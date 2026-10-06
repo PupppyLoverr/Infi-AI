@@ -19,6 +19,9 @@
 #                         logs via logger -> journald -> console)
 #   -monitor unix:...     QEMU monitor socket — grab a framebuffer dump any
 #                         time:  echo screendump /tmp/shot.ppm | socat - UNIX-CONNECT:work/image/monitor.sock
+#   -qmp unix:...         QMP socket — input-send-event works headless (HMP
+#                         mouse_move/mouse_button are dead with -display none):
+#                           printf '{"execute":"qmp_capabilities"}\n{"execute":"input-send-event","arguments":{"events":[{"type":"abs","data":{"axis":"x","value":16383}},{"type":"abs","data":{"axis":"y","value":16383}}]}}\n' | socat -t 2 - UNIX-CONNECT:work/image/qmp.sock
 #
 # Display: default SDL window on the host desktop (:0). For headless CI-ish
 # runs use  DISPLAY_MODE=none ./run.sh  — the GPU device still exists in the
@@ -30,6 +33,7 @@ WORK="$ROOT/work/image"
 IMG="${IMG:-$ROOT/dist/cosmosos-x86_64.raw}"
 SERIAL_LOG="$WORK/serial.log"
 MON_SOCK="$WORK/monitor.sock"
+QMP_SOCK="$WORK/qmp.sock"
 DISPLAY_MODE="${DISPLAY_MODE:-sdl}"
 
 [ -f "$IMG" ] || { echo "no image at $IMG — run build.sh first" >&2; exit 1; }
@@ -56,5 +60,6 @@ exec qemu-system-x86_64 \
   -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
   -serial file:"$SERIAL_LOG" \
   -monitor unix:"$MON_SOCK",server,nowait \
+  -qmp unix:"$QMP_SOCK",server,nowait \
   "${DISP[@]}" \
   "$@"
