@@ -21,7 +21,7 @@ use smithay::{
 #[cfg(feature = "debug")]
 use crate::drawing::FpsElement;
 use crate::{
-    drawing::{PointerRenderElement, CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN},
+    drawing::{clear_color, PointerRenderElement, CLEAR_COLOR_FULLSCREEN},
     shell::{FullscreenSurface, WindowElement, WindowRenderElement},
 };
 
@@ -80,7 +80,8 @@ pub fn space_preview_elements<'a, R, C>(
 where
     R: Renderer + ImportAll + ImportMem,
     R::TextureId: Clone + 'static,
-    C: From<CropRenderElement<RelocateRenderElement<RescaleRenderElement<WindowRenderElement<R>>>>> + 'a,
+    C: From<CropRenderElement<RelocateRenderElement<RescaleRenderElement<WindowRenderElement<R>>>>>
+        + 'a,
 {
     let constrain_behavior = ConstrainBehavior {
         reference: ConstrainReference::BoundingBox,
@@ -142,7 +143,10 @@ pub fn output_elements<R>(
     custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
     renderer: &mut R,
     show_window_preview: bool,
-) -> (Vec<OutputRenderElements<R, WindowRenderElement<R>>>, Color32F)
+) -> (
+    Vec<OutputRenderElements<R, WindowRenderElement<R>>>,
+    Color32F,
+)
 where
     R: Renderer + ImportAll + ImportMem,
     R::TextureId: Clone + 'static,
@@ -185,7 +189,7 @@ where
         .expect("output without mode?");
         output_render_elements.extend(space_elements.into_iter().map(OutputRenderElements::Space));
 
-        (output_render_elements, CLEAR_COLOR)
+        (output_render_elements, clear_color())
     }
 }
 
@@ -204,7 +208,12 @@ where
     R: Renderer + ImportAll + ImportMem,
     R::TextureId: Clone + 'static,
 {
-    let (elements, clear_color) =
-        output_elements(output, space, custom_elements, renderer, show_window_preview);
+    let (elements, clear_color) = output_elements(
+        output,
+        space,
+        custom_elements,
+        renderer,
+        show_window_preview,
+    );
     damage_tracker.render_output(renderer, framebuffer, age, &elements, clear_color)
 }

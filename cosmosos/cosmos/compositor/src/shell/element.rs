@@ -2,17 +2,21 @@ use std::{borrow::Cow, time::Duration};
 
 use smithay::{
     backend::renderer::{
-        element::{solid::SolidColorRenderElement, surface::WaylandSurfaceRenderElement, AsRenderElements},
+        element::{
+            surface::WaylandSurfaceRenderElement, texture::TextureRenderElement, AsRenderElements,
+        },
         ImportAll, ImportMem, Renderer, Texture,
     },
     desktop::{
-        space::SpaceElement, utils::OutputPresentationFeedback, Window, WindowSurface, WindowSurfaceType,
+        space::SpaceElement, utils::OutputPresentationFeedback, Window, WindowSurface,
+        WindowSurfaceType,
     },
     input::{
         pointer::{
-            AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
-            GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent,
-            GestureSwipeUpdateEvent, MotionEvent, PointerTarget, RelativeMotionEvent,
+            AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent,
+            GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent,
+            GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, MotionEvent,
+            PointerTarget, RelativeMotionEvent,
         },
         touch::TouchTarget,
         Seat,
@@ -24,7 +28,9 @@ use smithay::{
     },
     render_elements,
     utils::{user_data::UserDataMap, IsAlive, Logical, Physical, Point, Rectangle, Scale, Serial},
-    wayland::{compositor::SurfaceData as WlSurfaceData, dmabuf::DmabufFeedback, seat::WaylandFocus},
+    wayland::{
+        compositor::SurfaceData as WlSurfaceData, dmabuf::DmabufFeedback, seat::WaylandFocus,
+    },
 };
 
 use super::ssd::HEADER_BAR_HEIGHT;
@@ -49,7 +55,9 @@ impl WindowElement {
             Point::default()
         };
 
-        let surface_under = self.0.surface_under(location - offset.to_f64(), window_type);
+        let surface_under = self
+            .0
+            .surface_under(location - offset.to_f64(), window_type);
         let (under, loc) = match self.0.underlying_surface() {
             WindowSurface::Wayland(_) => {
                 surface_under.map(|(surface, loc)| (PointerFocusTarget::WlSurface(surface), loc))
@@ -79,7 +87,8 @@ impl WindowElement {
         T: Into<Duration>,
         F: FnMut(&WlSurface, &WlSurfaceData) -> Option<Output> + Copy,
     {
-        self.0.send_frame(output, time, throttle, primary_scan_out_output)
+        self.0
+            .send_frame(output, time, throttle, primary_scan_out_output)
     }
 
     pub fn send_dmabuf_feedback<'a, P, F>(
@@ -287,7 +296,9 @@ impl<BackendData: Backend> TouchTarget<AnvilState<BackendData>> for SSD {
         let mut state = self.0.decoration_state();
         if state.is_ssd {
             state.header_bar.pointer_enter(event.location);
-            state.header_bar.touch_down(seat, data, &self.0, event.serial);
+            state
+                .header_bar
+                .touch_down(seat, data, &self.0, event.serial);
         }
     }
 
@@ -398,9 +409,9 @@ impl SpaceElement for WindowElement {
 }
 
 render_elements!(
-    pub WindowRenderElement<R> where R: ImportAll + ImportMem;
+    pub WindowRenderElement<R> where R: ImportAll + ImportMem, R::TextureId: Texture;
     Window=WaylandSurfaceRenderElement<R>,
-    Decoration=SolidColorRenderElement,
+    Decoration=TextureRenderElement<R::TextureId>,
 );
 
 impl<R: Renderer> std::fmt::Debug for WindowRenderElement<R> {
@@ -434,7 +445,28 @@ where
 
             let mut state = self.decoration_state();
             let width = window_geo.size.w;
-            state.header_bar.redraw(width as u32);
+
+            // Cosmos chrome: repaint the titlebar only when its inputs change.
+            let (title, focused) = self
+                .wl_surface()
+                .as_deref()
+                .map(|s| {
+                    let (title, _) = crate::cosmos::toplevel_title_app(s);
+                    let focused = self
+                        .0
+                        .toplevel()
+                        .map(|t| {
+                            t.current_state()
+                                .states
+                                .contains(smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State::Activated)
+                        })
+                        .unwrap_or(false);
+                    (title.unwrap_or_default(), focused)
+                })
+                .unwrap_or_default();
+            state
+                .header_bar
+                .repaint(width as u32, &title, focused, super::ssd::current_theme());
             let mut vec = AsRenderElements::<R>::render_elements::<WindowRenderElement<R>>(
                 &state.header_bar,
                 renderer,

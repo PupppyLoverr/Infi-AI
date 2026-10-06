@@ -65,9 +65,12 @@ fn fullscreen_output_geometry(
     wl_output
         .and_then(Output::from_resource)
         .or_else(|| {
-            let w = space
-                .elements()
-                .find(|window| window.wl_surface().map(|s| &*s == wl_surface).unwrap_or(false));
+            let w = space.elements().find(|window| {
+                window
+                    .wl_surface()
+                    .map(|s| &*s == wl_surface)
+                    .unwrap_or(false)
+            });
             w.and_then(|w| space.outputs_for_element(w).first().cloned())
         })
         .as_ref()
@@ -145,7 +148,8 @@ impl<BackendData: Backend> CompositorHandler for AnvilState<BackendData> {
                         let client = surface.client().unwrap();
                         let res = state.handle.insert_source(source, move |_, _, data| {
                             let dh = data.display_handle.clone();
-                            data.client_compositor_state(&client).blocker_cleared(data, &dh);
+                            data.client_compositor_state(&client)
+                                .blocker_cleared(data, &dh);
                             Ok(())
                         });
                         if res.is_ok() {
@@ -158,7 +162,8 @@ impl<BackendData: Backend> CompositorHandler for AnvilState<BackendData> {
                     if let Some(client) = surface.client() {
                         let res = state.handle.insert_source(source, move |_, _, data| {
                             let dh = data.display_handle.clone();
-                            data.client_compositor_state(&client).blocker_cleared(data, &dh);
+                            data.client_compositor_state(&client)
+                                .blocker_cleared(data, &dh);
                             Ok(())
                         });
                         if res.is_ok() {
@@ -194,7 +199,8 @@ impl<BackendData: Backend> CompositorHandler for AnvilState<BackendData> {
 
                     if let Some(buffer_offset) = buffer_offset {
                         let current_loc = self.space.element_location(&window).unwrap();
-                        self.space.map_element(window, current_loc + buffer_offset, false);
+                        self.space
+                            .map_element(window, current_loc + buffer_offset, false);
                     }
                 }
             }
@@ -259,7 +265,8 @@ impl<BackendData: Backend> WlrLayerShellHandler for AnvilState<BackendData> {
             .and_then(Output::from_resource)
             .unwrap_or_else(|| self.space.outputs().next().unwrap().clone());
         let mut map = layer_map_for_output(&output);
-        map.map_layer(&LayerSurface::new(surface, namespace)).unwrap();
+        map.map_layer(&LayerSurface::new(surface, namespace))
+            .unwrap();
     }
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
@@ -291,7 +298,11 @@ pub struct SurfaceData {
     pub resize_state: ResizeState,
 }
 
-fn ensure_initial_configure(surface: &WlSurface, space: &Space<WindowElement>, popups: &mut PopupManager) {
+fn ensure_initial_configure(
+    surface: &WlSurface,
+    space: &Space<WindowElement>,
+    popups: &mut PopupManager,
+) {
     with_surface_tree_upward(
         surface,
         (),

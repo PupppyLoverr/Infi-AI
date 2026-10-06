@@ -17,9 +17,12 @@ profiling = { version = "1.0" }
 fps_ticker = "1.0.0"
 image = { version = "0.25.1", default-features = false, features = ["png"] }
 renderdoc = { version = "0.11.0" }
-smithay-drm-extras = { version = "0.1", features = ["edid"] }
+smithay-drm-extras = { version = "0.1", features = ["display-info"], optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+cosmic-text = "0.14"
+tiny-skia = "0.11"
+calloop = { version = "0.14", features = ["executor"] }
 cosmos-ipc = { path = "../ipc" }
 
 [dependencies.smithay]
@@ -30,8 +33,16 @@ version = "0.7.0"
 [build-dependencies]
 gl_generator = "0.14"
 
+[dependencies.x11rb]
+default-features = false
+features = ["composite"]
+optional = true
+version = "0.13.0"
+
 [features]
 default = ["egl", "winit", "udev"]
+debug = []
+xwayland = ["smithay/xwayland", "x11rb", "smithay/x11rb_event_source"]
 egl = ["smithay/use_system_lib", "smithay/backend_egl"]
 udev = [
   "smithay-drm-extras",
