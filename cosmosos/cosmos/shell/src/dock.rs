@@ -289,6 +289,39 @@ pub fn draw(state: &mut ShellState) {
         x += CELL_W;
     }
 
+    // macOS dock label: the hovered app's name floats in a pill above
+    // its icon, inside the MAG_ROOM overhang (outside the input region,
+    // so it can never block a click).
+    if let Some(idx) = dock_hover.and_then(|hx| hit(hx, items.len())) {
+        let item = &items[idx];
+        let name: &str = item.app.as_ref().map(|a| a.name.as_str()).unwrap_or(
+            if item.icon == "start" {
+                "Launcher"
+            } else {
+                item.icon.as_str()
+            },
+        );
+        let cell_center =
+            PAD + idx as f64 * CELL_W + if idx >= 1 { SEP_W } else { 0.0 } + CELL_W / 2.0;
+        let text_est = name.chars().count() as f32 * 6.0;
+        let pill_w = text_est + 16.0;
+        let pill_x = (cell_center as f32 - pill_w / 2.0)
+            .max(2.0)
+            .min(w as f32 - pill_w - 2.0);
+        draw::fill_round_rect(&mut pixmap, pill_x, 3.0, pill_w, 17.0, 8.0, bg);
+        draw::stroke_round_rect(&mut pixmap, pill_x, 3.0, pill_w, 17.0, 7.5, 1.0, sep);
+        draw::text_bold(
+            &mut pixmap,
+            pill_x + (pill_w - text_est) / 2.0,
+            5.0,
+            text_est.max(1.0),
+            13.0,
+            11.0,
+            name,
+            fg,
+        );
+    }
+
     let wl_surface = layer.wl_surface().clone();
     buffer.attach_to(&wl_surface).ok();
     wl_surface.damage_buffer(0, 0, w as i32, h as i32);
