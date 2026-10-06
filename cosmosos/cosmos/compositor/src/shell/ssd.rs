@@ -585,4 +585,15 @@ impl WindowElement {
     pub fn set_ssd(&self, ssd: bool) {
         self.decoration_state().is_ssd = ssd;
     }
+
+    /// Height the SSD header bar adds on top of the surface — element
+    /// geometry is `surface + titlebar`, so subtract this wherever a
+    /// surface size is expected (snap, maximize, resize configures).
+    pub fn titlebar_height(&self) -> i32 {
+        if self.decoration_state().is_ssd {
+            HEADER_BAR_HEIGHT
+        } else {
+            0
+        }
+    }
 }

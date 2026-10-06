@@ -74,7 +74,10 @@ use smithay::{
             control::{connector, crtc, Device, ModeTypeFlags},
             Device as _,
         },
-        input::{DeviceCapability, Libinput},
+        input::{
+            event::{DeviceEvent, EventTrait},
+            DeviceCapability, Event as LibinputEvent, Libinput,
+        },
         rustix::fs::OFlags,
         wayland_protocols::wp::{
             linux_dmabuf::zv1::server::zwp_linux_dmabuf_feedback_v1,
@@ -299,40 +302,38 @@ pub fn run_udev() {
         state.backend_data.session.clone().into(),
     );
     libinput_context.udev_assign_seat(&state.seat_name).unwrap();
-    // Flush the initial device enumeration now: the queued `device_added`
-    // events otherwise sit unprocessed until the first real input event
-    // wakes the event source — on QEMU that can be minutes, leaving
-    // keyboard/pointer apparently dead.
+    let libinput_backend = LibinputInputBackend::new(libinput_context.clone());
+
+    // Drain the initial device enumeration right now: `udev_assign_seat`
+    // queues `device_added` events, but they don't mark libinput's fd
+    // readable — the event source only wakes on real device activity, so
+    // on QEMU the seat stayed device-less for ~2 minutes of dead input.
     if let Err(err) = libinput_context.dispatch() {
         warn!("initial libinput dispatch failed: {err}");
     }
-    let libinput_backend = LibinputInputBackend::new(libinput_context.clone());
+    let dh = state.backend_data.dh.clone();
+    for raw in &mut libinput_context {
+        match raw {
+            LibinputEvent::Device(DeviceEvent::Added(e)) => {
+                let device = EventTrait::device(&e);
+                dispatch_libinput_event(&mut state, &dh, InputEvent::DeviceAdded { device });
+            }
+            LibinputEvent::Device(DeviceEvent::Removed(e)) => {
+                let device = EventTrait::device(&e);
+                dispatch_libinput_event(&mut state, &dh, InputEvent::DeviceRemoved { device });
+            }
+            _ => {}
+        }
+    }
 
     /*
      * Bind all our objects that get driven by the event loop
      */
     event_loop
         .handle()
-        .insert_source(libinput_backend, move |mut event, _, data| {
+        .insert_source(libinput_backend, move |event, _, data| {
             let dh = data.backend_data.dh.clone();
-            if let InputEvent::DeviceAdded { device } = &mut event {
-                if device.has_capability(DeviceCapability::Keyboard) {
-                    if let Some(led_state) = data
-                        .seat
-                        .get_keyboard()
-                        .map(|keyboard| keyboard.led_state())
-                    {
-                        device.led_update(led_state.into());
-                    }
-                    data.backend_data.keyboards.push(device.clone());
-                }
-            } else if let InputEvent::DeviceRemoved { ref device } = event {
-                if device.has_capability(DeviceCapability::Keyboard) {
-                    data.backend_data.keyboards.retain(|item| item != device);
-                }
-            }
-
-            data.process_input_event(&dh, event)
+            dispatch_libinput_event(data, &dh, event)
         })
         .unwrap();
 
@@ -565,6 +566,31 @@ pub fn run_udev() {
             state.ipc_flush();
         }
     }
+}
+
+fn dispatch_libinput_event(
+    data: &mut AnvilState<UdevData>,
+    dh: &DisplayHandle,
+    mut event: InputEvent<LibinputInputBackend>,
+) {
+    if let InputEvent::DeviceAdded { device } = &mut event {
+        if device.has_capability(DeviceCapability::Keyboard) {
+            if let Some(led_state) = data
+                .seat
+                .get_keyboard()
+                .map(|keyboard| keyboard.led_state())
+            {
+                device.led_update(led_state.into());
+            }
+            data.backend_data.keyboards.push(device.clone());
+        }
+    } else if let InputEvent::DeviceRemoved { ref device } = event {
+        if device.has_capability(DeviceCapability::Keyboard) {
+            data.backend_data.keyboards.retain(|item| item != device);
+        }
+    }
+
+    data.process_input_event(dh, event)
 }
 
 impl DrmLeaseHandler for AnvilState<UdevData> {

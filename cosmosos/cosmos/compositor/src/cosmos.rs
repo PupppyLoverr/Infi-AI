@@ -559,7 +559,12 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         };
         let id = self.cosmos.window_id(window);
         let current_loc = self.space.element_location(window).unwrap_or_default();
-        let current_size = window.geometry().size;
+        // `window.geometry()` includes the SSD titlebar; surface sizes
+        // must exclude it or every snap/restore cycle grows the window
+        // by 32px and overflows the zone.
+        let titlebar = window.titlebar_height();
+        let geo = window.geometry().size;
+        let current_size = Size::from((geo.w, geo.h - titlebar));
 
         // Save floating geometry when leaving Floating for the first time.
         {
@@ -574,15 +579,25 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         let (loc, size, state) = match snap {
             SnapState::Left => (
                 area.loc + Point::from((SNAP_GAP, SNAP_GAP)),
-                Size::from((area.size.w / 2 - SNAP_GAP * 2, area.size.h - SNAP_GAP * 2)),
+                Size::from((
+                    area.size.w / 2 - SNAP_GAP * 2,
+                    area.size.h - SNAP_GAP * 2 - titlebar,
+                )),
                 xdg_toplevel::State::TiledLeft,
             ),
             SnapState::Right => (
                 area.loc + Point::from((area.size.w / 2 + SNAP_GAP, SNAP_GAP)),
-                Size::from((area.size.w / 2 - SNAP_GAP * 2, area.size.h - SNAP_GAP * 2)),
+                Size::from((
+                    area.size.w / 2 - SNAP_GAP * 2,
+                    area.size.h - SNAP_GAP * 2 - titlebar,
+                )),
                 xdg_toplevel::State::TiledRight,
             ),
-            SnapState::Maximized => (area.loc, area.size, xdg_toplevel::State::Maximized),
+            SnapState::Maximized => (
+                area.loc,
+                Size::from((area.size.w, area.size.h - titlebar)),
+                xdg_toplevel::State::Maximized,
+            ),
             SnapState::Floating => {
                 let restore = self
                     .cosmos

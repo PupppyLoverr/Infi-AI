@@ -15,7 +15,7 @@ use smithay::{
             Resource,
         },
     },
-    utils::{Logical, Point, Serial},
+    utils::{Logical, Point, Serial, Size},
     wayland::{
         compositor::{self, with_states},
         seat::WaylandFocus,
@@ -429,9 +429,13 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
             // exclusive zone), not the raw output geometry.
             let area = self.work_area(Some(&window));
 
+            // The rendered element stacks the SSD titlebar on top of
+            // the surface; leave room for it or the bottom edge lands
+            // outside the work area.
+            let titlebar = window.titlebar_height();
             surface.with_pending_state(|state| {
                 state.states.set(xdg_toplevel::State::Maximized);
-                state.size = Some(area.size);
+                state.size = Some(Size::from((area.size.w, area.size.h - titlebar)));
             });
             if let Some(fit) = window.user_data().get::<InitialFit>() {
                 fit.user_moved();

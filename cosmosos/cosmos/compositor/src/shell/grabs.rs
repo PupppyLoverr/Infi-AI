@@ -429,14 +429,23 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>>
             WindowSurface::Wayland(xdg) => {
                 xdg.with_pending_state(|state| {
                     state.states.set(xdg_toplevel::State::Resizing);
-                    state.size = Some(self.last_window_size);
+                    state.size = Some(Size::from((
+                        self.last_window_size.w,
+                        self.last_window_size.h - self.window.titlebar_height(),
+                    )));
                 });
                 xdg.send_pending_configure();
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11) => {
                 let location = data.space.element_location(&self.window).unwrap();
-                x11.configure(Rectangle::new(location, self.last_window_size))
+                x11.configure(Rectangle::new(
+                        location,
+                        Size::from((
+                            self.last_window_size.w,
+                            self.last_window_size.h - self.window.titlebar_height(),
+                        )),
+                    ))
                     .unwrap();
             }
         }
@@ -472,7 +481,10 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>>
                 WindowSurface::Wayland(xdg) => {
                     xdg.with_pending_state(|state| {
                         state.states.unset(xdg_toplevel::State::Resizing);
-                        state.size = Some(self.last_window_size);
+                        state.size = Some(Size::from((
+                        self.last_window_size.w,
+                        self.last_window_size.h - self.window.titlebar_height(),
+                    )));
                     });
                     xdg.send_pending_configure();
                     if self.edges.intersects(ResizeEdge::TOP_LEFT) {
@@ -524,7 +536,13 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>>
                         data.space.map_element(self.window.clone(), location, true);
                     }
                     data.flush_pending_configures();
-                    x11.configure(Rectangle::new(location, self.last_window_size))
+                    x11.configure(Rectangle::new(
+                        location,
+                        Size::from((
+                            self.last_window_size.w,
+                            self.last_window_size.h - self.window.titlebar_height(),
+                        )),
+                    ))
                         .unwrap();
 
                     let Some(surface) = self.window.wl_surface() else {
@@ -690,7 +708,10 @@ impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>>
             WindowSurface::Wayland(xdg) => {
                 xdg.with_pending_state(|state| {
                     state.states.unset(xdg_toplevel::State::Resizing);
-                    state.size = Some(self.last_window_size);
+                    state.size = Some(Size::from((
+                        self.last_window_size.w,
+                        self.last_window_size.h - self.window.titlebar_height(),
+                    )));
                 });
                 xdg.send_pending_configure();
                 if self.edges.intersects(ResizeEdge::TOP_LEFT) {
@@ -742,7 +763,13 @@ impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>>
                     data.space.map_element(self.window.clone(), location, true);
                 }
                 data.flush_pending_configures();
-                x11.configure(Rectangle::new(location, self.last_window_size))
+                x11.configure(Rectangle::new(
+                        location,
+                        Size::from((
+                            self.last_window_size.w,
+                            self.last_window_size.h - self.window.titlebar_height(),
+                        )),
+                    ))
                     .unwrap();
 
                 let Some(surface) = self.window.wl_surface() else {
@@ -842,14 +869,23 @@ impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>>
             WindowSurface::Wayland(xdg) => {
                 xdg.with_pending_state(|state| {
                     state.states.set(xdg_toplevel::State::Resizing);
-                    state.size = Some(self.last_window_size);
+                    state.size = Some(Size::from((
+                        self.last_window_size.w,
+                        self.last_window_size.h - self.window.titlebar_height(),
+                    )));
                 });
                 xdg.send_pending_configure();
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11) => {
                 let location = data.space.element_location(&self.window).unwrap();
-                x11.configure(Rectangle::new(location, self.last_window_size))
+                x11.configure(Rectangle::new(
+                        location,
+                        Size::from((
+                            self.last_window_size.w,
+                            self.last_window_size.h - self.window.titlebar_height(),
+                        )),
+                    ))
                     .unwrap();
             }
         }
