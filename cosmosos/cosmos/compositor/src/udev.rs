@@ -815,20 +815,20 @@ impl AnvilState<UdevData> {
             let egl_device =
                 EGLDevice::device_for_display(&display).map_err(DeviceAddError::AddNode)?;
 
-            // Software GL (llvmpipe/softpipe over GBM) has no hardware render
-            // node — e.g. virtio-gpu without virgl in QEMU. Render on the
-            // primary node itself; anvil's upstream NoRenderNode bail-out
-            // would leave such devices unusable.
-            let render_node = if egl_device.is_software() {
-                info!("gpu has no hardware render node — using software rendering on {node:?}");
-                node
-            } else {
-                egl_device
-                    .try_get_render_node()
-                    .ok()
-                    .flatten()
-                    .unwrap_or(node)
-            };
+            // Software GL (llvmpipe over GBM — e.g. virtio-gpu without virgl)
+            // may not resolve a render node at all; register the renderer
+            // under the compositor's primary node so every
+            // `single_renderer(&primary_gpu)` lookup resolves.
+            let render_node = egl_device.try_get_render_node().ok().flatten().unwrap_or(
+                if egl_device.is_software() {
+                    self.backend_data.primary_gpu
+                } else {
+                    node
+                },
+            );
+            if egl_device.is_software() {
+                info!("gpu has no hardware render node — software rendering on {render_node:?}");
+            }
             self.backend_data
                 .gpus
                 .as_mut()
