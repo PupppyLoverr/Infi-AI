@@ -221,6 +221,22 @@ pub enum SnapState {
     Maximized,
 }
 
+/// The modifier that opened the window switcher; committing happens when
+/// it is released, matching macOS/Windows Alt+Tab and Cmd/Super+Tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeldMod {
+    Alt,
+    Logo,
+}
+
+/// Open Alt/Super+Tab switcher: stable window order + highlighted index.
+#[derive(Debug)]
+pub struct SwitcherState {
+    pub order: Vec<WindowElement>,
+    pub sel: usize,
+    pub held: HeldMod,
+}
+
 /// Cosmos-managed window state, keyed by compositor window id.
 #[derive(Debug)]
 pub struct WindowMeta {
@@ -254,6 +270,8 @@ pub struct CosmosState {
     pub config: CosmosConfig,
     /// Currently-open layer-shell launcher hint (panel handles visuals).
     pub launcher_open: bool,
+    /// Alt/Super+Tab switcher while the modifier is held.
+    pub switcher: Option<SwitcherState>,
     /// If set, broadcast a `Windows`+`Workspaces` update at the next idle point.
     pub dirty: bool,
 }
@@ -681,26 +699,89 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         self.cosmos.dirty = true;
     }
 
-    /// Cycle keyboard focus through the windows on the active workspace
-    /// (Alt+Tab). Each cycle raises the target window.
-    pub fn cycle_window(&mut self, backwards: bool) {
-        let elements: Vec<WindowElement> = self.space.elements().cloned().collect();
-        if elements.is_empty() {
-            return;
+    /// Alt+Tab / Super+Tab step: open the switcher on the first press
+    /// (selecting the window after the focused one), then advance the
+    /// highlight per press. Focus only changes on [`Self::switcher_commit`],
+    /// when the modifier that opened it is released.
+    pub fn switcher_step(&mut self, backwards: bool) {
+        // Forget windows that went away since the switcher opened.
+        let live: Vec<WindowElement> = self.space.elements().cloned().collect();
+        if let Some(sw) = &mut self.cosmos.switcher {
+            sw.order.retain(|w| live.contains(w));
+            if sw.order.is_empty() {
+                self.cosmos.switcher = None;
+            } else {
+                sw.sel = sw.sel.min(sw.order.len() - 1);
+            }
         }
-        let focused = self.focused_window();
-        let idx = focused
-            .and_then(|f| elements.iter().position(|w| w == &f))
-            .map(|i| {
-                if backwards {
-                    (i + elements.len() - 1) % elements.len()
-                } else {
-                    (i + 1) % elements.len()
+        if self.cosmos.switcher.is_none() {
+            let order: Vec<WindowElement> = self.space.elements().cloned().collect();
+            if order.is_empty() {
+                return;
+            }
+            let held = if self
+                .seat
+                .get_keyboard()
+                .map(|k| k.modifier_state().alt)
+                .unwrap_or(false)
+            {
+                HeldMod::Alt
+            } else {
+                HeldMod::Logo
+            };
+            let focused = self.focused_window();
+            let sel = match focused.and_then(|f| order.iter().position(|w| w == &f)) {
+                Some(i) if order.len() > 1 => {
+                    if backwards {
+                        (i + order.len() - 1) % order.len()
+                    } else {
+                        (i + 1) % order.len()
+                    }
                 }
-            })
-            .unwrap_or(0);
-        let window = elements[idx].clone();
-        self.focus_window(&window);
+                _ => 0,
+            };
+            self.cosmos.switcher = Some(SwitcherState { order, sel, held });
+        } else if let Some(sw) = &mut self.cosmos.switcher {
+            let n = sw.order.len();
+            sw.sel = if backwards {
+                (sw.sel + n - 1) % n
+            } else {
+                (sw.sel + 1) % n
+            };
+        }
+        let Some(sw) = &self.cosmos.switcher else {
+            return;
+        };
+        let order: Vec<u64> = sw
+            .order
+            .iter()
+            .map(|w| self.cosmos.id_of(w).unwrap_or(0))
+            .collect();
+        let selected = order.get(sw.sel).copied().unwrap_or(0);
+        self.ipc_broadcast(&cosmos_ipc::Event::Switcher {
+            open: true,
+            selected,
+            order,
+        });
+    }
+
+    /// Commit the highlighted switcher window: focus it and close the
+    /// switcher. Called when the held modifier is released.
+    pub fn switcher_commit(&mut self) {
+        let Some(sw) = self.cosmos.switcher.take() else {
+            return;
+        };
+        if let Some(window) = sw.order.get(sw.sel).cloned() {
+            if self.all_windows().contains(&window) {
+                self.focus_window(&window);
+            }
+        }
+        self.ipc_broadcast(&cosmos_ipc::Event::Switcher {
+            open: false,
+            selected: 0,
+            order: Vec::new(),
+        });
+        self.cosmos.dirty = true;
     }
 
     /// The focused window, if any.

@@ -125,6 +125,14 @@ pub enum Event {
     LauncherToggled {
         open: bool,
     },
+    /// Alt/Super+Tab window switcher state. `order` is the stable window-id
+    /// order the compositor cycles through; `selected` is the highlighted id.
+    /// `open: false` means the modifier was released and the choice committed.
+    Switcher {
+        open: bool,
+        selected: u64,
+        order: Vec<u64>,
+    },
     /// Session is ending; clients should exit.
     SessionEnding,
     /// A request failed — carries a human-readable reason.

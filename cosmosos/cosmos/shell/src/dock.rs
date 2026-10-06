@@ -5,15 +5,22 @@
 //! Layout: [Cosmos start glyph] | pinned apps | running extras.
 
 use cosmic_text::Color as CtColor;
-use smithay_client_toolkit::shell::WaylandSurface;
+use smithay_client_toolkit::{compositor::Region, shell::WaylandSurface};
 use tiny_skia::{Color, PixmapMut};
 use wayland_client::protocol::wl_shm;
 
 use crate::{desktop::AppEntry, draw, icons, ShellState};
 
 pub const DOCK_H: u32 = 54;
+/// Extra surface height above the card so magnified icons can pop
+/// over its top edge (macOS Dock). Input stays clipped to the card.
+pub const MAG_ROOM: u32 = 24;
+pub const SURFACE_H: u32 = DOCK_H + MAG_ROOM;
 const CELL_W: f64 = 46.0;
 const ICON_SZ: f32 = 28.0;
+/// Extra icon px at the hover centre and its falloff radius.
+const MAG_MAX: f32 = 16.0;
+const MAG_SPAN: f64 = 115.0;
 const PAD: f64 = 9.0;
 const SEP_W: f64 = 13.0;
 const DOCK_R: f32 = 15.0;
@@ -145,6 +152,16 @@ fn theme(dark: bool) -> (Color, Color, Color, CtColor) {
     }
 }
 
+/// Icon magnification: smoothstep bell over MAG_SPAN, peaking under
+/// the cursor (macOS dock zoom).
+fn mag(hover: Option<f64>, cell_center: f64) -> f32 {
+    let Some(hx) = hover else {
+        return 0.0;
+    };
+    let t = (1.0 - ((hx - cell_center).abs() / MAG_SPAN).min(1.0)) as f32;
+    MAG_MAX * t * t * (3.0 - 2.0 * t)
+}
+
 /// Repaint the dock surface.
 pub fn draw(state: &mut ShellState) {
     let (w, h) = state.dock_size;
@@ -158,6 +175,8 @@ pub fn draw(state: &mut ShellState) {
     let items = entries(state);
     let dock_hover = state.dock_hover;
     let glyph = Color::from_rgba8(fg.r(), fg.g(), fg.b(), fg.a());
+    // The card sits at the bottom of the taller surface.
+    let card_y = MAG_ROOM as f32;
 
     let stride = w as i32 * 4;
     let Ok((buffer, canvas)) =
@@ -176,18 +195,18 @@ pub fn draw(state: &mut ShellState) {
     draw::fill_round_rect(
         &mut pixmap,
         0.5,
-        0.5,
+        card_y + 0.5,
         w as f32 - 1.0,
-        h as f32 - 1.0,
+        DOCK_H as f32 - 1.0,
         DOCK_R,
         bg,
     );
     draw::stroke_round_rect(
         &mut pixmap,
         0.5,
-        0.5,
+        card_y + 0.5,
         w as f32 - 1.0,
-        h as f32 - 1.0,
+        DOCK_H as f32 - 1.0,
         DOCK_R - 0.5,
         1.0,
         sep,
@@ -214,9 +233,9 @@ pub fn draw(state: &mut ShellState) {
             draw::fill_round_rect(
                 &mut pixmap,
                 x as f32 + 2.0,
-                4.0,
+                card_y + 4.0,
                 CELL_W as f32 - 4.0,
-                h as f32 - 8.0,
+                DOCK_H as f32 - 8.0,
                 10.0,
                 hover_bg,
             );
@@ -226,19 +245,23 @@ pub fn draw(state: &mut ShellState) {
         } else {
             glyph
         };
+        let cell_center = x + CELL_W / 2.0;
+        // Bottom edge of the icon stays anchored as it magnifies.
+        let icon_sz = ICON_SZ + mag(dock_hover, cell_center);
+        let icon_bottom = card_y + DOCK_H as f32 - 9.0;
         icons::icon(
             &mut pixmap,
             &item.icon,
-            x as f32 + (CELL_W as f32 - ICON_SZ) / 2.0,
-            (h as f32 - ICON_SZ) / 2.0 - 2.0,
-            ICON_SZ,
+            cell_center as f32 - icon_sz / 2.0,
+            icon_bottom - icon_sz,
+            icon_sz,
             icon_color,
         );
         // Running indicator: a small dot centred under the icon.
         if !item.windows.is_empty() {
             let dot_r = 1.8f32;
-            let cx = x as f32 + CELL_W as f32 / 2.0;
-            let cy = h as f32 - 6.5;
+            let cx = cell_center as f32;
+            let cy = card_y + DOCK_H as f32 - 6.5;
             let mut pb = tiny_skia::PathBuilder::new();
             pb.push_circle(cx, cy, dot_r);
             if let Some(path) = pb.finish() {
@@ -265,6 +288,12 @@ pub fn draw(state: &mut ShellState) {
     let wl_surface = layer.wl_surface().clone();
     buffer.attach_to(&wl_surface).ok();
     wl_surface.damage_buffer(0, 0, w as i32, h as i32);
+    // Only the card band is clickable — the transparent overhang above
+    // it must let pointer events reach windows underneath.
+    if let Ok(region) = Region::new(&state.compositor_state) {
+        region.add(0, MAG_ROOM as i32, w as i32, DOCK_H as i32);
+        wl_surface.set_input_region(Some(region.wl_region()));
+    }
     wl_surface.commit();
 }
 
@@ -309,14 +338,15 @@ pub fn click(state: &mut ShellState, x: f64) -> bool {
     false
 }
 
-/// Hover bookkeeping for the icon highlight.
+/// Hover bookkeeping for the icon highlight + magnification. Icon
+/// scale changes continuously with x, so any move repaints.
 pub fn hover(state: &mut ShellState, x: f64) -> bool {
-    let prev = state.dock_hover;
+    let changed = state.dock_hover != Some(x);
     state.dock_hover = Some(x);
-    let items = entries(state);
-    hit(x, items.len())
-        != prev.and_then(|px| {
-            let items = entries(state);
-            hit(px, items.len())
-        })
+    changed
+}
+
+/// Pointer left the dock — drop hover + magnification.
+pub fn leave(state: &mut ShellState) -> bool {
+    state.dock_hover.take().is_some()
 }
