@@ -203,8 +203,15 @@ impl<BackendData: Backend> PointerTarget<AnvilState<BackendData>> for SSD {
             return;
         }
         let (is_ssd, zone) = {
-            let state = self.0.decoration_state();
-            (state.is_ssd, state.header_bar.zone_at_pointer())
+            let mut state = self.0.decoration_state();
+            let (is_ssd, zone) = (state.is_ssd, state.header_bar.zone_at_pointer());
+            // A second quick press on the non-button band is a
+            // double-click → maximize/restore (zone 2), not a move grab.
+            let zone = match (is_ssd, zone, state.header_bar.pointer_loc) {
+                (true, None, Some(loc)) if state.register_title_press(loc) => Some(2),
+                (_, z, _) => z,
+            };
+            (is_ssd, zone)
         };
         if is_ssd {
             // Dispatch only after the WindowState borrow is dropped — the
@@ -518,25 +525,17 @@ where
                 // included) plus SHADOW_MARGIN on every side — step back
                 // over the titlebar advance too.
                 let shadow_origin = location
-                    - Point::from((
-                        super::ssd::SHADOW_MARGIN,
-                        super::ssd::SHADOW_MARGIN + tb,
-                    ));
-                vec.extend(
-                    AsRenderElements::<R>::render_elements::<WindowRenderElement<R>>(
-                        &state.shadow,
-                        renderer,
-                        shadow_origin,
-                        scale,
-                        alpha,
-                    ),
-                );
+                    - Point::from((super::ssd::SHADOW_MARGIN, super::ssd::SHADOW_MARGIN + tb));
+                vec.extend(AsRenderElements::<R>::render_elements::<
+                    WindowRenderElement<R>,
+                >(
+                    &state.shadow, renderer, shadow_origin, scale, alpha
+                ));
             }
 
             vec.into_iter().map(C::from).collect()
         } else {
-            let body =
-                AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);
+            let body = AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);
             if crate::cosmos::element_debug() {
                 tracing::debug!(
                     emitted = body.len(),

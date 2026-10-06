@@ -95,6 +95,13 @@ pub enum Request {
     },
     /// Toggle the launcher overlay (shell-only shortcut surface).
     ToggleLauncher,
+    /// Pick a window in the Snap Assist overlay — it snaps into the
+    /// free half opposite the window that triggered the assist.
+    SnapAssistPick {
+        id: u64,
+    },
+    /// Dismiss Snap Assist without picking (backdrop click, Esc).
+    SnapAssistDismiss,
     /// Update a setting; persisted by the compositor.
     SetConfig {
         key: String,
@@ -132,6 +139,16 @@ pub enum Event {
         open: bool,
         selected: u64,
         order: Vec<u64>,
+    },
+    /// Snap Assist state (Win11): after a Left/Right snap the picker
+    /// offers the remaining windows to fill the free half. `fill` is
+    /// "left" or "right" — the half the picker and the picked window
+    /// occupy. `candidates` are eligible window ids. `open: false`
+    /// closes the overlay.
+    SnapAssist {
+        open: bool,
+        fill: String,
+        candidates: Vec<u64>,
     },
     /// Session is ending; clients should exit.
     SessionEnding,

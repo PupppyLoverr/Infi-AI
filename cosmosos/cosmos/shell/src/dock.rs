@@ -303,7 +303,10 @@ pub fn draw(state: &mut ShellState) {
         );
         let cell_center =
             PAD + idx as f64 * CELL_W + if idx >= 1 { SEP_W } else { 0.0 } + CELL_W / 2.0;
-        let text_est = name.chars().count() as f32 * 6.0;
+        // Semibold 11px runs ~7px/char — 6.0 clipped the tail glyph
+        // ("Termina", "Launche"); add slack so the text box never
+        // truncates inside the pill.
+        let text_est = name.chars().count() as f32 * 7.0;
         let pill_w = text_est + 16.0;
         let pill_x = (cell_center as f32 - pill_w / 2.0)
             .max(2.0)
@@ -312,9 +315,9 @@ pub fn draw(state: &mut ShellState) {
         draw::stroke_round_rect(&mut pixmap, pill_x, 3.0, pill_w, 17.0, 7.5, 1.0, sep);
         draw::text_bold(
             &mut pixmap,
-            pill_x + (pill_w - text_est) / 2.0,
+            pill_x + 4.0,
             5.0,
-            text_est.max(1.0),
+            pill_w - 8.0,
             13.0,
             11.0,
             name,

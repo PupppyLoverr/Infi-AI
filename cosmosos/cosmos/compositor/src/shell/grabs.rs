@@ -80,10 +80,12 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>>
         handle.button(data, event);
         if handle.current_pressed().is_empty() {
             // No more buttons are pressed, release the grab.
+            // Take the pending snap BEFORE unset_grab — our unset()
+            // clears snap_preview, so taking it after always reads None.
+            let snap = data.cosmos.snap_preview.take().map(|(zone, _)| zone);
             handle.unset_grab(self, data, event.serial, event.time, true);
             data.flush_pending_configures();
             // Dropped inside an edge snap zone → tile instead of float.
-            let snap = data.cosmos.snap_preview.take().map(|(zone, _)| zone);
             tracing::info!(?snap, "cosmos: move grab released");
             if snap.is_some() {
                 data.cosmos.dirty = true;
@@ -190,7 +192,10 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>>
     }
 
     fn unset(&mut self, data: &mut AnvilState<BackendData>) {
-        tracing::info!(preview = data.cosmos.snap_preview.is_some(), "cosmos: move grab unset");
+        tracing::info!(
+            preview = data.cosmos.snap_preview.is_some(),
+            "cosmos: move grab unset"
+        );
         data.cosmos.snap_preview = None;
     }
 }
@@ -229,8 +234,9 @@ impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>>
         }
 
         handle.up(data, event, seq);
-        handle.unset_grab(self, data);
+        // Take the pending snap BEFORE unset_grab — unset() clears it.
         let snap = data.cosmos.snap_preview.take().map(|(zone, _)| zone);
+        handle.unset_grab(self, data);
         if let Some(zone) = snap {
             data.cosmos.dirty = true;
             if self.window.alive() {

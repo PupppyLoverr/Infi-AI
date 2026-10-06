@@ -237,6 +237,15 @@ pub struct SwitcherState {
     pub held: HeldMod,
 }
 
+/// Snap Assist (Win11): after a Left/Right snap the picker offers the
+/// remaining windows to fill the free half. `fill` is the SnapState the
+/// picked window receives; `candidates` are eligible window ids.
+#[derive(Debug)]
+pub struct AssistState {
+    pub fill: SnapState,
+    pub candidates: Vec<u64>,
+}
+
 /// Cosmos-managed window state, keyed by compositor window id.
 #[derive(Debug)]
 pub struct WindowMeta {
@@ -276,6 +285,8 @@ pub struct CosmosState {
     /// exact rectangle the window would snap into on release (Win11's
     /// translucent drop preview).
     pub snap_preview: Option<(SnapState, Rectangle<i32, Logical>)>,
+    /// Snap Assist picker while it is offered (shell renders visuals).
+    pub assist: Option<AssistState>,
     /// If set, broadcast a `Windows`+`Workspaces` update at the next idle point.
     pub dirty: bool,
 }
@@ -407,6 +418,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             // stale pending Activated alongside the newly focused window.
             w.0.set_activated(false);
             self.space.unmap_elem(&w);
+            tracing::info!(id, ws, "cosmos: window parked");
             to_push.push(w);
         }
         self.cosmos.parked.entry(ws).or_default().extend(to_push);
@@ -427,6 +439,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             if let Some(meta) = self.cosmos.windows.get_mut(&id) {
                 meta.workspace = ws;
             }
+            tracing::info!(id, ws, loc = ?loc, "cosmos: window unparked");
             self.space.map_element(w, loc, false);
         }
     }
@@ -437,6 +450,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             return;
         }
         let from = self.cosmos.active_workspace;
+        self.close_snap_assist();
         self.park_current(from);
         self.cosmos.active_workspace = target;
         self.unpark(target);
@@ -473,6 +487,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             .element_location(window)
             .unwrap_or_else(|| window.geometry().loc);
         self.space.unmap_elem(window);
+        tracing::info!(id, ws, "cosmos: window moved to workspace");
         if let Some(meta) = self.cosmos.windows.get_mut(&id) {
             meta.workspace = ws;
             meta.parked_loc = loc;
@@ -491,6 +506,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         let loc = self.space.element_location(window).unwrap_or_default();
         window.0.set_activated(false);
         self.space.unmap_elem(window);
+        tracing::info!(id, "cosmos: window minimized");
         if let Some(meta) = self.cosmos.windows.get_mut(&id) {
             meta.minimized = true;
             meta.parked_loc = loc;
@@ -587,17 +603,11 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         let (loc, size) = match snap {
             SnapState::Left => (
                 area.loc + Point::from((SNAP_GAP, SNAP_GAP)),
-                Size::from((
-                    area.size.w / 2 - SNAP_GAP * 2,
-                    area.size.h - SNAP_GAP * 2,
-                )),
+                Size::from((area.size.w / 2 - SNAP_GAP * 2, area.size.h - SNAP_GAP * 2)),
             ),
             SnapState::Right => (
                 area.loc + Point::from((area.size.w / 2 + SNAP_GAP, SNAP_GAP)),
-                Size::from((
-                    area.size.w / 2 - SNAP_GAP * 2,
-                    area.size.h - SNAP_GAP * 2,
-                )),
+                Size::from((area.size.w / 2 - SNAP_GAP * 2, area.size.h - SNAP_GAP * 2)),
             ),
             SnapState::Maximized => (area.loc, area.size),
             SnapState::Floating => return None,
@@ -620,11 +630,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
     ) -> Option<SnapState> {
         let area = self.work_area(Some(window));
         const EDGE: f64 = 12.0;
-        let (ax, ay, aw) = (
-            area.loc.x as f64,
-            area.loc.y as f64,
-            area.size.w as f64,
-        );
+        let (ax, ay, aw) = (area.loc.x as f64, area.loc.y as f64, area.size.w as f64);
         if loc.x <= ax + EDGE {
             return Some(SnapState::Left);
         }
@@ -639,6 +645,15 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 
     /// Snap the focused window left/right/maximize or restore.
     pub fn snap_window(&mut self, window: &WindowElement, snap: SnapState) {
+        self.snap_window_with_assist(window, snap, true)
+    }
+
+    fn snap_window_with_assist(
+        &mut self,
+        window: &WindowElement,
+        snap: SnapState,
+        offer_assist: bool,
+    ) {
         let Some(surface) = window.0.toplevel() else {
             return;
         };
@@ -702,6 +717,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     fit.user_moved();
                 }
                 self.flush_pending_configures();
+                self.close_snap_assist();
                 self.cosmos.dirty = true;
                 return;
             }
@@ -720,7 +736,84 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             fit.user_moved();
         }
         self.flush_pending_configures();
+        match (offer_assist, snap) {
+            (true, SnapState::Left | SnapState::Right) => self.offer_snap_assist(snap, id),
+            (true, _) => self.close_snap_assist(),
+            (false, _) => {}
+        }
         self.cosmos.dirty = true;
+    }
+
+    /// Open the Snap Assist picker: offer the other non-minimized
+    /// windows on this workspace to fill the half `snapped` left free.
+    fn offer_snap_assist(&mut self, snapped: SnapState, snapped_id: u64) {
+        let fill = match snapped {
+            SnapState::Left => SnapState::Right,
+            _ => SnapState::Left,
+        };
+        let ws = self.cosmos.active_workspace;
+        let candidates: Vec<u64> = self
+            .all_windows()
+            .iter()
+            .filter_map(|w| {
+                let id = self.cosmos.id_of(w)?;
+                let m = self.cosmos.meta(id)?;
+                (id != snapped_id && m.workspace == ws && !m.minimized).then_some(id)
+            })
+            .collect();
+        if candidates.is_empty() {
+            self.close_snap_assist();
+            return;
+        }
+        self.cosmos.assist = Some(AssistState {
+            fill,
+            candidates: candidates.clone(),
+        });
+        self.ipc_broadcast(&cosmos_ipc::Event::SnapAssist {
+            open: true,
+            fill: if fill == SnapState::Left {
+                "left".to_string()
+            } else {
+                "right".to_string()
+            },
+            candidates,
+        });
+    }
+
+    /// Close Snap Assist if it is open (idempotent).
+    pub fn close_snap_assist(&mut self) {
+        if self.cosmos.assist.take().is_some() {
+            self.ipc_broadcast(&cosmos_ipc::Event::SnapAssist {
+                open: false,
+                fill: String::new(),
+                candidates: Vec::new(),
+            });
+        }
+    }
+
+    /// Snap Assist pick: snap `id` into the free half and focus it.
+    pub fn snap_assist_pick(&mut self, id: u64) {
+        let Some(assist) = self.cosmos.assist.take() else {
+            return;
+        };
+        self.ipc_broadcast(&cosmos_ipc::Event::SnapAssist {
+            open: false,
+            fill: String::new(),
+            candidates: Vec::new(),
+        });
+        if !assist.candidates.contains(&id) {
+            return;
+        }
+        let Some(window) = self.window_by_id(id) else {
+            return;
+        };
+        self.snap_window_with_assist(&window, assist.fill, false);
+        self.focus_window(&window);
+    }
+
+    /// Snap Assist dismissed without a pick.
+    pub fn snap_assist_dismiss(&mut self) {
+        self.close_snap_assist();
     }
 
     /// Push every pending toplevel configure (activation changes, bounds)

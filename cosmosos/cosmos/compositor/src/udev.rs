@@ -1793,7 +1793,10 @@ fn render_surface<'a>(
             smithay::backend::drm::compositor::RenderFrameError::RenderFrame(
                 OutputDamageTrackerError::Rendering(err),
             ) => SwapBuffersError::from(err),
-            _ => unreachable!(),
+            // Any other error shape degrades to a temporary failure — a
+            // panic here kills the render thread and freezes the whole
+            // desktop.
+            err => SwapBuffersError::TemporaryFailure(Box::new(err)),
         })?;
 
     update_primary_scanout_output(space, output, dnd_icon, cursor_status, &states);

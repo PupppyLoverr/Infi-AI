@@ -279,6 +279,14 @@ fn dispatch_request<BackendData: Backend>(
             });
             None
         }
+        Request::SnapAssistPick { id } => {
+            state.snap_assist_pick(id);
+            None
+        }
+        Request::SnapAssistDismiss => {
+            state.snap_assist_dismiss();
+            None
+        }
         Request::SetConfig { key, value } => match state.cosmos_set_config(&key, value) {
             Ok(()) => None,
             Err(message) => Some(Event::Error { message }),

@@ -84,6 +84,28 @@ pub struct WindowState {
     /// titlebar alive through frames where the surface bbox and the
     /// configured size are both empty (first paint, transient maps).
     pub last_ssd_width: u32,
+    /// Timestamp+spot of the last non-button titlebar press — two
+    /// presses inside the window make a double-click (maximize/restore).
+    pub last_title_press: Option<(std::time::Instant, Point<f64, Logical>)>,
+}
+
+impl WindowState {
+    /// Records a press on the non-button titlebar band; returns true for
+    /// a double-click (same spot within 400ms). A detected double resets
+    /// the clock so a third quick press starts a drag, not another toggle.
+    pub fn register_title_press(&mut self, loc: Point<f64, Logical>) -> bool {
+        let now = std::time::Instant::now();
+        let double = self
+            .last_title_press
+            .map(|(t, p)| {
+                now.duration_since(t).as_millis() <= 400
+                    && (p.x - loc.x).abs() <= 8.0
+                    && (p.y - loc.y).abs() <= 8.0
+            })
+            .unwrap_or(false);
+        self.last_title_press = if double { None } else { Some((now, loc)) };
+        double
+    }
 }
 
 /// macOS-style drop shadow — a black rounded-rect silhouette blurred by
@@ -730,6 +752,7 @@ impl WindowElement {
                 header_bar: HeaderBar::default(),
                 shadow: WindowShadow::default(),
                 last_ssd_width: 0,
+                last_title_press: None,
             })
         });
 
