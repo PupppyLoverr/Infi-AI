@@ -136,6 +136,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         dock_dirty: true,
         switcher_dirty: false,
         quick_open: false,
+        quick_dismissed_at: None,
         vol_drag: false,
         exit: false,
     };
@@ -262,6 +263,10 @@ pub struct ShellState {
     pub switcher_dirty: bool,
     /// Quick-settings flyout state.
     pub quick_open: bool,
+    /// Set when the flyout just closed from a focus-loss `leave` — the
+    /// next tray click inside the window is the same physical click and
+    /// must not reopen it.
+    pub quick_dismissed_at: Option<std::time::Instant>,
     /// Held while the pointer is dragging the volume slider.
     pub vol_drag: bool,
     pub exit: bool,
@@ -348,7 +353,11 @@ impl ShellState {
             layer.set_size(quick::QUICK_W, quick::desired_height(&self.sysinfo));
             layer.set_exclusive_zone(0);
             layer.set_margin((PANEL_HEIGHT + 4) as i32, 8, 0, 0);
-            layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+            // Exclusive keyboard interactivity is what makes the flyout
+            // dismissable: it takes focus on map, and any click landing on
+            // a window/panel pulls focus away — the keyboard `leave` then
+            // closes it, matching Win11/macOS popover behavior.
+            layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
             layer.wl_surface().commit();
             self.quick_surface = Some(layer);
             self.quick_dirty = true;
@@ -869,6 +878,11 @@ impl KeyboardHandler for ShellState {
         _surface: &wl_surface::WlSurface,
         _serial: u32,
     ) {
+        // Focus pulled away from the quick-settings flyout → dismiss it.
+        if self.quick_open {
+            self.set_quick_open(false);
+            self.quick_dismissed_at = Some(std::time::Instant::now());
+        }
     }
 
     fn press_key(
