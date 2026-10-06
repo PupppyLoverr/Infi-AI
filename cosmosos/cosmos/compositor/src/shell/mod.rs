@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 #[cfg(feature = "xwayland")]
@@ -406,9 +406,23 @@ fn ensure_initial_configure(
 }
 
 /// Marker: window was placed before its surface committed a real size, so
-/// its position must be re-clamped into the usable zone on the first
-/// commit that has nonzero geometry (see `handle_toplevel_commit`).
-pub struct InitialFit(pub AtomicBool);
+/// its position is re-clamped into the usable zone on every commit whose
+/// geometry differs from the previous one — settling once the size
+/// repeats (see `handle_toplevel_commit`).
+pub struct InitialFit {
+    settled: AtomicBool,
+    /// last committed size packed as (w << 32) | h; u64::MAX = none yet
+    last_size: AtomicU64,
+}
+
+impl InitialFit {
+    fn new() -> Self {
+        Self {
+            settled: AtomicBool::new(false),
+            last_size: AtomicU64::new(u64::MAX),
+        }
+    }
+}
 
 fn usable_zone(space: &Space<WindowElement>, output: &Output) -> Rectangle<i32, Logical> {
     let geo = space.output_geometry(output).unwrap();
@@ -439,12 +453,17 @@ pub fn refit_into_zone(space: &mut Space<WindowElement>, window: &WindowElement)
     let Some(fit) = window.user_data().get::<InitialFit>() else {
         return;
     };
-    if !fit.0.swap(false, Ordering::Relaxed) {
+    if fit.settled.load(Ordering::Relaxed) {
         return;
     }
     let size = window.geometry().size;
     if size.w <= 0 || size.h <= 0 {
-        fit.0.store(true, Ordering::Relaxed);
+        return;
+    }
+    let packed = ((size.w as u64) << 32) | (size.h as u64);
+    if fit.last_size.swap(packed, Ordering::Relaxed) == packed {
+        // Same size committed twice in a row — the window is settled.
+        fit.settled.store(true, Ordering::Relaxed);
         return;
     }
     let Some(loc) = space.element_location(window) else {
@@ -526,9 +545,7 @@ fn place_new_window(
 
     // Size can still grow at the first real commit (the toplevel bounds we
     // just set allow up to the whole zone) — flag for a one-time refit.
-    window
-        .user_data()
-        .insert_if_missing(|| InitialFit(AtomicBool::new(true)));
+    window.user_data().insert_if_missing(InitialFit::new);
     space.map_element(window.clone(), (x, y), activate);
 }
 
