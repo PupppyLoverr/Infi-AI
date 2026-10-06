@@ -709,8 +709,6 @@ enum DeviceAddError {
     DrmNode(CreateDrmNodeError),
     #[error("Failed to add device to GpuManager: {0}")]
     AddNode(egl::Error),
-    #[error("The device has no render node")]
-    NoRenderNode,
     #[error("Primary GPU is missing")]
     PrimaryGpuMissing,
 }
