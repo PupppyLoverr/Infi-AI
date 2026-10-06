@@ -120,6 +120,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         launcher_open: false,
         launcher_query: String::new(),
         launcher_sel: 0,
+        recent: launcher::load_recent(),
         apps,
         sysinfo: SysInfo::default(),
         notifications: Vec::new(),
@@ -240,6 +241,9 @@ pub struct ShellState {
     pub launcher_open: bool,
     pub launcher_query: String,
     pub launcher_sel: usize,
+    /// App launch MRU (desktop ids, newest first) — the launcher's
+    /// RECOMMENDED section; persisted to ~/.local/share/cosmos-shell.
+    pub recent: Vec<String>,
     pub apps: Vec<AppEntry>,
     pub sysinfo: SysInfo,
     pub notifications: Vec<Notification>,
@@ -400,6 +404,14 @@ impl ShellState {
             .collect()
     }
 
+    /// Record an app launch into the MRU (RECOMMENDED section source).
+    pub fn record_launch(&mut self, id: &str) {
+        self.recent.retain(|x| x != id);
+        self.recent.insert(0, id.to_string());
+        self.recent.truncate(8);
+        launcher::save_recent(&self.recent);
+    }
+
     /// Pointer click inside the launcher surface.
     pub fn launcher_click(&mut self, x: f64, y: f64) {
         let hit = launcher::hit_test(
@@ -408,6 +420,7 @@ impl ShellState {
             self.launcher_size,
             self.filtered_apps().len(),
             launcher::pinned(self).len(),
+            launcher::recommended(self).len(),
             !self.launcher_query.is_empty(),
         );
         match hit {
@@ -421,12 +434,25 @@ impl ShellState {
                     if let Err(err) = desktop::launch(&app) {
                         tracing::warn!("launch {} failed: {err}", app.id);
                     } else {
+                        self.record_launch(&app.id);
+                        self.set_launcher_open(false);
+                    }
+                }
+            }
+            launcher::Hit::Recent(idx) => {
+                let app = launcher::recommended(self).get(idx).cloned();
+                if let Some(app) = app {
+                    if let Err(err) = desktop::launch(&app) {
+                        tracing::warn!("launch {} failed: {err}", app.id);
+                    } else {
+                        self.record_launch(&app.id);
                         self.set_launcher_open(false);
                     }
                 }
             }
             launcher::Hit::Action(0) => {
                 let _ = std::process::Command::new("cosmos-settings").spawn();
+                self.record_launch("cosmos-settings");
                 self.set_launcher_open(false);
             }
             launcher::Hit::Action(1) => {
@@ -450,6 +476,7 @@ impl ShellState {
         if let Err(err) = desktop::launch(&app) {
             tracing::warn!("launch {} failed: {err}", app.id);
         } else {
+            self.record_launch(&app.id);
             self.set_launcher_open(false);
         }
     }

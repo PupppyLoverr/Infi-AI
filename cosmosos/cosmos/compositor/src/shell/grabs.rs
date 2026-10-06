@@ -49,6 +49,15 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>>
 
         data.space
             .map_element(self.window.clone(), new_location.to_i32_round(), true);
+
+        // Win11 edge-drop preview: show where the window lands if released.
+        let preview = data
+            .edge_snap_zone(event.location, &self.window)
+            .and_then(|zone| data.snap_target_rect(&self.window, zone).map(|r| (zone, r)));
+        if data.cosmos.snap_preview != preview {
+            data.cosmos.snap_preview = preview;
+            data.cosmos.dirty = true;
+        }
     }
 
     fn relative_motion(
@@ -72,6 +81,16 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>>
             // No more buttons are pressed, release the grab.
             handle.unset_grab(self, data, event.serial, event.time, true);
             data.flush_pending_configures();
+            // Dropped inside an edge snap zone → tile instead of float.
+            let snap = data.cosmos.snap_preview.take().map(|(zone, _)| zone);
+            if snap.is_some() {
+                data.cosmos.dirty = true;
+            }
+            if let Some(zone) = snap {
+                if self.window.alive() {
+                    data.snap_window(&self.window, zone);
+                }
+            }
         }
     }
 
@@ -168,7 +187,9 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>>
         &self.start_data
     }
 
-    fn unset(&mut self, _data: &mut AnvilState<BackendData>) {}
+    fn unset(&mut self, data: &mut AnvilState<BackendData>) {
+        data.cosmos.snap_preview = None;
+    }
 }
 
 pub struct TouchMoveSurfaceGrab<BackendData: Backend + 'static> {
@@ -206,6 +227,13 @@ impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>>
 
         handle.up(data, event, seq);
         handle.unset_grab(self, data);
+        let snap = data.cosmos.snap_preview.take().map(|(zone, _)| zone);
+        if let Some(zone) = snap {
+            data.cosmos.dirty = true;
+            if self.window.alive() {
+                data.snap_window(&self.window, zone);
+            }
+        }
     }
 
     fn motion(
@@ -227,6 +255,14 @@ impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>>
         let new_location = self.initial_window_location.to_f64() + delta;
         data.space
             .map_element(self.window.clone(), new_location.to_i32_round(), true);
+
+        let preview = data
+            .edge_snap_zone(event.location, &self.window)
+            .and_then(|zone| data.snap_target_rect(&self.window, zone).map(|r| (zone, r)));
+        if data.cosmos.snap_preview != preview {
+            data.cosmos.snap_preview = preview;
+            data.cosmos.dirty = true;
+        }
     }
 
     fn frame(
@@ -271,7 +307,9 @@ impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>>
         &self.start_data
     }
 
-    fn unset(&mut self, _data: &mut AnvilState<BackendData>) {}
+    fn unset(&mut self, data: &mut AnvilState<BackendData>) {
+        data.cosmos.snap_preview = None;
+    }
 }
 
 bitflags::bitflags! {

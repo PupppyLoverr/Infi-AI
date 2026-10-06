@@ -272,6 +272,10 @@ pub struct CosmosState {
     pub launcher_open: bool,
     /// Alt/Super+Tab switcher while the modifier is held.
     pub switcher: Option<SwitcherState>,
+    /// Live drag-to-edge snap hint: the zone the pointer targets and the
+    /// exact rectangle the window would snap into on release (Win11's
+    /// translucent drop preview).
+    pub snap_preview: Option<(SnapState, Rectangle<i32, Logical>)>,
     /// If set, broadcast a `Windows`+`Workspaces` update at the next idle point.
     pub dirty: bool,
 }
@@ -568,6 +572,68 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 Some(Rectangle::new(geo.loc + zone.loc, zone.size))
             })
             .unwrap_or_else(|| Rectangle::from_size((800, 600).into()))
+    }
+
+    /// Rectangle a snap of `window` to `snap` would occupy — the same
+    /// loc/size `snap_window` maps the window to (including the SSD
+    /// titlebar band, so the preview covers the full target frame).
+    /// Used to render the drag-to-edge drop preview.
+    pub fn snap_target_rect(
+        &self,
+        window: &WindowElement,
+        snap: SnapState,
+    ) -> Option<Rectangle<i32, Logical>> {
+        let area = self.work_area(Some(window));
+        let (loc, size) = match snap {
+            SnapState::Left => (
+                area.loc + Point::from((SNAP_GAP, SNAP_GAP)),
+                Size::from((
+                    area.size.w / 2 - SNAP_GAP * 2,
+                    area.size.h - SNAP_GAP * 2,
+                )),
+            ),
+            SnapState::Right => (
+                area.loc + Point::from((area.size.w / 2 + SNAP_GAP, SNAP_GAP)),
+                Size::from((
+                    area.size.w / 2 - SNAP_GAP * 2,
+                    area.size.h - SNAP_GAP * 2,
+                )),
+            ),
+            SnapState::Maximized => (area.loc, area.size),
+            SnapState::Floating => return None,
+        };
+        Some(Rectangle::new(loc, size))
+    }
+
+    /// Which edge-snap zone the pointer sits in while dragging a window:
+    /// 12px bands along the work area's edges — Win11 idiom: left/right
+    /// = half-tile, top = maximize. `None` outside the zone edges.
+    pub fn edge_snap_zone(
+        &self,
+        loc: Point<f64, Logical>,
+        window: &WindowElement,
+    ) -> Option<SnapState> {
+        let area = self.work_area(Some(window));
+        const EDGE: f64 = 12.0;
+        let (ax, ay, aw, ah) = (
+            area.loc.x as f64,
+            area.loc.y as f64,
+            area.size.w as f64,
+            area.size.h as f64,
+        );
+        if loc.y < ay || loc.y > ay + ah {
+            return None;
+        }
+        if loc.x <= ax + EDGE {
+            return Some(SnapState::Left);
+        }
+        if loc.x >= ax + aw - EDGE {
+            return Some(SnapState::Right);
+        }
+        if loc.y <= ay + EDGE {
+            return Some(SnapState::Maximized);
+        }
+        None
     }
 
     /// Snap the focused window left/right/maximize or restore.
