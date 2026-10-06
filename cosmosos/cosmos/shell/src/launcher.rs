@@ -67,8 +67,7 @@ fn recent_file() -> Option<std::path::PathBuf> {
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(std::path::PathBuf::from)
         .or_else(|| {
-            std::env::var_os("HOME")
-                .map(|h| std::path::PathBuf::from(h).join(".local/share"))
+            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))
         })?;
     Some(base.join("cosmos-shell/recent.txt"))
 }
@@ -141,13 +140,7 @@ fn box_height(n_items: usize, n_pinned: usize, n_rec: usize, searching: bool) ->
     h + FOOTER_H
 }
 
-fn footer_top(
-    h: u32,
-    n_items: usize,
-    n_pinned: usize,
-    n_rec: usize,
-    searching: bool,
-) -> f64 {
+fn footer_top(h: u32, n_items: usize, n_pinned: usize, n_rec: usize, searching: bool) -> f64 {
     box_top(h) + box_height(n_items, n_pinned, n_rec, searching) - FOOTER_H
 }
 
@@ -156,8 +149,7 @@ fn rows_top(n_pinned: usize, n_rec: usize, searching: bool) -> f64 {
     if searching || n_pinned == 0 {
         INPUT_H + SEC_H
     } else {
-        INPUT_H + SEC_H + grid_rows(n_pinned) as f64 * CELL_H
-            + rec_height(n_rec, searching) + SEC_H
+        INPUT_H + SEC_H + grid_rows(n_pinned) as f64 * CELL_H + rec_height(n_rec, searching) + SEC_H
     }
 }
 
@@ -282,6 +274,10 @@ pub fn draw(state: &mut ShellState) {
     let Some(mut pixmap) = PixmapMut::from_bytes(canvas, w, h) else {
         return;
     };
+    // The pool slot may still carry a previous surface's frame — the dim
+    // scrim blends SrcOver, so stale bytes would show through as a dimmed
+    // ghost. Clear to transparent first.
+    pixmap.fill(Color::TRANSPARENT);
 
     draw::fill_rect(&mut pixmap, 0.0, 0.0, w as f32, h as f32, bg);
 
