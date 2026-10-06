@@ -61,8 +61,22 @@ fn poll() -> SysInfo {
 // ---------------------------------------------------------------- clock
 
 fn clock() -> String {
+    // macOS menubar form: "Tue Oct 6  05:38" — weekday + short month +
+    // day, then the time. Weekday comes from days since epoch (1970-01-01
+    // was a Thursday), so no extra libc call is needed.
     libc_tm()
-        .map(|(h, m, _, _, _)| format!("{h:02}:{m:02}"))
+        .map(|(h, m, d, mo, _)| {
+            const WDAYS: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
+            const MONTHS: [&str; 12] = [
+                "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+            ];
+            let days = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_secs() / 86_400)
+                .unwrap_or(0);
+            let wday = WDAYS[(days % 7) as usize];
+            format!("{} {} {}  {:02}:{:02}", wday, MONTHS[mo as usize % 12], d, h, m)
+        })
         .unwrap_or_default()
 }
 
