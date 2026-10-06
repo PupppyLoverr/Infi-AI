@@ -381,6 +381,9 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 meta.workspace = ws;
                 meta.parked_loc = loc;
             }
+            // Deactivate before parking so a re-map can't resurrect a
+            // stale pending Activated alongside the newly focused window.
+            w.0.set_activated(false);
             self.space.unmap_elem(&w);
             to_push.push(w);
         }
@@ -416,11 +419,17 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         self.cosmos.active_workspace = target;
         self.unpark(target);
 
-        // Focus the top window on the new workspace, if any.
+        // Focus + activate the top window on the new workspace, if any.
+        // Parked windows keep their pending Activated state otherwise, and
+        // keyboard focus without activation desyncs the SSD focus discs.
         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
         let keyboard = self.seat.get_keyboard().unwrap();
         let top = self.space.elements().last().cloned();
+        if let Some(top) = &top {
+            self.space.raise_element(top, true);
+        }
         keyboard.set_focus(self, top.map(KeyboardFocusTarget::from), serial);
+        self.flush_pending_configures();
         self.cosmos.dirty = true;
     }
 
@@ -458,6 +467,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
     pub fn minimize_window(&mut self, window: &WindowElement) {
         let id = self.cosmos.window_id(window);
         let loc = self.space.element_location(window).unwrap_or_default();
+        window.0.set_activated(false);
         self.space.unmap_elem(window);
         if let Some(meta) = self.cosmos.windows.get_mut(&id) {
             meta.minimized = true;
@@ -469,11 +479,15 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             .entry(WORKSPACE_COUNT)
             .or_default()
             .push(window.clone());
-        // Move focus to whatever is next.
+        // Move focus + activation to whatever is next.
         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
         let keyboard = self.seat.get_keyboard().unwrap();
         let top = self.space.elements().last().cloned();
+        if let Some(top) = &top {
+            self.space.raise_element(top, true);
+        }
         keyboard.set_focus(self, top.map(KeyboardFocusTarget::from), serial);
+        self.flush_pending_configures();
         self.cosmos.dirty = true;
     }
 
@@ -510,6 +524,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
             let keyboard = self.seat.get_keyboard().unwrap();
             keyboard.set_focus(self, Some(KeyboardFocusTarget::from(entry)), serial);
+            self.flush_pending_configures();
         } else {
             self.cosmos.parked.entry(ws).or_default().push(entry);
         }
@@ -583,6 +598,10 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 });
                 surface.send_pending_configure();
                 self.space.map_element(window.clone(), restore.loc, false);
+                if let Some(fit) = window.user_data().get::<crate::shell::InitialFit>() {
+                    fit.user_moved();
+                }
+                self.flush_pending_configures();
                 self.cosmos.dirty = true;
                 return;
             }
@@ -597,7 +616,23 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         });
         surface.send_pending_configure();
         self.space.map_element(window.clone(), loc, true);
+        if let Some(fit) = window.user_data().get::<crate::shell::InitialFit>() {
+            fit.user_moved();
+        }
+        self.flush_pending_configures();
         self.cosmos.dirty = true;
+    }
+
+    /// Push every pending toplevel configure (activation changes, bounds)
+    /// so clients ack them — the SSD focus discs read the *acked* state,
+    /// and unfocused clients otherwise wait indefinitely for the next
+    /// configure to repaint.
+    pub fn flush_pending_configures(&mut self) {
+        for window in self.space.elements() {
+            if let Some(toplevel) = window.0.toplevel() {
+                toplevel.send_pending_configure();
+            }
+        }
     }
 
     /// Focus + raise a window, un-minimizing and switching workspace as needed.
@@ -626,6 +661,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 Some(KeyboardFocusTarget::from(window.clone())),
                 serial,
             );
+            self.flush_pending_configures();
         }
         self.cosmos.dirty = true;
     }

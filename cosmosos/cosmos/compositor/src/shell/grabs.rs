@@ -71,6 +71,7 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>>
         if handle.current_pressed().is_empty() {
             // No more buttons are pressed, release the grab.
             handle.unset_grab(self, data, event.serial, event.time, true);
+            data.flush_pending_configures();
         }
     }
 
@@ -489,6 +490,7 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>>
 
                         data.space.map_element(self.window.clone(), location, true);
                     }
+                    data.flush_pending_configures();
 
                     with_states(&self.window.wl_surface().unwrap(), |states| {
                         let mut data = states
@@ -521,6 +523,7 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>>
 
                         data.space.map_element(self.window.clone(), location, true);
                     }
+                    data.flush_pending_configures();
                     x11.configure(Rectangle::new(location, self.last_window_size))
                         .unwrap();
 
@@ -705,6 +708,7 @@ impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>>
 
                     data.space.map_element(self.window.clone(), location, true);
                 }
+                data.flush_pending_configures();
 
                 with_states(&self.window.wl_surface().unwrap(), |states| {
                     let mut data = states
@@ -737,6 +741,7 @@ impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>>
 
                     data.space.map_element(self.window.clone(), location, true);
                 }
+                data.flush_pending_configures();
                 x11.configure(Rectangle::new(location, self.last_window_size))
                     .unwrap();
 

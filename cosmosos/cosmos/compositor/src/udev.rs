@@ -299,6 +299,13 @@ pub fn run_udev() {
         state.backend_data.session.clone().into(),
     );
     libinput_context.udev_assign_seat(&state.seat_name).unwrap();
+    // Flush the initial device enumeration now: the queued `device_added`
+    // events otherwise sit unprocessed until the first real input event
+    // wakes the event source — on QEMU that can be minutes, leaving
+    // keyboard/pointer apparently dead.
+    if let Err(err) = libinput_context.dispatch() {
+        warn!("initial libinput dispatch failed: {err}");
+    }
     let libinput_backend = LibinputInputBackend::new(libinput_context.clone());
 
     /*

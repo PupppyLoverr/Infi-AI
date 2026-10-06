@@ -34,7 +34,7 @@ use crate::{
 };
 
 use super::{
-    fullscreen_output_geometry, place_new_window, refit_into_zone, FullscreenSurface,
+    fullscreen_output_geometry, place_new_window, refit_into_zone, FullscreenSurface, InitialFit,
     PointerMoveSurfaceGrab, PointerResizeSurfaceGrab, ResizeData, ResizeEdge, ResizeState,
     SurfaceData, WindowElement,
 };
@@ -55,6 +55,7 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
             &window,
             true,
         );
+        self.flush_pending_configures();
 
         // Register with the Cosmos window registry + tell IPC subscribers.
         let id = self.cosmos.window_id(&window);
@@ -170,6 +171,10 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
                 let loc = self.space.element_location(&window).unwrap();
                 let (initial_window_location, initial_window_size) = (loc, geometry.size);
 
+                if let Some(fit) = window.user_data().get::<InitialFit>() {
+                    fit.user_moved();
+                }
+
                 with_states(surface.wl_surface(), move |states| {
                     states
                         .data_map
@@ -223,6 +228,10 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
         let geometry = window.geometry();
         let loc = self.space.element_location(&window).unwrap();
         let (initial_window_location, initial_window_size) = (loc, geometry.size);
+
+        if let Some(fit) = window.user_data().get::<InitialFit>() {
+            fit.user_moved();
+        }
 
         with_states(surface.wl_surface(), move |states| {
             states
@@ -424,7 +433,11 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
                 state.states.set(xdg_toplevel::State::Maximized);
                 state.size = Some(area.size);
             });
+            if let Some(fit) = window.user_data().get::<InitialFit>() {
+                fit.user_moved();
+            }
             self.space.map_element(window, area.loc, true);
+            self.flush_pending_configures();
             self.cosmos.dirty = true;
         }
 
@@ -535,6 +548,10 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 
                 let mut initial_window_location = self.space.element_location(&window).unwrap();
 
+                if let Some(fit) = window.user_data().get::<InitialFit>() {
+                    fit.user_moved();
+                }
+
                 // If surface is maximized then unmaximize it
                 let current_state = surface.current_state();
                 if current_state
@@ -601,6 +618,10 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         }
 
         let mut initial_window_location = self.space.element_location(&window).unwrap();
+
+        if let Some(fit) = window.user_data().get::<InitialFit>() {
+            fit.user_moved();
+        }
 
         // If surface is maximized then unmaximize it
         let current_state = surface.current_state();

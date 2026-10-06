@@ -460,6 +460,7 @@ impl<BackendData: Backend> XdgActivationHandler for AnvilState<BackendData> {
                 .cloned();
             if let Some(window) = w {
                 self.space.raise_element(&window, true);
+                self.flush_pending_configures();
             }
         }
     }

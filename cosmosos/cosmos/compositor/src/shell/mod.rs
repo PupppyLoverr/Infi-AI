@@ -1,7 +1,6 @@
 use std::{
     cell::RefCell,
-    sync::Mutex,
-    time::{Duration, Instant},
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 #[cfg(feature = "xwayland")]
@@ -407,19 +406,25 @@ fn ensure_initial_configure(
 }
 
 /// Marker: window was placed before its surface committed a real size, so
-/// its position is re-clamped into the usable zone on every commit for a
-/// short window after the first nonzero-geometry commit — apps resize
-/// more than once on startup, and settling on an intermediate size still
-/// leaves the window offscreen.
+/// its position is re-clamped into the usable zone on every commit until
+/// the user takes over placement (drag/resize/snap/maximize) — apps resize
+/// more than once on startup, and a fixed time window let late-growing
+/// windows overflow the zone edge.
 pub struct InitialFit {
-    first_commit: Mutex<Option<Instant>>,
+    user_moved: AtomicBool,
 }
 
 impl InitialFit {
     fn new() -> Self {
         Self {
-            first_commit: Mutex::new(None),
+            user_moved: AtomicBool::new(false),
         }
+    }
+
+    /// The user (or an explicit compositor action) placed this window —
+    /// stop re-clamping it on commits.
+    pub fn user_moved(&self) {
+        self.user_moved.store(true, Ordering::Relaxed);
     }
 }
 
@@ -457,14 +462,8 @@ pub fn refit_into_zone(space: &mut Space<WindowElement>, window: &WindowElement)
     if size.w <= 0 || size.h <= 0 {
         return;
     }
-    {
-        let mut first = fit.first_commit.lock().unwrap();
-        match *first {
-            None => *first = Some(Instant::now()),
-            // Past the settle window — the user owns placement now.
-            Some(t) if t.elapsed() > Duration::from_secs(1) => return,
-            Some(_) => {}
-        }
+    if fit.user_moved.load(Ordering::Relaxed) {
+        return;
     }
     let Some(loc) = space.element_location(window) else {
         return;
