@@ -79,6 +79,123 @@ struct PaintKey {
 pub struct WindowState {
     pub is_ssd: bool,
     pub header_bar: HeaderBar,
+    pub shadow: WindowShadow,
+}
+
+/// macOS-style drop shadow — a black rounded-rect silhouette blurred by
+/// a gaussian falloff, biased slightly downward. Repaints only when the
+/// window size changes (repaint() is a no-op otherwise), so it costs one
+/// texture upload per resize, not per frame.
+pub struct WindowShadow {
+    /// Premultiplied RGBA pixels, `size.0` × `size.1`.
+    pixels: Vec<u8>,
+    /// Shadow texture dimensions: window + 2×SHADOW_MARGIN.
+    size: (u32, u32),
+    /// Window size this pixmap was painted for.
+    win_size: (i32, i32),
+}
+
+/// Bleed past each edge of the window rect.
+pub const SHADOW_MARGIN: i32 = 32;
+/// Downward bias — macOS shadows hang lower than they float high.
+const SHADOW_DY: i32 = 10;
+/// Peak alpha behind the window (hidden by the window itself; only the
+/// falloff at the edges is ever visible).
+const SHADOW_ALPHA: f32 = 0.36;
+/// Gaussian falloff width in px.
+const SHADOW_SIGMA: f32 = 11.0;
+
+impl Default for WindowShadow {
+    fn default() -> Self {
+        Self {
+            pixels: Vec::new(),
+            size: (0, 0),
+            win_size: (0, 0),
+        }
+    }
+}
+
+impl WindowShadow {
+    /// Repaint the shadow pixmap for a window of `w` × `h` (element-space
+    /// px, titlebar included). No-op when the size hasn't changed.
+    pub fn repaint(&mut self, w: i32, h: i32) {
+        if self.win_size == (w, h) {
+            return;
+        }
+        self.win_size = (w, h);
+        let sw = (w + SHADOW_MARGIN * 2).max(0) as u32;
+        let sh = (h + SHADOW_MARGIN * 2).max(0) as u32;
+        self.size = (sw, sh);
+        self.pixels.resize(sw as usize * sh as usize * 4, 0);
+        if sw == 0 || sh == 0 {
+            return;
+        }
+
+        // SDF of the window silhouette, shifted down by SHADOW_DY so the
+        // falloff below is deeper than above.
+        let x0 = SHADOW_MARGIN as f32;
+        let y0 = (SHADOW_MARGIN + SHADOW_DY) as f32;
+        let x1 = x0 + w as f32;
+        let y1 = y0 + h as f32;
+        let corner = 10.0f32;
+        let sigma2 = 2.0 * SHADOW_SIGMA * SHADOW_SIGMA;
+        for y in 0..sh as i32 {
+            for x in 0..sw as i32 {
+                let px = x as f32 + 0.5;
+                let py = y as f32 + 0.5;
+                // Distance outside the rect (corner-aware).
+                let dx = (x0 + corner - px).max(px - (x1 - corner)).max(0.0);
+                let dy = (y0 + corner - py).max(py - (y1 - corner)).max(0.0);
+                let edge = (dx * dx + dy * dy).sqrt() - corner;
+                let d = edge.max(0.0);
+                let a = SHADOW_ALPHA * (-d * d / sigma2).exp();
+                let i = ((y * sw as i32 + x) * 4) as usize;
+                // Premultiplied black — RGB 0, alpha = falloff.
+                self.pixels[i + 3] = (a * 255.0) as u8;
+            }
+        }
+    }
+}
+
+impl<R: Renderer> AsRenderElements<R> for WindowShadow
+where
+    R: ImportMem,
+    R::TextureId: Texture + Clone + 'static,
+{
+    type RenderElement = TextureRenderElement<R::TextureId>;
+
+    fn render_elements<C: From<Self::RenderElement>>(
+        &self,
+        renderer: &mut R,
+        location: Point<i32, smithay::utils::Physical>,
+        _scale: Scale<f64>,
+        alpha: f32,
+    ) -> Vec<C> {
+        if self.size.0 == 0 || self.pixels.is_empty() {
+            return vec![];
+        }
+        let Ok(buffer) = TextureBuffer::<R::TextureId>::from_memory(
+            renderer,
+            &self.pixels,
+            smithay::backend::allocator::Fourcc::Abgr8888,
+            (self.size.0 as i32, self.size.1 as i32),
+            false,
+            1,
+            smithay::utils::Transform::Normal,
+            None,
+        ) else {
+            return vec![];
+        };
+        vec![TextureRenderElement::from_texture_buffer(
+            location.to_f64(),
+            &buffer,
+            Some(alpha),
+            None,
+            Some((self.size.0 as i32, self.size.1 as i32).into()),
+            Kind::Unspecified,
+        )
+        .into()]
+    }
 }
 
 #[derive(Debug)]
@@ -607,6 +724,7 @@ impl WindowElement {
             RefCell::new(WindowState {
                 is_ssd: false,
                 header_bar: HeaderBar::default(),
+                shadow: WindowShadow::default(),
             })
         });
 

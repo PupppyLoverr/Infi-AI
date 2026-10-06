@@ -490,6 +490,34 @@ where
             let window_elements =
                 AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);
             vec.extend(window_elements);
+
+            // Drop shadow — painted under the whole window (titlebar +
+            // body). Pushed last: elements render back-to-front, so it
+            // draws beneath the rest of this window's stack. Only when
+            // the surface has real geometry — pre-commit windows have a
+            // configured titlebar but no body to shadow.
+            if !window_bbox.is_empty() {
+                let geo = SpaceElement::geometry(&self.0);
+                state.shadow.repaint(geo.size.w, geo.size.h + tb);
+                // The shadow pixmap covers the window rect (titlebar
+                // included) plus SHADOW_MARGIN on every side — step back
+                // over the titlebar advance too.
+                let shadow_origin = location
+                    - Point::from((
+                        super::ssd::SHADOW_MARGIN,
+                        super::ssd::SHADOW_MARGIN + tb,
+                    ));
+                vec.extend(
+                    AsRenderElements::<R>::render_elements::<WindowRenderElement<R>>(
+                        &state.shadow,
+                        renderer,
+                        shadow_origin,
+                        scale,
+                        alpha,
+                    ),
+                );
+            }
+
             vec.into_iter().map(C::from).collect()
         } else {
             AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha)
