@@ -82,6 +82,12 @@ if [ -n "$SOCKET" ]; then
   export WAYLAND_DISPLAY="${SOCKET##*/}"
   echo "cosmos-session: wayland socket $WAYLAND_DISPLAY up, starting cosmos-shell"
   cosmos-shell &
+  # opt-in smoke rig: present only when /etc/cosmos-smoke-apps flag exists
+  # (created post-build by loop-mounting the image; not shipped enabled)
+  if [ -f /etc/cosmos-smoke-apps ] && [ -x /usr/local/bin/cosmos-smoke-apps ]; then
+    echo "cosmos-session: smoke flag present, starting cosmos-smoke-apps"
+    /usr/local/bin/cosmos-smoke-apps &
+  fi
 else
   echo "cosmos-session: no wayland socket appeared (compositor died?)"
 fi
@@ -96,6 +102,49 @@ sleep 2
 exit "$rc"
 EOF
 chmod 755 "$OVERLAY/usr/local/bin/cosmos-session"
+
+# opt-in smoke rig: launches two app clients on the live compositor, logs
+# guest `free -m`, probes the IPC socket (ping/list_windows/list_workspaces
+# — newline-delimited JSON, see cosmos/ipc), then kills the apps and lists
+# windows again to prove cleanup. Installed always; RUNS only when the
+# /etc/cosmos-smoke-apps flag file exists — inject it by loop-mounting the
+# finished image (`touch mnt/etc/cosmos-smoke-apps`).
+cat > "$OVERLAY/usr/local/bin/cosmos-smoke-apps" <<'EOF'
+#!/bin/bash
+exec > >(logger -t cosmos-smoke) 2>&1
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}"
+IPC="$XDG_RUNTIME_DIR/cosmos-ipc.sock"
+probe() { echo "$1" | socat -t 3 - UNIX-CONNECT:"$IPC" || echo "ipc probe failed: $1"; }
+
+echo "cosmos-smoke: warming up for shell"
+sleep 6
+
+echo "cosmos-smoke: launching cosmos-terminal pid & cosmos-files"
+cosmos-terminal & TPID=$!
+sleep 3
+cosmos-files & FPID=$!
+sleep 8
+
+echo "cosmos-smoke: guest memory (free -m):"
+free -m
+
+echo "cosmos-smoke: ipc ping:"
+probe '{"op":"ping"}'
+echo "cosmos-smoke: ipc list_windows (apps up):"
+probe '{"op":"list_windows"}'
+echo "cosmos-smoke: ipc list_workspaces:"
+probe '{"op":"list_workspaces"}'
+
+sleep 4
+echo "cosmos-smoke: killing apps ($TPID $FPID)"
+kill "$TPID" "$FPID" 2>/dev/null
+sleep 3
+echo "cosmos-smoke: ipc list_windows (post-kill):"
+probe '{"op":"list_windows"}'
+echo "cosmos-smoke: done"
+EOF
+chmod 755 "$OVERLAY/usr/local/bin/cosmos-smoke-apps"
 
 cat > "$OVERLAY/etc/profile.d/99-cosmos-session.sh" <<'EOF'
 # Start the Cosmos session when logging in on tty1.
@@ -130,7 +179,7 @@ libudev1 libxkbcommon0 libwayland-server0 libwayland-client0 \
 libwayland-egl1 libwayland-cursor0 libdrm2 libgbm1 libegl1 libgles2 \
 libgl1-mesa-dri libinput10 libseat1 libdisplay-info2 libpixman-1-0 \
 libgudev-1.0-0 libdbus-1-3 \
-fonts-dejavu-core fontconfig xdg-utils kbd procps mesa-utils login"
+fonts-dejavu-core fontconfig xdg-utils kbd procps mesa-utils socat login"
 
 # in-chroot setup. NOTE: mmdebstrap hooks run on the HOST with $1=rootfs —
 # guest commands must go through `chroot "$1"` (a bare useradd here creates

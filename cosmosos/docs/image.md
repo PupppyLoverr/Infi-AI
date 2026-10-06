@@ -99,18 +99,64 @@ restarts the whole session: built-in crash-retry, rate-limited 2s.
 
 ## Smoke result (2026-10-06)
 
-Boot → `graphical.target` in ~5 s → **Cosmos desktop paints** (verified
-via QEMU monitor `screendump`: panel bar with cosmos logo, workspaces
-1–9, `Wired connection 1 · Vol 40%` tray — real NM/PipeWire data).
+Boot → `graphical.target` in ~5 s → **Cosmos desktop paints** and real
+windows compose. Verified via QEMU monitor `screendump` while
+`DISPLAY_MODE=none`: panel (cosmos logo, workspaces 1–9,
+`Wired connection 1 · Vol 40%` tray — real NM/PipeWire data), then a
+Terminal window (titlebar + live `cosmos@cosmosos:~$` prompt) and a
+Files window (real `/home/cosmos` listing) rendered over KMS.
 NM: `dhcp4 (ens5): address=10.0.2.15`, `dns=systemd-resolved`. upower,
-pipewire, wireplumber (user services) all running. Session chain:
-wayland-1 socket → IPC socket → libinput + xkb → EGL on PLATFORM_GBM
-(llvmpipe) → Output `Virtual-1`/`wl_output` → modeset `1024x768` →
-`drm master` → `gpu has no hardware render node — software rendering
-on DrmNode{57984,Render}` → EGL HW-accel fallback noted
+pipewire, wireplumber (user services) all running. Zero panics.
+
+Session chain: wayland-1 socket → IPC socket → libinput + xkb → EGL
+on PLATFORM_GBM (llvmpipe) → Output `Virtual-1`/`wl_output` →
+modeset `1024x768` → `drm master` → `gpu has no hardware render node —
+software rendering on DrmNode{57984,Render}` → EGL HW-accel fallback
 (`EGL_WL_bind_wayland_display` unsupported — dmabuf-only clients) →
 cosmos-shell connects, `notifications service registered`, renders.
-Zero panics, session stable the whole run.
+
+### Opt-in app-window smoke rig
+
+`/usr/local/bin/cosmos-smoke-apps` is installed in every image but
+runs only when `/etc/cosmos-smoke-apps` exists. Inject post-build:
+
+```
+sudo losetup -fP dist/cosmosos-x86_64.raw && sudo mount /dev/loopNp1 /mnt
+sudo touch /mnt/etc/cosmos-smoke-apps && sudo umount /mnt && sudo losetup -d /dev/loopN
+```
+
+It launches `cosmos-terminal` + `cosmos-files` on the live compositor,
+logs `free -m`, probes the IPC socket (newline-delimited JSON:
+`{"op":"ping"}`, `{"op":"list_windows"}`, `{"op":"list_workspaces"}`
+on `/run/user/1000/cosmos-ipc.sock` via socat), kills the apps, and
+re-lists windows to prove cleanup. Observed verbatim:
+
+```
+cosmos: new window id=1                                  # Terminal
+cosmos: new window id=2                                  # Files
+{"type":"pong","pong":{"version":"0.1.0","name":"cosmos-compositor"}}
+{"type":"windows","windows":[{"id":1,"title":"Terminal","app_id":"cosmos.terminal",
+  "workspace":0,"x":542,"y":429,"w":680,"h":476,...,"output":"Virtual-1"},
+ {"id":2,"title":"Files","app_id":"cosmos.files","workspace":0,"x":374,"y":502,
+  "w":560,"h":436,...,"output":"Virtual-1"}]}
+{"type":"workspaces","workspaces":[{"id":0,"focused":true,"window_count":2},...x9]}
+... post-kill: {"type":"windows","windows":[]}
+```
+
+### Perf (QEMU -m 1G -smp 2, KVM, llvmpipe)
+
+| Metric | Value |
+|---|---|
+| kernel → graphical.target | ~5.0 s |
+| kernel → DRM modeset 1024x768 | ~5.7 s |
+| kernel → first desktop frame | ≤10 s |
+| guest RAM used at desktop (+2 apps) | 289 / 967 MiB |
+| image file | 772 MiB real (3 GiB sparse) |
+| image build time | ~2.5 min (~35 s mmdebstrap w/ SKIP_CARGO_BUILD=1, +~1 min release build) |
+
+Known quirk (compositor-side, reported): cascade window placement can
+spawn windows partially below/right of the 1024x768 output (x=542,y=429
++w=680 overflows); content still renders and clips correctly.
 
 Pitfall found in smoke: the shell needs `fontconfig`, not just
 `fonts-dejavu-core` — without it `cosmic-text` panics
