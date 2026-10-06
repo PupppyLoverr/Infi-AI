@@ -55,6 +55,7 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>>
             .edge_snap_zone(event.location, &self.window)
             .and_then(|zone| data.snap_target_rect(&self.window, zone).map(|r| (zone, r)));
         if data.cosmos.snap_preview != preview {
+            tracing::info!(?preview, loc = ?event.location, "cosmos: snap-preview transition");
             data.cosmos.snap_preview = preview;
             data.cosmos.dirty = true;
         }
@@ -83,6 +84,7 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>>
             data.flush_pending_configures();
             // Dropped inside an edge snap zone → tile instead of float.
             let snap = data.cosmos.snap_preview.take().map(|(zone, _)| zone);
+            tracing::info!(?snap, "cosmos: move grab released");
             if snap.is_some() {
                 data.cosmos.dirty = true;
             }
@@ -188,6 +190,7 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>>
     }
 
     fn unset(&mut self, data: &mut AnvilState<BackendData>) {
+        tracing::info!(preview = data.cosmos.snap_preview.is_some(), "cosmos: move grab unset");
         data.cosmos.snap_preview = None;
     }
 }
