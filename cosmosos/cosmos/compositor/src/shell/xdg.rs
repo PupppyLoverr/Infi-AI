@@ -34,8 +34,9 @@ use crate::{
 };
 
 use super::{
-    fullscreen_output_geometry, place_new_window, FullscreenSurface, PointerMoveSurfaceGrab,
-    PointerResizeSurfaceGrab, ResizeData, ResizeEdge, ResizeState, SurfaceData, WindowElement,
+    fullscreen_output_geometry, place_new_window, refit_into_zone, FullscreenSurface,
+    PointerMoveSurfaceGrab, PointerResizeSurfaceGrab, ResizeData, ResizeEdge, ResizeState,
+    SurfaceData, WindowElement,
 };
 
 impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
@@ -720,8 +721,12 @@ fn handle_toplevel_commit(space: &mut Space<WindowElement>, surface: &WlSurface)
 
     if new_loc.x.is_some() || new_loc.y.is_some() {
         // If TOP or LEFT side of the window got resized, we have to move it
-        space.map_element(window, window_loc, false);
+        space.map_element(window.clone(), window_loc, false);
     }
+
+    // First commit with real geometry: place_new_window ran while the size
+    // was still unknown — pull the window fully inside the zone once.
+    refit_into_zone(space, &window);
 
     Some(())
 }
