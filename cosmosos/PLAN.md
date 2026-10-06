@@ -62,3 +62,13 @@ Failure-priority order per spec: bootable > compositor > input > windows > shell
 - macOS-side image creation needs a Linux VM intermediary — mitigated by doing *all* image assembly inside the builder VM.
 - Smithay/egui layer-shell integration details — mitigated by building shell as separate SCTK layer-shell clients (no in-compositor UI toolkit needed).
 - Audio in QEMU — best-effort (PipeWire + virtio-snd); documented honestly if unavailable.
+
+## Status (as of 2026-10-06)
+
+- [x] Day 1 — Rust workspace; Smithay compositor (`--winit` nested + `--tty-udev` real); workspaces, snapping, SSD chrome, cosmos-ipc. **[PR #2]**
+- [x] Day 2 — cosmos-shell over layer-shell (panel, searchable launcher, notification daemon, D-Bus status area); workspaces+snapping shipped in PR #2. **[PR #3]**
+- [x] Day 3 (partial) — cosmos-uitk + terminal/files/editor/settings/monitor apps; compositor window-id + IPC outbox hardening; `tests/smoke-nested.sh` (PASS); docs. **[PR #4, #5]**
+- [~] Day 3 — disk image build on the x86_64 host: in progress.
+- [ ] Day 4 — stabilization cycles, perf numbers, final image + report.
+
+Verified nested: `weston --backend=headless → compositor --winit → shell + files + terminal` — real windows/pong over IPC, 5/5 procs alive, no panics.
