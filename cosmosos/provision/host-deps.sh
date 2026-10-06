@@ -36,7 +36,11 @@ sudo apt-get install -y --no-install-recommends \
   libdbus-1-dev \
   `# winit/X11 client deps` \
   libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-  libxcb-keysyms1-dev libxkbcommon-x11-dev libfontconfig-dev libssl-dev
+  libxcb-keysyms1-dev libxkbcommon-x11-dev libfontconfig-dev libssl-dev \
+  `# smithay pixman renderer links -lpixman-1 at build time` \
+  libpixman-1-dev \
+  `# socat: QEMU monitor socket for screendump smoke tests` \
+  socat
 
 # --- rustup (stable toolchain) ----------------------------------------------
 
@@ -47,6 +51,22 @@ fi
 # shellcheck disable=SC1091
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 rustup default stable
+
+# --- Debian archive keyring (trixie signatures) --------------------------------
+# Ubuntu 22.04 ships debian-archive-keyring 2021.x — too old to verify
+# trixie InRelease (mmdebstrap fails with NO_PUBKEY). Pull the current
+# keyring .deb straight from the Debian pool when a trixie key is missing.
+if ! gpg --no-default-keyring \
+    --keyring /usr/share/keyrings/debian-archive-keyring.gpg \
+    --list-keys 2>/dev/null | grep -q 6ED0E7B82643E131; then
+  keyring_deb="$(curl -fsSL http://ftp.debian.org/debian/pool/main/d/debian-archive-keyring/ \
+    | grep -oE 'debian-archive-keyring_[0-9.]+_all\.deb' | sort -uV | tail -1)"
+  tmpdir="$(mktemp -d)"
+  curl -fsSL "http://ftp.debian.org/debian/pool/main/d/debian-archive-keyring/$keyring_deb" \
+    -o "$tmpdir/keyring.deb"
+  sudo dpkg -i "$tmpdir/keyring.deb"
+  rm -rf "$tmpdir"
+fi
 
 # --- libdisplay-info 0.2.0 from source (not in Ubuntu 22.04) -----------------
 
@@ -61,6 +81,13 @@ if ! pkg-config --exists 'libdisplay-info >= 0.1.0' 'libdisplay-info < 0.3.0'; t
   sudo ldconfig
   rm -rf "$tmpdir"
   trap - EXIT
+fi
+
+# --- KVM access ---------------------------------------------------------------
+# /dev/kvm is root:kvm 0660 — add the invoking user to the kvm group so
+# qemu -enable-kvm works without sudo (takes effect in new sessions/shells).
+if [ -e /dev/kvm ] && [ -n "${SUDO_USER:-$USER}" ]; then
+  sudo usermod -aG kvm "${SUDO_USER:-$USER}"
 fi
 
 # --- smoke report ------------------------------------------------------------
