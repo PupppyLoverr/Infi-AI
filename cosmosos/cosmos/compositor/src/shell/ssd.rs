@@ -21,17 +21,22 @@ use smithay::{
     wayland::shell::xdg::XdgShellHandler,
 };
 
-use tiny_skia::{Color, Paint, PathBuilder, PixmapMut, Stroke};
+use tiny_skia::{Color, FillRule, Paint, PathBuilder, PixmapMut, Stroke, Transform};
 
 use crate::{cosmos::CosmosTheme, state::Backend, AnvilState};
 
 use super::WindowElement;
 
-pub const HEADER_BAR_HEIGHT: i32 = 36;
-const BUTTON_WIDTH: f64 = 46.0;
-const TITLE_PAD_LEFT: f32 = 12.0;
+pub const HEADER_BAR_HEIGHT: i32 = 32;
+/// macOS-style traffic-light cluster on the left: 12px discs, 20px pitch.
+const BTN_CX0: f64 = 18.0;
+const BTN_PITCH: f64 = 20.0;
+const BTN_HIT_R: f64 = 10.0;
+const CIRCLE_R: f32 = 6.0;
 const FONT_SIZE: f32 = 13.0;
 const LINE_HEIGHT: f32 = 16.0;
+/// Left edge of the centred title's no-overlap band (right of the cluster).
+const TITLE_CLEAR_LEFT: f32 = 68.0;
 
 thread_local! {
     static CURRENT_THEME: Cell<CosmosTheme> = Cell::new(CosmosTheme::from_config(&crate::cosmos::CosmosConfig::default()));
@@ -48,17 +53,16 @@ pub(crate) fn current_theme() -> CosmosTheme {
     CURRENT_THEME.with(Cell::get)
 }
 
-/// Which titlebar button the x coordinate is over: 0=min, 1=max, 2=close.
-fn button_zone(x: f64, width: f64) -> Option<u8> {
-    if x >= width - BUTTON_WIDTH {
-        Some(2)
-    } else if x >= width - BUTTON_WIDTH * 2.0 {
-        Some(1)
-    } else if x >= width - BUTTON_WIDTH * 3.0 {
-        Some(0)
-    } else {
-        None
-    }
+/// Which traffic-light disc the x coordinate is over: 0=close, 1=minimize,
+/// 2=maximize — macOS left-cluster order.
+fn button_zone(x: f64, _width: f64) -> Option<u8> {
+    (0..3u8)
+        .find(|i| (x - (BTN_CX0 + *i as f64 * BTN_PITCH)).abs() <= BTN_HIT_R)
+        .map(|i| i)
+}
+
+fn circle_center(zone: u8) -> f32 {
+    (BTN_CX0 + zone as f64 * BTN_PITCH) as f32
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -173,15 +177,22 @@ impl HeaderBar {
 
         match zone {
             // close
-            2 => match window.0.underlying_surface() {
+            0 => match window.0.underlying_surface() {
                 WindowSurface::Wayland(w) => w.send_close(),
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(w) => {
                     let _ = w.close();
                 }
             },
+            // minimize
+            1 => {
+                let window = window.clone();
+                state
+                    .handle
+                    .insert_idle(move |data| data.minimize_window(&window));
+            }
             // maximize / restore
-            1 => match window.0.underlying_surface() {
+            2 => match window.0.underlying_surface() {
                 WindowSurface::Wayland(w) => {
                     let maximized = w
                         .current_state()
@@ -201,13 +212,6 @@ impl HeaderBar {
                         .insert_idle(move |data| data.maximize_request_x11(&surface));
                 }
             },
-            // minimize
-            0 => {
-                let window = window.clone();
-                state
-                    .handle
-                    .insert_idle(move |data| data.minimize_window(&window));
-            }
             _ => {}
         }
     }
@@ -258,14 +262,20 @@ impl HeaderBar {
             return;
         };
         match zone {
-            2 => match window.0.underlying_surface() {
+            0 => match window.0.underlying_surface() {
                 WindowSurface::Wayland(w) => w.send_close(),
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(w) => {
                     let _ = w.close();
                 }
             },
-            1 => match window.0.underlying_surface() {
+            1 => {
+                let window = window.clone();
+                state
+                    .handle
+                    .insert_idle(move |data| data.minimize_window(&window));
+            }
+            2 => match window.0.underlying_surface() {
                 WindowSurface::Wayland(w) => state.maximize_request(w.clone()),
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(w) => {
@@ -275,12 +285,6 @@ impl HeaderBar {
                         .insert_idle(move |data| data.maximize_request_x11(&surface));
                 }
             },
-            0 => {
-                let window = window.clone();
-                state
-                    .handle
-                    .insert_idle(move |data| data.minimize_window(&window));
-            }
             _ => {}
         }
     }
@@ -321,105 +325,131 @@ fn paint_titlebar(
         None,
     );
 
-    // Button hover fills.
-    if let Some(zone) = pointer_loc.and_then(|l| button_zone(l.x, w as f64)) {
-        let hover = theme.button_hover;
-        let x = w as f32 - BUTTON_WIDTH as f32 * (3 - zone) as f32;
-        pixmap.fill_rect(
-            tiny_skia::Rect::from_xywh(x, 0.0, BUTTON_WIDTH as f32, h as f32).unwrap(),
-            &Paint {
-                shader: tiny_skia::Shader::SolidColor(
-                    Color::from_rgba(hover[0], hover[1], hover[2], hover[3]).unwrap(),
-                ),
-                ..Default::default()
-            },
-            tiny_skia::Transform::default(),
-            None,
-        );
-    }
-
-    // Button glyphs, right to left: close, maximize, minimize.
-    let paint = Paint {
-        shader: tiny_skia::Shader::SolidColor(if focused {
-            fg
-        } else {
-            let mut c = f;
-            c[3] *= 0.55;
-            Color::from_rgba(c[0], c[1], c[2], c[3]).unwrap()
-        }),
+    // macOS traffic-light cluster, monochrome: discs when focused, rings when
+    // unfocused, glyph on hover.
+    let hover_zone = pointer_loc.and_then(|l| button_zone(l.x, w as f64));
+    let cy = h as f32 / 2.0;
+    let disc = Paint {
+        shader: tiny_skia::Shader::SolidColor(
+            Color::from_rgba(f[0], f[1], f[2], if focused { 0.30 } else { 0.0 }).unwrap(),
+        ),
         anti_alias: true,
         ..Default::default()
     };
-    let stroke = Stroke {
-        width: 1.2,
+    let ring = Stroke {
+        width: 1.0,
+        ..Default::default()
+    };
+    let ring_paint = Paint {
+        shader: tiny_skia::Shader::SolidColor(
+            Color::from_rgba(f[0], f[1], f[2], if focused { 0.0 } else { 0.35 }).unwrap(),
+        ),
+        anti_alias: true,
+        ..Default::default()
+    };
+    let hc = theme.button_hover;
+    let hover_paint = Paint {
+        shader: tiny_skia::Shader::SolidColor(
+            Color::from_rgba(hc[0], hc[1], hc[2], hc[3]).unwrap(),
+        ),
+        anti_alias: true,
+        ..Default::default()
+    };
+    let glyph_paint = Paint {
+        shader: tiny_skia::Shader::SolidColor(glyph_color(theme)),
+        anti_alias: true,
+        ..Default::default()
+    };
+    let glyph_stroke = Stroke {
+        width: 1.0,
         ..Default::default()
     };
 
-    let h_f = h as f32;
-    let cy = h_f / 2.0;
     for zone in 0..3u8 {
-        let cx = w as f32 - BUTTON_WIDTH as f32 * (3 - zone) as f32 + BUTTON_WIDTH as f32 / 2.0;
-        match zone {
-            // close: ✕
-            2 => {
-                let r = 5.0;
-                let mut pb = PathBuilder::new();
-                pb.move_to(cx - r, cy - r);
-                pb.line_to(cx + r, cy + r);
-                pb.move_to(cx + r, cy - r);
-                pb.line_to(cx - r, cy + r);
-                if let Some(path) = pb.finish() {
-                    pixmap.stroke_path(
-                        &path,
-                        &paint,
-                        &stroke,
-                        tiny_skia::Transform::default(),
-                        None,
-                    );
-                }
-            }
-            // maximize: □
-            1 => {
-                let r = 5.0;
-                let mut pb = PathBuilder::new();
-                pb.move_to(cx - r, cy - r);
-                pb.line_to(cx + r, cy - r);
-                pb.line_to(cx + r, cy + r);
-                pb.line_to(cx - r, cy + r);
-                pb.close();
-                if let Some(path) = pb.finish() {
-                    pixmap.stroke_path(
-                        &path,
-                        &paint,
-                        &stroke,
-                        tiny_skia::Transform::default(),
-                        None,
-                    );
-                }
-            }
-            // minimize: —
-            _ => {
-                let r = 5.0;
-                let mut pb = PathBuilder::new();
-                pb.move_to(cx - r, cy);
-                pb.line_to(cx + r, cy);
-                if let Some(path) = pb.finish() {
-                    pixmap.stroke_path(
-                        &path,
-                        &paint,
-                        &stroke,
-                        tiny_skia::Transform::default(),
-                        None,
-                    );
-                }
-            }
+        let cx = circle_center(zone);
+        let Some(circle) = circle_path(cx, cy, CIRCLE_R) else {
+            continue;
+        };
+        let hovered = hover_zone == Some(zone);
+        if hovered {
+            pixmap.fill_path(
+                &circle,
+                &hover_paint,
+                FillRule::Winding,
+                Transform::default(),
+                None,
+            );
+        } else if focused {
+            pixmap.fill_path(
+                &circle,
+                &disc,
+                FillRule::Winding,
+                Transform::default(),
+                None,
+            );
+        } else {
+            pixmap.stroke_path(&circle, &ring_paint, &ring, Transform::default(), None);
+        }
+        if hovered || focused {
+            draw_button_glyph(pixmap, zone, cx, cy, &glyph_paint, &glyph_stroke);
         }
     }
 
-    // Title text, left side.
-    let text_max_w = w as f32 - BUTTON_WIDTH as f32 * 3.0 - TITLE_PAD_LEFT * 2.0;
+    // Centred title (macOS), cleared of the button cluster.
+    let text_max_w = w as f32 - TITLE_CLEAR_LEFT - 12.0;
     if text_max_w > 8.0 && !title.is_empty() {
         draw_title(pixmap, title, text_max_w, fg, focused);
+    }
+}
+
+/// Glyph ink on a filled disc: knock out with the titlebar background colour.
+fn glyph_color(theme: CosmosTheme) -> Color {
+    let c = theme.titlebar_bg_focused;
+    Color::from_rgba(c[0], c[1], c[2], 1.0).unwrap_or(Color::BLACK)
+}
+
+fn circle_path(cx: f32, cy: f32, r: f32) -> Option<tiny_skia::Path> {
+    let mut pb = PathBuilder::new();
+    pb.push_circle(cx, cy, r);
+    pb.finish()
+}
+
+fn draw_button_glyph(
+    pixmap: &mut PixmapMut<'_>,
+    zone: u8,
+    cx: f32,
+    cy: f32,
+    paint: &Paint<'_>,
+    stroke: &Stroke,
+) {
+    let mut pb = PathBuilder::new();
+    match zone {
+        // close: ✕
+        0 => {
+            let r = 2.6;
+            pb.move_to(cx - r, cy - r);
+            pb.line_to(cx + r, cy + r);
+            pb.move_to(cx + r, cy - r);
+            pb.line_to(cx - r, cy + r);
+        }
+        // minimize: —
+        1 => {
+            let r = 3.0;
+            pb.move_to(cx - r, cy);
+            pb.line_to(cx + r, cy);
+        }
+        // maximize: □
+        _ => {
+            let r = 2.6;
+            pb.move_to(cx - r, cy - r);
+            pb.line_to(cx + r, cy - r);
+            pb.line_to(cx + r, cy + r);
+            pb.line_to(cx - r, cy + r);
+            pb.close();
+        }
+    }
+    if let Some(path) = pb.finish() {
+        pixmap.stroke_path(&path, paint, stroke, Transform::default(), None);
     }
 }
 
@@ -452,7 +482,16 @@ fn draw_title(pixmap: &mut PixmapMut<'_>, title: &str, max_w: f32, fg: Color, fo
                 color = cosmic_text::Color::rgba(color.r(), color.g(), color.b(), 140);
             }
 
-            let x0 = TITLE_PAD_LEFT as i32;
+            // Centred within the bar (clamped right of the button cluster).
+            let text_w = buffer
+                .layout_runs()
+                .map(|r| r.line_w)
+                .fold(0.0_f32, f32::max);
+            let centred = ((pixmap.width() as f32 - text_w) / 2.0).round();
+            let x0 = centred
+                .max(TITLE_CLEAR_LEFT)
+                .min(pixmap.width() as f32 - text_w)
+                .max(0.0) as i32;
             let y0 = ((pixmap.height() as f32 - LINE_HEIGHT) / 2.0).max(0.0) as i32;
             let data_w = pixmap.width() as i32;
             let data_h = pixmap.height() as i32;
