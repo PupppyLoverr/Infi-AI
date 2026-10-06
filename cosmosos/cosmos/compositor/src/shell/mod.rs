@@ -1,6 +1,7 @@
 use std::{
     cell::RefCell,
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    sync::Mutex,
+    time::{Duration, Instant},
 };
 
 #[cfg(feature = "xwayland")]
@@ -406,20 +407,18 @@ fn ensure_initial_configure(
 }
 
 /// Marker: window was placed before its surface committed a real size, so
-/// its position is re-clamped into the usable zone on every commit whose
-/// geometry differs from the previous one — settling once the size
-/// repeats (see `handle_toplevel_commit`).
+/// its position is re-clamped into the usable zone on every commit for a
+/// short window after the first nonzero-geometry commit — apps resize
+/// more than once on startup, and settling on an intermediate size still
+/// leaves the window offscreen.
 pub struct InitialFit {
-    settled: AtomicBool,
-    /// last committed size packed as (w << 32) | h; u64::MAX = none yet
-    last_size: AtomicU64,
+    first_commit: Mutex<Option<Instant>>,
 }
 
 impl InitialFit {
     fn new() -> Self {
         Self {
-            settled: AtomicBool::new(false),
-            last_size: AtomicU64::new(u64::MAX),
+            first_commit: Mutex::new(None),
         }
     }
 }
@@ -453,18 +452,19 @@ pub fn refit_into_zone(space: &mut Space<WindowElement>, window: &WindowElement)
     let Some(fit) = window.user_data().get::<InitialFit>() else {
         return;
     };
-    if fit.settled.load(Ordering::Relaxed) {
-        return;
-    }
+    // Element geometry already includes the SSD titlebar height.
     let size = window.geometry().size;
     if size.w <= 0 || size.h <= 0 {
         return;
     }
-    let packed = ((size.w as u64) << 32) | (size.h as u64);
-    if fit.last_size.swap(packed, Ordering::Relaxed) == packed {
-        // Same size committed twice in a row — the window is settled.
-        fit.settled.store(true, Ordering::Relaxed);
-        return;
+    {
+        let mut first = fit.first_commit.lock().unwrap();
+        match *first {
+            None => *first = Some(Instant::now()),
+            // Past the settle window — the user owns placement now.
+            Some(t) if t.elapsed() > Duration::from_secs(1) => return,
+            Some(_) => {}
+        }
     }
     let Some(loc) = space.element_location(window) else {
         return;
