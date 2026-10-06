@@ -143,8 +143,8 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     self.move_window_to_workspace(&window, n);
                 }
             }
-            KeyAction::NextWindow => self.cycle_window(false),
-            KeyAction::PrevWindow => self.cycle_window(true),
+            KeyAction::NextWindow => self.switcher_step(false),
+            KeyAction::PrevWindow => self.switcher_step(true),
             KeyAction::SnapLeft => {
                 if let Some(window) = self.focused_window() {
                     self.snap_window(&window, crate::cosmos::SnapState::Left);
@@ -306,6 +306,23 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             .unwrap_or(KeyAction::None);
 
         self.suppressed_keys = suppressed_keys;
+
+        // Alt+Tab / Super+Tab: the switcher stays open while the modifier
+        // that opened it is held; commit the highlighted window when it
+        // is released (any key event can carry the release).
+        let mods = keyboard.modifier_state();
+        let released = self
+            .cosmos
+            .switcher
+            .as_ref()
+            .map(|sw| match sw.held {
+                crate::cosmos::HeldMod::Alt => !mods.alt,
+                crate::cosmos::HeldMod::Logo => !mods.logo,
+            })
+            .unwrap_or(false);
+        if released {
+            self.switcher_commit();
+        }
         action
     }
 

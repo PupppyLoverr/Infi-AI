@@ -12,6 +12,7 @@ mod notify;
 mod panel;
 mod popups;
 mod quick;
+mod switcher;
 mod sysinfo;
 
 use std::{os::unix::net::UnixStream, time::Duration};
@@ -101,12 +102,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         loop_handle: handle.clone(),
         panel: None,
         dock_surface: None,
+        switcher_surface: None,
         launcher_surface: None,
         notify_surface: None,
         quick_surface: None,
         notify_conn: None,
         panel_size: (0, PANEL_HEIGHT),
         dock_size: (0, dock::SURFACE_H),
+        switcher_size: (0, 0),
+        switcher_order: Vec::new(),
+        switcher_sel: 0,
         launcher_size: (0, 0),
         notify_size: (0, 0),
         quick_size: (0, 0),
@@ -128,6 +133,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         panel_hover: (0.0, false),
         dock_hover: None,
         dock_dirty: true,
+        switcher_dirty: false,
         quick_open: false,
         vol_drag: false,
         exit: false,
@@ -214,12 +220,17 @@ pub struct ShellState {
 
     pub panel: Option<LayerSurface>,
     pub dock_surface: Option<LayerSurface>,
+    pub switcher_surface: Option<LayerSurface>,
     pub launcher_surface: Option<LayerSurface>,
     pub notify_surface: Option<LayerSurface>,
     pub quick_surface: Option<LayerSurface>,
     pub notify_conn: Option<zbus::blocking::Connection>,
     pub panel_size: (u32, u32),
     pub dock_size: (u32, u32),
+    pub switcher_size: (u32, u32),
+    /// Window ids in compositor cycle order while the switcher is open.
+    pub switcher_order: Vec<u64>,
+    pub switcher_sel: u64,
     pub launcher_size: (u32, u32),
     pub notify_size: (u32, u32),
     pub quick_size: (u32, u32),
@@ -244,6 +255,7 @@ pub struct ShellState {
     /// Last pointer x on the dock (cell highlight).
     pub dock_hover: Option<f64>,
     pub dock_dirty: bool,
+    pub switcher_dirty: bool,
     /// Quick-settings flyout state.
     pub quick_open: bool,
     /// Held while the pointer is dragging the volume slider.
@@ -442,6 +454,53 @@ impl ShellState {
         }
     }
 
+    /// Centered Alt/Super+Tab overlay — created on the first `Switcher`
+    /// event and dropped when the compositor reports `open: false`.
+    fn create_switcher(&mut self, qh: &QueueHandle<Self>) {
+        let surface = self.compositor_state.create_surface(qh);
+        let layer = self.layer_shell.create_layer_surface(
+            qh,
+            surface,
+            Layer::Overlay,
+            Some("cosmos-switcher"),
+            None,
+        );
+        // No anchors: the compositor centers the surface on both axes.
+        layer.set_anchor(Anchor::empty());
+        layer.set_size(
+            switcher::desired_width(self.switcher_order.len()),
+            switcher::SWITCHER_H,
+        );
+        layer.set_exclusive_zone(-1);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        // Empty input region: the overlay never eats pointer events.
+        layer.wl_surface().set_input_region(None);
+        layer.wl_surface().commit();
+        self.switcher_size = (
+            switcher::desired_width(self.switcher_order.len()),
+            switcher::SWITCHER_H,
+        );
+        self.switcher_surface = Some(layer);
+        self.switcher_dirty = true;
+    }
+
+    /// Bring the switcher surface in sync with the latest `Switcher` event.
+    fn sync_switcher(&mut self) {
+        if self.switcher_surface.is_none() {
+            let qh = self.qh.clone();
+            self.create_switcher(&qh);
+            return;
+        }
+        let want_w = switcher::desired_width(self.switcher_order.len());
+        if let Some(layer) = &self.switcher_surface {
+            if self.switcher_size.0 != want_w {
+                layer.set_size(want_w, switcher::SWITCHER_H);
+                layer.wl_surface().commit();
+            }
+        }
+        self.switcher_dirty = true;
+    }
+
     fn on_ipc_event(&mut self, ev: cosmos_ipc::Event) {
         use cosmos_ipc::Event::*;
         match ev {
@@ -455,6 +514,20 @@ impl ShellState {
                 self.panel_dirty = true;
             }
             LauncherToggled { open } => self.set_launcher_open(open),
+            Switcher {
+                open,
+                selected,
+                order,
+            } => {
+                if open {
+                    self.switcher_sel = selected;
+                    self.switcher_order = order;
+                    self.sync_switcher();
+                } else {
+                    self.switcher_surface = None;
+                    self.switcher_order.clear();
+                }
+            }
             Config(map) => self.apply_config(map),
             SessionEnding => self.exit = true,
             Pong { .. } | Error { .. } => {}
@@ -571,6 +644,10 @@ impl ShellState {
             self.dock_dirty = false;
             dock::draw(self);
         }
+        if self.switcher_dirty && self.switcher_surface.is_some() {
+            self.switcher_dirty = false;
+            switcher::draw(self);
+        }
     }
 }
 
@@ -664,6 +741,16 @@ impl LayerShellHandler for ShellState {
                 dock::SURFACE_H,
             );
             self.dock_dirty = true;
+        }
+        if self.switcher_surface.as_ref() == Some(layer) {
+            self.switcher_size = (
+                configure
+                    .new_size
+                    .0
+                    .max(switcher::desired_width(self.switcher_order.len())),
+                switcher::SWITCHER_H,
+            );
+            self.switcher_dirty = true;
         }
         if self.launcher_surface.as_ref() == Some(layer) {
             self.launcher_size = configure.new_size;
