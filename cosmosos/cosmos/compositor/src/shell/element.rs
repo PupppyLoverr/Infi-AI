@@ -33,7 +33,6 @@ use smithay::{
     },
 };
 
-use super::ssd::HEADER_BAR_HEIGHT;
 use crate::{focus::PointerFocusTarget, state::Backend, AnvilState};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -45,15 +44,11 @@ impl WindowElement {
         location: Point<f64, Logical>,
         window_type: WindowSurfaceType,
     ) -> Option<(PointerFocusTarget, Point<i32, Logical>)> {
-        let state = self.decoration_state();
-        if state.is_ssd && location.y < HEADER_BAR_HEIGHT as f64 {
+        let tb = self.titlebar_height();
+        if tb > 0 && location.y < tb as f64 {
             return Some((PointerFocusTarget::SSD(SSD(self.clone())), Point::default()));
         }
-        let offset = if state.is_ssd {
-            Point::from((0, HEADER_BAR_HEIGHT))
-        } else {
-            Point::default()
-        };
+        let offset = Point::from((0, tb));
 
         let surface_under = self
             .0
@@ -366,28 +361,18 @@ impl<BackendData: Backend> TouchTarget<AnvilState<BackendData>> for SSD {
 impl SpaceElement for WindowElement {
     fn geometry(&self) -> Rectangle<i32, Logical> {
         let mut geo = SpaceElement::geometry(&self.0);
-        if self.decoration_state().is_ssd {
-            geo.size.h += HEADER_BAR_HEIGHT;
-        }
+        geo.size.h += self.titlebar_height();
         geo
     }
     fn bbox(&self) -> Rectangle<i32, Logical> {
         let mut bbox = SpaceElement::bbox(&self.0);
-        if self.decoration_state().is_ssd {
-            bbox.size.h += HEADER_BAR_HEIGHT;
-        }
+        bbox.size.h += self.titlebar_height();
         bbox
     }
     fn is_in_input_region(&self, point: &Point<f64, Logical>) -> bool {
-        if self.decoration_state().is_ssd {
-            point.y < HEADER_BAR_HEIGHT as f64
-                || SpaceElement::is_in_input_region(
-                    &self.0,
-                    &(*point - Point::from((0.0, HEADER_BAR_HEIGHT as f64))),
-                )
-        } else {
-            SpaceElement::is_in_input_region(&self.0, point)
-        }
+        let tb = self.titlebar_height() as f64;
+        (tb > 0.0 && point.y < tb)
+            || SpaceElement::is_in_input_region(&self.0, &(*point - Point::from((0.0, tb))))
     }
     fn z_index(&self) -> u8 {
         SpaceElement::z_index(&self.0)
@@ -439,8 +424,9 @@ where
         alpha: f32,
     ) -> Vec<C> {
         let window_bbox = SpaceElement::bbox(&self.0);
+        let tb = self.titlebar_height();
 
-        if self.decoration_state().is_ssd && !window_bbox.is_empty() {
+        if tb > 0 && !window_bbox.is_empty() {
             let window_geo = SpaceElement::geometry(&self.0);
 
             let mut state = self.decoration_state();
@@ -475,7 +461,7 @@ where
                 alpha,
             );
 
-            location.y += (scale.y * HEADER_BAR_HEIGHT as f64) as i32;
+            location.y += (scale.y * tb as f64) as i32;
 
             let window_elements =
                 AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);

@@ -3,7 +3,9 @@
 //! to cosmos-compositor over cosmos-ipc.
 
 mod desktop;
+mod dock;
 mod draw;
+mod icons;
 mod ipc_client;
 mod launcher;
 mod notify;
@@ -98,11 +100,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         qh: qh.clone(),
         loop_handle: handle.clone(),
         panel: None,
+        dock_surface: None,
         launcher_surface: None,
         notify_surface: None,
         quick_surface: None,
         notify_conn: None,
         panel_size: (0, PANEL_HEIGHT),
+        dock_size: (0, dock::DOCK_H),
         launcher_size: (0, 0),
         notify_size: (0, 0),
         quick_size: (0, 0),
@@ -122,12 +126,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         notify_dirty: false,
         quick_dirty: false,
         panel_hover: (0.0, false),
+        dock_hover: None,
+        dock_dirty: true,
         quick_open: false,
         vol_drag: false,
         exit: false,
     };
 
     state.create_panel(&qh);
+    state.create_dock(&qh);
     if let Some(reader) = state.ipc.connect() {
         register_ipc_source(&handle, reader);
     } else {
@@ -206,11 +213,13 @@ pub struct ShellState {
     pub loop_handle: LoopHandle<'static, Self>,
 
     pub panel: Option<LayerSurface>,
+    pub dock_surface: Option<LayerSurface>,
     pub launcher_surface: Option<LayerSurface>,
     pub notify_surface: Option<LayerSurface>,
     pub quick_surface: Option<LayerSurface>,
     pub notify_conn: Option<zbus::blocking::Connection>,
     pub panel_size: (u32, u32),
+    pub dock_size: (u32, u32),
     pub launcher_size: (u32, u32),
     pub notify_size: (u32, u32),
     pub quick_size: (u32, u32),
@@ -232,6 +241,9 @@ pub struct ShellState {
     pub quick_dirty: bool,
     /// (x, hovering) — last pointer x on the panel, for hit highlights.
     pub panel_hover: (f64, bool),
+    /// Last pointer x on the dock (cell highlight).
+    pub dock_hover: Option<f64>,
+    pub dock_dirty: bool,
     /// Quick-settings flyout state.
     pub quick_open: bool,
     /// Held while the pointer is dragging the volume slider.
@@ -263,6 +275,41 @@ impl ShellState {
         layer.wl_surface().commit();
         self.panel = Some(layer);
         self.panel_dirty = true;
+    }
+
+    /// The bottom dock — a floating, centred icon strip (no exclusive
+    /// zone: windows may slide underneath it, like the macOS Dock).
+    pub fn create_dock(&mut self, qh: &QueueHandle<Self>) {
+        let surface = self.compositor_state.create_surface(qh);
+        let layer = self.layer_shell.create_layer_surface(
+            qh,
+            surface,
+            Layer::Top,
+            Some("cosmos-dock"),
+            None,
+        );
+        layer.set_anchor(Anchor::BOTTOM);
+        layer.set_size(dock::desired_width(self), dock::DOCK_H);
+        layer.set_exclusive_zone(0);
+        layer.set_margin(0, 0, 8, 0);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        layer.wl_surface().commit();
+        self.dock_surface = Some(layer);
+        self.dock_dirty = true;
+    }
+
+    /// Resize the dock to its current item set (called when the window
+    /// list or app set changes).
+    pub fn sync_dock(&mut self) {
+        if let Some(layer) = &self.dock_surface {
+            let want = dock::desired_width(self);
+            if want != self.dock_size.0 && want > 0 {
+                layer.set_size(want, dock::DOCK_H);
+                layer.wl_surface().commit();
+            } else {
+                self.dock_dirty = true;
+            }
+        }
     }
 
     /// Toggle the quick-settings flyout (Win11-style tray popover).
@@ -343,11 +390,28 @@ impl ShellState {
 
     /// Pointer click inside the launcher surface.
     pub fn launcher_click(&mut self, x: f64, y: f64) {
-        let hit = launcher::hit_test(x, y, self.launcher_size, self.filtered_apps().len());
+        let hit = launcher::hit_test(
+            x,
+            y,
+            self.launcher_size,
+            self.filtered_apps().len(),
+            launcher::pinned(self).len(),
+            !self.launcher_query.is_empty(),
+        );
         match hit {
             launcher::Hit::Item(idx) => {
                 self.launcher_sel = idx;
                 self.launch_selected();
+            }
+            launcher::Hit::Cell(idx) => {
+                let app = launcher::pinned(self).get(idx).cloned();
+                if let Some(app) = app {
+                    if let Err(err) = desktop::launch(&app) {
+                        tracing::warn!("launch {} failed: {err}", app.id);
+                    } else {
+                        self.set_launcher_open(false);
+                    }
+                }
             }
             launcher::Hit::Action(0) => {
                 let _ = std::process::Command::new("cosmos-settings").spawn();
@@ -384,6 +448,7 @@ impl ShellState {
             Windows { windows } => {
                 self.windows = windows;
                 self.panel_dirty = true;
+                self.sync_dock();
             }
             Workspaces { workspaces } => {
                 self.workspaces = workspaces;
@@ -502,6 +567,10 @@ impl ShellState {
             self.quick_dirty = false;
             quick::draw(self);
         }
+        if self.dock_dirty && self.dock_surface.is_some() {
+            self.dock_dirty = false;
+            dock::draw(self);
+        }
     }
 }
 
@@ -561,6 +630,9 @@ impl LayerShellHandler for ShellState {
         if self.panel.as_ref() == Some(layer) {
             self.panel = None;
         }
+        if self.dock_surface.as_ref() == Some(layer) {
+            self.dock_surface = None;
+        }
         if self.launcher_surface.as_ref() == Some(layer) {
             self.launcher_surface = None;
             self.launcher_open = false;
@@ -585,6 +657,13 @@ impl LayerShellHandler for ShellState {
         if self.panel.as_ref() == Some(layer) {
             self.panel_size = (configure.new_size.0, PANEL_HEIGHT);
             self.panel_dirty = true;
+        }
+        if self.dock_surface.as_ref() == Some(layer) {
+            self.dock_size = (
+                configure.new_size.0.max(dock::desired_width(self)),
+                dock::DOCK_H,
+            );
+            self.dock_dirty = true;
         }
         if self.launcher_surface.as_ref() == Some(layer) {
             self.launcher_size = configure.new_size;
@@ -737,6 +816,7 @@ impl PointerHandler for ShellState {
             let Some(layer) = self
                 .panel
                 .iter()
+                .chain(self.dock_surface.iter())
                 .chain(self.launcher_surface.iter())
                 .chain(self.notify_surface.iter())
                 .chain(self.quick_surface.iter())
@@ -749,6 +829,8 @@ impl PointerHandler for ShellState {
                 PointerEventKind::Press { .. } => {
                     if self.panel.as_ref() == Some(&layer) {
                         self.panel_dirty = panel::click(self, ev.position.0, ev.position.1);
+                    } else if self.dock_surface.as_ref() == Some(&layer) {
+                        self.dock_dirty = dock::click(self, ev.position.0);
                     } else if self.launcher_surface.as_ref() == Some(&layer) {
                         self.launcher_click(ev.position.0, ev.position.1);
                     } else if self.notify_surface.as_ref() == Some(&layer) {
@@ -760,6 +842,8 @@ impl PointerHandler for ShellState {
                 PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
                     if self.panel.as_ref() == Some(&layer) {
                         self.panel_dirty |= panel::hover(self, ev.position.0, ev.position.1);
+                    } else if self.dock_surface.as_ref() == Some(&layer) {
+                        self.dock_dirty |= dock::hover(self, ev.position.0);
                     } else if self.launcher_surface.as_ref() == Some(&layer) {
                         self.launcher_dirty |= launcher::hover(self, ev.position.0, ev.position.1);
                     } else if self.quick_surface.as_ref() == Some(&layer) && self.vol_drag {

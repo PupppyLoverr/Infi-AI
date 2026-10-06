@@ -440,13 +440,13 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>>
             WindowSurface::X11(x11) => {
                 let location = data.space.element_location(&self.window).unwrap();
                 x11.configure(Rectangle::new(
-                        location,
-                        Size::from((
-                            self.last_window_size.w,
-                            self.last_window_size.h - self.window.titlebar_height(),
-                        )),
-                    ))
-                    .unwrap();
+                    location,
+                    Size::from((
+                        self.last_window_size.w,
+                        self.last_window_size.h - self.window.titlebar_height(),
+                    )),
+                ))
+                .unwrap();
             }
         }
     }
@@ -482,9 +482,9 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>>
                     xdg.with_pending_state(|state| {
                         state.states.unset(xdg_toplevel::State::Resizing);
                         state.size = Some(Size::from((
-                        self.last_window_size.w,
-                        self.last_window_size.h - self.window.titlebar_height(),
-                    )));
+                            self.last_window_size.w,
+                            self.last_window_size.h - self.window.titlebar_height(),
+                        )));
                     });
                     xdg.send_pending_configure();
                     if self.edges.intersects(ResizeEdge::TOP_LEFT) {
@@ -543,7 +543,7 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>>
                             self.last_window_size.h - self.window.titlebar_height(),
                         )),
                     ))
-                        .unwrap();
+                    .unwrap();
 
                     let Some(surface) = self.window.wl_surface() else {
                         // X11 Window got unmapped, abort
@@ -764,13 +764,13 @@ impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>>
                 }
                 data.flush_pending_configures();
                 x11.configure(Rectangle::new(
-                        location,
-                        Size::from((
-                            self.last_window_size.w,
-                            self.last_window_size.h - self.window.titlebar_height(),
-                        )),
-                    ))
-                    .unwrap();
+                    location,
+                    Size::from((
+                        self.last_window_size.w,
+                        self.last_window_size.h - self.window.titlebar_height(),
+                    )),
+                ))
+                .unwrap();
 
                 let Some(surface) = self.window.wl_surface() else {
                     // X11 Window got unmapped, abort
@@ -880,13 +880,13 @@ impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>>
             WindowSurface::X11(x11) => {
                 let location = data.space.element_location(&self.window).unwrap();
                 x11.configure(Rectangle::new(
-                        location,
-                        Size::from((
-                            self.last_window_size.w,
-                            self.last_window_size.h - self.window.titlebar_height(),
-                        )),
-                    ))
-                    .unwrap();
+                    location,
+                    Size::from((
+                        self.last_window_size.w,
+                        self.last_window_size.h - self.window.titlebar_height(),
+                    )),
+                ))
+                .unwrap();
             }
         }
     }
