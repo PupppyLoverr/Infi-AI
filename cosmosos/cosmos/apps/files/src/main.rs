@@ -26,7 +26,9 @@ struct Files {
 
 impl Files {
     fn new() -> Self {
-        let dir = std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("/"));
+        let dir = std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("/"));
         let mut f = Files {
             dir,
             entries: Vec::new(),
@@ -47,9 +49,10 @@ impl Files {
             Ok(rd) => {
                 for e in rd.flatten() {
                     let md = e.metadata().ok();
-                    let is_dir = md.as_ref().map(|m| m.is_dir()).unwrap_or_else(|| {
-                        e.file_type().map(|t| t.is_dir()).unwrap_or(false)
-                    });
+                    let is_dir = md
+                        .as_ref()
+                        .map(|m| m.is_dir())
+                        .unwrap_or_else(|| e.file_type().map(|t| t.is_dir()).unwrap_or(false));
                     let size = md.as_ref().map(|m| m.len()).unwrap_or(0);
                     let modified = md
                         .and_then(|m| m.modified().ok())
@@ -154,10 +157,11 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
                 }
             }
             ui.separator();
-            let path_str = f.path_edit.get_or_insert_with(|| f.dir.display().to_string());
+            let path_str = f
+                .path_edit
+                .get_or_insert_with(|| f.dir.display().to_string());
             let resp = ui.add(
-                egui::TextEdit::singleline(path_str)
-                    .desired_width(ui.available_width() - 140.0),
+                egui::TextEdit::singleline(path_str).desired_width(ui.available_width() - 140.0),
             );
             if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 let p = PathBuf::from(path_str.trim());

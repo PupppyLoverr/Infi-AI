@@ -37,7 +37,9 @@ pub fn draw(state: &mut ShellState) {
     if w == 0 {
         return;
     }
-    let Some(layer) = state.panel.clone() else { return };
+    let Some(layer) = state.panel.clone() else {
+        return;
+    };
     let (bg, hover_bg, sep, fg, fg_dim) = theme(state.dark);
     let ws_count = crate::workspace_count(state);
     let active_ws = state
@@ -54,9 +56,10 @@ pub fn draw(state: &mut ShellState) {
         .collect();
 
     let stride = w as i32 * 4;
-    let Ok((buffer, canvas)) = state
-        .pool
-        .create_buffer(w as i32, h as i32, stride, wl_shm::Format::Argb8888)
+    let Ok((buffer, canvas)) =
+        state
+            .pool
+            .create_buffer(w as i32, h as i32, stride, wl_shm::Format::Argb8888)
     else {
         tracing::warn!("panel: pool create_buffer failed");
         return;
@@ -66,21 +69,21 @@ pub fn draw(state: &mut ShellState) {
     };
 
     draw::fill_rect(&mut pixmap, 0.0, 0.0, w as f32, h as f32, bg);
-    draw::fill_rect(
-        &mut pixmap,
-        0.0,
-        h as f32 - 1.0,
-        w as f32,
-        1.0,
-        sep,
-    );
+    draw::fill_rect(&mut pixmap, 0.0, h as f32 - 1.0, w as f32, 1.0, sep);
 
     let mid_y = (h as f32 - 18.0) / 2.0 + 14.0; // text baseline-ish center
 
     // Cosmos launcher button.
     let hover_launch = state.panel_hover.0 < LAUNCH_BTN_W;
     if hover_launch {
-        draw::fill_rect(&mut pixmap, 0.0, 0.0, LAUNCH_BTN_W as f32, h as f32, hover_bg);
+        draw::fill_rect(
+            &mut pixmap,
+            0.0,
+            0.0,
+            LAUNCH_BTN_W as f32,
+            h as f32,
+            hover_bg,
+        );
     }
     draw::text(
         &mut pixmap,
@@ -107,7 +110,14 @@ pub fn draw(state: &mut ShellState) {
             win.title.clone()
         };
         if focused {
-            draw::fill_rect(&mut pixmap, x as f32, 2.0, TASK_W as f32, h as f32 - 4.0, hover_bg);
+            draw::fill_rect(
+                &mut pixmap,
+                x as f32,
+                2.0,
+                TASK_W as f32,
+                h as f32 - 4.0,
+                hover_bg,
+            );
         }
         draw::text(
             &mut pixmap,
@@ -186,11 +196,7 @@ fn status_text(info: &crate::sysinfo::SysInfo) -> String {
         None => "Vol --".to_string(),
     };
     let bat = match &info.battery {
-        Some(b) if b.present => format!(
-            " {}%{} ",
-            b.percent,
-            if b.charging { "↑" } else { "" }
-        ),
+        Some(b) if b.present => format!(" {}%{} ", b.percent, if b.charging { "↑" } else { "" }),
         _ => " ".to_string(),
     };
     format!("{net} · {vol} ·{bat}{}", info.clock)

@@ -159,8 +159,8 @@ pub fn launch(entry: &AppEntry) -> Result<(), String> {
             .map_err(|e| format!("spawn failed: {e}"))
     };
     if entry.terminal {
-        let term = std::env::var("COSMOS_TERMINAL")
-            .unwrap_or_else(|_| "cosmos-terminal".to_string());
+        let term =
+            std::env::var("COSMOS_TERMINAL").unwrap_or_else(|_| "cosmos-terminal".to_string());
         let mut c = Command::new(term);
         c.arg("-e").arg("sh").arg("-c").arg(&cmd);
         spawn(c)
@@ -221,8 +221,23 @@ fn dbus_lock_session() -> Result<(), String> {
 pub fn system_entries() -> Vec<AppEntry> {
     vec![
         AppEntry::action_entry("sys.lock", "Lock", "system-lock-screen", SystemAction::Lock),
-        AppEntry::action_entry("sys.logout", "Log out", "system-log-out", SystemAction::Logout),
-        AppEntry::action_entry("sys.reboot", "Reboot", "system-reboot", SystemAction::Reboot),
-        AppEntry::action_entry("sys.shutdown", "Shut down", "system-shutdown", SystemAction::Shutdown),
+        AppEntry::action_entry(
+            "sys.logout",
+            "Log out",
+            "system-log-out",
+            SystemAction::Logout,
+        ),
+        AppEntry::action_entry(
+            "sys.reboot",
+            "Reboot",
+            "system-reboot",
+            SystemAction::Reboot,
+        ),
+        AppEntry::action_entry(
+            "sys.shutdown",
+            "Shut down",
+            "system-shutdown",
+            SystemAction::Shutdown,
+        ),
     ]
 }

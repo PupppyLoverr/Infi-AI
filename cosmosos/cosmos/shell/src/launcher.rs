@@ -63,8 +63,7 @@ pub fn draw(state: &mut ShellState) {
     let Some(layer) = state.launcher_surface.clone() else {
         return;
     };
-    let apps: Vec<crate::desktop::AppEntry> =
-        state.filtered_apps().into_iter().cloned().collect();
+    let apps: Vec<crate::desktop::AppEntry> = state.filtered_apps().into_iter().cloned().collect();
     let n_items = apps.len().min(MAX_ROWS);
     let dark = state.dark;
     let (bg, box_bg, sel_bg, sep, fg, fg_dim) = if dark {
@@ -88,9 +87,10 @@ pub fn draw(state: &mut ShellState) {
     };
 
     let stride = w as i32 * 4;
-    let Ok((buffer, canvas)) = state
-        .pool
-        .create_buffer(w as i32, h as i32, stride, wl_shm::Format::Argb8888)
+    let Ok((buffer, canvas)) =
+        state
+            .pool
+            .create_buffer(w as i32, h as i32, stride, wl_shm::Format::Argb8888)
     else {
         tracing::warn!("launcher: pool create_buffer failed");
         return;
@@ -105,9 +105,23 @@ pub fn draw(state: &mut ShellState) {
     let left = box_left(w) as f32;
     let top = box_top(h) as f32;
     let height = box_height(n_items) as f32;
-    draw::fill_rect(&mut pixmap, left, top, LAUNCHER_WIDTH as f32, height, box_bg);
+    draw::fill_rect(
+        &mut pixmap,
+        left,
+        top,
+        LAUNCHER_WIDTH as f32,
+        height,
+        box_bg,
+    );
     draw::fill_rect(&mut pixmap, left, top, LAUNCHER_WIDTH as f32, 1.0, sep);
-    draw::fill_rect(&mut pixmap, left, top + height - 1.0, LAUNCHER_WIDTH as f32, 1.0, sep);
+    draw::fill_rect(
+        &mut pixmap,
+        left,
+        top + height - 1.0,
+        LAUNCHER_WIDTH as f32,
+        1.0,
+        sep,
+    );
     draw::fill_rect(&mut pixmap, left, top, 1.0, height, sep);
     draw::fill_rect(
         &mut pixmap,

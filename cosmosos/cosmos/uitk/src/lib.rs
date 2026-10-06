@@ -199,9 +199,9 @@ impl UiState {
         let Some(window) = &self.window else { return };
         let (w, h) = (self.width as i32, self.height as i32);
         let stride = w * 4;
-        let Ok((buffer, canvas)) =
-            self.pool
-                .create_buffer(w, h, stride, wl_shm::Format::Argb8888)
+        let Ok((buffer, canvas)) = self
+            .pool
+            .create_buffer(w, h, stride, wl_shm::Format::Argb8888)
         else {
             tracing::warn!("uitk: failed to allocate shm buffer");
             return;
@@ -257,9 +257,7 @@ fn map_key(sym: Keysym) -> Option<Key> {
                             .as_str(),
                     )
                 }
-                0x30..=0x39 => {
-                    return Key::from_name(char::from_u32(raw)?.to_string().as_str())
-                }
+                0x30..=0x39 => return Key::from_name(char::from_u32(raw)?.to_string().as_str()),
                 _ => return None,
             }
         }
@@ -323,8 +321,22 @@ impl CompositorHandler for UiState {
         _time: u32,
     ) {
     }
-    fn surface_enter(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _surface: &wl_surface::WlSurface, _output: &wl_output::WlOutput) {}
-    fn surface_leave(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _surface: &wl_surface::WlSurface, _output: &wl_output::WlOutput) {}
+    fn surface_enter(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _surface: &wl_surface::WlSurface,
+        _output: &wl_output::WlOutput,
+    ) {
+    }
+    fn surface_leave(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _surface: &wl_surface::WlSurface,
+        _output: &wl_output::WlOutput,
+    ) {
+    }
 }
 
 impl WindowHandler for UiState {
@@ -355,7 +367,8 @@ impl SeatHandler for UiState {
     }
 
     fn new_seat(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _seat: wl_seat::WlSeat) {}
-    fn remove_seat(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _seat: wl_seat::WlSeat) {}
+    fn remove_seat(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _seat: wl_seat::WlSeat) {
+    }
 
     fn new_capability(
         &mut self,
@@ -523,9 +536,27 @@ impl OutputHandler for UiState {
     fn output_state(&mut self) -> &mut OutputState {
         &mut self.output_state
     }
-    fn new_output(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _output: wl_output::WlOutput) {}
-    fn update_output(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _output: wl_output::WlOutput) {}
-    fn output_destroyed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _output: wl_output::WlOutput) {}
+    fn new_output(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _output: wl_output::WlOutput,
+    ) {
+    }
+    fn update_output(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _output: wl_output::WlOutput,
+    ) {
+    }
+    fn output_destroyed(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _output: wl_output::WlOutput,
+    ) {
+    }
 }
 
 impl ShmHandler for UiState {

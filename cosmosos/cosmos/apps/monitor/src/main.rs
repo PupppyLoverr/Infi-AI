@@ -9,7 +9,7 @@ struct Proc {
     pid: u32,
     name: String,
     state: char,
-    cpu: f64,  // percent over the sample window
+    cpu: f64, // percent over the sample window
     rss_kib: u64,
 }
 
@@ -83,7 +83,9 @@ impl Stats {
     }
 
     fn read_cpu(&mut self) {
-        let Ok(s) = fs::read_to_string("/proc/stat") else { return };
+        let Ok(s) = fs::read_to_string("/proc/stat") else {
+            return;
+        };
         let mut totals: Vec<(u64, u64)> = Vec::new(); // (busy+idle, idle)
         let mut prev: Vec<u64> = Vec::new();
         for line in s.lines() {
@@ -127,7 +129,9 @@ impl Stats {
     }
 
     fn read_mem(&mut self) {
-        let Ok(s) = fs::read_to_string("/proc/meminfo") else { return };
+        let Ok(s) = fs::read_to_string("/proc/meminfo") else {
+            return;
+        };
         let mut kv = HashMap::new();
         for line in s.lines() {
             let mut it = line.split(':');
@@ -159,7 +163,9 @@ impl Stats {
 
         let mut out = Vec::new();
         let mut seen = HashMap::new();
-        let Ok(rd) = fs::read_dir("/proc") else { return };
+        let Ok(rd) = fs::read_dir("/proc") else {
+            return;
+        };
         for e in rd.flatten() {
             let name = e.file_name();
             let Ok(pid) = name.to_string_lossy().parse::<u32>() else {
@@ -206,7 +212,8 @@ impl Stats {
         }
         self.prev_proc_jiffies = seen;
         out.sort_by(|a, b| {
-            b.cpu.partial_cmp(&a.cpu)
+            b.cpu
+                .partial_cmp(&a.cpu)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         out.truncate(64);
@@ -236,7 +243,8 @@ fn main() {
             stats.tick();
             last_tick = std::time::Instant::now();
         }
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(500));
         draw(ui, &mut stats);
     }) {
         tracing::error!("cosmos-monitor fatal: {e}");
@@ -281,7 +289,12 @@ fn sparkline(ui: &mut egui::Ui, hist: &VecDeque<f64>) {
             .collect();
         painter.add(egui::Shape::line(
             pts,
-            egui::Stroke::new(1.5, ui.visuals().override_text_color.unwrap_or(egui::Color32::WHITE)),
+            egui::Stroke::new(
+                1.5,
+                ui.visuals()
+                    .override_text_color
+                    .unwrap_or(egui::Color32::WHITE),
+            ),
         ));
     }
 }
@@ -311,7 +324,12 @@ fn draw(ui: &mut egui::Ui, st: &mut Stats) {
             ui.label(format!("up {}", fmt_uptime(st.uptime_s)));
         });
         ui.add_space(4.0);
-        bar(ui, "CPU", st.cpu_pct / 100.0, &format!("{:.0}%", st.cpu_pct));
+        bar(
+            ui,
+            "CPU",
+            st.cpu_pct / 100.0,
+            &format!("{:.0}%", st.cpu_pct),
+        );
         sparkline(ui, &st.cpu_hist);
         let mem_used = st.mem_total.saturating_sub(st.mem_avail);
         bar(

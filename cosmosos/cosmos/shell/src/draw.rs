@@ -12,14 +12,7 @@ thread_local! {
 }
 
 /// Fill a rect.
-pub fn fill_rect(
-    pixmap: &mut PixmapMut<'_>,
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-    color: Color,
-) {
+pub fn fill_rect(pixmap: &mut PixmapMut<'_>, x: f32, y: f32, w: f32, h: f32, color: Color) {
     let Some(rect) = Rect::from_xywh(x, y, w, h) else {
         return;
     };

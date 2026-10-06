@@ -132,10 +132,7 @@ fn client_readable<BackendData: Backend>(
                     let Some(idx) = client_index(state, id) else {
                         return Ok(PostAction::Remove);
                     };
-                    AnvilState::<BackendData>::ipc_push(
-                        &mut state.cosmos.ipc.clients[idx],
-                        &ev,
-                    );
+                    AnvilState::<BackendData>::ipc_push(&mut state.cosmos.ipc.clients[idx], &ev);
                     if state.cosmos.ipc.clients[idx].dead {
                         return Ok(PostAction::Remove);
                     }

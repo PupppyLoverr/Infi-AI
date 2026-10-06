@@ -172,16 +172,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn register_ipc_source(handle: &LoopHandle<'static, ShellState>, stream: UnixStream) {
-    let _ = handle.insert_source(Generic::new(stream, Interest::READ, Mode::Level), |_, _, state| {
-        if !state.ipc.read() {
-            tracing::warn!("compositor IPC closed; will retry");
-            return Ok(PostAction::Remove);
-        }
-        for ev in state.ipc.poll_events() {
-            state.on_ipc_event(ev);
-        }
-        Ok(PostAction::Continue)
-    });
+    let _ = handle.insert_source(
+        Generic::new(stream, Interest::READ, Mode::Level),
+        |_, _, state| {
+            if !state.ipc.read() {
+                tracing::warn!("compositor IPC closed; will retry");
+                return Ok(PostAction::Remove);
+            }
+            for ev in state.ipc.poll_events() {
+                state.on_ipc_event(ev);
+            }
+            Ok(PostAction::Continue)
+        },
+    );
 }
 
 pub struct ShellState {
@@ -229,7 +232,6 @@ pub fn workspace_count(state: &ShellState) -> usize {
 
 // Fields needing `Option`/defaults for the manual Default impl.
 
-
 impl ShellState {
     pub fn create_panel(&mut self, qh: &QueueHandle<Self>) {
         let surface = self.compositor_state.create_surface(qh);
@@ -265,9 +267,7 @@ impl ShellState {
                 Some("cosmos-launcher"),
                 None,
             );
-            layer.set_anchor(
-                Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
-            );
+            layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
             layer.set_size(0, 0);
             layer.set_exclusive_zone(-1);
             layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
@@ -306,9 +306,7 @@ impl ShellState {
 
     pub fn launch_selected(&mut self) {
         let apps = self.filtered_apps();
-        let idx = self
-            .launcher_sel
-            .min(apps.len().saturating_sub(1));
+        let idx = self.launcher_sel.min(apps.len().saturating_sub(1));
         let Some(app) = apps.get(idx) else {
             return;
         };
@@ -574,7 +572,8 @@ impl SeatHandler for ShellState {
     ) {
     }
 
-    fn remove_seat(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _seat: wl_seat::WlSeat) {}
+    fn remove_seat(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _seat: wl_seat::WlSeat) {
+    }
 }
 
 impl KeyboardHandler for ShellState {
@@ -680,8 +679,7 @@ impl PointerHandler for ShellState {
                     if self.panel.as_ref() == Some(&layer) {
                         self.panel_dirty |= panel::hover(self, ev.position.0, ev.position.1);
                     } else if self.launcher_surface.as_ref() == Some(&layer) {
-                        self.launcher_dirty |=
-                            launcher::hover(self, ev.position.0, ev.position.1);
+                        self.launcher_dirty |= launcher::hover(self, ev.position.0, ev.position.1);
                     }
                 }
                 _ => {}

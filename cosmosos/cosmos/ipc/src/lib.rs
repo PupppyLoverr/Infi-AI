@@ -77,17 +77,29 @@ pub enum Request {
     ListWindows,
     ListWorkspaces,
     /// Ask the compositor to focus a window.
-    FocusWindow { id: u64 },
+    FocusWindow {
+        id: u64,
+    },
     /// Move a window to a workspace (0-based).
-    MoveWindowToWorkspace { id: u64, workspace: u8 },
+    MoveWindowToWorkspace {
+        id: u64,
+        workspace: u8,
+    },
     /// Close a window politely (xdg close).
-    CloseWindow { id: u64 },
+    CloseWindow {
+        id: u64,
+    },
     /// Switch the active workspace.
-    SwitchWorkspace { workspace: u8 },
+    SwitchWorkspace {
+        workspace: u8,
+    },
     /// Toggle the launcher overlay (shell-only shortcut surface).
     ToggleLauncher,
     /// Update a setting; persisted by the compositor.
-    SetConfig { key: String, value: serde_json::Value },
+    SetConfig {
+        key: String,
+        value: serde_json::Value,
+    },
     /// Read all settings.
     GetConfig,
     /// Ask the session to end (logout).
@@ -98,17 +110,27 @@ pub enum Request {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
-    Pong { pong: Pong },
-    Windows { windows: Vec<WindowInfo> },
-    Workspaces { workspaces: Vec<WorkspaceInfo> },
+    Pong {
+        pong: Pong,
+    },
+    Windows {
+        windows: Vec<WindowInfo>,
+    },
+    Workspaces {
+        workspaces: Vec<WorkspaceInfo>,
+    },
     /// Full config dump after a `GetConfig` or a change.
     Config(serde_json::Map<String, serde_json::Value>),
     /// Something external toggled the launcher.
-    LauncherToggled { open: bool },
+    LauncherToggled {
+        open: bool,
+    },
     /// Session is ending; clients should exit.
     SessionEnding,
     /// A request failed — carries a human-readable reason.
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 /// Read one newline-delimited JSON message from `reader`.

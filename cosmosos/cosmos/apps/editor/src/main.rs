@@ -86,7 +86,10 @@ fn main() {
 
 fn draw(ui: &mut egui::Ui, ed: &mut Editor) {
     // Ctrl+S saves from anywhere in the window.
-    if ui.ctx().input(|i| i.key_pressed(egui::Key::S) && i.modifiers.command) {
+    if ui
+        .ctx()
+        .input(|i| i.key_pressed(egui::Key::S) && i.modifiers.command)
+    {
         ed.save();
     }
 

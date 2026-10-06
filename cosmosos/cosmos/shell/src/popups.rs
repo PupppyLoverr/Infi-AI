@@ -43,9 +43,10 @@ pub fn draw(state: &mut ShellState) {
     let (card, border, fg, fg_dim) = theme(state.dark);
 
     let stride = w as i32 * 4;
-    let Ok((buffer, canvas)) = state
-        .pool
-        .create_buffer(w as i32, h as i32, stride, wl_shm::Format::Argb8888)
+    let Ok((buffer, canvas)) =
+        state
+            .pool
+            .create_buffer(w as i32, h as i32, stride, wl_shm::Format::Argb8888)
     else {
         tracing::warn!("notify: pool create_buffer failed");
         return;
@@ -66,14 +67,7 @@ pub fn draw(state: &mut ShellState) {
             CARD_H as f32,
             card,
         );
-        draw::fill_rect(
-            &mut pixmap,
-            0.0,
-            y,
-            NOTIFY_WIDTH as f32,
-            1.0,
-            border,
-        );
+        draw::fill_rect(&mut pixmap, 0.0, y, NOTIFY_WIDTH as f32, 1.0, border);
         draw::fill_rect(
             &mut pixmap,
             0.0,
@@ -82,8 +76,26 @@ pub fn draw(state: &mut ShellState) {
             1.0,
             border,
         );
-        draw::text(&mut pixmap, 12.0, y + 8.0, 240.0, 16.0, 11.0, &n.app_name, fg_dim);
-        draw::text(&mut pixmap, 12.0, y + 26.0, 300.0, 20.0, 13.0, &n.summary, fg);
+        draw::text(
+            &mut pixmap,
+            12.0,
+            y + 8.0,
+            240.0,
+            16.0,
+            11.0,
+            &n.app_name,
+            fg_dim,
+        );
+        draw::text(
+            &mut pixmap,
+            12.0,
+            y + 26.0,
+            300.0,
+            20.0,
+            13.0,
+            &n.summary,
+            fg,
+        );
         draw::text(
             &mut pixmap,
             12.0,

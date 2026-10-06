@@ -13,7 +13,7 @@ use cosmos_ipc::{read_message, write_message, Event, Request};
 
 #[derive(Clone)]
 struct Cfg {
-    appearance: String,   // "dark" | "light"
+    appearance: String, // "dark" | "light"
     reduce_motion: bool,
     scale: f64,
     terminal: String,
@@ -51,7 +51,9 @@ fn load() -> Cfg {
         if line.starts_with('#') {
             continue;
         }
-        let Some((k, v)) = line.split_once('=') else { continue };
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
         let v = v.trim().trim_matches('"');
         match k.trim() {
             "appearance" => c.appearance = v.to_string(),
@@ -175,7 +177,10 @@ fn draw(ui: &mut egui::Ui, app: &mut App) {
                 app.cfg.appearance = if dark { "dark" } else { "light" }.into();
                 app.dirty = true;
             }
-            if ui.checkbox(&mut app.cfg.reduce_motion, "Reduce motion").changed() {
+            if ui
+                .checkbox(&mut app.cfg.reduce_motion, "Reduce motion")
+                .changed()
+            {
                 app.dirty = true;
             }
         });

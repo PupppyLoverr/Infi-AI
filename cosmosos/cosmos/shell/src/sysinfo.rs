@@ -61,7 +61,9 @@ fn poll() -> SysInfo {
 // ---------------------------------------------------------------- clock
 
 fn clock() -> String {
-    libc_tm().map(|(h, m, _, _, _)| format!("{h:02}:{m:02}")).unwrap_or_default()
+    libc_tm()
+        .map(|(h, m, _, _, _)| format!("{h:02}:{m:02}"))
+        .unwrap_or_default()
 }
 
 fn date_str() -> String {
@@ -81,7 +83,13 @@ fn libc_tm() -> Option<(i32, i32, i32, i32, i32)> {
         if libc::localtime_r(&secs, &mut tm).is_null() {
             return None;
         }
-        Some((tm.tm_hour, tm.tm_min, tm.tm_mday, tm.tm_mon, tm.tm_year + 1900))
+        Some((
+            tm.tm_hour,
+            tm.tm_min,
+            tm.tm_mday,
+            tm.tm_mon,
+            tm.tm_year + 1900,
+        ))
     }
 }
 
@@ -212,10 +220,17 @@ fn sysclass_network() -> NetworkState {
     }
     if online {
         online = std::fs::read_to_string("/proc/net/route")
-            .map(|r| r.lines().skip(1).any(|l| l.split_whitespace().nth(1) == Some("00000000")))
+            .map(|r| {
+                r.lines()
+                    .skip(1)
+                    .any(|l| l.split_whitespace().nth(1) == Some("00000000"))
+            })
             .unwrap_or(false)
             || std::fs::read_to_string("/proc/net/ipv6_route")
-                .map(|r| r.lines().any(|l| l.contains("00000000000000000000000000000000")))
+                .map(|r| {
+                    r.lines()
+                        .any(|l| l.contains("00000000000000000000000000000000"))
+                })
                 .unwrap_or(false);
         if !online {
             label = "Link".to_string();

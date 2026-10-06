@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use egui::epaint::{ClippedPrimitive, ImageDelta, ImageData, Primitive};
+use egui::epaint::{ClippedPrimitive, ImageData, ImageDelta, Primitive};
 use egui::{Color32, TextureId};
 
 #[derive(Default)]
@@ -64,23 +64,13 @@ impl Painter {
     }
 
     /// Paint clipped primitives into `buf` (ARGB8888, packed, `w*h*4`).
-    pub fn paint(
-        &mut self,
-        buf: &mut [u8],
-        w: u32,
-        h: u32,
-        prims: &[ClippedPrimitive],
-        ppp: f32,
-    ) {
+    pub fn paint(&mut self, buf: &mut [u8], w: u32, h: u32, prims: &[ClippedPrimitive], ppp: f32) {
         buf.fill(0);
         for prim in prims {
             let Primitive::Mesh(mesh) = &prim.primitive else {
                 continue; // Primitive::Callback unused by core widgets
             };
-            let tex = self
-                .textures
-                .get(&mesh.texture_id)
-                .unwrap_or(&self.white);
+            let tex = self.textures.get(&mesh.texture_id).unwrap_or(&self.white);
 
             let clip = prim.clip_rect;
             let clip = Clip {

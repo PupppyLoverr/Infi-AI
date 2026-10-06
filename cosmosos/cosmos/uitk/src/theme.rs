@@ -5,7 +5,11 @@
 use egui::{Color32, CornerRadius, Stroke, Visuals};
 
 pub fn apply(ctx: &egui::Context, dark: bool) {
-    let mut v = if dark { Visuals::dark() } else { Visuals::light() };
+    let mut v = if dark {
+        Visuals::dark()
+    } else {
+        Visuals::light()
+    };
 
     let fg = if dark {
         Color32::from_gray(220)

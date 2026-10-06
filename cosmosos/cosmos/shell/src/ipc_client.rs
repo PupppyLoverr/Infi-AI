@@ -54,7 +54,6 @@ impl IpcClient {
         out
     }
 
-
     /// Pull new bytes. Returns false on EOF/error → caller should reconnect.
     pub fn read(&mut self) -> bool {
         let Some(stream) = self.stream.as_mut() else {

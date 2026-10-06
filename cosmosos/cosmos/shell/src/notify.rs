@@ -1,7 +1,10 @@
 //! org.freedesktop.Notifications D-Bus server — real notifications from real
 //! clients land here and get drawn as layer-shell popups.
 
-use std::{collections::HashMap, sync::atomic::{AtomicU32, Ordering}};
+use std::{
+    collections::HashMap,
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 use calloop::channel::Sender;
 use zbus::zvariant;
@@ -21,7 +24,11 @@ pub struct Notification {
 #[derive(Debug)]
 pub enum NotifyEvent {
     Raised(Notification),
-    Closed { id: u32, #[allow(dead_code)] reason: u32 },
+    Closed {
+        id: u32,
+        #[allow(dead_code)]
+        reason: u32,
+    },
 }
 
 struct NotifyDaemon {
