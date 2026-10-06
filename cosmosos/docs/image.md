@@ -146,13 +146,13 @@ cosmos: new window id=1..5              # Terminal Files Editor Settings System 
 ... post-kill: {"type":"windows","windows":[]}
 ```
 
-Geometry vs 1024x768 (post-`b6e63db` InitialFit refit): all
-`x+w <= 1024`. Y-axis still overflows on three windows — Terminal
-785, Settings 808, System Monitor 837 bottom edges (non-exclusive
-zone bottom ~744–768). The refit is a one-shot `InitialFit`
-(AtomicBool) on the first nonzero-geometry commit — consistent with
-it firing against an early, smaller committed size and never
-re-running once the app settles to its real size (reported upstream).
+Geometry vs 1024x768 (post-`2775ece` settle-refit): Terminal
+380x79 680x476 (x+w=1060 over), Files 498x333 560x436 (x+w=1058
+over, y+h=769 ~1px), Editor 273x49 560x456 inside, Settings
+361x126 520x516 inside, System Monitor 499x138 600x496 (x+w=1099
+over). IPC coordinates verified against the framebuffer — three
+windows still extend past the right bezel; y-axis within bounds
+(reported upstream).
 
 ### Perf (QEMU -m 1G -smp 2, KVM, llvmpipe)
 
