@@ -98,9 +98,9 @@ pub enum Request {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
-    Pong(Pong),
-    Windows(Vec<WindowInfo>),
-    Workspaces(Vec<WorkspaceInfo>),
+    Pong { pong: Pong },
+    Windows { windows: Vec<WindowInfo> },
+    Workspaces { workspaces: Vec<WorkspaceInfo> },
     /// Full config dump after a `GetConfig` or a change.
     Config(serde_json::Map<String, serde_json::Value>),
     /// Something external toggled the launcher.

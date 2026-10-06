@@ -719,8 +719,12 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 
     /// Broadcast current window + workspace state to IPC subscribers.
     pub fn ipc_broadcast_state(&mut self) {
-        let windows = cosmos_ipc::Event::Windows(self.ipc_windows());
-        let workspaces = cosmos_ipc::Event::Workspaces(self.ipc_workspaces());
+        let windows = cosmos_ipc::Event::Windows {
+            windows: self.ipc_windows(),
+        };
+        let workspaces = cosmos_ipc::Event::Workspaces {
+            workspaces: self.ipc_workspaces(),
+        };
         self.ipc_broadcast(&windows);
         self.ipc_broadcast(&workspaces);
     }

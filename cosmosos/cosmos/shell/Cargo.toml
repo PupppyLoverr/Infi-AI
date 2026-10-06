@@ -1,7 +1,25 @@
 [package]
 name = "cosmos-shell"
+description = "CosmosOS shell: panel, launcher, notifications (wlr-layer-shell)"
 edition = "2021"
 license = "MIT"
 version = "0.1.0"
 
 [dependencies]
+smithay-client-toolkit = "0.21"
+wayland-client = "0.31"
+calloop = { version = "0.14", features = ["executor"] }
+calloop-wayland-source = "0.4"
+cosmic-text = "0.14"
+tiny-skia = "0.11"
+serde = { workspace = true }
+serde_json = { workspace = true }
+cosmos-ipc = { path = "../ipc" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zbus = { version = "5", features = ["blocking"] }
+libc = "0.2"
+
+[[bin]]
+name = "cosmos-shell"
+path = "src/main.rs"

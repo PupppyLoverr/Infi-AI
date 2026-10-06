@@ -117,6 +117,7 @@ fn client_readable<BackendData: Backend>(
     let mut buf = [0u8; 4096];
     match state.cosmos.ipc.clients[idx].stream.read(&mut buf) {
         Ok(0) => {
+            tracing::info!(client = id, "ipc client eof");
             mark_dead(state, id);
             Ok(PostAction::Remove)
         }
@@ -130,9 +131,10 @@ fn client_readable<BackendData: Backend>(
                     let Some(idx) = client_index(state, id) else {
                         return Ok(PostAction::Remove);
                     };
-                    if cosmos_ipc::write_message(&mut state.cosmos.ipc.clients[idx].stream, &ev)
-                        .is_err()
+                    if let Err(err) =
+                        cosmos_ipc::write_message(&mut state.cosmos.ipc.clients[idx].stream, &ev)
                     {
+                        warn!(client = id, "ipc reply write failed: {err}");
                         mark_dead(state, id);
                         return Ok(PostAction::Remove);
                     }
@@ -143,7 +145,7 @@ fn client_readable<BackendData: Backend>(
         }
         Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => Ok(PostAction::Continue),
         Err(err) => {
-            debug!("ipc client read failed: {err}");
+            warn!(client = id, "ipc client read failed: {err}");
             mark_dead(state, id);
             Ok(PostAction::Remove)
         }
@@ -196,18 +198,24 @@ fn dispatch_request<BackendData: Backend>(
     use cosmos_ipc::{Event, Request};
 
     match req {
-        Request::Ping => Some(Event::Pong(cosmos_ipc::Pong {
-            name: "cosmos-compositor".into(),
-            version: env!("CARGO_PKG_VERSION").into(),
-        })),
+        Request::Ping => Some(Event::Pong {
+            pong: cosmos_ipc::Pong {
+                name: "cosmos-compositor".into(),
+                version: env!("CARGO_PKG_VERSION").into(),
+            },
+        }),
         Request::Subscribe => {
             if let Some(idx) = client_index(state, id) {
                 state.cosmos.ipc.clients[idx].subscribed = true;
             }
             // Send current state immediately so the client doesn't need
             // separate ListWindows/ListWorkspaces calls.
-            let windows = Event::Windows(state.ipc_windows());
-            let workspaces = Event::Workspaces(state.ipc_workspaces());
+            let windows = Event::Windows {
+                windows: state.ipc_windows(),
+            };
+            let workspaces = Event::Workspaces {
+                workspaces: state.ipc_workspaces(),
+            };
             let config = Event::Config(state.cosmos.config.as_map());
             if let Some(idx) = client_index(state, id) {
                 let stream = &mut state.cosmos.ipc.clients[idx].stream;
@@ -216,8 +224,12 @@ fn dispatch_request<BackendData: Backend>(
             }
             Some(config)
         }
-        Request::ListWindows => Some(Event::Windows(state.ipc_windows())),
-        Request::ListWorkspaces => Some(Event::Workspaces(state.ipc_workspaces())),
+        Request::ListWindows => Some(Event::Windows {
+            windows: state.ipc_windows(),
+        }),
+        Request::ListWorkspaces => Some(Event::Workspaces {
+            workspaces: state.ipc_workspaces(),
+        }),
         Request::GetConfig => Some(Event::Config(state.cosmos.config.as_map())),
         Request::FocusWindow { id } => {
             let Some(window) = state.window_by_id(id) else {

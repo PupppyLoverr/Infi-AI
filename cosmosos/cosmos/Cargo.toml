@@ -3,14 +3,10 @@ resolver = "2"
 members = [
     "compositor",
     "ipc",
-    "uitk",
     "shell",
-    "apps/terminal",
-    "apps/files",
-    "apps/editor",
-    "apps/settings",
-    "apps/monitor",
-    "apps/demo",
+    # Added as they are implemented:
+    #   "uitk", "apps/terminal", "apps/files", "apps/editor",
+    #   "apps/settings", "apps/monitor", "apps/demo",
 ]
 
 [workspace.dependencies]
