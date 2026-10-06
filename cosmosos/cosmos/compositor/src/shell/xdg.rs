@@ -84,6 +84,20 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
                 if let Some(meta) = self.cosmos.windows.remove(&id) {
                     self.cosmos.ids.remove(&meta.surface_key);
                 }
+                // Prune dead candidates from an open Snap Assist; close
+                // it when nothing is left to offer.
+                if let Some(a) = &mut self.cosmos.assist {
+                    a.candidates.retain(|c| *c != id);
+                }
+                if self
+                    .cosmos
+                    .assist
+                    .as_ref()
+                    .map(|a| a.candidates.is_empty())
+                    .unwrap_or(false)
+                {
+                    self.close_snap_assist();
+                }
             }
             self.space.unmap_elem(&window);
             for list in self.cosmos.parked.values_mut() {

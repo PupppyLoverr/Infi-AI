@@ -2,6 +2,7 @@
 //! notification popups. Runs as a wlr-layer-shell Wayland client and talks
 //! to cosmos-compositor over cosmos-ipc.
 
+mod assist;
 mod desktop;
 mod dock;
 mod draw;
@@ -106,6 +107,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         launcher_surface: None,
         notify_surface: None,
         quick_surface: None,
+        assist_surface: None,
         notify_conn: None,
         panel_size: (0, PANEL_HEIGHT),
         dock_size: (0, dock::SURFACE_H),
@@ -113,6 +115,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         switcher_order: Vec::new(),
         switcher_sel: 0,
         launcher_size: (0, 0),
+        assist_size: (0, 0),
+        assist_ids: Vec::new(),
+        assist_fill_left: false,
+        assist_sel: 0,
+        assist_hover: None,
+        assist_open: false,
+        assist_dirty: false,
         notify_size: (0, 0),
         quick_size: (0, 0),
         windows: Vec::new(),
@@ -226,6 +235,8 @@ pub struct ShellState {
     pub launcher_surface: Option<LayerSurface>,
     pub notify_surface: Option<LayerSurface>,
     pub quick_surface: Option<LayerSurface>,
+    /// Snap Assist picker (Win11) — fullscreen overlay on the free half.
+    pub assist_surface: Option<LayerSurface>,
     pub notify_conn: Option<zbus::blocking::Connection>,
     pub panel_size: (u32, u32),
     pub dock_size: (u32, u32),
@@ -234,6 +245,16 @@ pub struct ShellState {
     pub switcher_order: Vec<u64>,
     pub switcher_sel: u64,
     pub launcher_size: (u32, u32),
+    /// Snap Assist state — the free-half picker after a Left/Right snap.
+    pub assist_size: (u32, u32),
+    /// Candidate window ids the picker offers (compositor order).
+    pub assist_ids: Vec<u64>,
+    /// True when the picker occupies the LEFT half (snap went right).
+    pub assist_fill_left: bool,
+    pub assist_sel: usize,
+    pub assist_hover: Option<usize>,
+    pub assist_open: bool,
+    pub assist_dirty: bool,
     pub notify_size: (u32, u32),
     pub quick_size: (u32, u32),
 
@@ -502,6 +523,74 @@ impl ShellState {
         }
     }
 
+    /// Snap Assist picker on the free half. `fill_left` = the picker
+    /// occupies the left half (the snap went right).
+    pub fn set_assist(&mut self, open: bool, fill_left: bool, ids: Vec<u64>) {
+        if !open {
+            self.assist_open = false;
+            self.assist_surface = None;
+            self.assist_ids.clear();
+            return;
+        }
+        self.assist_fill_left = fill_left;
+        self.assist_ids = ids;
+        self.assist_sel = 0;
+        self.assist_hover = None;
+        if self.assist_surface.is_none() {
+            let surface = self.compositor_state.create_surface(&self.qh);
+            let layer = self.layer_shell.create_layer_surface(
+                &self.qh,
+                surface,
+                Layer::Overlay,
+                Some("cosmos-assist"),
+                None,
+            );
+            layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
+            layer.set_size(0, 0);
+            layer.set_exclusive_zone(-1);
+            layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+            layer.wl_surface().commit();
+            self.assist_surface = Some(layer);
+        }
+        self.assist_open = true;
+        self.assist_dirty = true;
+    }
+
+    /// Close the assist on the shell's own initiative (backdrop, Esc).
+    /// Mirrors `close_launcher`: the compositor still believes the
+    /// picker is open — without a Dismiss the assist state lingers and
+    /// the next snap offer would desync.
+    pub fn close_assist(&mut self) {
+        if self.assist_open {
+            self.assist_open = false;
+            self.assist_surface = None;
+            self.assist_ids.clear();
+            self.ipc.send(&cosmos_ipc::Request::SnapAssistDismiss);
+        }
+    }
+
+    /// Enter/click on a row: snap that window into the free half.
+    pub fn assist_pick_selected(&mut self) {
+        let idx = self.assist_sel.min(self.assist_ids.len().saturating_sub(1));
+        let Some(&id) = self.assist_ids.get(idx) else {
+            return;
+        };
+        self.assist_open = false;
+        self.assist_surface = None;
+        self.assist_ids.clear();
+        self.ipc.send(&cosmos_ipc::Request::SnapAssistPick { id });
+    }
+
+    pub fn assist_click(&mut self, x: f64, y: f64) {
+        match assist::hit_test(self, x, y) {
+            assist::Hit::Row(i) => {
+                self.assist_sel = i;
+                self.assist_pick_selected();
+            }
+            assist::Hit::Backdrop => self.close_assist(),
+        }
+    }
+
     /// Centered Alt/Super+Tab overlay — created on the first `Switcher`
     /// event and dropped when the compositor reports `open: false`.
     fn create_switcher(&mut self, qh: &QueueHandle<Self>) {
@@ -562,6 +651,20 @@ impl ShellState {
                 self.panel_dirty = true;
             }
             LauncherToggled { open } => self.set_launcher_open(open),
+            SnapAssist {
+                open,
+                fill,
+                candidates,
+            } => {
+                if open {
+                    // One overlay at a time — a launcher left open would
+                    // hide the picker and desync its compositor flag.
+                    self.close_launcher();
+                    self.set_assist(true, fill == "left", candidates);
+                } else {
+                    self.set_assist(false, false, Vec::new());
+                }
+            }
             Switcher {
                 open,
                 selected,
@@ -696,6 +799,10 @@ impl ShellState {
             self.switcher_dirty = false;
             switcher::draw(self);
         }
+        if self.assist_dirty && self.assist_surface.is_some() {
+            self.assist_dirty = false;
+            assist::draw(self);
+        }
     }
 }
 
@@ -769,6 +876,10 @@ impl LayerShellHandler for ShellState {
             self.quick_surface = None;
             self.quick_open = false;
         }
+        if self.assist_surface.as_ref() == Some(layer) {
+            self.assist_surface = None;
+            self.assist_open = false;
+        }
     }
 
     fn configure(
@@ -820,6 +931,10 @@ impl LayerShellHandler for ShellState {
         if self.quick_surface.as_ref() == Some(layer) {
             self.quick_size = (quick::QUICK_W, quick::desired_height(&self.sysinfo));
             self.quick_dirty = true;
+        }
+        if self.assist_surface.as_ref() == Some(layer) {
+            self.assist_size = configure.new_size;
+            self.assist_dirty = true;
         }
         // Acking configure happens via committing the surface.
         let _ = serial;
@@ -905,7 +1020,9 @@ impl KeyboardHandler for ShellState {
         _serial: u32,
         event: KeyEvent,
     ) {
-        if self.launcher_open {
+        if self.assist_open {
+            assist::key_press(self, event);
+        } else if self.launcher_open {
             launcher::key_press(self, event);
         }
     }
@@ -958,6 +1075,7 @@ impl PointerHandler for ShellState {
                 .iter()
                 .chain(self.dock_surface.iter())
                 .chain(self.launcher_surface.iter())
+                .chain(self.assist_surface.iter())
                 .chain(self.notify_surface.iter())
                 .chain(self.quick_surface.iter())
                 .find(|l| l.wl_surface() == &ev.surface)
@@ -977,6 +1095,8 @@ impl PointerHandler for ShellState {
                         popups::click(self, ev.position.1);
                     } else if self.quick_surface.as_ref() == Some(&layer) {
                         self.quick_click(ev.position.0, ev.position.1);
+                    } else if self.assist_surface.as_ref() == Some(&layer) {
+                        self.assist_click(ev.position.0, ev.position.1);
                     }
                 }
                 PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
@@ -988,6 +1108,8 @@ impl PointerHandler for ShellState {
                         self.launcher_dirty |= launcher::hover(self, ev.position.0, ev.position.1);
                     } else if self.quick_surface.as_ref() == Some(&layer) && self.vol_drag {
                         self.quick_dirty |= quick::drag(self, ev.position.0, ev.position.1);
+                    } else if self.assist_surface.as_ref() == Some(&layer) {
+                        self.assist_dirty |= assist::hover(self, ev.position.0, ev.position.1);
                     }
                 }
                 PointerEventKind::Release { .. } => {
