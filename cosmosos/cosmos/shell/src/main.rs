@@ -106,7 +106,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         quick_surface: None,
         notify_conn: None,
         panel_size: (0, PANEL_HEIGHT),
-        dock_size: (0, dock::DOCK_H),
+        dock_size: (0, dock::SURFACE_H),
         launcher_size: (0, 0),
         notify_size: (0, 0),
         quick_size: (0, 0),
@@ -289,7 +289,7 @@ impl ShellState {
             None,
         );
         layer.set_anchor(Anchor::BOTTOM);
-        layer.set_size(dock::desired_width(self), dock::DOCK_H);
+        layer.set_size(dock::desired_width(self), dock::SURFACE_H);
         layer.set_exclusive_zone(0);
         layer.set_margin(0, 0, 8, 0);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
@@ -304,7 +304,7 @@ impl ShellState {
         if let Some(layer) = &self.dock_surface {
             let want = dock::desired_width(self);
             if want != self.dock_size.0 && want > 0 {
-                layer.set_size(want, dock::DOCK_H);
+                layer.set_size(want, dock::SURFACE_H);
                 layer.wl_surface().commit();
             } else {
                 self.dock_dirty = true;
@@ -661,7 +661,7 @@ impl LayerShellHandler for ShellState {
         if self.dock_surface.as_ref() == Some(layer) {
             self.dock_size = (
                 configure.new_size.0.max(dock::desired_width(self)),
-                dock::DOCK_H,
+                dock::SURFACE_H,
             );
             self.dock_dirty = true;
         }
@@ -853,6 +853,14 @@ impl PointerHandler for ShellState {
                 PointerEventKind::Release { .. } => {
                     if self.quick_surface.as_ref() == Some(&layer) {
                         quick::release(self);
+                    }
+                }
+                PointerEventKind::Leave { .. } => {
+                    if self.dock_surface.as_ref() == Some(&layer) {
+                        self.dock_dirty |= dock::leave(self);
+                    } else if self.panel.as_ref() == Some(&layer) {
+                        self.panel_hover = (0.0, false);
+                        self.panel_dirty = true;
                     }
                 }
                 _ => {}
