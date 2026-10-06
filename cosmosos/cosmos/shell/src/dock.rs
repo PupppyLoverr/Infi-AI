@@ -332,6 +332,8 @@ pub fn click(state: &mut ShellState, x: f64) -> bool {
         let app = app.clone();
         if let Err(err) = crate::desktop::launch(&app) {
             tracing::warn!("dock launch {} failed: {err}", app.id);
+        } else {
+            state.record_launch(&app.id);
         }
         return true;
     }

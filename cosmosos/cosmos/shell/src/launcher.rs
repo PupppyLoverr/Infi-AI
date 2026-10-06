@@ -25,12 +25,17 @@ const CELL_ICON: f32 = 30.0;
 /// Gap between overlay top edge and the launcher box.
 const TOP_PAD_FRAC: f64 = 0.16;
 
+/// Recently launched apps shown under the pinned grid, newest first.
+const MAX_REC: usize = 3;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Hit {
     /// Row item in the results/apps list.
     Item(usize),
     /// Icon cell in the pinned grid.
     Cell(usize),
+    /// Row in the RECOMMENDED block (index into `recommended`).
+    Recent(usize),
     /// Footer action: 0 = Settings, 1 = Log out.
     Action(u8),
     Input,
@@ -44,6 +49,58 @@ pub fn pinned(state: &ShellState) -> Vec<AppEntry> {
         .iter()
         .filter_map(|id| state.apps.iter().find(|a| a.id == *id).cloned())
         .collect()
+}
+
+/// Win11's "Recommended": the last few apps the user actually launched,
+/// resolved to entries (skipped when the desktop file vanished).
+pub fn recommended(state: &ShellState) -> Vec<AppEntry> {
+    state
+        .recent
+        .iter()
+        .filter_map(|id| state.apps.iter().find(|a| &a.id == id).cloned())
+        .take(MAX_REC)
+        .collect()
+}
+
+/// Persisted MRU — real launch history, survives restarts.
+fn recent_file() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(|h| std::path::PathBuf::from(h).join(".local/share"))
+        })?;
+    Some(base.join("cosmos-shell/recent.txt"))
+}
+
+/// Load the launch MRU (one desktop id per line, newest first).
+pub fn load_recent() -> Vec<String> {
+    let Some(path) = recent_file() else {
+        return Vec::new();
+    };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let id = line.trim();
+        if !id.is_empty() && !out.iter().any(|x| x == id) {
+            out.push(id.to_string());
+        }
+    }
+    out.truncate(8);
+    out
+}
+
+/// Write the launch MRU back to disk.
+pub fn save_recent(recent: &[String]) {
+    let Some(path) = recent_file() else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, recent.join("\n") + "\n");
 }
 
 fn box_top(h: u32) -> f64 {
@@ -62,28 +119,54 @@ fn grid_rows(n_pinned: usize) -> usize {
     }
 }
 
+/// Height of the RECOMMENDED block (header + rows), 0 when hidden.
+fn rec_height(n_rec: usize, searching: bool) -> f64 {
+    if searching || n_rec == 0 {
+        0.0
+    } else {
+        SEC_H + n_rec as f64 * ROW_H
+    }
+}
+
 /// Content height of the card.
-fn box_height(n_items: usize, n_pinned: usize, searching: bool) -> f64 {
+fn box_height(n_items: usize, n_pinned: usize, n_rec: usize, searching: bool) -> f64 {
     let mut h = INPUT_H;
     if searching || n_pinned == 0 {
         h += SEC_H + n_items.min(MAX_ROWS) as f64 * ROW_H;
     } else {
         h += SEC_H + grid_rows(n_pinned) as f64 * CELL_H;
+        h += rec_height(n_rec, searching);
         h += SEC_H + n_items.min(MAX_ROWS) as f64 * ROW_H;
     }
     h + FOOTER_H
 }
 
-fn footer_top(h: u32, n_items: usize, n_pinned: usize, searching: bool) -> f64 {
-    box_top(h) + box_height(n_items, n_pinned, searching) - FOOTER_H
+fn footer_top(
+    h: u32,
+    n_items: usize,
+    n_pinned: usize,
+    n_rec: usize,
+    searching: bool,
+) -> f64 {
+    box_top(h) + box_height(n_items, n_pinned, n_rec, searching) - FOOTER_H
 }
 
-/// Y offset (relative to card top) where the row list starts.
-fn rows_top(n_pinned: usize, searching: bool) -> f64 {
+/// Y offset (relative to card top) where the ALL APPS row list starts.
+fn rows_top(n_pinned: usize, n_rec: usize, searching: bool) -> f64 {
     if searching || n_pinned == 0 {
         INPUT_H + SEC_H
     } else {
-        INPUT_H + SEC_H + grid_rows(n_pinned) as f64 * CELL_H + SEC_H
+        INPUT_H + SEC_H + grid_rows(n_pinned) as f64 * CELL_H
+            + rec_height(n_rec, searching) + SEC_H
+    }
+}
+
+/// Y offset where RECOMMENDED rows start (0 when hidden).
+fn rec_top(n_pinned: usize, searching: bool) -> f64 {
+    if searching {
+        0.0
+    } else {
+        INPUT_H + SEC_H + grid_rows(n_pinned) as f64 * CELL_H
     }
 }
 
@@ -93,11 +176,12 @@ pub fn hit_test(
     size: (u32, u32),
     n_items: usize,
     n_pinned: usize,
+    n_rec: usize,
     searching: bool,
 ) -> Hit {
     let left = box_left(size.0);
     let top = box_top(size.1);
-    let height = box_height(n_items, n_pinned, searching);
+    let height = box_height(n_items, n_pinned, n_rec, searching);
     if x < left || x > left + LAUNCHER_WIDTH as f64 || y < top || y > top + height {
         return Hit::Backdrop;
     }
@@ -130,7 +214,14 @@ pub fn hit_test(
             return Hit::List;
         }
     }
-    let rtop = rows_top(n_pinned, searching);
+    if !searching && n_rec > 0 {
+        let rtop = rec_top(n_pinned, searching) + SEC_H;
+        let idx = ((ry - rtop) / ROW_H) as usize;
+        if ry >= rtop && idx < n_rec {
+            return Hit::Recent(idx);
+        }
+    }
+    let rtop = rows_top(n_pinned, n_rec, searching);
     let idx = ((ry - rtop) / ROW_H) as usize;
     if ry >= rtop && idx < n_items.min(MAX_ROWS) {
         Hit::Item(idx)
@@ -173,6 +264,7 @@ pub fn draw(state: &mut ShellState) {
     };
     let apps: Vec<AppEntry> = state.filtered_apps().into_iter().cloned().collect();
     let pinned_apps = pinned(state);
+    let rec_apps = recommended(state);
     let searching = !state.launcher_query.is_empty();
     let n_items = apps.len().min(MAX_ROWS);
     let (bg, box_bg, sel_bg, sep, input_bg, fg, fg_dim) = theme(state.dark);
@@ -195,7 +287,7 @@ pub fn draw(state: &mut ShellState) {
 
     let left = box_left(w) as f32;
     let top = box_top(h) as f32;
-    let height = box_height(apps.len(), pinned_apps.len(), searching) as f32;
+    let height = box_height(apps.len(), pinned_apps.len(), rec_apps.len(), searching) as f32;
     draw::fill_round_rect(
         &mut pixmap,
         left,
@@ -301,8 +393,45 @@ pub fn draw(state: &mut ShellState) {
         }
     }
 
+    // RECOMMENDED rows (Win11 Start) between the grid and ALL APPS.
+    if !searching && !rec_apps.is_empty() {
+        let rtop = rec_top(pinned_apps.len(), searching) as f32;
+        section(&mut pixmap, left + 16.0, top + rtop, "RECOMMENDED", fg_dim);
+        for (idx, app) in rec_apps.iter().enumerate() {
+            let ry = top + rtop + SEC_H as f32 + idx as f32 * ROW_H as f32;
+            icons::icon(
+                &mut pixmap,
+                &icons::key_for(&app.id),
+                left + 16.0,
+                ry + (ROW_H as f32 - 18.0) / 2.0,
+                18.0,
+                glyph,
+            );
+            draw::text(
+                &mut pixmap,
+                left + 44.0,
+                ry + (ROW_H as f32 - 18.0) / 2.0,
+                LAUNCHER_WIDTH as f32 * 0.62,
+                18.0,
+                13.0,
+                &app.name,
+                fg,
+            );
+            draw::text(
+                &mut pixmap,
+                left + LAUNCHER_WIDTH as f32 - 14.0 - 60.0,
+                ry + (ROW_H as f32 - 14.0) / 2.0,
+                60.0,
+                14.0,
+                11.0,
+                "Recent",
+                fg_dim,
+            );
+        }
+    }
+
     // Rows — all filtered apps below the grid (or the results when searching).
-    let rtop = rows_top(pinned_apps.len(), searching) as f32;
+    let rtop = rows_top(pinned_apps.len(), rec_apps.len(), searching) as f32;
     if !searching && n_items > 0 {
         section(
             &mut pixmap,
@@ -375,7 +504,7 @@ pub fn draw(state: &mut ShellState) {
     }
 
     // Footer (Start-style): separator + Settings / Log out buttons.
-    let fy = footer_top(h, apps.len(), pinned_apps.len(), searching) as f32;
+    let fy = footer_top(h, apps.len(), pinned_apps.len(), rec_apps.len(), searching) as f32;
     draw::fill_rect(
         &mut pixmap,
         left + 1.0,
@@ -457,7 +586,8 @@ pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {
     let n = state.filtered_apps().len();
     let np = pinned(state).len();
     let searching = !state.launcher_query.is_empty();
-    if let Hit::Item(idx) = hit_test(x, y, state.launcher_size, n, np, searching) {
+    let nr = recommended(state).len();
+    if let Hit::Item(idx) = hit_test(x, y, state.launcher_size, n, np, nr, searching) {
         if state.launcher_sel != idx {
             state.launcher_sel = idx;
             return true;
