@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=System Monitor
+Comment=CosmosOS System Monitor
+Exec=cosmos-monitor
+Icon=cosmos-monitor
+Terminal=false
+Categories=Utility;

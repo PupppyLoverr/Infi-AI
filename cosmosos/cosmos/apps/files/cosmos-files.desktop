@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Files
+Comment=CosmosOS Files
+Exec=cosmos-files
+Icon=cosmos-files
+Terminal=false
+Categories=Utility;

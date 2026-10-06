@@ -4,9 +4,12 @@ members = [
     "compositor",
     "ipc",
     "shell",
-    # Added as they are implemented:
-    #   "uitk", "apps/terminal", "apps/files", "apps/editor",
-    #   "apps/settings", "apps/monitor", "apps/demo",
+    "uitk",
+    "apps/terminal",
+    "apps/files",
+    "apps/editor",
+    "apps/settings",
+    "apps/monitor",
 ]
 
 [workspace.dependencies]

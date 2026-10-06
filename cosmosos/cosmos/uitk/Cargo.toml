@@ -1,7 +1,16 @@
 [package]
 name = "cosmos-uitk"
+description = "Cosmos UI toolkit: Wayland toplevel window + egui rasterization for CosmosOS apps"
 edition = "2021"
 license = "MIT"
 version = "0.1.0"
 
 [dependencies]
+smithay-client-toolkit = "0.21"
+wayland-client = "0.31"
+calloop = { version = "0.14", features = ["executor"] }
+calloop-wayland-source = "0.4"
+egui = { workspace = true }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = { workspace = true }

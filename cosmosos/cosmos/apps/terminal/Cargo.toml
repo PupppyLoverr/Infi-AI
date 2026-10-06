@@ -1,7 +1,18 @@
 [package]
 name = "cosmos-terminal"
+description = "CosmosOS terminal emulator"
 edition = "2021"
 license = "MIT"
 version = "0.1.0"
 
 [dependencies]
+cosmos-uitk = { path = "../../uitk" }
+egui = { workspace = true }
+portable-pty = "0.9"
+vt100 = "0.16"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[bin]]
+name = "cosmos-terminal"
+path = "src/main.rs"

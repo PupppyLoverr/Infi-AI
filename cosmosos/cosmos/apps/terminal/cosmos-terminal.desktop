@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Terminal
+Comment=CosmosOS Terminal
+Exec=cosmos-terminal
+Icon=cosmos-terminal
+Terminal=false
+Categories=Utility;

@@ -1,7 +1,16 @@
 [package]
 name = "cosmos-editor"
+description = "CosmosOS text editor"
 edition = "2021"
 license = "MIT"
 version = "0.1.0"
 
 [dependencies]
+cosmos-uitk = { path = "../../uitk" }
+egui = { workspace = true }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[bin]]
+name = "cosmos-editor"
+path = "src/main.rs"

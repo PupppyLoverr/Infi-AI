@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Editor
+Comment=CosmosOS Editor
+Exec=cosmos-editor
+Icon=cosmos-editor
+Terminal=false
+Categories=Utility;

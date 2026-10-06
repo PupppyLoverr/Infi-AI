@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Settings
+Comment=CosmosOS Settings
+Exec=cosmos-settings
+Icon=cosmos-settings
+Terminal=false
+Categories=Utility;

@@ -1,7 +1,19 @@
 [package]
 name = "cosmos-settings"
+description = "CosmosOS settings"
 edition = "2021"
 license = "MIT"
 version = "0.1.0"
 
 [dependencies]
+cosmos-uitk = { path = "../../uitk" }
+cosmos-ipc = { path = "../../ipc" }
+egui = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[bin]]
+name = "cosmos-settings"
+path = "src/main.rs"
