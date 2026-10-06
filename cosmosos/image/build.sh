@@ -42,7 +42,7 @@ done
 
 echo "== staging overlay =="
 rm -rf "$OVERLAY"
-mkdir -p "$OVERLAY"/{usr/local/bin,usr/share/applications,etc/profile.d,etc/systemd/network,etc/systemd/system/getty@tty1.service.d}
+mkdir -p "$OVERLAY"/{usr/local/bin,usr/share/applications,etc/profile.d,etc/systemd/network,etc/systemd/system/getty@tty1.service.d,etc/polkit-1/rules.d}
 
 install -m755 "$BINDIR"/cosmos-{compositor,shell,files,terminal,editor,settings,monitor} \
   "$OVERLAY/usr/local/bin/"
@@ -169,6 +169,19 @@ EOF
 
 echo "cosmosos" > "$OVERLAY/etc/hostname"
 
+# netdev group may call every org.freedesktop.NetworkManager.* action: the
+# autologin session isn't always 'active' to polkit, and the stock Debian rule
+# only grants settings.modify.system to netdev/sudo. The quick-settings NM
+# toggle (nm networking off) needs network-control.
+cat > "$OVERLAY/etc/polkit-1/rules.d/60-cosmos-nm.rules" <<'EOF'
+polkit.addRule(function(action, subject) {
+    if (action.id.indexOf("org.freedesktop.NetworkManager.") === 0 &&
+        subject.isInGroup("netdev")) {
+        return polkit.Result.YES;
+    }
+});
+EOF
+
 # --- 3. mmdebstrap the rootfs -------------------------------------------------
 # split-package reality check (trixie): networkd lives in `systemd`,
 # resolved is `systemd-resolved`. No X11, no desktop environment.
@@ -176,7 +189,7 @@ echo "cosmosos" > "$OVERLAY/etc/hostname"
 
 PACKAGES="systemd-sysv udev dbus libpam-systemd kmod \
 linux-image-amd64 initramfs-tools systemd-resolved \
-network-manager pipewire pipewire-alsa wireplumber upower \
+network-manager polkitd pipewire pipewire-alsa wireplumber upower \
 libudev1 libxkbcommon0 libwayland-server0 libwayland-client0 \
 libwayland-egl1 libwayland-cursor0 libdrm2 libgbm1 libegl1 libgles2 \
 libgl1-mesa-dri libinput10 libseat1 libdisplay-info2 libpixman-1-0 \
@@ -189,10 +202,10 @@ fonts-dejavu-core fontconfig xdg-utils kbd procps mesa-utils socat login"
 cat > "$WORK/setup.sh" <<'EOF'
 #!/bin/sh
 set -e
-for g in video input render tty; do
+for g in video input render tty netdev; do
   getent group "$g" >/dev/null 2>&1 || groupadd -r "$g"
 done
-useradd -m -s /bin/bash -G video,input,render,tty cosmos
+useradd -m -s /bin/bash -G video,input,render,tty,netdev cosmos
 systemctl enable systemd-networkd.service systemd-resolved.service || true
 ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 rm -f /tmp/setup.sh
