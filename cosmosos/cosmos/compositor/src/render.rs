@@ -3,11 +3,12 @@ use smithay::{
         damage::{Error as OutputDamageTrackerError, OutputDamageTracker, RenderOutputResult},
         element::{
             surface::WaylandSurfaceRenderElement,
+            texture::{TextureBuffer, TextureRenderElement},
             utils::{
                 ConstrainAlign, ConstrainScaleBehavior, CropRenderElement, RelocateRenderElement,
                 RescaleRenderElement,
             },
-            AsRenderElements, RenderElement, Wrap,
+            AsRenderElements, Kind, RenderElement, Wrap,
         },
         Color32F, ImportAll, ImportMem, Renderer,
     },
@@ -15,7 +16,7 @@ use smithay::{
         constrain_space_element, ConstrainBehavior, ConstrainReference, Space, SpaceRenderElements,
     },
     output::Output,
-    utils::{Point, Rectangle, Size},
+    utils::{Point, Rectangle, Size, Transform},
 };
 
 #[cfg(feature = "debug")]
@@ -56,6 +57,7 @@ smithay::backend::renderer::element::render_elements! {
     Window=Wrap<E>,
     Custom=CustomRenderElements<R>,
     Preview=CropRenderElement<RelocateRenderElement<RescaleRenderElement<WindowRenderElement<R>>>>,
+    Background=TextureRenderElement<R::TextureId>,
 }
 
 impl<R: Renderer + ImportAll + ImportMem, E: RenderElement<R> + std::fmt::Debug> std::fmt::Debug
@@ -67,6 +69,7 @@ impl<R: Renderer + ImportAll + ImportMem, E: RenderElement<R> + std::fmt::Debug>
             Self::Window(arg0) => f.debug_tuple("Window").field(arg0).finish(),
             Self::Custom(arg0) => f.debug_tuple("Custom").field(arg0).finish(),
             Self::Preview(arg0) => f.debug_tuple("Preview").field(arg0).finish(),
+            Self::Background(arg0) => f.debug_tuple("Background").field(arg0).finish(),
             Self::_GenericCatcher(arg0) => f.debug_tuple("_GenericCatcher").field(arg0).finish(),
         }
     }
@@ -189,8 +192,63 @@ where
         .expect("output without mode?");
         output_render_elements.extend(space_elements.into_iter().map(OutputRenderElements::Space));
 
+        // Elements render back-to-front: last pushed = bottom-most. The desktop
+        // gradient sits under every window/layer surface.
+        output_render_elements.extend(background_element(renderer, output));
+
         (output_render_elements, clear_color())
     }
+}
+
+/// Subtle vertical monochrome gradient as the desktop background — a 1x256
+/// texture stretched to the output. Rebuilt each frame (1 KiB) so theme
+/// changes apply instantly.
+fn background_element<R>(
+    renderer: &mut R,
+    output: &Output,
+) -> Option<OutputRenderElements<R, WindowRenderElement<R>>>
+where
+    R: Renderer + ImportAll + ImportMem,
+    R::TextureId: Clone + 'static,
+{
+    let scale = output.current_scale().fractional_scale();
+    // Element geometry is in physical pixels: the transformed mode size.
+    let size = output
+        .current_mode()
+        .map(|m| output.current_transform().transform_size(m.size))?;
+    let theme = crate::shell::ssd::current_theme();
+    let c = theme.background;
+    // Bottom rows drift ~2% lighter (dark) / darker (light) — barely visible,
+    // keeps the desktop from reading as a dead flat fill.
+    let lift = if theme.dark { 0.022 } else { -0.018 };
+    let mut pixels = Vec::with_capacity(256 * 4);
+    for i in 0..256u32 {
+        let k = i as f32 / 255.0;
+        let f = |v: f32| ((v + lift * k) * 255.0).clamp(0.0, 255.0) as u8;
+        pixels.extend_from_slice(&[f(c[0]), f(c[1]), f(c[2]), 255]);
+    }
+    let buffer = TextureBuffer::<R::TextureId>::from_memory(
+        renderer,
+        &pixels,
+        smithay::backend::allocator::Fourcc::Abgr8888,
+        (1, 256),
+        false,
+        1,
+        Transform::Normal,
+        None,
+    )
+    .ok()?;
+    let loc = output.current_location().to_f64().to_physical(scale);
+    Some(OutputRenderElements::Background(
+        TextureRenderElement::from_texture_buffer(
+            loc,
+            &buffer,
+            None,
+            None,
+            Some(size.to_f64().to_logical(scale).to_i32_round()),
+            Kind::Unspecified,
+        ),
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
