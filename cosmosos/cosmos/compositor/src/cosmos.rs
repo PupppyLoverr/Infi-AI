@@ -608,6 +608,11 @@ impl<BackendData: Backend> AnvilState<BackendData> {
     /// Which edge-snap zone the pointer sits in while dragging a window:
     /// 12px bands along the work area's edges — Win11 idiom: left/right
     /// = half-tile, top = maximize. `None` outside the zone edges.
+    ///
+    /// The bands follow the pointer wherever it travels, including over
+    /// the exclusive menubar — a titlebar drag to the screen's top-left
+    /// corner otherwise spends its whole approach in `y < work_area.y`,
+    /// and the old `loc.y < ay` early-return made the zones unreachable.
     pub fn edge_snap_zone(
         &self,
         loc: Point<f64, Logical>,
@@ -615,15 +620,11 @@ impl<BackendData: Backend> AnvilState<BackendData> {
     ) -> Option<SnapState> {
         let area = self.work_area(Some(window));
         const EDGE: f64 = 12.0;
-        let (ax, ay, aw, ah) = (
+        let (ax, ay, aw) = (
             area.loc.x as f64,
             area.loc.y as f64,
             area.size.w as f64,
-            area.size.h as f64,
         );
-        if loc.y < ay || loc.y > ay + ah {
-            return None;
-        }
         if loc.x <= ax + EDGE {
             return Some(SnapState::Left);
         }
