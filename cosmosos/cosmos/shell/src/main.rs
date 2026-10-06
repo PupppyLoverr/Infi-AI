@@ -421,6 +421,18 @@ impl ShellState {
         launcher::save_recent(&self.recent);
     }
 
+    /// Close the launcher on the shell's own initiative (backdrop click,
+    /// item launch, footer action). The compositor still believes the
+    /// launcher is open after a local close — `launcher_open` only flips
+    /// on `ToggleLauncher` — so notify it, or the NEXT toggle request
+    /// (dock glyph, Super) is silently eaten and the launcher looks stuck.
+    fn close_launcher(&mut self) {
+        if self.launcher_open {
+            self.set_launcher_open(false);
+            self.ipc.send(&cosmos_ipc::Request::ToggleLauncher);
+        }
+    }
+
     /// Pointer click inside the launcher surface.
     pub fn launcher_click(&mut self, x: f64, y: f64) {
         let hit = launcher::hit_test(
@@ -444,7 +456,7 @@ impl ShellState {
                         tracing::warn!("launch {} failed: {err}", app.id);
                     } else {
                         self.record_launch(&app.id);
-                        self.set_launcher_open(false);
+                        self.close_launcher();
                     }
                 }
             }
@@ -455,23 +467,23 @@ impl ShellState {
                         tracing::warn!("launch {} failed: {err}", app.id);
                     } else {
                         self.record_launch(&app.id);
-                        self.set_launcher_open(false);
+                        self.close_launcher();
                     }
                 }
             }
             launcher::Hit::Action(0) => {
                 let _ = std::process::Command::new("cosmos-settings").spawn();
                 self.record_launch("cosmos-settings");
-                self.set_launcher_open(false);
+                self.close_launcher();
             }
             launcher::Hit::Action(1) => {
                 if let Some(app) = self.apps.iter().find(|a| a.id == "sys.logout").cloned() {
                     let _ = desktop::launch(&app);
                 }
-                self.set_launcher_open(false);
+                self.close_launcher();
             }
             launcher::Hit::Action(_) | launcher::Hit::Input | launcher::Hit::List => {}
-            launcher::Hit::Backdrop => self.set_launcher_open(false),
+            launcher::Hit::Backdrop => self.close_launcher(),
         }
     }
 
@@ -486,7 +498,7 @@ impl ShellState {
             tracing::warn!("launch {} failed: {err}", app.id);
         } else {
             self.record_launch(&app.id);
-            self.set_launcher_open(false);
+            self.close_launcher();
         }
     }
 
