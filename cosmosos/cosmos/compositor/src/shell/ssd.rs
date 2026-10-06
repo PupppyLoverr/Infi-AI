@@ -147,17 +147,23 @@ impl HeaderBar {
         }
     }
 
-    pub fn clicked<BackendData: Backend>(
-        &mut self,
+    /// Which titlebar button the pointer is over, if any. Read under a
+    /// short borrow before [`Self::dispatch_click`] — never hold a
+    /// `WindowState` borrow across the dispatch, since the maximize path
+    /// re-reads it (`RefCell already borrowed` panic).
+    pub fn zone_at_pointer(&self) -> Option<u8> {
+        self.pointer_loc
+            .and_then(|l| button_zone(l.x, self.width as f64))
+    }
+
+    pub fn dispatch_click<BackendData: Backend>(
+        zone: Option<u8>,
         seat: &Seat<AnvilState<BackendData>>,
         state: &mut AnvilState<BackendData>,
         window: &WindowElement,
         serial: Serial,
     ) {
-        let Some(zone) = self
-            .pointer_loc
-            .and_then(|l| button_zone(l.x, self.width as f64))
-        else {
+        let Some(zone) = zone else {
             // Non-button area: drag-move the window.
             match window.0.underlying_surface() {
                 WindowSurface::Wayland(w) => {
@@ -252,17 +258,14 @@ impl HeaderBar {
         }
     }
 
-    pub fn touch_up<BackendData: Backend>(
-        &mut self,
-        _seat: &Seat<AnvilState<BackendData>>,
+    /// Touch-release variant of [`Self::dispatch_click`]: buttons act on
+    /// release, taps outside buttons do nothing (touch-down starts a move).
+    pub fn dispatch_touch_up<BackendData: Backend>(
+        zone: Option<u8>,
         state: &mut AnvilState<BackendData>,
         window: &WindowElement,
-        _serial: Serial,
     ) {
-        let Some(zone) = self
-            .pointer_loc
-            .and_then(|l| button_zone(l.x, self.width as f64))
-        else {
+        let Some(zone) = zone else {
             return;
         };
         match zone {

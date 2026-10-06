@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::HashMap, HashSet},
+    collections::hash_map::HashMap,
     io,
     ops::Not,
     path::Path,
@@ -138,9 +138,6 @@ pub struct UdevData {
     primary_gpu: DrmNode,
     gpus: GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>,
     backends: HashMap<DrmNode, BackendData>,
-    /// Render nodes backed by software GL (llvmpipe). Their damage
-    /// tracking is unreliable in practice — we force full redraws.
-    software_render_nodes: HashSet<DrmNode>,
     pointer_images: Vec<(xcursor::parser::Image, MemoryRenderBuffer)>,
     pointer_element: PointerElement,
     #[cfg(feature = "debug")]
@@ -277,7 +274,6 @@ pub fn run_udev() {
         primary_gpu,
         gpus,
         backends: HashMap::new(),
-        software_render_nodes: HashSet::new(),
         pointer_image: crate::cursor::Cursor::load(),
         pointer_images: Vec::new(),
         pointer_element: PointerElement::default(),
@@ -863,12 +859,6 @@ impl AnvilState<UdevData> {
                     node
                 },
             );
-            if egl_device.is_software() {
-                info!("gpu has no hardware render node — software rendering on {render_node:?}");
-                self.backend_data
-                    .software_render_nodes
-                    .insert(render_node);
-            }
             self.backend_data
                 .gpus
                 .as_mut()
@@ -1591,7 +1581,6 @@ impl AnvilState<UdevData> {
                 buffer
             });
 
-        let software_rendering = self.backend_data.software_render_nodes.contains(&render_node);
         let result = render_surface(
             surface,
             &mut renderer,
@@ -1603,7 +1592,6 @@ impl AnvilState<UdevData> {
             &self.dnd_icon,
             &mut self.cursor_status,
             self.show_window_preview,
-            software_rendering,
         );
         let reschedule = match result {
             Ok((has_rendered, states)) => {
@@ -1688,7 +1676,6 @@ fn render_surface<'a>(
     dnd_icon: &Option<DndIcon>,
     cursor_status: &mut CursorImageStatus,
     show_window_preview: bool,
-    software_rendering: bool,
 ) -> Result<(bool, RenderElementStates), SwapBuffersError> {
     let output_geometry = space.output_geometry(output).unwrap();
     let scale = Scale::from(output.current_scale().fractional_scale());
@@ -1773,15 +1760,15 @@ fn render_surface<'a>(
         show_window_preview,
     );
 
-    if software_rendering {
-        // Software GL (llvmpipe) occasionally loses damage bookkeeping,
-        // leaving stale bands of older frames on screen. Discarding the
-        // buffer ages makes the next frame a full redraw; at our
-        // resolutions a whole-frame repaint is cheap on this path.
-        surface
-            .drm_output
-            .with_compositor(|c| c.reset_buffer_ages());
-    }
+    // Damage tracking under-reports on the paths we ship in the image
+    // (llvmpipe over virtio-gbm has no reliable software flag —
+    // EGL_MESA_device_software stays false since the DRM node exists —
+    // and an under-damaged frame leaves stale bands of older frames on
+    // screen). Discarding buffer ages makes every frame a full redraw;
+    // at our resolutions that repaint is cheap on every GPU.
+    surface
+        .drm_output
+        .with_compositor(|c| c.reset_buffer_ages());
 
     let frame_mode = if surface.disable_direct_scanout {
         FrameFlags::empty()

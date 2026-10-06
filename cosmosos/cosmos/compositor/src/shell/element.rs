@@ -197,9 +197,14 @@ impl<BackendData: Backend> PointerTarget<AnvilState<BackendData>> for SSD {
         data: &mut AnvilState<BackendData>,
         event: &ButtonEvent,
     ) {
-        let mut state = self.0.decoration_state();
-        if state.is_ssd {
-            state.header_bar.clicked(seat, data, &self.0, event.serial);
+        let (is_ssd, zone) = {
+            let state = self.0.decoration_state();
+            (state.is_ssd, state.header_bar.zone_at_pointer())
+        };
+        if is_ssd {
+            // Dispatch only after the WindowState borrow is dropped — the
+            // maximize/move paths re-read decoration_state.
+            super::ssd::HeaderBar::dispatch_click(zone, seat, data, &self.0, event.serial);
         }
     }
     fn axis(
@@ -299,14 +304,17 @@ impl<BackendData: Backend> TouchTarget<AnvilState<BackendData>> for SSD {
 
     fn up(
         &self,
-        seat: &Seat<AnvilState<BackendData>>,
+        _seat: &Seat<AnvilState<BackendData>>,
         data: &mut AnvilState<BackendData>,
-        event: &smithay::input::touch::UpEvent,
+        _event: &smithay::input::touch::UpEvent,
         _seq: Serial,
     ) {
-        let mut state = self.0.decoration_state();
-        if state.is_ssd {
-            state.header_bar.touch_up(seat, data, &self.0, event.serial);
+        let (is_ssd, zone) = {
+            let state = self.0.decoration_state();
+            (state.is_ssd, state.header_bar.zone_at_pointer())
+        };
+        if is_ssd {
+            super::ssd::HeaderBar::dispatch_touch_up(zone, data, &self.0);
         }
     }
 

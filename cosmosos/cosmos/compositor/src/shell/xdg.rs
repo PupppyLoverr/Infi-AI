@@ -49,6 +49,11 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
         // of a xdg_surface has to be sent during the commit if
         // the surface is not already configured
         let window = WindowElement(Window::new_wayland_window(surface.clone()));
+        // Default to server-side chrome at map time — clients that never
+        // bind zxdg_toplevel_decoration_v1 would otherwise stay chromeless
+        // forever (the decoration handler still downgrades to CSD when a
+        // client explicitly asks for it).
+        window.set_ssd(true);
         place_new_window(
             &mut self.space,
             self.pointer.current_location(),
