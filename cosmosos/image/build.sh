@@ -130,7 +130,7 @@ libudev1 libxkbcommon0 libwayland-server0 libwayland-client0 \
 libwayland-egl1 libwayland-cursor0 libdrm2 libgbm1 libegl1 libgles2 \
 libgl1-mesa-dri libinput10 libseat1 libdisplay-info2 libpixman-1-0 \
 libgudev-1.0-0 libdbus-1-3 \
-fonts-dejavu-core xdg-utils kbd procps mesa-utils login"
+fonts-dejavu-core fontconfig xdg-utils kbd procps mesa-utils login"
 
 # in-chroot setup. NOTE: mmdebstrap hooks run on the HOST with $1=rootfs —
 # guest commands must go through `chroot "$1"` (a bare useradd here creates
