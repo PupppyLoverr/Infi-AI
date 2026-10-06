@@ -197,6 +197,11 @@ impl<BackendData: Backend> PointerTarget<AnvilState<BackendData>> for SSD {
         data: &mut AnvilState<BackendData>,
         event: &ButtonEvent,
     ) {
+        // ButtonEvent fires for press AND release — dispatching both
+        // double-fires every disc (and both toggle maximize).
+        if !matches!(event.state, smithay::backend::input::ButtonState::Pressed) {
+            return;
+        }
         let (is_ssd, zone) = {
             let state = self.0.decoration_state();
             (state.is_ssd, state.header_bar.zone_at_pointer())
@@ -434,11 +439,22 @@ where
         let window_bbox = SpaceElement::bbox(&self.0);
         let tb = self.titlebar_height();
 
-        if tb > 0 && !window_bbox.is_empty() {
-            let window_geo = SpaceElement::geometry(&self.0);
+        // Fall back to the configured size when the window hasn't
+        // committed its first buffer yet — gating the SSD on a
+        // non-empty bbox means every new window paints chromeless
+        // until its first buffer lands.
+        let ssd_width = if !window_bbox.is_empty() {
+            SpaceElement::geometry(&self.0).size.w
+        } else {
+            self.0
+                .toplevel()
+                .and_then(|t| t.current_state().size.map(|s| s.w))
+                .unwrap_or_default()
+        };
 
+        if tb > 0 && ssd_width > 0 {
             let mut state = self.decoration_state();
-            let width = window_geo.size.w;
+            let width = ssd_width;
 
             // Cosmos chrome: repaint the titlebar only when its inputs change.
             let (title, focused) = self

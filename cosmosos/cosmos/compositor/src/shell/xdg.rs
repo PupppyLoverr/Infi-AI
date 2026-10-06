@@ -15,7 +15,7 @@ use smithay::{
             Resource,
         },
     },
-    utils::{Logical, Point, Serial, Size},
+    utils::{Logical, Point, Rectangle, Serial, Size},
     wayland::{
         compositor::{self, with_states},
         seat::WaylandFocus,
@@ -434,6 +434,21 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
             // exclusive zone), not the raw output geometry.
             let area = self.work_area(Some(&window));
 
+            // Record the floating rect + snap state so restore has
+            // somewhere to return to — otherwise unmaximize can only
+            // unset the Maximized flag while the window stays put.
+            let titlebar = window.titlebar_height();
+            let cur_loc = self.space.element_location(&window).unwrap_or_default();
+            let geo = window.geometry().size;
+            let cur_size = Size::from((geo.w, geo.h - titlebar));
+            let id = self.cosmos.window_id(&window);
+            if let Some(meta) = self.cosmos.windows.get_mut(&id) {
+                if meta.snap == crate::cosmos::SnapState::Floating {
+                    meta.restore = Some(Rectangle::new(cur_loc, cur_size));
+                }
+                meta.snap = crate::cosmos::SnapState::Maximized;
+            }
+
             // The rendered element stacks the SSD titlebar on top of
             // the surface; leave room for it or the bottom edge lands
             // outside the work area.
@@ -468,11 +483,13 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
             return;
         }
 
-        surface.with_pending_state(|state| {
-            state.states.unset(xdg_toplevel::State::Maximized);
-            state.size = None;
-        });
-        surface.send_pending_configure();
+        // Route through snap_window(Floating): unsets the tile state,
+        // re-issues the configure AND remaps the saved floating rect —
+        // unsetting Maximized alone leaves the window pinned at its
+        // maximized geometry (clients ignore size=None).
+        if let Some(window) = self.window_for_surface(surface.wl_surface()) {
+            self.snap_window(&window, crate::cosmos::SnapState::Floating);
+        }
         self.cosmos.dirty = true;
     }
 

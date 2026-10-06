@@ -16,7 +16,7 @@ use smithay::{
         constrain_space_element, ConstrainBehavior, ConstrainReference, Space, SpaceRenderElements,
     },
     output::Output,
-    utils::{Point, Rectangle, Size, Transform},
+    utils::{Logical, Point, Rectangle, Size, Transform},
 };
 
 #[cfg(feature = "debug")]
@@ -146,6 +146,7 @@ pub fn output_elements<R>(
     custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
     renderer: &mut R,
     show_window_preview: bool,
+    snap_preview: Option<Rectangle<i32, Logical>>,
 ) -> (
     Vec<OutputRenderElements<R, WindowRenderElement<R>>>,
     Color32F,
@@ -192,12 +193,60 @@ where
         .expect("output without mode?");
         output_render_elements.extend(space_elements.into_iter().map(OutputRenderElements::Space));
 
+        // Drag-to-edge drop target: under every window, above the
+        // wallpaper — the translucent zone a release would snap into.
+        if let Some(rect) = snap_preview {
+            output_render_elements.extend(snap_preview_element(renderer, output, rect));
+        }
+
         // Elements render back-to-front: last pushed = bottom-most. The desktop
         // gradient sits under every window/layer surface.
         output_render_elements.extend(background_element(renderer, output));
 
         (output_render_elements, clear_color())
     }
+}
+
+/// Translucent drop-target highlight for drag-to-edge snapping (Win11's
+/// snap-assist zone). A 1x1 tint stretched over the target rect.
+fn snap_preview_element<R>(
+    renderer: &mut R,
+    output: &Output,
+    rect: Rectangle<i32, Logical>,
+) -> Option<OutputRenderElements<R, WindowRenderElement<R>>>
+where
+    R: Renderer + ImportAll + ImportMem,
+    R::TextureId: Clone + 'static,
+{
+    let scale = output.current_scale().fractional_scale();
+    let theme = crate::shell::ssd::current_theme();
+    let px = if theme.dark {
+        [0xFF, 0xFF, 0xFF, 0x26]
+    } else {
+        [0x00, 0x00, 0x00, 0x20]
+    };
+    let buffer = TextureBuffer::<R::TextureId>::from_memory(
+        renderer,
+        &px,
+        smithay::backend::allocator::Fourcc::Abgr8888,
+        (1, 1),
+        false,
+        1,
+        Transform::Normal,
+        None,
+    )
+    .ok()?;
+    let loc = rect.loc.to_f64().to_physical(scale);
+    Some(OutputRenderElements::Background(
+        TextureRenderElement::from_texture_buffer(
+            loc,
+            &buffer,
+            None,
+            None,
+            Some(rect.size),
+            Kind::Unspecified,
+        ),
+    ))
 }
 
 /// Subtle vertical monochrome gradient as the desktop background — a 1x256
@@ -261,6 +310,7 @@ pub fn render_output<'a, 'd, R>(
     damage_tracker: &'d mut OutputDamageTracker,
     age: usize,
     show_window_preview: bool,
+    snap_preview: Option<Rectangle<i32, Logical>>,
 ) -> Result<RenderOutputResult<'d>, OutputDamageTrackerError<R::Error>>
 where
     R: Renderer + ImportAll + ImportMem,
@@ -272,6 +322,7 @@ where
         custom_elements,
         renderer,
         show_window_preview,
+        snap_preview,
     );
     damage_tracker.render_output(renderer, framebuffer, age, &elements, clear_color)
 }

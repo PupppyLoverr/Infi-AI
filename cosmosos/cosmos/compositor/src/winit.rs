@@ -316,6 +316,7 @@ pub fn run_winit() {
             } else {
                 backend.buffer_age().unwrap_or(0)
             };
+            let snap_preview = state.cosmos.snap_preview.map(|(_, rect)| rect);
             #[cfg(feature = "debug")]
             let window_handle = backend
                 .window()
@@ -378,6 +379,7 @@ pub fn run_winit() {
                     damage_tracker,
                     age,
                     show_window_preview,
+                    snap_preview,
                 )
                 .map_err(|err| match err {
                     OutputDamageTrackerError::Rendering(err) => err.into(),

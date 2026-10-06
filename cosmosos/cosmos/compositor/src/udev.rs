@@ -85,7 +85,7 @@ use smithay::{
         },
         wayland_server::{backend::GlobalId, protocol::wl_surface, Display, DisplayHandle},
     },
-    utils::{DeviceFd, IsAlive, Logical, Monotonic, Point, Scale, Time, Transform},
+    utils::{DeviceFd, IsAlive, Logical, Monotonic, Point, Rectangle, Scale, Time, Transform},
     wayland::{
         compositor,
         dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
@@ -696,7 +696,6 @@ struct SurfaceData {
         Option<OutputPresentationFeedback>,
         DrmDeviceFd,
     >,
-    disable_direct_scanout: bool,
     #[cfg(feature = "debug")]
     fps: fps_ticker::Fps,
     #[cfg(feature = "debug")]
@@ -1111,8 +1110,7 @@ impl AnvilState<UdevData> {
                 }
             };
 
-            let disable_direct_scanout = std::env::var("ANVIL_DISABLE_DIRECT_SCANOUT").is_ok();
-
+            info!("cosmos: composite pipeline active (no direct scanout, forced full redraw)");
             let dmabuf_feedback = drm_output.with_compositor(|compositor| {
                 compositor.set_debug_flags(self.backend_data.debug_flags);
 
@@ -1131,7 +1129,6 @@ impl AnvilState<UdevData> {
                 render_node: device.render_node,
                 global: Some(global),
                 drm_output,
-                disable_direct_scanout,
                 #[cfg(feature = "debug")]
                 fps: fps_ticker::Fps::default(),
                 #[cfg(feature = "debug")]
@@ -1592,6 +1589,7 @@ impl AnvilState<UdevData> {
             &self.dnd_icon,
             &mut self.cursor_status,
             self.show_window_preview,
+            self.cosmos.snap_preview.map(|(_, rect)| rect),
         );
         let reschedule = match result {
             Ok((has_rendered, states)) => {
@@ -1676,6 +1674,7 @@ fn render_surface<'a>(
     dnd_icon: &Option<DndIcon>,
     cursor_status: &mut CursorImageStatus,
     show_window_preview: bool,
+    snap_preview: Option<Rectangle<i32, Logical>>,
 ) -> Result<(bool, RenderElementStates), SwapBuffersError> {
     let output_geometry = space.output_geometry(output).unwrap();
     let scale = Scale::from(output.current_scale().fractional_scale());
@@ -1758,6 +1757,7 @@ fn render_surface<'a>(
         custom_elements,
         renderer,
         show_window_preview,
+        snap_preview,
     );
 
     // Damage tracking under-reports on the paths we ship in the image
@@ -1770,11 +1770,12 @@ fn render_surface<'a>(
         .drm_output
         .with_compositor(|c| c.reset_buffer_ages());
 
-    let frame_mode = if surface.disable_direct_scanout {
-        FrameFlags::empty()
-    } else {
-        FrameFlags::DEFAULT
-    };
+    // llvmpipe-over-virtio-gbm (the GPU story of the shipped image) has a
+    // single usable plane anyway — direct scanout saves nothing there and
+    // any element routed around the compositor bypasses damage tracking
+    // entirely, which is exactly how stale bands survive a frame. Force
+    // the full composite path on every display.
+    let frame_mode = FrameFlags::empty();
     let (rendered, states) = surface
         .drm_output
         .render_frame(renderer, &elements, clear_color, frame_mode)
