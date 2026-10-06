@@ -337,6 +337,41 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         let state = wl_pointer::ButtonState::from(evt.state());
 
         if wl_pointer::ButtonState::Pressed == state {
+            // Snap Assist: a press outside the picker's input region closes
+            // it — Win11's click-anywhere-else contract. The assist surface
+            // clips its input region to the dimmed free half, so
+            // `surface_under` misses exactly on outside clicks (tray, dock,
+            // windows, wallpaper) — including clicks the fullscreen bbox
+            // used to swallow.
+            if self.cosmos.assist.is_some() {
+                let loc = self.pointer.current_location();
+                let inside_assist = self
+                    .space
+                    .output_under(loc)
+                    .next()
+                    .map(|output| {
+                        let output_geo = self.space.output_geometry(&output).unwrap();
+                        let map = layer_map_for_output(&output);
+                        let inside = map
+                            .layers()
+                            .find(|l| l.namespace() == "cosmos-assist")
+                            .map(|layer| {
+                                let geo = map.layer_geometry(layer).unwrap();
+                                layer
+                                    .surface_under(
+                                        loc - output_geo.loc.to_f64() - geo.loc.to_f64(),
+                                        WindowSurfaceType::ALL,
+                                    )
+                                    .is_some()
+                            })
+                            .unwrap_or(false);
+                        inside
+                    })
+                    .unwrap_or(false);
+                if !inside_assist {
+                    self.close_snap_assist();
+                }
+            }
             self.update_keyboard_focus(self.pointer.current_location(), serial);
         };
         let pointer = self.pointer.clone();
