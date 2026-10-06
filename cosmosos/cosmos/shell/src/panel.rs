@@ -247,9 +247,17 @@ pub fn draw(state: &mut ShellState) {
 /// Hit-test + dispatch a click on the panel.
 pub fn click(state: &mut ShellState, x: f64, _y: f64) -> bool {
     let (w, _) = state.panel_size;
-    // Tray region toggles the quick-settings flyout.
+    // Tray region toggles the quick-settings flyout. When the flyout was
+    // just dismissed by the focus-loss `leave` of THIS same click, the
+    // toggle must not fire — the click's job was already the dismissal.
     if state.tray_clicked(x) {
-        state.set_quick_open(!state.quick_open);
+        let just_dismissed = state
+            .quick_dismissed_at
+            .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(300));
+        state.quick_dismissed_at = None;
+        if !just_dismissed {
+            state.set_quick_open(!state.quick_open);
+        }
         return true;
     }
     if state.quick_open {
