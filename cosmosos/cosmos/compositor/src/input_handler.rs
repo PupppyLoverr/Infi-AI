@@ -390,32 +390,28 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 }
 
                 let layers = layer_map_for_output(output);
-                if let Some(layer) = layers
-                    .layer_under(WlrLayer::Overlay, location - output_geo.loc.to_f64())
-                    .or_else(|| {
-                        layers.layer_under(WlrLayer::Top, location - output_geo.loc.to_f64())
-                    })
-                {
-                    if layer.can_receive_keyboard_focus() {
-                        let geo = layers.layer_geometry(layer).unwrap();
-                        if let Some((_, _)) = layer.surface_under(
-                            location - output_geo.loc.to_f64() - geo.loc.to_f64(),
-                            WindowSurfaceType::ALL,
-                        ) {
-                            keyboard.set_focus(self, Some(layer.clone().into()), serial);
-                            return;
+                // `layer_under` matches on bounding box, not input region —
+                // a fullscreen Overlay surface (launcher/assist) would shadow
+                // the Top layer even where its input region is empty, so
+                // iterate layers in stacking order with the region-aware
+                // `surface_under` probe instead.
+                let focus_layer = [WlrLayer::Overlay, WlrLayer::Top]
+                    .iter()
+                    .flat_map(|wl| layers.layers_on(*wl).rev())
+                    .find(|layer| {
+                        layer.can_receive_keyboard_focus() && {
+                            let geo = layers.layer_geometry(layer).unwrap();
+                            layer
+                                .surface_under(
+                                    location - output_geo.loc.to_f64() - geo.loc.to_f64(),
+                                    WindowSurfaceType::ALL,
+                                )
+                                .is_some()
                         }
-                        tracing::info!(
-                            ?location,
-                            ?geo,
-                            "cosmos: layer under pointer but surface_under missed"
-                        );
-                    } else {
-                        tracing::info!(
-                            ?location,
-                            "cosmos: layer under pointer cannot take keyboard focus"
-                        );
-                    }
+                    });
+                if let Some(layer) = focus_layer {
+                    keyboard.set_focus(self, Some(layer.clone().into()), serial);
+                    return;
                 }
             }
 
@@ -503,10 +499,10 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             .and_then(|w| w.surface_under(pos - output_geo.loc.to_f64(), WindowSurfaceType::ALL))
         {
             under = Some((surface, loc + output_geo.loc));
-        } else if let Some(focus) = layers
-            .layer_under(WlrLayer::Overlay, pos - output_geo.loc.to_f64())
-            .or_else(|| layers.layer_under(WlrLayer::Top, pos - output_geo.loc.to_f64()))
-            .and_then(|layer| {
+        } else if let Some(focus) = [WlrLayer::Overlay, WlrLayer::Top]
+            .iter()
+            .flat_map(|wl| layers.layers_on(*wl).rev())
+            .find_map(|layer| {
                 let layer_loc = layers.layer_geometry(layer).unwrap().loc;
                 layer
                     .surface_under(
@@ -528,10 +524,10 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 .map(|(surface, surf_loc)| (surface, surf_loc + loc))
         }) {
             under = Some(focus);
-        } else if let Some(focus) = layers
-            .layer_under(WlrLayer::Bottom, pos - output_geo.loc.to_f64())
-            .or_else(|| layers.layer_under(WlrLayer::Background, pos - output_geo.loc.to_f64()))
-            .and_then(|layer| {
+        } else if let Some(focus) = [WlrLayer::Bottom, WlrLayer::Background]
+            .iter()
+            .flat_map(|wl| layers.layers_on(*wl).rev())
+            .find_map(|layer| {
                 let layer_loc = layers.layer_geometry(layer).unwrap().loc;
                 layer
                     .surface_under(
