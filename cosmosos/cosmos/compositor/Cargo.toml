@@ -1,0 +1,58 @@
+[package]
+name = "cosmos-compositor"
+description = "CosmosOS Wayland compositor (Smithay-based)"
+edition = "2021"
+license = "MIT"
+version = "0.1.0"
+
+[dependencies]
+bitflags = "2.2.1"
+rand = "0.8"
+tracing = { version = "0.1.37", features = ["max_level_trace", "release_max_level_debug"] }
+tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
+thiserror = "1"
+xcursor = "0.3.3"
+xkbcommon = "0.8.0"
+profiling = { version = "1.0" }
+fps_ticker = "1.0.0"
+image = { version = "0.25.1", default-features = false, features = ["png"] }
+renderdoc = { version = "0.11.0" }
+smithay-drm-extras = { version = "0.1", features = ["edid"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+cosmos-ipc = { path = "../ipc" }
+
+[dependencies.smithay]
+default-features = false
+features = ["desktop", "wayland_frontend"]
+version = "0.7.0"
+
+[build-dependencies]
+gl_generator = "0.14"
+
+[features]
+default = ["egl", "winit", "udev"]
+egl = ["smithay/use_system_lib", "smithay/backend_egl"]
+udev = [
+  "smithay-drm-extras",
+  "smithay/backend_libinput",
+  "smithay/backend_udev",
+  "smithay/backend_drm",
+  "smithay/backend_gbm",
+  "smithay/backend_vulkan",
+  "smithay/backend_egl",
+  "smithay/backend_session_libseat",
+  "smithay/renderer_gl",
+  "smithay/renderer_pixman",
+  "smithay/renderer_multi",
+]
+winit = ["smithay/backend_winit", "smithay/backend_drm"]
+renderer_sync = []
+
+[[bin]]
+name = "cosmos-compositor"
+path = "src/main.rs"
+
+[lib]
+name = "cosmos_compositor"
+path = "src/lib.rs"

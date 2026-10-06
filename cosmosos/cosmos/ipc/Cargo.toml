@@ -1,0 +1,10 @@
+[package]
+name = "cosmos-ipc"
+description = "CosmosOS IPC protocol shared by compositor, shell and apps"
+edition = "2021"
+license = "MIT"
+version = "0.1.0"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
