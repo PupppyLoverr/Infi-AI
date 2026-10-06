@@ -64,7 +64,11 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
 
         // Register with the Cosmos window registry + tell IPC subscribers.
         let id = self.cosmos.window_id(&window);
-        tracing::info!(id, "cosmos: new window");
+        let loc = self
+            .space
+            .element_location(&window)
+            .unwrap_or_else(|| (i32::MIN, i32::MIN).into());
+        tracing::info!(id, loc = ?loc, bbox = ?window.bbox().size, "cosmos: new window");
         self.cosmos.dirty = true;
 
         compositor::add_post_commit_hook(surface.wl_surface(), |state: &mut Self, _, surface| {

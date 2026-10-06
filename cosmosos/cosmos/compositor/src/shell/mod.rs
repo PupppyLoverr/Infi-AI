@@ -282,7 +282,10 @@ impl<BackendData: Backend> WlrLayerShellHandler for AnvilState<BackendData> {
                 .cloned();
             layer.map(|layer| (map, layer))
         }) {
-            tracing::info!(namespace = layer.namespace(), "cosmos: layer surface destroyed");
+            tracing::info!(
+                namespace = layer.namespace(),
+                "cosmos: layer surface destroyed"
+            );
             map.unmap_layer(&layer);
         }
     }
@@ -480,6 +483,7 @@ pub fn refit_into_zone(space: &mut Space<WindowElement>, window: &WindowElement)
     };
     let new_loc = clamp_loc_to_zone(loc, size, usable_zone(space, &output));
     if new_loc != loc {
+        tracing::info!(loc = ?loc, new_loc = ?new_loc, "cosmos: initial refit relocated window");
         space.map_element(window.clone(), new_loc, false);
     }
 }

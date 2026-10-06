@@ -14,8 +14,12 @@ use smithay::{
         utils::CommitCounter,
         Color32F, ImportAll, ImportMem, Renderer,
     },
-    desktop::space::{
-        constrain_space_element, ConstrainBehavior, ConstrainReference, Space, SpaceRenderElements,
+    desktop::{
+        layer_map_for_output,
+        space::{
+            constrain_space_element, ConstrainBehavior, ConstrainReference, Space,
+            SpaceRenderElements,
+        },
     },
     output::Output,
     utils::{Logical, Point, Rectangle, Size, Transform},
@@ -179,6 +183,23 @@ where
             .collect::<Vec<_>>();
         (elements, CLEAR_COLOR_FULLSCREEN)
     } else {
+        // A layer surface whose destroy raced the unmap path keeps emitting
+        // stale frames (a dead launcher was observed painting ~95s after its
+        // `destroyed` log). Purge dead layers unconditionally before they are
+        // enumerated — a removed layer can never paint.
+        {
+            let mut map = layer_map_for_output(output);
+            let dead: Vec<_> = map
+                .layers()
+                .filter(|l| !l.layer_surface().alive())
+                .cloned()
+                .collect();
+            for layer in dead {
+                tracing::warn!("cosmos: purged dead layer surface from render map");
+                map.unmap_layer(&layer);
+            }
+        }
+
         let mut output_render_elements = custom_elements
             .into_iter()
             .map(OutputRenderElements::from)

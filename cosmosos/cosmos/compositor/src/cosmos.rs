@@ -418,6 +418,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             // stale pending Activated alongside the newly focused window.
             w.0.set_activated(false);
             self.space.unmap_elem(&w);
+            tracing::info!(id, ws, "cosmos: window parked");
             to_push.push(w);
         }
         self.cosmos.parked.entry(ws).or_default().extend(to_push);
@@ -438,6 +439,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             if let Some(meta) = self.cosmos.windows.get_mut(&id) {
                 meta.workspace = ws;
             }
+            tracing::info!(id, ws, loc = ?loc, "cosmos: window unparked");
             self.space.map_element(w, loc, false);
         }
     }
@@ -485,6 +487,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             .element_location(window)
             .unwrap_or_else(|| window.geometry().loc);
         self.space.unmap_elem(window);
+        tracing::info!(id, ws, "cosmos: window moved to workspace");
         if let Some(meta) = self.cosmos.windows.get_mut(&id) {
             meta.workspace = ws;
             meta.parked_loc = loc;
@@ -503,6 +506,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         let loc = self.space.element_location(window).unwrap_or_default();
         window.0.set_activated(false);
         self.space.unmap_elem(window);
+        tracing::info!(id, "cosmos: window minimized");
         if let Some(meta) = self.cosmos.windows.get_mut(&id) {
             meta.minimized = true;
             meta.parked_loc = loc;

@@ -525,25 +525,17 @@ where
                 // included) plus SHADOW_MARGIN on every side — step back
                 // over the titlebar advance too.
                 let shadow_origin = location
-                    - Point::from((
-                        super::ssd::SHADOW_MARGIN,
-                        super::ssd::SHADOW_MARGIN + tb,
-                    ));
-                vec.extend(
-                    AsRenderElements::<R>::render_elements::<WindowRenderElement<R>>(
-                        &state.shadow,
-                        renderer,
-                        shadow_origin,
-                        scale,
-                        alpha,
-                    ),
-                );
+                    - Point::from((super::ssd::SHADOW_MARGIN, super::ssd::SHADOW_MARGIN + tb));
+                vec.extend(AsRenderElements::<R>::render_elements::<
+                    WindowRenderElement<R>,
+                >(
+                    &state.shadow, renderer, shadow_origin, scale, alpha
+                ));
             }
 
             vec.into_iter().map(C::from).collect()
         } else {
-            let body =
-                AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);
+            let body = AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);
             if crate::cosmos::element_debug() {
                 tracing::debug!(
                     emitted = body.len(),

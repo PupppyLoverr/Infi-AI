@@ -192,7 +192,10 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>>
     }
 
     fn unset(&mut self, data: &mut AnvilState<BackendData>) {
-        tracing::info!(preview = data.cosmos.snap_preview.is_some(), "cosmos: move grab unset");
+        tracing::info!(
+            preview = data.cosmos.snap_preview.is_some(),
+            "cosmos: move grab unset"
+        );
         data.cosmos.snap_preview = None;
     }
 }

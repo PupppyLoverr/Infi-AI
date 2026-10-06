@@ -399,9 +399,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     if layer.can_receive_keyboard_focus() {
                         let geo = layers.layer_geometry(layer).unwrap();
                         if let Some((_, _)) = layer.surface_under(
-                            location
-                                - output_geo.loc.to_f64()
-                                - geo.loc.to_f64(),
+                            location - output_geo.loc.to_f64() - geo.loc.to_f64(),
                             WindowSurfaceType::ALL,
                         ) {
                             keyboard.set_focus(self, Some(layer.clone().into()), serial);
@@ -477,7 +475,10 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 keyboard.current_focus(),
                 Some(KeyboardFocusTarget::LayerSurface(_))
             ) {
-                tracing::info!(?location, "cosmos: click cleared layer focus (bare desktop)");
+                tracing::info!(
+                    ?location,
+                    "cosmos: click cleared layer focus (bare desktop)"
+                );
                 keyboard.set_focus(self, None, serial);
             }
         }
