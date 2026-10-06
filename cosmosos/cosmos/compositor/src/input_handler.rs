@@ -397,15 +397,26 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     })
                 {
                     if layer.can_receive_keyboard_focus() {
+                        let geo = layers.layer_geometry(layer).unwrap();
                         if let Some((_, _)) = layer.surface_under(
                             location
                                 - output_geo.loc.to_f64()
-                                - layers.layer_geometry(layer).unwrap().loc.to_f64(),
+                                - geo.loc.to_f64(),
                             WindowSurfaceType::ALL,
                         ) {
                             keyboard.set_focus(self, Some(layer.clone().into()), serial);
                             return;
                         }
+                        tracing::info!(
+                            ?location,
+                            ?geo,
+                            "cosmos: layer under pointer but surface_under missed"
+                        );
+                    } else {
+                        tracing::info!(
+                            ?location,
+                            "cosmos: layer under pointer cannot take keyboard focus"
+                        );
                     }
                 }
             }
@@ -415,6 +426,16 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 .element_under(location)
                 .map(|(w, p)| (w.clone(), p))
             {
+                // A press reaching a window while a keyboard-exclusive
+                // layer (quick settings, launcher) holds focus means the
+                // layer's surface_under missed — the `leave` that follows
+                // dismisses the flyout even though the click was inside it.
+                if matches!(
+                    keyboard.current_focus(),
+                    Some(KeyboardFocusTarget::LayerSurface(_))
+                ) {
+                    tracing::info!(?location, "cosmos: click through open layer to window");
+                }
                 self.space.raise_element(&window, true);
                 #[cfg(feature = "xwayland")]
                 if let Some(surface) = window.0.x11_surface() {
@@ -456,6 +477,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 keyboard.current_focus(),
                 Some(KeyboardFocusTarget::LayerSurface(_))
             ) {
+                tracing::info!(?location, "cosmos: click cleared layer focus (bare desktop)");
                 keyboard.set_focus(self, None, serial);
             }
         }

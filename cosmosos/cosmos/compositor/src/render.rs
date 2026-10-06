@@ -2,14 +2,16 @@ use smithay::{
     backend::renderer::{
         damage::{Error as OutputDamageTrackerError, OutputDamageTracker, RenderOutputResult},
         element::{
+            solid::SolidColorRenderElement,
             surface::WaylandSurfaceRenderElement,
             texture::{TextureBuffer, TextureRenderElement},
             utils::{
                 ConstrainAlign, ConstrainScaleBehavior, CropRenderElement, RelocateRenderElement,
                 RescaleRenderElement,
             },
-            AsRenderElements, Kind, RenderElement, Wrap,
+            AsRenderElements, Id, Kind, RenderElement, Wrap,
         },
+        utils::CommitCounter,
         Color32F, ImportAll, ImportMem, Renderer,
     },
     desktop::space::{
@@ -58,6 +60,7 @@ smithay::backend::renderer::element::render_elements! {
     Custom=CustomRenderElements<R>,
     Preview=CropRenderElement<RelocateRenderElement<RescaleRenderElement<WindowRenderElement<R>>>>,
     Background=TextureRenderElement<R::TextureId>,
+    Snap=SolidColorRenderElement,
 }
 
 impl<R: Renderer + ImportAll + ImportMem, E: RenderElement<R> + std::fmt::Debug> std::fmt::Debug
@@ -70,6 +73,7 @@ impl<R: Renderer + ImportAll + ImportMem, E: RenderElement<R> + std::fmt::Debug>
             Self::Custom(arg0) => f.debug_tuple("Custom").field(arg0).finish(),
             Self::Preview(arg0) => f.debug_tuple("Preview").field(arg0).finish(),
             Self::Background(arg0) => f.debug_tuple("Background").field(arg0).finish(),
+            Self::Snap(arg0) => f.debug_tuple("Snap").field(arg0).finish(),
             Self::_GenericCatcher(arg0) => f.debug_tuple("_GenericCatcher").field(arg0).finish(),
         }
     }
@@ -210,7 +214,7 @@ where
 /// Translucent drop-target highlight for drag-to-edge snapping (Win11's
 /// snap-assist zone). A 1x1 tint stretched over the target rect.
 fn snap_preview_element<R>(
-    renderer: &mut R,
+    _renderer: &mut R,
     output: &Output,
     rect: Rectangle<i32, Logical>,
 ) -> Option<OutputRenderElements<R, WindowRenderElement<R>>>
@@ -220,41 +224,23 @@ where
 {
     let scale = output.current_scale().fractional_scale();
     let theme = crate::shell::ssd::current_theme();
-    let px = if theme.dark {
-        [0xFF, 0xFF, 0xFF, 0x26]
+    // Shader-solid fill — no texture upload. llvmpipe's memory import
+    // renders even full-size uploads as garbage quads (opaque block +
+    // diagonal artifacts) on this path; a solid-color element paints
+    // the rect with the pixel shader instead.
+    let color = if theme.dark {
+        Color32F::new(1.0, 1.0, 1.0, 0.15)
     } else {
-        [0x00, 0x00, 0x00, 0x20]
+        Color32F::new(0.0, 0.0, 0.0, 0.12)
     };
-    // Upload at the rect's own size — a 1x1 texel stretched to the snap
-    // rect renders as a garbage quad (opaque block + diagonal) on
-    // llvmpipe; a full-size buffer keeps the path 1:1.
-    let (w, h) = (rect.size.w.max(1), rect.size.h.max(1));
-    let mut pixels = vec![0u8; w as usize * h as usize * 4];
-    for chunk in pixels.chunks_exact_mut(4) {
-        chunk.copy_from_slice(&px);
-    }
-    let buffer = TextureBuffer::<R::TextureId>::from_memory(
-        renderer,
-        &pixels,
-        smithay::backend::allocator::Fourcc::Abgr8888,
-        (w, h),
-        false,
-        1,
-        Transform::Normal,
-        None,
-    )
-    .ok()?;
-    let loc = rect.loc.to_f64().to_physical(scale);
-    Some(OutputRenderElements::Background(
-        TextureRenderElement::from_texture_buffer(
-            loc,
-            &buffer,
-            None,
-            None,
-            Some(rect.size),
-            Kind::Unspecified,
-        ),
-    ))
+    let geo = rect.to_physical_precise_round(scale);
+    Some(OutputRenderElements::Snap(SolidColorRenderElement::new(
+        Id::new(),
+        geo,
+        CommitCounter::default(),
+        color,
+        Kind::Unspecified,
+    )))
 }
 
 /// Subtle vertical monochrome gradient as the desktop background — a 1x256
