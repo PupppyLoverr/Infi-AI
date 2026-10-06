@@ -191,6 +191,7 @@ pub fn draw(state: &mut ShellState) {
         return;
     };
     let (card, sep, btn_bg, fill, fg, fg_dim) = theme(state.dark);
+    let glyph = Color::from_rgba8(fg.r(), fg.g(), fg.b(), fg.a());
     // Row positions borrow `state` — compute before the pool borrow below.
     let vy = vol_row_y() as f32;
     let bat_y = bat_row_y() as f32;
@@ -261,9 +262,21 @@ pub fn draw(state: &mut ShellState) {
     } else {
         "Offline"
     };
+    icons::icon(
+        &mut pixmap,
+        if info.network.online {
+            "net-on"
+        } else {
+            "net-off"
+        },
+        PAD as f32,
+        ny + 2.0,
+        14.0,
+        glyph,
+    );
     draw::text(
         &mut pixmap,
-        PAD as f32,
+        PAD as f32 + 20.0,
         ny + 4.0,
         200.0,
         15.0,
@@ -326,7 +339,24 @@ pub fn draw(state: &mut ShellState) {
         .map(|v| v.level.clamp(0.0, 1.0))
         .unwrap_or(0.0);
     let muted = info.volume.as_ref().map(|v| v.muted).unwrap_or(false);
-    draw::text(&mut pixmap, PAD as f32, vy, 100.0, 15.0, 13.0, "Volume", fg);
+    icons::icon(
+        &mut pixmap,
+        if muted { "vol-mute" } else { "vol-on" },
+        PAD as f32,
+        vy - 2.0,
+        14.0,
+        glyph,
+    );
+    draw::text(
+        &mut pixmap,
+        PAD as f32 + 20.0,
+        vy,
+        100.0,
+        15.0,
+        13.0,
+        "Volume",
+        fg,
+    );
     let vol_label = if muted {
         "Muted".to_string()
     } else {
@@ -377,31 +407,31 @@ pub fn draw(state: &mut ShellState) {
         8.0,
         if muted { fill } else { btn_bg },
     );
-    draw::text(
+    // Speaker glyph centred in the pill (matches the menubar tray icon).
+    icons::icon(
         &mut pixmap,
-        mx + 5.0,
+        if muted { "vol-mute" } else { "vol-on" },
+        mx + 9.0,
         ty - 4.0,
-        24.0,
         12.0,
-        10.0,
-        if muted { "M" } else { "O" },
         if muted {
             if state.dark {
-                CtColor::rgba(0x18, 0x18, 0x1B, 0xFF)
+                Color::from_rgba8(0x18, 0x18, 0x1B, 0xFF)
             } else {
-                CtColor::rgba(0xFF, 0xFF, 0xFF, 0xFF)
+                Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF)
             }
         } else {
-            fg
+            glyph
         },
     );
 
     // Battery row.
     if let Some(b) = &info.battery {
         if b.present {
+            icons::battery(&mut pixmap, PAD as f32, bat_y + 3.0, 14.0, glyph, b.percent);
             draw::text(
                 &mut pixmap,
-                PAD as f32,
+                PAD as f32 + 22.0,
                 bat_y + 4.0,
                 200.0,
                 15.0,
@@ -431,7 +461,6 @@ pub fn draw(state: &mut ShellState) {
     let by = h as f32 - BTN_H as f32;
     draw::fill_rect(&mut pixmap, 1.0, by, w as f32 - 2.0, 1.0, sep);
     let half = w as f32 / 2.0;
-    let glyph = Color::from_rgba8(fg.r(), fg.g(), fg.b(), fg.a());
     draw::fill_round_rect(
         &mut pixmap,
         PAD as f32,
