@@ -267,6 +267,7 @@ impl<BackendData: Backend> WlrLayerShellHandler for AnvilState<BackendData> {
             .as_ref()
             .and_then(Output::from_resource)
             .unwrap_or_else(|| self.space.outputs().next().unwrap().clone());
+        tracing::info!(namespace, "cosmos: layer surface created");
         let mut map = layer_map_for_output(&output);
         map.map_layer(&LayerSurface::new(surface, namespace))
             .unwrap();
@@ -281,6 +282,7 @@ impl<BackendData: Backend> WlrLayerShellHandler for AnvilState<BackendData> {
                 .cloned();
             layer.map(|layer| (map, layer))
         }) {
+            tracing::info!(namespace = layer.namespace(), "cosmos: layer surface destroyed");
             map.unmap_layer(&layer);
         }
     }

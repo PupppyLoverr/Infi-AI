@@ -318,12 +318,18 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
                 .find(|element| element.wl_surface().as_deref() == Some(&surface));
             if let Some(window) = window {
                 use xdg_decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode;
-                let is_ssd = configure
-                    .state
-                    .decoration_mode
-                    .map(|mode| mode == Mode::ServerSide)
-                    .unwrap_or(false);
-                window.set_ssd(is_ssd);
+                // A configure without a decoration mode must not clobber the
+                // flag — `unwrap_or(false)` used to un-set SSD on every ack
+                // for clients that bind (or ack) the decoration object after
+                // their first configure, leaving them chromeless until a
+                // later configure happened to carry the mode again.
+                if let Some(mode) = configure.state.decoration_mode {
+                    let is_ssd = mode == Mode::ServerSide;
+                    if window.decoration_state().is_ssd != is_ssd {
+                        tracing::info!(ssd = is_ssd, "cosmos: decoration flip");
+                        window.set_ssd(is_ssd);
+                    }
+                }
             }
         }
     }
@@ -620,6 +626,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 
         // Check that this surface has a click grab.
         if !pointer.has_grab(serial) {
+            tracing::info!("cosmos: move grab refused — no click grab for serial");
             return;
         }
 
@@ -628,6 +635,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         // If the client disconnects after requesting a move
         // we can just ignore the request
         let Some(window) = self.window_for_surface(surface.wl_surface()) else {
+            tracing::info!("cosmos: move grab refused — window gone");
             return;
         };
 
@@ -640,6 +648,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 .0
                 .same_client_as(&surface.wl_surface().id())
         {
+            tracing::info!("cosmos: move grab refused — focus/client mismatch");
             return;
         }
 
@@ -684,6 +693,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         };
 
         pointer.set_grab(self, grab, serial, Focus::Clear);
+        tracing::info!("cosmos: move grab armed");
     }
 
     fn unconstrain_popup(&self, popup: &PopupSurface) {

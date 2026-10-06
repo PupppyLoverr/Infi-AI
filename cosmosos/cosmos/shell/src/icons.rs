@@ -171,6 +171,74 @@ pub fn icon(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32, co
             ln!(pb, 18.0, 11.5);
             stroke(pixmap, pb, s, w, color);
         }
+        "net-on" => {
+            // Wi-Fi fan: three arcs opening upward + a base dot.
+            for r in [10.0f32, 7.0, 4.0] {
+                let mut pb = PathBuilder::new();
+                let e = r * 0.7071;
+                mv!(pb, 12.0 - e, 17.5 - e);
+                pb.quad_to(
+                    ox + 12.0 * s,
+                    oy + (17.5 - 1.2929 * r) * s,
+                    ox + (12.0 + e) * s,
+                    oy + (17.5 - e) * s,
+                );
+                stroke(pixmap, pb, s, w * 0.9, color);
+            }
+            let mut pb = PathBuilder::new();
+            circle!(pb, 12.0, 17.5, 1.5);
+            fill(pixmap, pb, color);
+        }
+        "net-off" => {
+            // Offline: base dot + a strike-through.
+            let mut pb = PathBuilder::new();
+            circle!(pb, 12.0, 17.5, 1.5);
+            fill(pixmap, pb, color);
+            let mut pb = PathBuilder::new();
+            mv!(pb, 5.5, 7.0);
+            ln!(pb, 18.5, 20.0);
+            stroke(pixmap, pb, s, w * 0.9, color);
+        }
+        "vol-on" => {
+            // Speaker wedge + two sound arcs.
+            mv!(pb, 4.5, 9.5);
+            ln!(pb, 8.0, 9.5);
+            ln!(pb, 12.5, 5.0);
+            ln!(pb, 12.5, 19.0);
+            ln!(pb, 8.0, 14.5);
+            ln!(pb, 4.5, 14.5);
+            pb.close();
+            fill(pixmap, pb, color);
+            for r in [3.0f32, 5.6] {
+                let mut pb = PathBuilder::new();
+                let e = r * 0.7071;
+                mv!(pb, 14.0 + e, 12.0 - e);
+                pb.quad_to(
+                    ox + (14.0 + 1.2929 * r) * s,
+                    oy + 12.0 * s,
+                    ox + (14.0 + e) * s,
+                    oy + (12.0 + e) * s,
+                );
+                stroke(pixmap, pb, s, w * 0.85, color);
+            }
+        }
+        "vol-mute" => {
+            // Speaker wedge + strike X.
+            mv!(pb, 4.5, 9.5);
+            ln!(pb, 8.0, 9.5);
+            ln!(pb, 12.5, 5.0);
+            ln!(pb, 12.5, 19.0);
+            ln!(pb, 8.0, 14.5);
+            ln!(pb, 4.5, 14.5);
+            pb.close();
+            fill(pixmap, pb, color);
+            let mut pb = PathBuilder::new();
+            mv!(pb, 15.0, 9.5);
+            ln!(pb, 20.0, 14.5);
+            mv!(pb, 20.0, 9.5);
+            ln!(pb, 15.0, 14.5);
+            stroke(pixmap, pb, s, w * 0.85, color);
+        }
         "sys-lock" => {
             rr!(pb, 6.0, 10.5, 12.0, 9.0, 2.0);
             mv!(pb, 8.5, 10.5);
@@ -247,5 +315,23 @@ pub fn icon(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32, co
             ln!(pb, 20.0, 9.0);
             stroke(pixmap, pb, s, w, color);
         }
+    }
+}
+
+/// Battery tray glyph with a level fill — `pct` 0..=100. Kept out of
+/// `icon()` because it takes a live charge level.
+pub fn battery(pixmap: &mut PixmapMut<'_>, x: f32, y: f32, size: f32, color: Color, pct: u8) {
+    let s = size / 24.0;
+    let (ox, oy) = (x, y);
+    let mut pb = PathBuilder::new();
+    rrect(&mut pb, ox + 2.5 * s, oy + 8.0 * s, 17.0 * s, 9.0 * s, 2.2 * s);
+    // Terminal nub.
+    rrect(&mut pb, ox + 20.5 * s, oy + 10.5 * s, 2.4 * s, 4.0 * s, 0.8 * s);
+    stroke(pixmap, pb, s, 1.5, color);
+    let fill_w = (15.2 * pct.min(100) as f32 / 100.0).max(0.0);
+    if fill_w > 0.5 {
+        let mut pb = PathBuilder::new();
+        rrect(&mut pb, ox + 3.6 * s, oy + 9.1 * s, fill_w * s, 6.8 * s, 1.3 * s);
+        fill(pixmap, pb, color);
     }
 }

@@ -23,6 +23,8 @@ const TRACK_W: f64 = QUICK_W as f64 - PAD * 2.0 - 16.0 - 30.0; // minus mute but
 enum Hit {
     Slider,
     Mute,
+    /// The whole network row — Win11's connectivity tile toggles.
+    Network,
     Settings,
     Logout,
     Card,
@@ -77,6 +79,10 @@ fn hit_test(x: f64, y: f64, state: &ShellState) -> Hit {
             return Hit::Mute;
         }
     }
+    let ny = PAD + HEADER_H;
+    if y >= ny && y < ny + NET_H {
+        return Hit::Network;
+    }
     let by = state.quick_size.1 as f64 - BTN_H;
     if y >= by {
         if x < QUICK_W as f64 / 2.0 {
@@ -85,6 +91,23 @@ fn hit_test(x: f64, y: f64, state: &ShellState) -> Hit {
         return Hit::Logout;
     }
     Hit::Card
+}
+
+/// Flip NetworkManager's networking master switch over D-Bus (the same
+/// interface `sysinfo` reads `State` from — no nmcli dependency).
+/// Returns false when NM is unavailable so the optimistic flip is skipped.
+fn nm_enable(on: bool) -> bool {
+    let Ok(conn) = zbus::blocking::Connection::system() else {
+        return false;
+    };
+    conn.call_method(
+        Some("org.freedesktop.NetworkManager"),
+        "/org/freedesktop/NetworkManager",
+        Some("org.freedesktop.NetworkManager"),
+        "Enable",
+        &(on),
+    )
+    .is_ok()
 }
 
 /// Apply a volume level for real via wpctl, then optimistically update state.
@@ -117,6 +140,16 @@ pub fn press(state: &mut ShellState, x: f64, y: f64) -> bool {
                 .status();
             if let Some(v) = state.sysinfo.volume.as_mut() {
                 v.muted = !v.muted;
+            }
+            true
+        }
+        Hit::Network => {
+            let on = !state.sysinfo.network.online;
+            if nm_enable(on) {
+                state.sysinfo.network.online = on;
+                if !on {
+                    state.sysinfo.network.label = "Offline".to_string();
+                }
             }
             true
         }
@@ -238,7 +271,7 @@ pub fn draw(state: &mut ShellState) {
     );
     draw::text(
         &mut pixmap,
-        w as f32 - PAD as f32 - 140.0,
+        w as f32 - PAD as f32 - 140.0 - 42.0,
         ny + 4.0,
         140.0,
         15.0,
@@ -246,6 +279,43 @@ pub fn draw(state: &mut ShellState) {
         net_label,
         fg_dim,
     );
+    // Win11-style toggle: the whole row flips NM's networking switch.
+    let sw_x = w as f32 - PAD as f32 - 34.0;
+    let sw_y = ny + 11.0;
+    draw::fill_round_rect(
+        &mut pixmap,
+        sw_x,
+        sw_y,
+        34.0,
+        18.0,
+        9.0,
+        if info.network.online { fill } else { sep },
+    );
+    let knob_x = if info.network.online {
+        sw_x + 25.0
+    } else {
+        sw_x + 9.0
+    };
+    let mut pb = tiny_skia::PathBuilder::new();
+    pb.push_circle(knob_x, sw_y + 9.0, 6.0);
+    if let Some(path) = pb.finish() {
+        pixmap.fill_path(
+            &path,
+            &tiny_skia::Paint {
+                // On: dark knob on the white track; off: light knob on gray.
+                shader: tiny_skia::Shader::SolidColor(if info.network.online {
+                    card
+                } else {
+                    fill
+                }),
+                anti_alias: true,
+                ..Default::default()
+            },
+            tiny_skia::FillRule::Winding,
+            tiny_skia::Transform::default(),
+            None,
+        );
+    }
 
     // Volume row: label, slider track + fill + knob, mute button.
     let level = info
