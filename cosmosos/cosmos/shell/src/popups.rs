@@ -5,7 +5,7 @@ use smithay_client_toolkit::shell::WaylandSurface;
 use tiny_skia::{Color, PixmapMut};
 use wayland_client::protocol::wl_shm;
 
-use crate::{draw, notify::Notification, ShellState, NOTIFY_WIDTH};
+use crate::{draw, icons, notify::Notification, ShellState, NOTIFY_WIDTH};
 
 const CARD_H: u32 = 76;
 const CARD_GAP: u32 = 8;
@@ -62,14 +62,15 @@ pub fn draw(state: &mut ShellState) {
     let ordered: Vec<&Notification> = state.notifications.iter().rev().collect();
     for (i, n) in ordered.iter().enumerate() {
         let y = i as f32 * (CARD_H + CARD_GAP) as f32;
-        // Rounded card (blend doc: shell surfaces r10).
+        // Rounded card — the drop shadow comes from the compositor's
+        // layer decal, so the card itself only needs fill + hairline.
         draw::fill_round_rect(
             &mut pixmap,
             0.0,
             y,
             NOTIFY_WIDTH as f32,
             CARD_H as f32,
-            10.0,
+            12.0,
             card,
         );
         draw::stroke_round_rect(
@@ -78,13 +79,23 @@ pub fn draw(state: &mut ShellState) {
             y + 0.5,
             NOTIFY_WIDTH as f32 - 1.0,
             CARD_H as f32 - 1.0,
-            9.5,
+            11.5,
             1.0,
             border,
         );
+        // macOS idiom: the app's icon rides the left edge of the card.
+        let glyph = Color::from_rgba8(fg.r(), fg.g(), fg.b(), fg.a());
+        icons::icon(
+            &mut pixmap,
+            &icons::key_for(&n.app_name.to_lowercase().replace(' ', "-")),
+            10.0,
+            y + 30.0,
+            18.0,
+            glyph,
+        );
         draw::text(
             &mut pixmap,
-            12.0,
+            34.0,
             y + 8.0,
             240.0,
             16.0,
@@ -94,9 +105,9 @@ pub fn draw(state: &mut ShellState) {
         );
         draw::text(
             &mut pixmap,
-            12.0,
+            34.0,
             y + 26.0,
-            300.0,
+            270.0,
             20.0,
             13.0,
             &n.summary,
@@ -104,9 +115,9 @@ pub fn draw(state: &mut ShellState) {
         );
         draw::text(
             &mut pixmap,
-            12.0,
+            34.0,
             y + 48.0,
-            NOTIFY_WIDTH as f32 - 20.0,
+            NOTIFY_WIDTH as f32 - 42.0,
             18.0,
             11.0,
             &n.body,

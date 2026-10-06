@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 
 use cosmic_text::{Attrs, Buffer, Color as CtColor, Family, FontSystem, Metrics, Shaping};
-use tiny_skia::{Color, Paint, PixmapMut, Rect, Transform};
+use tiny_skia::{Color, Paint, Pixmap, PixmapMut, Rect, Transform};
 
 thread_local! {
     static FONT_SYSTEM: RefCell<FontSystem> = RefCell::new(FontSystem::new());
@@ -105,6 +105,145 @@ pub fn stroke_round_rect(
         Transform::default(),
         None,
     );
+}
+
+/// Soft drop shadow under a card rect — SDF silhouette + gaussian
+/// falloff, premultiplied black, blitted SrcOver (the macOS popover
+/// look). The pixmap is cached by (w, h, r): the exp() per-pixel cost
+/// is paid once per card size, not per repaint.
+pub fn shadow(pixmap: &mut PixmapMut<'_>, x: f32, y: f32, w: f32, h: f32, r: f32) {
+    // Bleed past each card edge.
+    const MARGIN: i32 = 20;
+    // Downward bias — shadows hang lower than they float high.
+    const DY: i32 = 7;
+    // Gaussian falloff width in px.
+    const SIGMA: f32 = 9.0;
+    // Peak alpha at the silhouette.
+    const ALPHA: f32 = 0.34;
+    let sw = (w.ceil() as i32 + MARGIN * 2).max(0) as u32;
+    let sh = (h.ceil() as i32 + MARGIN * 2).max(0) as u32;
+    if sw == 0 || sh == 0 {
+        return;
+    }
+    let px = card_pixmap(sw, sh, r, |buf, pw| {
+        let x0 = MARGIN as f32;
+        let y0 = (MARGIN + DY) as f32;
+        let x1 = x0 + w;
+        let y1 = y0 + h;
+        let sigma2 = 2.0 * SIGMA * SIGMA;
+        for yy in 0..sh as i32 {
+            for xx in 0..sw as i32 {
+                let fx = xx as f32 + 0.5;
+                let fy = yy as f32 + 0.5;
+                // Corner-aware distance outside the card rect.
+                let dx = (x0 + r - fx).max(fx - (x1 - r)).max(0.0);
+                let dy = (y0 + r - fy).max(fy - (y1 - r)).max(0.0);
+                let d = ((dx * dx + dy * dy).sqrt() - r).max(0.0);
+                let a = ALPHA * (-d * d / sigma2).exp();
+                let i = (yy * pw as i32 + xx) as usize;
+                buf[i] = tiny_skia::PremultipliedColorU8::from_rgba(
+                    0,
+                    0,
+                    0,
+                    (a * 255.0).min(255.0) as u8,
+                )
+                .unwrap_or(buf[i]);
+            }
+        }
+    });
+    let _ = pixmap.draw_pixmap(
+        (x - MARGIN as f32).round() as i32,
+        (y - MARGIN as f32).round() as i32,
+        px.as_ref().as_ref(),
+        &tiny_skia::PixmapPaint::default(),
+        Transform::default(),
+        None,
+    );
+}
+
+/// Radial scrim for fullscreen overlays — lightest around the focal
+/// point so the eye lands on the card, deepening toward the corners
+/// (Spotlight's dim is a vignette, not a flat veil). Cached by size +
+/// theme.
+pub fn scrim(pixmap: &mut PixmapMut<'_>, w: u32, h: u32, dark: bool) {
+    // Alpha at the focal point / at the far edge.
+    let (base, edge) = if dark { (0.30, 0.62) } else { (0.16, 0.40) };
+    // Lightest near the card zone (upper-centre where the card floats).
+    let (fx, fy) = (w as f32 * 0.5, h as f32 * 0.42);
+    // Distance at which the scrim reaches `edge` alpha: ~55% of the
+    // half-diagonal keeps the middle airy without bright spots.
+    let max_d = (w as f32 * w as f32 + h as f32 * h as f32).sqrt() * 0.28;
+    let key = (w, h, dark as u32);
+    let px = keyed_pixmap(&SCRIM_PIXMAPS, key, w, h, |buf, pw| {
+        let (r8, g8, b8) = if dark {
+            (0u8, 0u8, 0u8)
+        } else {
+            (255, 255, 255)
+        };
+        for yy in 0..h as i32 {
+            for xx in 0..w as i32 {
+                let dx = xx as f32 + 0.5 - fx;
+                let dy = yy as f32 + 0.5 - fy;
+                let t = ((dx * dx + dy * dy).sqrt() / max_d).min(1.0);
+                let a = base + (edge - base) * t * t * (3.0 - 2.0 * t);
+                let i = (yy * pw as i32 + xx) as usize;
+                buf[i] = tiny_skia::PremultipliedColorU8::from_rgba(
+                    r8,
+                    g8,
+                    b8,
+                    (a * 255.0).min(255.0) as u8,
+                )
+                .unwrap_or(buf[i]);
+            }
+        }
+    });
+    let _ = pixmap.draw_pixmap(
+        0,
+        0,
+        px.as_ref().as_ref(),
+        &tiny_skia::PixmapPaint::default(),
+        Transform::default(),
+        None,
+    );
+}
+
+type PixmapKey = (u32, u32, u32);
+type PixmapCache = std::cell::RefCell<std::collections::HashMap<PixmapKey, std::rc::Rc<Pixmap>>>;
+
+thread_local! {
+    static SHADOW_PIXMAPS: PixmapCache = std::cell::RefCell::new(std::collections::HashMap::new());
+    static SCRIM_PIXMAPS: PixmapCache = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+fn card_pixmap(
+    sw: u32,
+    sh: u32,
+    r: f32,
+    paint: impl FnOnce(&mut [tiny_skia::PremultipliedColorU8], u32),
+) -> std::rc::Rc<Pixmap> {
+    keyed_pixmap(&SHADOW_PIXMAPS, (sw, sh, r.to_bits()), sw, sh, paint)
+}
+
+fn keyed_pixmap(
+    cache: &'static std::thread::LocalKey<PixmapCache>,
+    key: PixmapKey,
+    w: u32,
+    h: u32,
+    paint: impl FnOnce(&mut [tiny_skia::PremultipliedColorU8], u32),
+) -> std::rc::Rc<Pixmap> {
+    cache.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.len() >= 16 {
+            c.clear();
+        }
+        c.entry(key)
+            .or_insert_with(|| {
+                let mut px = Pixmap::new(w, h).unwrap();
+                paint(px.pixels_mut(), w);
+                std::rc::Rc::new(px)
+            })
+            .clone()
+    })
 }
 
 /// Draw text (single line, truncated) at a pixel offset. `max_w` clamps the

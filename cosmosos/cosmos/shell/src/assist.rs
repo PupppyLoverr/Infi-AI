@@ -5,20 +5,21 @@
 
 use cosmic_text::Color as CtColor;
 use smithay_client_toolkit::{
+    compositor::Region,
     seat::keyboard::{KeyEvent, Keysym},
     shell::WaylandSurface,
 };
 use tiny_skia::{Color, PixmapMut};
 use wayland_client::protocol::wl_shm;
 
-use crate::{draw, icons, ShellState};
+use crate::{draw, icons, ShellState, PANEL_HEIGHT};
 
 const CARD_W: f64 = 300.0;
 const ROW_H: f64 = 44.0;
 const HEAD_H: f64 = 34.0;
 const FOOT_H: f64 = 28.0;
 const PAD: f64 = 12.0;
-const CARD_R: f32 = 14.0;
+const CARD_R: f32 = 12.0;
 const MAX_ROWS: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -138,7 +139,15 @@ pub fn draw(state: &mut ShellState) {
     };
     draw::fill_rect(&mut pixmap, dx, 0.0, dw, h as f32, dim);
 
-    // Picker card.
+    // Picker card — soft shadow under it like the launcher's.
+    draw::shadow(
+        &mut pixmap,
+        cx as f32,
+        cy as f32,
+        cw as f32,
+        ch as f32,
+        CARD_R,
+    );
     draw::fill_round_rect(
         &mut pixmap,
         cx as f32,
@@ -216,6 +225,19 @@ pub fn draw(state: &mut ShellState) {
 
     buffer.attach_to(layer.wl_surface()).ok();
     layer.wl_surface().damage_buffer(0, 0, w as i32, h as i32);
+    // Only the dimmed free half (below the menubar) takes pointer input.
+    // Clicks on the snapped window, the menubar, or the tray hit the
+    // surfaces underneath instead of being swallowed as a backdrop
+    // press — a tray click must open the flyout, not just cancel this.
+    if let Ok(region) = Region::new(&state.compositor_state) {
+        region.add(
+            dx as i32,
+            PANEL_HEIGHT as i32,
+            dw as i32,
+            (h as i32 - PANEL_HEIGHT as i32).max(0),
+        );
+        layer.wl_surface().set_input_region(Some(region.wl_region()));
+    }
     layer.wl_surface().commit();
 }
 

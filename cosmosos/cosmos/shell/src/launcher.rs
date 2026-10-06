@@ -17,7 +17,7 @@ const INPUT_H: f64 = 48.0;
 const ROW_H: f64 = 36.0;
 const SEC_H: f64 = 24.0;
 const FOOTER_H: f64 = 44.0;
-const CARD_R: f32 = 14.0;
+const CARD_R: f32 = 12.0;
 const MAX_ROWS: usize = 5;
 const GRID_COLS: usize = 6;
 const CELL_H: f64 = 78.0;
@@ -222,10 +222,9 @@ pub fn hit_test(
     }
 }
 
-fn theme(dark: bool) -> (Color, Color, Color, Color, Color, CtColor, CtColor) {
+fn theme(dark: bool) -> (Color, Color, Color, Color, CtColor, CtColor) {
     if dark {
         (
-            Color::from_rgba8(0x00, 0x00, 0x00, 0x90), // backdrop dim
             Color::from_rgba8(0x1A, 0x1B, 0x1E, 0xF2), // card
             Color::from_rgba8(0x30, 0x31, 0x35, 0xFF), // selection
             Color::from_rgba8(0x3C, 0x3D, 0x42, 0xFF), // border
@@ -235,7 +234,6 @@ fn theme(dark: bool) -> (Color, Color, Color, Color, Color, CtColor, CtColor) {
         )
     } else {
         (
-            Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x66),
             Color::from_rgba8(0xFA, 0xFA, 0xFB, 0xF6),
             Color::from_rgba8(0xE0, 0xE0, 0xE2, 0xFF),
             Color::from_rgba8(0xC4, 0xC4, 0xC8, 0xFF),
@@ -259,7 +257,7 @@ pub fn draw(state: &mut ShellState) {
     let rec_apps = recommended(state);
     let searching = !state.launcher_query.is_empty();
     let n_items = apps.len().min(MAX_ROWS);
-    let (bg, box_bg, sel_bg, sep, input_bg, fg, fg_dim) = theme(state.dark);
+    let (box_bg, sel_bg, sep, input_bg, fg, fg_dim) = theme(state.dark);
     let glyph = Color::from_rgba8(fg.r(), fg.g(), fg.b(), fg.a());
 
     let stride = w as i32 * 4;
@@ -279,11 +277,21 @@ pub fn draw(state: &mut ShellState) {
     // ghost. Clear to transparent first.
     pixmap.fill(Color::TRANSPARENT);
 
-    draw::fill_rect(&mut pixmap, 0.0, 0.0, w as f32, h as f32, bg);
+    // Spotlight idiom: a vignette scrim — airy near the card, deeper at
+    // the corners — then the card's own soft shadow.
+    draw::scrim(&mut pixmap, w, h, state.dark);
 
     let left = box_left(w) as f32;
     let top = box_top(h) as f32;
     let height = box_height(apps.len(), pinned_apps.len(), rec_apps.len(), searching) as f32;
+    draw::shadow(
+        &mut pixmap,
+        left,
+        top,
+        LAUNCHER_WIDTH as f32,
+        height,
+        CARD_R,
+    );
     draw::fill_round_rect(
         &mut pixmap,
         left,
@@ -511,9 +519,17 @@ pub fn draw(state: &mut ShellState) {
     );
     let by = fy + (FOOTER_H as f32 - 28.0) / 2.0;
     draw::fill_round_rect(&mut pixmap, left + 8.0, by, 104.0, 28.0, 8.0, input_bg);
+    icons::icon(
+        &mut pixmap,
+        "cosmos-settings",
+        left + 18.0,
+        by + 7.0,
+        14.0,
+        glyph,
+    );
     draw::text(
         &mut pixmap,
-        left + 24.0,
+        left + 38.0,
         by + 5.0,
         88.0,
         18.0,
@@ -523,9 +539,10 @@ pub fn draw(state: &mut ShellState) {
     );
     let rx = left + LAUNCHER_WIDTH as f32 - 8.0 - 104.0;
     draw::fill_round_rect(&mut pixmap, rx, by, 104.0, 28.0, 8.0, input_bg);
+    icons::icon(&mut pixmap, "sys-logout", rx + 16.0, by + 7.0, 14.0, glyph);
     draw::text(
         &mut pixmap,
-        rx + 22.0,
+        rx + 34.0,
         by + 5.0,
         88.0,
         18.0,
@@ -541,7 +558,8 @@ pub fn draw(state: &mut ShellState) {
 }
 
 fn section(pixmap: &mut PixmapMut<'_>, x: f32, y: f32, label: &str, color: CtColor) {
-    draw::text(
+    // Win11's section headers are semibold, small, and quiet.
+    draw::text_bold(
         pixmap,
         x,
         y + (SEC_H as f32 - 14.0) / 2.0,

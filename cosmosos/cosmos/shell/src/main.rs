@@ -1020,6 +1020,18 @@ impl KeyboardHandler for ShellState {
             self.set_quick_open(false);
             self.quick_dismissed_at = Some(std::time::Instant::now());
         }
+        // Same popover contract for Snap Assist: a click landing
+        // anywhere else (tray, dock, a window) pulls keyboard focus off
+        // the picker — dismiss it so that click isn't swallowed.
+        if self.assist_open
+            && self
+                .assist_surface
+                .as_ref()
+                .map(|l| l.wl_surface() == surface)
+                .unwrap_or(false)
+        {
+            self.close_assist();
+        }
     }
 
     fn press_key(

@@ -6,8 +6,8 @@ use smithay::{
             surface::WaylandSurfaceRenderElement,
             texture::{TextureBuffer, TextureRenderElement},
             utils::{
-                ConstrainAlign, ConstrainScaleBehavior, CropRenderElement, RelocateRenderElement,
-                RescaleRenderElement,
+                ConstrainAlign, ConstrainScaleBehavior, CropRenderElement, Relocate,
+                RelocateRenderElement, RescaleRenderElement,
             },
             AsRenderElements, Id, Kind, RenderElement, Wrap,
         },
@@ -22,15 +22,27 @@ use smithay::{
         },
     },
     output::Output,
-    utils::{Logical, Point, Rectangle, Size, Transform},
+    reexports::wayland_server::Resource as _,
+    utils::{Logical, Point, Rectangle, Scale, Size, Transform},
+    wayland::shell::wlr_layer::Layer as WlrLayer,
 };
 
 #[cfg(feature = "debug")]
 use crate::drawing::FpsElement;
 use crate::{
     drawing::{clear_color, PointerRenderElement, CLEAR_COLOR_FULLSCREEN},
-    shell::{FullscreenSurface, WindowElement, WindowRenderElement},
+    shell::{ssd, FullscreenSurface, WindowElement, WindowRenderElement},
 };
+
+// Drop shadows floating over the desktop come in two flavours: window
+// chrome paints its own (ssd.rs), and floating shell cards get one from
+// the compositor here — keyed per layer surface so the SDF repaint only
+// runs when the card's size changes.
+thread_local! {
+    static LAYER_SHADOWS: std::cell::RefCell<
+        std::collections::HashMap<u32, ssd::WindowShadow>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
 
 smithay::backend::renderer::element::render_elements! {
     pub CustomRenderElements<R> where
@@ -61,6 +73,11 @@ smithay::backend::renderer::element::render_elements! {
     pub OutputRenderElements<R, E> where R: ImportAll + ImportMem;
     Space=SpaceRenderElements<R, E>,
     Window=Wrap<E>,
+    Layer=WaylandSurfaceRenderElement<R>,
+    // Distinct enum types only — a second TextureRenderElement variant
+    // would collide with Background's From impl, hence the Relocate
+    // (0,0) wrapper.
+    LayerShadow=RelocateRenderElement<TextureRenderElement<R::TextureId>>,
     Custom=CustomRenderElements<R>,
     Preview=CropRenderElement<RelocateRenderElement<RescaleRenderElement<WindowRenderElement<R>>>>,
     Background=TextureRenderElement<R::TextureId>,
@@ -74,6 +91,8 @@ impl<R: Renderer + ImportAll + ImportMem, E: RenderElement<R> + std::fmt::Debug>
         match self {
             Self::Space(arg0) => f.debug_tuple("Space").field(arg0).finish(),
             Self::Window(arg0) => f.debug_tuple("Window").field(arg0).finish(),
+            Self::Layer(arg0) => f.debug_tuple("Layer").field(arg0).finish(),
+            Self::LayerShadow(arg0) => f.debug_tuple("LayerShadow").field(arg0).finish(),
             Self::Custom(arg0) => f.debug_tuple("Custom").field(arg0).finish(),
             Self::Preview(arg0) => f.debug_tuple("Preview").field(arg0).finish(),
             Self::Background(arg0) => f.debug_tuple("Background").field(arg0).finish(),
@@ -209,19 +228,72 @@ where
             output_render_elements.extend(space_preview_elements(renderer, space, output));
         }
 
-        let space_elements = smithay::desktop::space::space_render_elements::<_, WindowElement, _>(
-            renderer,
-            [space],
-            output,
-            1.0,
-        )
-        .expect("output without mode?");
-        output_render_elements.extend(space_elements.into_iter().map(OutputRenderElements::Space));
+        // Mirrors smithay's space_render_elements ordering (upper layers
+        // → space windows → lower layers, front-to-back) but interleaves
+        // a soft shadow behind each floating card surface — the upstream
+        // helper can't inject per-surface decals.
+        let output_scale = output.current_scale().fractional_scale();
+        let layer_map = layer_map_for_output(output);
+        let (lower, upper): (Vec<_>, Vec<_>) = layer_map
+            .layers()
+            .rev()
+            .partition(|s| matches!(s.layer(), WlrLayer::Background | WlrLayer::Bottom));
+
+        for surface in upper {
+            let Some(geo) = layer_map.layer_geometry(surface) else {
+                continue;
+            };
+            output_render_elements.extend(
+                AsRenderElements::<R>::render_elements::<WaylandSurfaceRenderElement<R>>(
+                    surface,
+                    renderer,
+                    geo.loc.to_physical_precise_round(output_scale),
+                    Scale::from(output_scale),
+                    1.0,
+                )
+                .into_iter()
+                .map(OutputRenderElements::Layer),
+            );
+            layer_shadow_elements(
+                renderer,
+                surface,
+                geo,
+                output_scale,
+                &mut output_render_elements,
+            );
+        }
+
+        if let Some(output_geo) = space.output_geometry(output) {
+            output_render_elements.extend(
+                space
+                    .render_elements_for_region(renderer, &output_geo, output_scale, 1.0)
+                    .into_iter()
+                    .map(|e| OutputRenderElements::Window(Wrap::from(e))),
+            );
+        }
+
+        for surface in lower {
+            let Some(geo) = layer_map.layer_geometry(surface) else {
+                continue;
+            };
+            output_render_elements.extend(
+                AsRenderElements::<R>::render_elements::<WaylandSurfaceRenderElement<R>>(
+                    surface,
+                    renderer,
+                    geo.loc.to_physical_precise_round(output_scale),
+                    Scale::from(output_scale),
+                    1.0,
+                )
+                .into_iter()
+                .map(OutputRenderElements::Layer),
+            );
+        }
+        drop(layer_map);
 
         // Drag-to-edge drop target: under every window, above the
         // wallpaper — the translucent zone a release would snap into.
         if let Some(rect) = snap_preview {
-            output_render_elements.extend(snap_preview_element(renderer, output, rect));
+            output_render_elements.extend(snap_preview_elements(renderer, output, rect));
         }
 
         // Elements render back-to-front: last pushed = bottom-most. The desktop
@@ -232,41 +304,126 @@ where
     }
 }
 
-/// Translucent drop-target highlight for drag-to-edge snapping (Win11's
-/// snap-assist zone). A 1x1 tint stretched over the target rect.
-fn snap_preview_element<R>(
+/// Layer surfaces that float as cards over the desktop — everything
+/// else (the menubar, fullscreen overlays like the launcher/assist)
+/// gets no compositor shadow. The returned px top inset trims surfaces
+/// that keep a transparent overhang band above the visible card (the
+/// dock's magnification room).
+fn layer_shadow_top_inset(namespace: &str) -> Option<i32> {
+    match namespace {
+        // 24 = shell's dock::MAG_ROOM — the transparent overhang above
+        // the dock card must not silhouette into the shadow rect.
+        "cosmos-dock" => Some(24),
+        "cosmos-quick" | "cosmos-notify" | "cosmos-switcher" => Some(0),
+        _ => None,
+    }
+}
+
+/// A soft drop shadow behind a floating card layer surface (macOS
+/// popover/menubar idiom). Reuses the window-shadow SDF pixmap, cached
+/// per surface so the repaint only runs when the card resizes.
+fn layer_shadow_elements<R>(
+    renderer: &mut R,
+    surface: &smithay::desktop::LayerSurface,
+    geo: Rectangle<i32, Logical>,
+    output_scale: f64,
+    out: &mut Vec<OutputRenderElements<R, WindowRenderElement<R>>>,
+) where
+    R: Renderer + ImportAll + ImportMem,
+    R::TextureId: Clone + 'static,
+{
+    let Some(top_inset) = layer_shadow_top_inset(surface.namespace()) else {
+        return;
+    };
+    if geo.size.h <= top_inset {
+        return;
+    }
+    let (w, h) = (geo.size.w, geo.size.h - top_inset);
+    let key = surface.wl_surface().id().protocol_id();
+    LAYER_SHADOWS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        // Dead surfaces' entries die with their ids; cap the map so a
+        // long session can't accumulate stale pixmaps.
+        if cache.len() >= 32 {
+            cache.retain(|k, _| *k == key);
+        }
+        let shadow = cache.entry(key).or_insert_with(ssd::WindowShadow::default);
+        shadow.repaint(w, h);
+        let origin = (geo.loc + Point::from((0, top_inset)))
+            .to_physical_precise_round(output_scale)
+            - Point::from((ssd::SHADOW_MARGIN, ssd::SHADOW_MARGIN));
+        out.extend(
+            AsRenderElements::<R>::render_elements::<TextureRenderElement<R::TextureId>>(
+                shadow,
+                renderer,
+                origin,
+                Scale::from(output_scale),
+                1.0,
+            )
+            .into_iter()
+            .map(|el| {
+                OutputRenderElements::LayerShadow(RelocateRenderElement::from_element(
+                    el,
+                    (0, 0),
+                    Relocate::Relative,
+                ))
+            }),
+        );
+    });
+}
+
+/// Drop-target outline for drag-to-edge snapping — four opaque hairline
+/// rects forming the zone a release would snap into. Solid fills can't
+/// alpha-blend on llvmpipe (the 15%-alpha fill painted opaque), and a
+/// thin outline reads cleaner than a translucent slab anyway.
+fn snap_preview_elements<R>(
     _renderer: &mut R,
     output: &Output,
     rect: Rectangle<i32, Logical>,
-) -> Option<OutputRenderElements<R, WindowRenderElement<R>>>
+) -> Vec<OutputRenderElements<R, WindowRenderElement<R>>>
 where
     R: Renderer + ImportAll + ImportMem,
     R::TextureId: Clone + 'static,
 {
     let scale = output.current_scale().fractional_scale();
     let theme = crate::shell::ssd::current_theme();
-    // Shader-solid fill — no texture upload. llvmpipe's memory import
-    // renders even full-size uploads as garbage quads (opaque block +
-    // diagonal artifacts) on this path; a solid-color element paints
-    // the rect with the pixel shader instead.
     let color = if theme.dark {
-        Color32F::new(1.0, 1.0, 1.0, 0.15)
+        Color32F::new(0.70, 0.71, 0.74, 1.0)
     } else {
-        Color32F::new(0.0, 0.0, 0.0, 0.12)
+        Color32F::new(0.32, 0.32, 0.35, 1.0)
     };
     let geo = rect.to_physical_precise_round(scale);
-    Some(OutputRenderElements::Snap(SolidColorRenderElement::new(
-        Id::new(),
-        geo,
-        CommitCounter::default(),
-        color,
-        Kind::Unspecified,
-    )))
+    let (x, y, w, h) = (geo.loc.x, geo.loc.y, geo.size.w, geo.size.h);
+    // ~2 logical px, always an even physical thickness for crispness.
+    let t = (2.0 * scale).round().max(2.0) as i32;
+    if w <= 2 * t || h <= 2 * t {
+        return Vec::new();
+    }
+    let edges = [
+        Rectangle::new((x, y).into(), (w, t).into()),
+        Rectangle::new((x, y + h - t).into(), (w, t).into()),
+        Rectangle::new((x, y + t).into(), (t, h - 2 * t).into()),
+        Rectangle::new((x + w - t, y + t).into(), (t, h - 2 * t).into()),
+    ];
+    edges
+        .into_iter()
+        .map(|edge| {
+            OutputRenderElements::Snap(SolidColorRenderElement::new(
+                Id::new(),
+                edge,
+                CommitCounter::default(),
+                color,
+                Kind::Unspecified,
+            ))
+        })
+        .collect()
 }
 
-/// Subtle vertical monochrome gradient as the desktop background — a 1x256
-/// texture stretched to the output. Rebuilt each frame (1 KiB) so theme
-/// changes apply instantly.
+/// Desktop background — a soft radial vignette in the theme's
+/// background colour: flat through the middle, easing a few percent
+/// darker toward the corners, so the desktop reads as a surface rather
+/// than a dead fill. A 64x64 texture stretched bilinear to the output;
+/// rebuilt each frame so theme changes apply instantly.
 fn background_element<R>(
     renderer: &mut R,
     output: &Output,
@@ -275,6 +432,9 @@ where
     R: Renderer + ImportAll + ImportMem,
     R::TextureId: Clone + 'static,
 {
+    const N: usize = 64;
+    // Peak corner darkening — subtle enough to read as depth, not a filter.
+    const VIGNETTE: f32 = 0.10;
     let scale = output.current_scale().fractional_scale();
     // Element geometry is in physical pixels: the transformed mode size.
     let size = output
@@ -282,20 +442,26 @@ where
         .map(|m| output.current_transform().transform_size(m.size))?;
     let theme = crate::shell::ssd::current_theme();
     let c = theme.background;
-    // Bottom rows drift ~2% lighter (dark) / darker (light) — barely visible,
-    // keeps the desktop from reading as a dead flat fill.
-    let lift = if theme.dark { 0.022 } else { -0.018 };
-    let mut pixels = Vec::with_capacity(256 * 4);
-    for i in 0..256u32 {
-        let k = i as f32 / 255.0;
-        let f = |v: f32| ((v + lift * k) * 255.0).clamp(0.0, 255.0) as u8;
-        pixels.extend_from_slice(&[f(c[0]), f(c[1]), f(c[2]), 255]);
+    let mut pixels = Vec::with_capacity(N * N * 4);
+    for py in 0..N {
+        for px in 0..N {
+            // r: 0 at the centre → ~1 at the corners.
+            let nx = (px as f32 + 0.5) / N as f32 - 0.5;
+            let ny = (py as f32 + 0.5) / N as f32 - 0.5;
+            let r = ((nx * nx + ny * ny).sqrt() * std::f32::consts::SQRT_2).min(1.0);
+            // Smoothstep past 35% radius: flat in the middle, easing dark
+            // toward the edges.
+            let t = ((r - 0.35) / 0.65).clamp(0.0, 1.0);
+            let dim = 1.0 - t * t * (3.0 - 2.0 * t) * VIGNETTE;
+            let f = |v: f32| (v * dim * 255.0).clamp(0.0, 255.0) as u8;
+            pixels.extend_from_slice(&[f(c[0]), f(c[1]), f(c[2]), 255]);
+        }
     }
     let buffer = TextureBuffer::<R::TextureId>::from_memory(
         renderer,
         &pixels,
         smithay::backend::allocator::Fourcc::Abgr8888,
-        (1, 256),
+        (N as i32, N as i32),
         false,
         1,
         Transform::Normal,

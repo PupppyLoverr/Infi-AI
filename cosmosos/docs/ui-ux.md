@@ -12,9 +12,11 @@ Design goal: borrow the best interaction ideas from Windows 11 and macOS and fus
 | **Launcher** | Spotlight: centred floating card, dim backdrop, type-first; Launchpad icon grid | Start: search field, "PINNED" grid, "ALL APPS" list, footer with system actions | Spotlight placement + Start contents; typing flips grid → Spotlight results |
 | **Tray** | — | Quick Settings flyout on tray click | Flyout card anchored to tray: network, volume slider, battery, power row |
 | **Workspace pager** | — | Win11 virtual-desktop strip | Numbered pills; active = inverted pill |
-| **Notifications** | Banner stack top-right | Toasts top-right | Kept; rounded cards, 8px radius |
-| **Background** | Soft tonal gradient | — | Subtle vertical monochrome gradient (no artwork) |
-| **Corners** | Rounded cards | Rounded everything | Rounded shell surfaces (launcher, flyouts, notifications); windows stay square — see below |
+| **Notifications** | Banner stack top-right, app icon per card | Toasts top-right | Kept; rounded 12px cards, per-app icon, drop shadow |
+| **Background** | Soft tonal field | — | Radial vignette (flat middle, ~10% darker corners) |
+| **Shadows** | Popover/menubar drop shadows | — | SDF gaussian decals under every floating card (dock, flyout, notifications, switcher, launcher, assist) — the compositor paints them for bounded layer surfaces, the shell paints them for fullscreen overlays |
+| **Snap preview** | — | Snap-assist zone hint | Opaque 2px hairline outline of the drop zone (solid fills can't alpha-blend on llvmpipe; the outline reads cleaner anyway) |
+| **Corners** | Rounded cards | Rounded everything | All shell cards unified at 12px radius (dock keeps 15px as the largest card); windows keep square bodies with rounded titlebar tops |
 
 ## Skipped (deliberately)
 
@@ -27,7 +29,10 @@ Design goal: borrow the best interaction ideas from Windows 11 and macOS and fus
 ## Type & metrics
 
 - Panel (menubar) 32px; titlebar 32px; dock height 54 (8px float margin), cell 46, icon 28, card radius 15.
-- Launcher card radius 14; grid 6 columns, cell 78px high, icon 30 + 10.5 label.
+- All other shell cards: 12px radius (launcher, quick settings, notifications, window switcher, snap-assist picker).
+- Launcher: Spotlight vignette scrim (airy near the card, deeper at corners) + card shadow; grid 6 columns, cell 78px high, icon 30 + 10.5 label; section headers semibold 11px; footer buttons carry the settings/logout icons.
+- Shadows: gaussian SDF pixmap — window chrome + layer decals 32px bleed, σ≈11, α≈0.36, +10px down; in-canvas card shadows 20px bleed, σ≈9, α≈0.34, +7px — cached per card size.
 - Title font 13; menubar app name 13 semibold; panel text 12–13; flyout body 13 / headers 11 dim.
 - Traffic-light circles: 12px diameter, 20px pitch, order L→R = close, minimize, maximize. Unfocused = outlines; focused = discs; hover = glyph inside.
-- Icon set (`shell/src/icons.rs`): monochrome stroke glyphs on a 24px grid — start mark, terminal, files, editor, settings, monitor, lock, logout, reboot, shutdown, generic window — shared by panel, dock and launcher.
+- Icon set (`shell/src/icons.rs`): monochrome stroke glyphs on a 24px grid — start mark, terminal, files, editor, settings, monitor, lock, logout, reboot, shutdown, generic window — shared by panel, dock, launcher, flyout and notifications.
+- Snap Assist input region covers only the dimmed free half below the menubar: tray/dock/snapped-window clicks pass through (the picker dismisses on the resulting focus loss) instead of being swallowed.

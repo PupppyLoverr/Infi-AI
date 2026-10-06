@@ -17,7 +17,7 @@ pub const SWITCHER_H: u32 = 84;
 const CELL_W: f64 = 104.0;
 const ICON_SZ: f32 = 28.0;
 const PAD: f64 = 10.0;
-const CARD_R: f32 = 14.0;
+const CARD_R: f32 = 12.0;
 const CELL_R: f32 = 10.0;
 const MAX_CELLS: usize = 9;
 

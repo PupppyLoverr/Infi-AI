@@ -7,7 +7,7 @@ use smithay_client_toolkit::shell::WaylandSurface;
 use tiny_skia::{Color, PixmapMut};
 use wayland_client::protocol::wl_shm;
 
-use crate::{draw, ShellState};
+use crate::{draw, icons, ShellState};
 
 pub const QUICK_W: u32 = 300;
 const PAD: f64 = 16.0;
@@ -211,14 +211,16 @@ pub fn draw(state: &mut ShellState) {
     // would otherwise show stale shm pool memory as garbage glyphs.
     pixmap.fill(Color::TRANSPARENT);
 
-    draw::fill_round_rect(&mut pixmap, 0.0, 0.0, w as f32, h as f32, 10.0, card);
+    // The drop shadow comes from the compositor (layer decal) — the
+    // card itself only needs the rounded fill + hairline.
+    draw::fill_round_rect(&mut pixmap, 0.0, 0.0, w as f32, h as f32, 12.0, card);
     draw::stroke_round_rect(
         &mut pixmap,
         0.5,
         0.5,
         w as f32 - 1.0,
         h as f32 - 1.0,
-        9.5,
+        11.5,
         1.0,
         sep,
     );
@@ -429,6 +431,7 @@ pub fn draw(state: &mut ShellState) {
     let by = h as f32 - BTN_H as f32;
     draw::fill_rect(&mut pixmap, 1.0, by, w as f32 - 2.0, 1.0, sep);
     let half = w as f32 / 2.0;
+    let glyph = Color::from_rgba8(fg.r(), fg.g(), fg.b(), fg.a());
     draw::fill_round_rect(
         &mut pixmap,
         PAD as f32,
@@ -438,9 +441,17 @@ pub fn draw(state: &mut ShellState) {
         6.0,
         btn_bg,
     );
+    icons::icon(
+        &mut pixmap,
+        "cosmos-settings",
+        PAD as f32 + 10.0,
+        by + 19.0,
+        14.0,
+        glyph,
+    );
     draw::text(
         &mut pixmap,
-        PAD as f32 + 14.0,
+        PAD as f32 + 28.0,
         by + 18.0,
         100.0,
         16.0,
@@ -457,9 +468,17 @@ pub fn draw(state: &mut ShellState) {
         6.0,
         btn_bg,
     );
+    icons::icon(
+        &mut pixmap,
+        "sys-logout",
+        half + 12.0,
+        by + 19.0,
+        14.0,
+        glyph,
+    );
     draw::text(
         &mut pixmap,
-        half + 14.0,
+        half + 30.0,
         by + 18.0,
         100.0,
         16.0,
