@@ -68,7 +68,8 @@ Failure-priority order per spec: bootable > compositor > input > windows > shell
 - [x] Day 1 — Rust workspace; Smithay compositor (`--winit` nested + `--tty-udev` real); workspaces, snapping, SSD chrome, cosmos-ipc. **[PR #2]**
 - [x] Day 2 — cosmos-shell over layer-shell (panel, searchable launcher, notification daemon, D-Bus status area); workspaces+snapping shipped in PR #2. **[PR #3]**
 - [x] Day 3 (partial) — cosmos-uitk + terminal/files/editor/settings/monitor apps; compositor window-id + IPC outbox hardening; `tests/smoke-nested.sh` (PASS); docs. **[PR #4, #5]**
-- [~] Day 3 — disk image build on the x86_64 host: in progress.
-- [ ] Day 4 — stabilization cycles, perf numbers, final image + report.
+- [x] Day 3 — bootable x86_64 disk image: `image/build.sh` (mmdebstrap trixie + GRUB → 772MB raw) + `image/run.sh` (KVM/TCG, SDL/headless). **[PR #14]**
+- [x] Day 4 — KVM boot smoke on the x86_64 host: desktop painted, all 5 apps live via guest smoke rig, **zero panics over 100s**, all windows inside output (after 4 placement iterations), guest RAM 310/967 MiB idle. Perf + pitfalls in `docs/image.md`. **[PRs #8–#13, #14]**
 
 Verified nested: `weston --backend=headless → compositor --winit → shell + files + terminal` — real windows/pong over IPC, 5/5 procs alive, no panics.
+Verified on real KVM boot: kernel→graphical.target ~5s, →first frame ≤10s; live NM/PipeWire tray state; `list_windows`/`windows:[]` lifecycle clean.
