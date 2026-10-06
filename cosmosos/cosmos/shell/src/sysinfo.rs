@@ -75,7 +75,14 @@ fn clock() -> String {
                 .map(|d| d.as_secs() / 86_400)
                 .unwrap_or(0);
             let wday = WDAYS[(days % 7) as usize];
-            format!("{} {} {}  {:02}:{:02}", wday, MONTHS[mo as usize % 12], d, h, m)
+            format!(
+                "{} {} {}  {:02}:{:02}",
+                wday,
+                MONTHS[mo as usize % 12],
+                d,
+                h,
+                m
+            )
         })
         .unwrap_or_default()
 }

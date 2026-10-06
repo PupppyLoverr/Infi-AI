@@ -324,14 +324,35 @@ pub fn battery(pixmap: &mut PixmapMut<'_>, x: f32, y: f32, size: f32, color: Col
     let s = size / 24.0;
     let (ox, oy) = (x, y);
     let mut pb = PathBuilder::new();
-    rrect(&mut pb, ox + 2.5 * s, oy + 8.0 * s, 17.0 * s, 9.0 * s, 2.2 * s);
+    rrect(
+        &mut pb,
+        ox + 2.5 * s,
+        oy + 8.0 * s,
+        17.0 * s,
+        9.0 * s,
+        2.2 * s,
+    );
     // Terminal nub.
-    rrect(&mut pb, ox + 20.5 * s, oy + 10.5 * s, 2.4 * s, 4.0 * s, 0.8 * s);
+    rrect(
+        &mut pb,
+        ox + 20.5 * s,
+        oy + 10.5 * s,
+        2.4 * s,
+        4.0 * s,
+        0.8 * s,
+    );
     stroke(pixmap, pb, s, 1.5, color);
     let fill_w = (15.2 * pct.min(100) as f32 / 100.0).max(0.0);
     if fill_w > 0.5 {
         let mut pb = PathBuilder::new();
-        rrect(&mut pb, ox + 3.6 * s, oy + 9.1 * s, fill_w * s, 6.8 * s, 1.3 * s);
+        rrect(
+            &mut pb,
+            ox + 3.6 * s,
+            oy + 9.1 * s,
+            fill_w * s,
+            6.8 * s,
+            1.3 * s,
+        );
         fill(pixmap, pb, color);
     }
 }

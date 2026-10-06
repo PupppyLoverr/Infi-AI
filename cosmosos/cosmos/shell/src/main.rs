@@ -1002,11 +1002,21 @@ impl KeyboardHandler for ShellState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
         _keyboard: &wl_keyboard::WlKeyboard,
-        _surface: &wl_surface::WlSurface,
+        surface: &wl_surface::WlSurface,
         _serial: u32,
     ) {
         // Focus pulled away from the quick-settings flyout → dismiss it.
-        if self.quick_open {
+        // `leave` fires for ANY surface losing focus — a click inside the
+        // card also moves keyboard focus (window → flyout) and the window's
+        // leave must not kill the card, so only the flyout's own leave
+        // dismisses.
+        if self.quick_open
+            && self
+                .quick_surface
+                .as_ref()
+                .map(|l| l.wl_surface() == surface)
+                .unwrap_or(false)
+        {
             self.set_quick_open(false);
             self.quick_dismissed_at = Some(std::time::Instant::now());
         }

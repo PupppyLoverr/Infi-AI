@@ -294,13 +294,15 @@ pub fn draw(state: &mut ShellState) {
     // so it can never block a click).
     if let Some(idx) = dock_hover.and_then(|hx| hit(hx, items.len())) {
         let item = &items[idx];
-        let name: &str = item.app.as_ref().map(|a| a.name.as_str()).unwrap_or(
-            if item.icon == "start" {
-                "Launcher"
-            } else {
-                item.icon.as_str()
-            },
-        );
+        let name: &str =
+            item.app
+                .as_ref()
+                .map(|a| a.name.as_str())
+                .unwrap_or(if item.icon == "start" {
+                    "Launcher"
+                } else {
+                    item.icon.as_str()
+                });
         let cell_center =
             PAD + idx as f64 * CELL_W + if idx >= 1 { SEP_W } else { 0.0 } + CELL_W / 2.0;
         // Semibold 11px runs ~7px/char — 6.0 clipped the tail glyph

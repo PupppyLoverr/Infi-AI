@@ -70,18 +70,16 @@ pub fn draw(state: &mut ShellState) {
     }
     let cells: Vec<(String, String)> = order
         .iter()
-        .map(|id| {
-            match state.windows.iter().find(|wi| wi.id == *id) {
-                Some(wi) => (
-                    icons::key_for(&wi.app_id),
-                    if wi.title.is_empty() {
-                        wi.app_id.clone()
-                    } else {
-                        wi.title.clone()
-                    },
-                ),
-                None => ("generic".into(), "Window".into()),
-            }
+        .map(|id| match state.windows.iter().find(|wi| wi.id == *id) {
+            Some(wi) => (
+                icons::key_for(&wi.app_id),
+                if wi.title.is_empty() {
+                    wi.app_id.clone()
+                } else {
+                    wi.title.clone()
+                },
+            ),
+            None => ("generic".into(), "Window".into()),
         })
         .collect();
     let selected = state.switcher_sel;
