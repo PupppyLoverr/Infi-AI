@@ -146,13 +146,20 @@ cosmos: new window id=1..5              # Terminal Files Editor Settings System 
 ... post-kill: {"type":"windows","windows":[]}
 ```
 
-Geometry vs 1024x768 (post-`2775ece` settle-refit): Terminal
-380x79 680x476 (x+w=1060 over), Files 498x333 560x436 (x+w=1058
-over, y+h=769 ~1px), Editor 273x49 560x456 inside, Settings
-361x126 520x516 inside, System Monitor 499x138 600x496 (x+w=1099
-over). IPC coordinates verified against the framebuffer — three
-windows still extend past the right bezel; y-axis within bounds
-(reported upstream).
+Geometry vs 1024x768 (final, post-`840ab19` 1s time-boxed refit)
+— all five windows fully inside the non-exclusive zone:
+
+| window | x | y | w | h | x+w | y+h | inside? |
+|---|---|---|---|---|---|---|---|
+| Terminal | 125 | 152 | 680 | 476 | 805 | 628 | yes |
+| Files | 441 | 58 | 560 | 436 | 1001 | 494 | yes |
+| Editor | 249 | 178 | 560 | 456 | 809 | 634 | yes |
+| Settings | 142 | 46 | 520 | 516 | 662 | 562 | yes |
+| System Monitor | 256 | 232 | 600 | 496 | 856 | 728 | yes |
+
+IPC coordinates verified against the framebuffer screendump. 20s
+post-smoke idle watch: zero panics, zero getty respawns, stable
+session (panic count 0 across the full 100s serial log).
 
 ### Perf (QEMU -m 1G -smp 2, KVM, llvmpipe)
 
