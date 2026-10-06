@@ -318,12 +318,14 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
                 .find(|element| element.wl_surface().as_deref() == Some(&surface));
             if let Some(window) = window {
                 use xdg_decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode;
-                let is_ssd = configure
-                    .state
-                    .decoration_mode
-                    .map(|mode| mode == Mode::ServerSide)
-                    .unwrap_or(false);
-                window.set_ssd(is_ssd);
+                // A configure without a decoration mode must not clobber the
+                // flag — `unwrap_or(false)` used to un-set SSD on every ack
+                // for clients that bind (or ack) the decoration object after
+                // their first configure, leaving them chromeless until a
+                // later configure happened to carry the mode again.
+                if let Some(mode) = configure.state.decoration_mode {
+                    window.set_ssd(mode == Mode::ServerSide);
+                }
             }
         }
     }
