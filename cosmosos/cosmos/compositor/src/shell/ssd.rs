@@ -37,6 +37,8 @@ const FONT_SIZE: f32 = 13.0;
 const LINE_HEIGHT: f32 = 16.0;
 /// Left edge of the centred title's no-overlap band (right of the cluster).
 const TITLE_CLEAR_LEFT: f32 = 68.0;
+/// Window top-corner radius (macOS window chrome).
+const CORNER_R: f32 = 10.0;
 
 thread_local! {
     static CURRENT_THEME: Cell<CosmosTheme> = Cell::new(CosmosTheme::from_config(&crate::cosmos::CosmosConfig::default()));
@@ -136,6 +138,7 @@ impl HeaderBar {
 
         self.pixels
             .resize(width as usize * HEADER_BAR_HEIGHT as usize * 4, 0);
+        self.pixels.fill(0);
         let pointer_loc = self.pointer_loc;
         if let Some(mut pixmap) =
             PixmapMut::from_bytes(&mut self.pixels, width, HEADER_BAR_HEIGHT as u32)
@@ -307,7 +310,34 @@ fn paint_titlebar(
     } else {
         theme.titlebar_bg
     };
-    pixmap.fill(Color::from_rgba(bg[0], bg[1], bg[2], bg[3]).unwrap());
+    // Titlebar background — square bottom edge, rounded top corners like a
+    // macOS window (the two top corners stay transparent so the desktop
+    // shows through).
+    let r = CORNER_R.min(h as f32 / 2.0).min(w as f32 / 2.0);
+    let mut pb = PathBuilder::new();
+    let k = 0.5523_f32 * r; // circle-to-cubic constant
+    pb.move_to(0.0, h as f32);
+    pb.line_to(0.0, r);
+    pb.cubic_to(0.0, r - k, r - k, 0.0, r, 0.0);
+    pb.line_to(w as f32 - r, 0.0);
+    pb.cubic_to(w as f32 - r + k, 0.0, w as f32, r - k, w as f32, r);
+    pb.line_to(w as f32, h as f32);
+    pb.close();
+    if let Some(path) = pb.finish() {
+        pixmap.fill_path(
+            &path,
+            &Paint {
+                shader: tiny_skia::Shader::SolidColor(
+                    Color::from_rgba(bg[0], bg[1], bg[2], bg[3]).unwrap(),
+                ),
+                anti_alias: true,
+                ..Default::default()
+            },
+            FillRule::Winding,
+            Transform::default(),
+            None,
+        );
+    }
 
     // Bottom 1px separator line.
     let sep = if theme.dark {

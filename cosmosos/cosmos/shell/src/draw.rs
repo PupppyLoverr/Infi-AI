@@ -119,18 +119,51 @@ pub fn text(
     content: &str,
     color: CtColor,
 ) {
+    text_styled(
+        pixmap, x, y, max_w, line_h, font_size, content, color, false,
+    );
+}
+
+/// [`text`] with an optional semibold weight — the macOS menubar's
+/// focused-app name look.
+pub fn text_bold(
+    pixmap: &mut PixmapMut<'_>,
+    x: f32,
+    y: f32,
+    max_w: f32,
+    line_h: f32,
+    font_size: f32,
+    content: &str,
+    color: CtColor,
+) {
+    text_styled(pixmap, x, y, max_w, line_h, font_size, content, color, true);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn text_styled(
+    pixmap: &mut PixmapMut<'_>,
+    x: f32,
+    y: f32,
+    max_w: f32,
+    line_h: f32,
+    font_size: f32,
+    content: &str,
+    color: CtColor,
+    bold: bool,
+) {
     FONT_SYSTEM.with(|fs| {
         SWASH_CACHE.with(|cache| {
             let mut fs = fs.borrow_mut();
             let mut cache = cache.borrow_mut();
             let mut buf = Buffer::new(&mut fs, Metrics::new(font_size, line_h));
             buf.set_size(&mut fs, Some(max_w.max(1.0)), Some(line_h));
-            buf.set_text(
-                &mut fs,
-                content,
-                &Attrs::new().family(Family::SansSerif),
-                Shaping::Advanced,
-            );
+            let attrs = Attrs::new().family(Family::SansSerif);
+            let attrs = if bold {
+                attrs.weight(cosmic_text::Weight::SEMIBOLD)
+            } else {
+                attrs
+            };
+            buf.set_text(&mut fs, content, &attrs, Shaping::Advanced);
             buf.shape_until_scroll(&mut fs, false);
             let ox = x as i32;
             let oy = y as i32;

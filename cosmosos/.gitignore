@@ -1,4 +1,5 @@
 /target
+cosmos/target
 *.img
 *.qcow2
 *.iso

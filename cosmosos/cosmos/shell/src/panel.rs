@@ -1,213 +1,57 @@
-//! The top panel: launcher button, task buttons, workspace pager, status.
+//! The Cosmos panel — a top menubar in the macOS idiom: Cosmos mark and
+//! the focused application's name on the left; workspace pager and the
+//! status tray (network · volume · battery · clock) on the right. Window
+//! task management lives on the bottom dock.
 
 use cosmic_text::Color as CtColor;
-use smithay_client_toolkit::shell::WaylandSurface;
 use tiny_skia::{Color, PixmapMut};
-use wayland_client::protocol::wl_shm;
 
-use crate::{draw, ShellState};
+use crate::{draw, icons, ShellState};
 
-const LAUNCH_BTN_W: f64 = 76.0;
+const LAUNCH_BTN_W: f64 = 46.0;
+const APP_NAME_X: f64 = 54.0;
 const WS_CELL_W: f64 = 26.0;
-const TASK_W: f64 = 160.0;
+const WS_CELL_H: f32 = 18.0;
 
 fn theme(dark: bool) -> (Color, Color, Color, CtColor, CtColor) {
     if dark {
         (
-            Color::from_rgba8(0x14, 0x14, 0x16, 0xFF),
-            Color::from_rgba8(0x22, 0x22, 0x26, 0xFF),
-            Color::from_rgba8(0x33, 0x33, 0x38, 0xFF),
-            CtColor::rgba(0xEC, 0xEC, 0xEE, 0xFF),
-            CtColor::rgba(0x9A, 0x9A, 0xA0, 0xFF),
+            Color::from_rgba8(0x18, 0x19, 0x1C, 0xE8), // bg
+            Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x2E), // hover
+            Color::from_rgba8(0x45, 0x46, 0x4C, 0x80), // separator
+            CtColor::rgba(0xEC, 0xEC, 0xEE, 0xFF),     // fg
+            CtColor::rgba(0x8F, 0x90, 0x97, 0xFF),     // fg dim
         )
     } else {
         (
-            Color::from_rgba8(0xF6, 0xF6, 0xF6, 0xFF),
-            Color::from_rgba8(0xEA, 0xEA, 0xEA, 0xFF),
-            Color::from_rgba8(0xD8, 0xD8, 0xD8, 0xFF),
+            Color::from_rgba8(0xF7, 0xF7, 0xF9, 0xEC),
+            Color::from_rgba8(0x00, 0x00, 0x00, 0x18),
+            Color::from_rgba8(0xD4, 0xD4, 0xD9, 0xAA),
             CtColor::rgba(0x18, 0x18, 0x1B, 0xFF),
-            CtColor::rgba(0x55, 0x55, 0x5A, 0xFF),
+            CtColor::rgba(0x6E, 0x6E, 0x78, 0xFF),
         )
     }
 }
 
-/// Draw the whole panel into a fresh slot-pool buffer.
-pub fn draw(state: &mut ShellState) {
-    let (w, h) = state.panel_size;
-    if w == 0 {
-        return;
-    }
-    let Some(layer) = state.panel.clone() else {
-        return;
+/// Focused window's display name — the macOS menubar app-name slot.
+/// Falls back to the window title, then nothing.
+fn focused_app_name(state: &ShellState) -> String {
+    let Some(win) = state.windows.iter().find(|w| w.focused) else {
+        return String::new();
     };
-    let (bg, hover_bg, sep, fg, fg_dim) = theme(state.dark);
-    let ws_count = crate::workspace_count(state);
-    let active_ws = state
-        .workspaces
+    let id = icons::key_for(&win.app_id);
+    state
+        .apps
         .iter()
-        .find(|ws| ws.focused)
-        .map(|ws| ws.id)
-        .unwrap_or(0);
-    let panel_windows: Vec<cosmos_ipc::WindowInfo> = state
-        .windows
-        .iter()
-        .filter(|w| w.workspace == active_ws || w.minimized)
-        .cloned()
-        .collect();
-
-    let stride = w as i32 * 4;
-    let Ok((buffer, canvas)) =
-        state
-            .pool
-            .create_buffer(w as i32, h as i32, stride, wl_shm::Format::Argb8888)
-    else {
-        tracing::warn!("panel: pool create_buffer failed");
-        return;
-    };
-    let Some(mut pixmap) = PixmapMut::from_bytes(canvas, w, h) else {
-        return;
-    };
-
-    draw::fill_rect(&mut pixmap, 0.0, 0.0, w as f32, h as f32, bg);
-    draw::fill_rect(&mut pixmap, 0.0, h as f32 - 1.0, w as f32, 1.0, sep);
-
-    let mid_y = (h as f32 - 18.0) / 2.0 + 14.0; // text baseline-ish center
-
-    // Cosmos launcher button — rounded hover pill (Win11 taskbar feel).
-    let hover_launch = state.panel_hover.0 < LAUNCH_BTN_W;
-    if hover_launch {
-        draw::fill_round_rect(
-            &mut pixmap,
-            3.0,
-            3.0,
-            LAUNCH_BTN_W as f32 - 6.0,
-            h as f32 - 6.0,
-            6.0,
-            hover_bg,
-        );
-    }
-    // Small mark before the wordmark.
-    draw::fill_round_rect(
-        &mut pixmap,
-        12.0,
-        h as f32 / 2.0 - 4.0,
-        8.0,
-        8.0,
-        4.0,
-        if state.dark {
-            Color::from_rgba8(0xEC, 0xEC, 0xEE, 0xFF)
-        } else {
-            Color::from_rgba8(0x30, 0x30, 0x33, 0xFF)
-        },
-    );
-    draw::text(
-        &mut pixmap,
-        26.0,
-        mid_y - 14.0,
-        LAUNCH_BTN_W as f32 - 26.0,
-        18.0,
-        13.0,
-        "Cosmos",
-        fg,
-    );
-    draw::fill_rect(&mut pixmap, LAUNCH_BTN_W as f32, 0.0, 1.0, h as f32, sep);
-
-    // Task buttons for the active workspace's windows.
-    let mut x = LAUNCH_BTN_W + 8.0;
-    for win in &panel_windows {
-        if x + TASK_W > w as f64 - 400.0 {
-            break;
-        }
-        let focused = win.focused;
-        let title = if win.title.is_empty() {
-            win.app_id.clone()
-        } else {
-            win.title.clone()
-        };
-        if focused {
-            draw::fill_round_rect(
-                &mut pixmap,
-                x as f32,
-                3.0,
-                TASK_W as f32,
-                h as f32 - 6.0,
-                6.0,
-                hover_bg,
-            );
-        }
-        draw::text(
-            &mut pixmap,
-            x as f32 + 8.0,
-            mid_y - 14.0,
-            TASK_W as f32 - 12.0,
-            18.0,
-            12.0,
-            &title,
-            if win.minimized { fg_dim } else { fg },
-        );
-        x += TASK_W + 4.0;
-    }
-
-    // Right side: status text then workspace pager, measured from the right.
-    let status = status_text(&state.sysinfo);
-    let status_w = status.len() as f64 * 7.0;
-    let status_x = (w as f64 - status_w - 12.0).max(x + 20.0);
-    draw::text(
-        &mut pixmap,
-        status_x as f32,
-        mid_y - 14.0,
-        status_w as f32 + 12.0,
-        18.0,
-        12.0,
-        &status,
-        fg,
-    );
-
-    // Workspace pager — active workspace is an inverted pill (Win11 strip).
-    let mut wsx = status_x - ws_count as f64 * WS_CELL_W - 10.0;
-    for ws in &state.workspaces {
-        let active = ws.focused;
-        if active {
-            draw::fill_round_rect(
-                &mut pixmap,
-                wsx as f32 + 1.0,
-                5.0,
-                WS_CELL_W as f32 - 6.0,
-                h as f32 - 10.0,
-                11.0,
-                if state.dark {
-                    Color::from_rgba8(0xEC, 0xEC, 0xEE, 0xFF)
-                } else {
-                    Color::from_rgba8(0x30, 0x30, 0x33, 0xFF)
-                },
-            );
-        }
-        draw::text(
-            &mut pixmap,
-            wsx as f32 + 7.0,
-            mid_y - 14.0,
-            WS_CELL_W as f32 - 8.0,
-            18.0,
-            12.0,
-            &(ws.id + 1).to_string(),
-            if active {
-                // Inverted on the pill.
-                if state.dark {
-                    CtColor::rgba(0x18, 0x18, 0x1B, 0xFF)
-                } else {
-                    CtColor::rgba(0xF6, 0xF6, 0xF6, 0xFF)
-                }
+        .find(|a| a.id == id)
+        .map(|a| a.name.clone())
+        .unwrap_or_else(|| {
+            if win.title.is_empty() {
+                String::new()
             } else {
-                fg_dim
-            },
-        );
-        wsx += WS_CELL_W;
-    }
-
-    let wl_surface = layer.wl_surface().clone();
-    buffer.attach_to(&wl_surface).ok();
-    wl_surface.damage_buffer(0, 0, w as i32, h as i32);
-    wl_surface.commit();
+                win.title.clone()
+            }
+        })
 }
 
 fn status_text(info: &crate::sysinfo::SysInfo) -> String {
@@ -226,20 +70,182 @@ fn status_text(info: &crate::sysinfo::SysInfo) -> String {
         None => "Vol --".to_string(),
     };
     let bat = match &info.battery {
-        Some(b) if b.present => format!(" {}%{} ", b.percent, if b.charging { "↑" } else { "" }),
+        Some(b) if b.present => format!(" {}%{} ", b.percent, if b.charging { "+" } else { "" }),
         _ => " ".to_string(),
     };
     format!("{net} · {vol} ·{bat}{}", info.clock)
 }
 
-/// Tray click region width (matches `draw`'s status column).
+/// Width of the status column — shared by draw, click and `tray_clicked`.
 pub fn status_text_len(info: &crate::sysinfo::SysInfo) -> f64 {
     status_text(info).len() as f64 * 7.0
 }
 
-/// Click handler — returns whether a repaint is needed.
-pub fn click(state: &mut ShellState, x: f64, y: f64) -> bool {
-    let _ = y;
+/// Repaint the panel.
+pub fn draw(state: &mut ShellState) {
+    let (w, h) = state.panel_size;
+    if w == 0 {
+        return;
+    }
+    let Some(layer) = state.panel.clone() else {
+        return;
+    };
+    let (bg, hover_bg, sep, fg, fg_dim) = theme(state.dark);
+    let (hx, hov) = state.panel_hover;
+    let name = focused_app_name(state);
+    let status = status_text(&state.sysinfo);
+    let status_w = status_text_len(&state.sysinfo);
+    let ws_count = crate::workspace_count(state);
+    let workspaces = state.workspaces.clone();
+    let dark = state.dark;
+    let tray_x = w as f64 - status_w - 12.0;
+
+    let stride = w as i32 * 4;
+    let Ok((buffer, canvas)) = state.pool.create_buffer(
+        w as i32,
+        h as i32,
+        stride,
+        wayland_client::protocol::wl_shm::Format::Argb8888,
+    ) else {
+        tracing::warn!("panel: pool create_buffer failed");
+        return;
+    };
+    let Some(mut pixmap) = PixmapMut::from_bytes(canvas, w, h) else {
+        return;
+    };
+    pixmap.fill(bg);
+
+    // Cosmos mark — the launcher button.
+    if hov && hx < LAUNCH_BTN_W {
+        draw::fill_round_rect(
+            &mut pixmap,
+            4.0,
+            4.0,
+            LAUNCH_BTN_W as f32 - 8.0,
+            h as f32 - 8.0,
+            8.0,
+            hover_bg,
+        );
+    }
+    let glyph = Color::from_rgba8(fg.r(), fg.g(), fg.b(), fg.a());
+    icons::icon(
+        &mut pixmap,
+        "start",
+        LAUNCH_BTN_W as f32 / 2.0 - 9.0,
+        h as f32 / 2.0 - 9.0,
+        18.0,
+        glyph,
+    );
+
+    // Focused app name — bold, macOS-style.
+    if !name.is_empty() {
+        draw::text_bold(
+            &mut pixmap,
+            APP_NAME_X as f32,
+            h as f32 / 2.0 - 8.0,
+            200.0,
+            16.0,
+            13.0,
+            &name,
+            fg,
+        );
+    }
+
+    // Right side: status text (rightmost — the tray), then the pager.
+    if hov && hx >= tray_x {
+        draw::fill_round_rect(
+            &mut pixmap,
+            tray_x as f32 + 2.0,
+            4.0,
+            status_w as f32 + 8.0,
+            h as f32 - 8.0,
+            8.0,
+            hover_bg,
+        );
+    }
+    draw::text(
+        &mut pixmap,
+        tray_x as f32 + 8.0,
+        h as f32 / 2.0 - 8.0,
+        status_w as f32,
+        16.0,
+        12.0,
+        &status,
+        fg,
+    );
+    let mut rx = tray_x - ws_count as f64 * WS_CELL_W - 10.0;
+
+    // Workspace pager — numbered cells, active one a filled pill (inverted).
+    for ws in &workspaces {
+        let cy = h as f32 / 2.0 - WS_CELL_H / 2.0;
+        let label = (ws.id + 1).to_string();
+        if ws.focused {
+            draw::fill_round_rect(
+                &mut pixmap,
+                rx as f32 + 3.0,
+                cy,
+                WS_CELL_W as f32 - 6.0,
+                WS_CELL_H,
+                9.0,
+                if dark {
+                    Color::from_rgba8(0xEC, 0xEC, 0xEE, 0xFF)
+                } else {
+                    Color::from_rgba8(0x1A, 0x1A, 0x1C, 0xFF)
+                },
+            );
+            draw::text(
+                &mut pixmap,
+                rx as f32 + 3.0,
+                cy + 1.0,
+                WS_CELL_W as f32 - 6.0,
+                WS_CELL_H,
+                11.0,
+                &label,
+                if dark {
+                    CtColor::rgba(0x14, 0x14, 0x16, 0xFF)
+                } else {
+                    CtColor::rgba(0xF5, 0xF5, 0xF7, 0xFF)
+                },
+            );
+        } else {
+            let has_windows = ws.window_count > 0;
+            if hov && hx >= rx && hx < rx + WS_CELL_W {
+                draw::fill_round_rect(
+                    &mut pixmap,
+                    rx as f32 + 3.0,
+                    cy,
+                    WS_CELL_W as f32 - 6.0,
+                    WS_CELL_H,
+                    9.0,
+                    hover_bg,
+                );
+            }
+            draw::text(
+                &mut pixmap,
+                rx as f32 + 3.0,
+                cy + 1.0,
+                WS_CELL_W as f32 - 6.0,
+                WS_CELL_H,
+                11.0,
+                &label,
+                if has_windows { fg } else { fg_dim },
+            );
+        }
+        rx += WS_CELL_W;
+    }
+
+    // Bottom hairline separator.
+    draw::fill_rect(&mut pixmap, 0.0, h as f32 - 1.0, w as f32, 1.0, sep);
+
+    use smithay_client_toolkit::shell::WaylandSurface;
+    let wl_surface = layer.wl_surface().clone();
+    buffer.attach_to(&wl_surface).ok();
+    wl_surface.damage_buffer(0, 0, w as i32, h as i32);
+    wl_surface.commit();
+}
+
+/// Hit-test + dispatch a click on the panel.
+pub fn click(state: &mut ShellState, x: f64, _y: f64) -> bool {
     let (w, _) = state.panel_size;
     // Tray region toggles the quick-settings flyout.
     if state.tray_clicked(x) {
@@ -252,27 +258,6 @@ pub fn click(state: &mut ShellState, x: f64, y: f64) -> bool {
     if x < LAUNCH_BTN_W {
         state.ipc.send(&cosmos_ipc::Request::ToggleLauncher);
         return true;
-    }
-    // Task buttons.
-    let active_ws = state
-        .workspaces
-        .iter()
-        .find(|ws| ws.focused)
-        .map(|ws| ws.id)
-        .unwrap_or(0);
-    let wins: Vec<u64> = state
-        .windows
-        .iter()
-        .filter(|w| w.workspace == active_ws || w.minimized)
-        .map(|w| w.id)
-        .collect();
-    let mut bx = LAUNCH_BTN_W + 8.0;
-    for id in wins {
-        if x >= bx && x < bx + TASK_W {
-            state.ipc.send(&cosmos_ipc::Request::FocusWindow { id });
-            return true;
-        }
-        bx += TASK_W + 4.0;
     }
     // Workspace pager.
     let count = crate::workspace_count(state);
@@ -290,10 +275,12 @@ pub fn click(state: &mut ShellState, x: f64, y: f64) -> bool {
     false
 }
 
-/// Hover updates the launcher-button highlight.
+/// Pointer hover — launcher button + tray highlight bookkeeping.
 pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {
     let _ = y;
     let prev = state.panel_hover;
     state.panel_hover = (x, true);
-    (prev.0 < LAUNCH_BTN_W) != (x < LAUNCH_BTN_W)
+    let edge =
+        |px: f64, w: f64| px < LAUNCH_BTN_W || px >= w - status_text_len(&state.sysinfo) - 12.0;
+    edge(prev.0, state.panel_size.0 as f64) != edge(x, state.panel_size.0 as f64)
 }
