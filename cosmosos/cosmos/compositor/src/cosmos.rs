@@ -8,6 +8,7 @@
 
 use std::{
     collections::HashMap,
+    io::Write,
     os::unix::net::UnixStream,
     path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
@@ -200,6 +201,10 @@ pub struct IpcClient {
     pub dead: bool,
     /// Partial-line accumulator for the NDJSON protocol.
     pub read_buf: Vec<u8>,
+    /// Serialized-but-not-yet-written events. The socket is nonblocking;
+    /// EAGAIN queues here and drains on the next dispatch/flush instead of
+    /// killing the client.
+    pub outbox: Vec<u8>,
 }
 
 #[derive(Debug, Default)]
@@ -299,11 +304,20 @@ impl CosmosState {
     }
 }
 
-/// Identity key for a window: its root `WlSurface` object id.
+/// Identity key for a window: owning client id + root `WlSurface` object id.
+/// The object id alone is client-local — two clients both get `wl_surface@N`
+/// — so the client's backend id must disambiguate or every window would
+/// dedupe to the same registry entry.
 pub fn surface_key(window: &WindowElement) -> String {
     window
         .wl_surface()
-        .map(|s| format!("{}", s.id()))
+        .map(|s| {
+            let cid = s
+                .client()
+                .map(|c| format!("{:?}", c.id()))
+                .unwrap_or_else(|| "none".to_string());
+            format!("{cid}:{}", s.id())
+        })
         .unwrap_or_else(|| "unknown".to_string())
 }
 
@@ -735,14 +749,38 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             if client.dead {
                 continue;
             }
-            if let Err(err) = cosmos_ipc::write_message(&mut client.stream, event) {
-                // Shutting down wakes the client's read source so it removes itself.
-                tracing::debug!("ipc client write failed: {err}");
-                let _ = client.stream.shutdown(std::net::Shutdown::Both);
-                client.dead = true;
-            }
+            Self::ipc_push(client, event);
         }
         self.cosmos.ipc.clients.retain(|c| !c.dead);
+    }
+
+    /// Queue one event into a client's outbox and write what fits.
+    /// Outlives transient EAGAIN instead of dropping the client.
+    pub fn ipc_push(client: &mut IpcClient, event: &cosmos_ipc::Event) {
+        if cosmos_ipc::write_message(&mut client.outbox, event).is_err() {
+            return;
+        }
+        Self::ipc_flush_client(client);
+    }
+
+    /// Drain as much of a client's outbox as the socket accepts right now.
+    /// Returns false (and marks the client dead) on a real error.
+    pub fn ipc_flush_client(client: &mut IpcClient) {
+        while !client.outbox.is_empty() {
+            match client.stream.write(&client.outbox) {
+                Ok(0) => break,
+                Ok(n) => {
+                    client.outbox.drain(..n);
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(err) => {
+                    tracing::debug!("ipc client write failed: {err}");
+                    let _ = client.stream.shutdown(std::net::Shutdown::Both);
+                    client.dead = true;
+                    return;
+                }
+            }
+        }
     }
 
     /// Respond to one client only.
@@ -769,8 +807,14 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         Ok(())
     }
 
-    /// Flush queued state broadcasts.
+    /// Flush queued state broadcasts and any pending client outboxes.
     pub fn ipc_flush(&mut self) {
+        for client in &mut self.cosmos.ipc.clients {
+            if !client.dead {
+                Self::ipc_flush_client(client);
+            }
+        }
+        self.cosmos.ipc.clients.retain(|c| !c.dead);
         if self.cosmos.dirty {
             self.cosmos.dirty = false;
             self.ipc_broadcast_state();

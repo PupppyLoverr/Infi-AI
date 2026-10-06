@@ -94,6 +94,7 @@ fn accept_client<BackendData: Backend + 'static>(
         subscribed: false,
         dead: false,
         read_buf: Vec::new(),
+        outbox: Vec::new(),
     });
 
     let handle = state.handle.clone();
@@ -131,11 +132,11 @@ fn client_readable<BackendData: Backend>(
                     let Some(idx) = client_index(state, id) else {
                         return Ok(PostAction::Remove);
                     };
-                    if let Err(err) =
-                        cosmos_ipc::write_message(&mut state.cosmos.ipc.clients[idx].stream, &ev)
-                    {
-                        warn!(client = id, "ipc reply write failed: {err}");
-                        mark_dead(state, id);
+                    AnvilState::<BackendData>::ipc_push(
+                        &mut state.cosmos.ipc.clients[idx],
+                        &ev,
+                    );
+                    if state.cosmos.ipc.clients[idx].dead {
                         return Ok(PostAction::Remove);
                     }
                 }
