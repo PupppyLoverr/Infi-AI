@@ -137,11 +137,26 @@ pub fn draw(state: &mut ShellState) {
         glyph,
     );
 
-    // Focused app name — bold, macOS-style.
+    // Focused app — macOS menubar shows the app icon then its bold name.
     if !name.is_empty() {
+        let icon_key = state
+            .windows
+            .iter()
+            .find(|w| w.focused)
+            .map(|w| icons::key_for(&w.app_id));
+        if let Some(key) = icon_key {
+            icons::icon(
+                &mut pixmap,
+                &key,
+                APP_NAME_X as f32,
+                h as f32 / 2.0 - 7.0,
+                14.0,
+                glyph,
+            );
+        }
         draw::text_bold(
             &mut pixmap,
-            APP_NAME_X as f32,
+            APP_NAME_X as f32 + 20.0,
             h as f32 / 2.0 - 8.0,
             200.0,
             16.0,

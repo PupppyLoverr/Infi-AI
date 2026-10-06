@@ -1798,6 +1798,20 @@ fn render_surface<'a>(
 
     update_primary_scanout_output(space, output, dnd_icon, cursor_status, &states);
 
+    // Per-element visibility diagnostics — COSMOS_DEBUG_ELEMENTS=1 dumps
+    // each element's damaged/presented state so drive tests can tell a
+    // missing element from an occlusion-culled one.
+    if crate::cosmos::element_debug() {
+        for (id, state) in states.states.iter() {
+            tracing::debug!(
+                element = ?id,
+                visible_area = state.visible_area,
+                state = ?state.presentation_state,
+                "cosmos: render element state"
+            );
+        }
+    }
+
     if rendered {
         let output_presentation_feedback = take_presentation_feedback(output, space, &states);
         surface

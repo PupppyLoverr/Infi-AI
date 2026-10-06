@@ -99,6 +99,9 @@ pub fn draw(state: &mut ShellState) {
     let Some(mut pixmap) = PixmapMut::from_bytes(canvas, w, h) else {
         return;
     };
+    // Clear before painting — edge/corner pixels the card fill misses
+    // would otherwise show stale shm pool memory as garbage glyphs.
+    pixmap.fill(Color::TRANSPARENT);
 
     draw::fill_round_rect(
         &mut pixmap,

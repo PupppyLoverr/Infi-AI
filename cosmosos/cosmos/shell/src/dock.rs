@@ -190,6 +190,10 @@ pub fn draw(state: &mut ShellState) {
     let Some(mut pixmap) = PixmapMut::from_bytes(canvas, w, h) else {
         return;
     };
+    // The card only fills the bottom DOCK_H rows — the MAG_ROOM overhang
+    // above it must be explicitly cleared or stale pool memory shows
+    // through as garbage glyph bands.
+    pixmap.fill(Color::TRANSPARENT);
 
     // Floating card.
     draw::fill_round_rect(

@@ -443,7 +443,7 @@ where
         // committed its first buffer yet — gating the SSD on a
         // non-empty bbox means every new window paints chromeless
         // until its first buffer lands.
-        let ssd_width = if !window_bbox.is_empty() {
+        let mut ssd_width = if !window_bbox.is_empty() {
             SpaceElement::geometry(&self.0).size.w
         } else {
             self.0
@@ -451,10 +451,17 @@ where
                 .and_then(|t| t.current_state().size.map(|s| s.w))
                 .unwrap_or_default()
         };
+        if tb > 0 && ssd_width == 0 {
+            let cached = self.decoration_state().last_ssd_width as i32;
+            if cached > 0 {
+                ssd_width = cached;
+            }
+        }
 
         if tb > 0 && ssd_width > 0 {
             let mut state = self.decoration_state();
             let width = ssd_width;
+            state.last_ssd_width = width as u32;
 
             // Cosmos chrome: repaint the titlebar only when its inputs change.
             let (title, focused) = self
@@ -489,13 +496,57 @@ where
 
             let window_elements =
                 AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);
+            if crate::cosmos::element_debug() {
+                tracing::debug!(
+                    body = window_elements.len(),
+                    tb,
+                    ssd_width,
+                    "cosmos: ssd window elements"
+                );
+            }
             vec.extend(window_elements);
+
+            // Drop shadow — painted under the whole window (titlebar +
+            // body). Pushed last: elements render back-to-front, so it
+            // draws beneath the rest of this window's stack. Only when
+            // the surface has real geometry — pre-commit windows have a
+            // configured titlebar but no body to shadow.
+            if !window_bbox.is_empty() {
+                let geo = SpaceElement::geometry(&self.0);
+                state.shadow.repaint(geo.size.w, geo.size.h + tb);
+                // The shadow pixmap covers the window rect (titlebar
+                // included) plus SHADOW_MARGIN on every side — step back
+                // over the titlebar advance too.
+                let shadow_origin = location
+                    - Point::from((
+                        super::ssd::SHADOW_MARGIN,
+                        super::ssd::SHADOW_MARGIN + tb,
+                    ));
+                vec.extend(
+                    AsRenderElements::<R>::render_elements::<WindowRenderElement<R>>(
+                        &state.shadow,
+                        renderer,
+                        shadow_origin,
+                        scale,
+                        alpha,
+                    ),
+                );
+            }
+
             vec.into_iter().map(C::from).collect()
         } else {
-            AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha)
-                .into_iter()
-                .map(C::from)
-                .collect()
+            let body =
+                AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);
+            if crate::cosmos::element_debug() {
+                tracing::debug!(
+                    emitted = body.len(),
+                    tb,
+                    ssd_width,
+                    ?window_bbox,
+                    "cosmos: plain window elements"
+                );
+            }
+            body.into_iter().map(C::from).collect()
         }
     }
 }

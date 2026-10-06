@@ -1019,3 +1019,12 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         }
     }
 }
+
+/// `COSMOS_DEBUG_ELEMENTS=1` — verbose per-frame element diagnostics used
+/// by QEMU drive tests to separate "element not emitted" from "emitted
+/// but occlusion-culled". Cached once; production runs pay one atomic
+/// read per call site.
+pub(crate) fn element_debug() -> bool {
+    static DBG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DBG.get_or_init(|| std::env::var_os("COSMOS_DEBUG_ELEMENTS").is_some())
+}
