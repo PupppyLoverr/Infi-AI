@@ -474,16 +474,28 @@ impl<BackendData: Backend> XdgDecorationHandler for AnvilState<BackendData> {
         toplevel.with_pending_state(|state| {
             state.decoration_mode = Some(Mode::ServerSide);
         });
+        // Flip the chrome flag at decision time, not at ack_configure —
+        // otherwise the window paints chromeless until its first ack.
+        if let Some(window) = self.window_for_surface(toplevel.wl_surface()) {
+            window.set_ssd(true);
+            self.cosmos.dirty = true;
+        }
     }
     fn request_mode(&mut self, toplevel: ToplevelSurface, mode: DecorationMode) {
         use xdg_decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode;
 
+        let ssd = matches!(mode, DecorationMode::ServerSide);
         toplevel.with_pending_state(|state| {
-            state.decoration_mode = Some(match mode {
-                DecorationMode::ServerSide => Mode::ServerSide,
-                _ => Mode::ClientSide,
+            state.decoration_mode = Some(if ssd {
+                Mode::ServerSide
+            } else {
+                Mode::ClientSide
             });
         });
+        if let Some(window) = self.window_for_surface(toplevel.wl_surface()) {
+            window.set_ssd(ssd);
+            self.cosmos.dirty = true;
+        }
 
         if toplevel.is_initial_configure_sent() {
             toplevel.send_pending_configure();
@@ -495,6 +507,10 @@ impl<BackendData: Backend> XdgDecorationHandler for AnvilState<BackendData> {
         toplevel.with_pending_state(|state| {
             state.decoration_mode = Some(Mode::ServerSide);
         });
+        if let Some(window) = self.window_for_surface(toplevel.wl_surface()) {
+            window.set_ssd(true);
+            self.cosmos.dirty = true;
+        }
 
         if toplevel.is_initial_configure_sent() {
             toplevel.send_pending_configure();

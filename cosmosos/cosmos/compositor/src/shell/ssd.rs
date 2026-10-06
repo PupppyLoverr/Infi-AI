@@ -197,6 +197,7 @@ impl HeaderBar {
             // maximize / restore
             2 => match window.0.underlying_surface() {
                 WindowSurface::Wayland(w) => {
+                    tracing::debug!("ssd: maximize/restore click");
                     let maximized = w
                         .current_state()
                         .states
