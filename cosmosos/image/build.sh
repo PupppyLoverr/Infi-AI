@@ -120,10 +120,12 @@ probe() { echo "$1" | socat -t 3 - UNIX-CONNECT:"$IPC" || echo "ipc probe failed
 echo "cosmos-smoke: warming up for shell"
 sleep 6
 
-echo "cosmos-smoke: launching cosmos-terminal pid & cosmos-files"
-cosmos-terminal & TPID=$!
-sleep 3
-cosmos-files & FPID=$!
+echo "cosmos-smoke: launching all five apps"
+PIDS=""
+for app in cosmos-terminal cosmos-files cosmos-editor cosmos-settings cosmos-monitor; do
+  "$app" & PIDS="$PIDS $!"
+  sleep 2
+done
 sleep 8
 
 echo "cosmos-smoke: guest memory (free -m):"
@@ -137,8 +139,8 @@ echo "cosmos-smoke: ipc list_workspaces:"
 probe '{"op":"list_workspaces"}'
 
 sleep 4
-echo "cosmos-smoke: killing apps ($TPID $FPID)"
-kill "$TPID" "$FPID" 2>/dev/null
+echo "cosmos-smoke: killing apps ($PIDS)"
+kill $PIDS 2>/dev/null
 sleep 3
 echo "cosmos-smoke: ipc list_windows (post-kill):"
 probe '{"op":"list_windows"}'

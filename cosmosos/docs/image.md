@@ -125,23 +125,31 @@ sudo losetup -fP dist/cosmosos-x86_64.raw && sudo mount /dev/loopNp1 /mnt
 sudo touch /mnt/etc/cosmos-smoke-apps && sudo umount /mnt && sudo losetup -d /dev/loopN
 ```
 
-It launches `cosmos-terminal` + `cosmos-files` on the live compositor,
-logs `free -m`, probes the IPC socket (newline-delimited JSON:
-`{"op":"ping"}`, `{"op":"list_windows"}`, `{"op":"list_workspaces"}`
-on `/run/user/1000/cosmos-ipc.sock` via socat), kills the apps, and
-re-lists windows to prove cleanup. Observed verbatim:
+It launches all five shipped apps (`cosmos-terminal`, `cosmos-files`,
+`cosmos-editor`, `cosmos-settings`, `cosmos-monitor`) staggered on the
+live compositor, logs `free -m`, probes the IPC socket
+(newline-delimited JSON: `{"op":"ping"}`, `{"op":"list_windows"}`,
+`{"op":"list_workspaces"}` on `/run/user/1000/cosmos-ipc.sock` via
+socat), kills the apps, and re-lists windows to prove cleanup.
+Observed verbatim (post-`8efdac9` placement clamp):
 
 ```
-cosmos: new window id=1                                  # Terminal
-cosmos: new window id=2                                  # Files
+cosmos: new window id=1..5              # Terminal Files Editor Settings System Monitor
 {"type":"pong","pong":{"version":"0.1.0","name":"cosmos-compositor"}}
-{"type":"windows","windows":[{"id":1,"title":"Terminal","app_id":"cosmos.terminal",
-  "workspace":0,"x":542,"y":429,"w":680,"h":476,...,"output":"Virtual-1"},
- {"id":2,"title":"Files","app_id":"cosmos.files","workspace":0,"x":374,"y":502,
-  "w":560,"h":436,...,"output":"Virtual-1"}]}
-{"type":"workspaces","workspaces":[{"id":0,"focused":true,"window_count":2},...x9]}
+{"type":"windows","windows":[
+ {"id":1,"title":"Terminal","app_id":"cosmos.terminal","x":340,"y":38,"w":680,"h":476,...},
+ {"id":2,"title":"Files","app_id":"cosmos.files","x":295,"y":50,"w":560,"h":436,...},
+ {"id":3,"title":"Editor","app_id":"cosmos.editor","x":188,"y":268,"w":560,"h":456,...},
+ {"id":4,"title":"Settings","app_id":"cosmos.settings","x":371,"y":261,"w":520,"h":516,...},
+ {"id":5,"title":"System Monitor","app_id":"cosmos.monitor","x":486,"y":106,"w":600,"h":496,...}]}
+{"type":"workspaces","workspaces":[{"id":0,"focused":true,"window_count":5},...x9]}
 ... post-kill: {"type":"windows","windows":[]}
 ```
+
+Geometry vs 1024x768: Terminal/Files/Editor fully inside; Settings
+bottom edge 777 (9px over) and System Monitor right edge 1086 (62px
+over) — clamp improved overflow vs the pre-fix run but two windows
+still extend slightly past the output (reported upstream).
 
 ### Perf (QEMU -m 1G -smp 2, KVM, llvmpipe)
 
@@ -150,13 +158,9 @@ cosmos: new window id=2                                  # Files
 | kernel → graphical.target | ~5.0 s |
 | kernel → DRM modeset 1024x768 | ~5.7 s |
 | kernel → first desktop frame | ≤10 s |
-| guest RAM used at desktop (+2 apps) | 289 / 967 MiB |
+| guest RAM used at desktop (+5 apps) | 339 / 967 MiB |
 | image file | 772 MiB real (3 GiB sparse) |
 | image build time | ~2.5 min (~35 s mmdebstrap w/ SKIP_CARGO_BUILD=1, +~1 min release build) |
-
-Known quirk (compositor-side, reported): cascade window placement can
-spawn windows partially below/right of the 1024x768 output (x=542,y=429
-+w=680 overflows); content still renders and clips correctly.
 
 Pitfall found in smoke: the shell needs `fontconfig`, not just
 `fonts-dejavu-core` — without it `cosmic-text` panics
