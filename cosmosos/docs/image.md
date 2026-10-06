@@ -101,26 +101,30 @@ restarts the whole session: built-in crash-retry, rate-limited 2s.
 
 Boot → `graphical.target` in ~5 s. NM: `dhcp4 (ens5): address=10.0.2.15`,
 `dns=systemd-resolved`. upower, pipewire, wireplumber (user services)
-all running. Session chain executes: wayland-1 socket created, IPC
-socket up, libinput + EGL on PLATFORM_GBM init, cosmos-shell launches —
-then the compositor panics (deterministic, 100% reproducible):
+all running. Session chain executes fully: wayland-1 socket created,
+IPC socket up, libinput + xkb keymap, EGL Initialized on
+PLATFORM_GBM (llvmpipe), Output `Virtual-1` + `wl_output` created, DRM
+surface modeset `1024x768` succeeds, `drm master` acquired —
+`cosmos-shell` launches on socket appearance. Then the compositor
+panics at the first render-node touch (deterministic):
 
 ```
-WARN  cosmos_compositor::udev: failed to initialize gpu err=NoRenderNode
-thread 'main' (406) panicked at compositor/src/udev.rs:395:14:
-failed to initialize primary node: PrimaryGpuMissing
+INFO  cosmos_compositor::udev: Using renderD128 as primary gpu.
+... EGL Initialized (PLATFORM_GBM) ...
+INFO  smithay::backend::drm::surface::atomic: Setting new mode: "1024x768"
+thread 'main' (1389) panicked at compositor/src/udev.rs:416:14:
+called `Result::unwrap()` on an `Err` value: Error::NoDevice(DrmNode { dev: 57984, ty: Render })
 ```
 
-Also seen, probably related context for whoever fixes udev.rs:
-
-```
-WARN  smithay::backend::drm::device::fd: Unable to become drm master,
-      assuming unprivileged mode
-ERROR smithay::backend::drm::device::atomic: Failed to restore previous
-      state. Error: Permission denied (os error 13)
-```
+Line 416 is `gpus.single_renderer(&primary_gpu).unwrap()`:
+`primary_gpu` = renderD128 (dev_t 226:128 = 57984), but the
+GpuManager only holds card0's device — the software-EGL path renders
+on the primary node itself, so no renderer was registered under the
+render node id. (Post-`d392364`+`c99c84e`; earlier it died at :395
+`PrimaryGpuMissing` before EGL.)
 
 The shell then dies (wayland connection reset), session logs out,
 respawn loop continues cleanly — no host-side hang. Non-fatal noise:
 RTKit absent (PipeWire realtime hints), BlueZ/libcamera SPA plugins
-missing (expected — no BT/camera), `/etc/default/locale` missing.
+missing (expected — no BT/camera), `/etc/default/locale` missing,
+`AB30/AR30/AB24` plane formats unavailable on virtio-gpu (cosmetic).
