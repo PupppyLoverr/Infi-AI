@@ -77,6 +77,18 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
     };
     v.widgets.open.weak_bg_fill = v.widgets.hovered.weak_bg_fill;
 
+    // Widget corners soften to match the shell's rounded-card language —
+    // egui's default 2px reads sharp/technical against 12px cards.
+    for w in [
+        &mut v.widgets.noninteractive,
+        &mut v.widgets.inactive,
+        &mut v.widgets.hovered,
+        &mut v.widgets.active,
+        &mut v.widgets.open,
+    ] {
+        w.corner_radius = CornerRadius::same(4);
+    }
+    v.menu_corner_radius = CornerRadius::same(6);
     v.window_corner_radius = CornerRadius::same(6);
     v.window_shadow = egui::Shadow::NONE;
     v.popup_shadow = egui::Shadow::NONE;

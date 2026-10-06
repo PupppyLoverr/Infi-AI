@@ -6,7 +6,7 @@ Design goal: borrow the best interaction ideas from Windows 11 and macOS and fus
 
 | Surface | From macOS | From Windows 11 | Cosmos choice |
 |---|---|---|---|
-| **Dock (bottom)** | Floating centred translucent card, icon strip, running dots, no exclusive zone (windows slide under) | Centred taskbar arrangement, click-to-focus/launch | New surface: start glyph + pinned icons + running extras — the Dock IS the taskbar |
+| **Dock (bottom)** | Floating centred translucent card, icon strip, running dots, pinned/running divider, no exclusive zone (windows slide under) | Centred taskbar arrangement, click-to-focus/launch, mirrors ALL running apps | New surface: start glyph + pinned icons + running extras — the Dock IS the taskbar |
 | **Panel (top)** | Menu-bar idiom: app mark + **focused app name** (semibold) left, system status right | Workspace pager | Pure menubar — task buttons moved to the dock; the two-bar split is the signature blend |
 | **Window chrome** | Traffic-light cluster (left, circles, glyph-on-hover), centred title, 32px, **rounded top corners** | — | macOS chrome fully; monochrome circles; 10px corner radius |
 | **Launcher** | Spotlight: centred floating card, dim backdrop, type-first; Launchpad icon grid | Start: search field, "PINNED" grid, "ALL APPS" list, footer with system actions | Spotlight placement + Start contents; typing flips grid → Spotlight results |
@@ -36,3 +36,5 @@ Design goal: borrow the best interaction ideas from Windows 11 and macOS and fus
 - Traffic-light circles: 12px diameter, 20px pitch, order L→R = close, minimize, maximize. Unfocused = outlines; focused = discs; hover = glyph inside.
 - Icon set (`shell/src/icons.rs`): monochrome stroke glyphs on a 24px grid — start mark, terminal, files, editor, settings, monitor, lock, logout, reboot, shutdown, generic window — shared by panel, dock, launcher, flyout and notifications.
 - Snap Assist input region covers only the dimmed free half below the menubar: tray/dock/snapped-window clicks pass through (the picker dismisses on the resulting focus loss) instead of being swallowed.
+- Hover parity: launcher pinned cells / RECOMMENDED rows / footer buttons highlight under the pointer (`launcher_hover`), cleared on Leave/close; dock separators: after the start glyph and between pinned apps and running extras.
+- Icon-led flyout rows: Network/Volume/Battery each carry their tray glyph at the left edge; the mute pill shows the speaker icon, not letters.
