@@ -589,8 +589,19 @@ impl WindowElement {
     /// Height the SSD header bar adds on top of the surface — element
     /// geometry is `surface + titlebar`, so subtract this wherever a
     /// surface size is expected (snap, maximize, resize configures).
+    /// A fullscreen window gets no chrome: 0 keeps geometry, input
+    /// regions and rendering consistent.
     pub fn titlebar_height(&self) -> i32 {
-        if self.decoration_state().is_ssd {
+        let fullscreen = self
+            .0
+            .toplevel()
+            .map(|toplevel| {
+                toplevel.current_state().states.contains(
+                    smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State::Fullscreen,
+                )
+            })
+            .unwrap_or(false);
+        if !fullscreen && self.decoration_state().is_ssd {
             HEADER_BAR_HEIGHT
         } else {
             0
