@@ -54,31 +54,16 @@ fn focused_app_name(state: &ShellState) -> String {
         })
 }
 
-fn status_text(info: &crate::sysinfo::SysInfo) -> String {
-    let net = if info.network.label.is_empty() {
-        if info.network.online {
-            "Online".to_string()
-        } else {
-            "Offline".to_string()
-        }
-    } else {
-        info.network.label.clone()
-    };
-    let vol = match &info.volume {
-        Some(v) if v.muted => "Muted".to_string(),
-        Some(v) => format!("Vol {}%", (v.level * 100.0).round() as i32),
-        None => "Vol --".to_string(),
-    };
-    let bat = match &info.battery {
-        Some(b) if b.present => format!(" {}%{} ", b.percent, if b.charging { "+" } else { "" }),
-        _ => " ".to_string(),
-    };
-    format!("{net} · {vol} ·{bat}{}", info.clock)
-}
-
 /// Width of the status column — shared by draw, click and `tray_clicked`.
+/// Layout: [net][vol][battery?] icons at 20px stride, then the clock text.
 pub fn status_text_len(info: &crate::sysinfo::SysInfo) -> f64 {
-    status_text(info).len() as f64 * 7.0
+    let icons = 2.0
+        + info
+            .battery
+            .as_ref()
+            .map(|b| if b.present { 1.0 } else { 0.0 })
+            .unwrap_or(0.0);
+    8.0 + icons * 20.0 + 6.0 + info.clock.len() as f64 * 7.0
 }
 
 /// Repaint the panel.
@@ -93,8 +78,21 @@ pub fn draw(state: &mut ShellState) {
     let (bg, hover_bg, sep, fg, fg_dim) = theme(state.dark);
     let (hx, hov) = state.panel_hover;
     let name = focused_app_name(state);
-    let status = status_text(&state.sysinfo);
     let status_w = status_text_len(&state.sysinfo);
+    let net_on = state.sysinfo.network.online;
+    let vol_muted = state
+        .sysinfo
+        .volume
+        .as_ref()
+        .map(|v| v.muted)
+        .unwrap_or(false);
+    let bat_pct = state
+        .sysinfo
+        .battery
+        .as_ref()
+        .filter(|b| b.present)
+        .map(|b| b.percent);
+    let clock = state.sysinfo.clock.clone();
     let ws_count = crate::workspace_count(state);
     let workspaces = state.workspaces.clone();
     let dark = state.dark;
@@ -166,7 +164,7 @@ pub fn draw(state: &mut ShellState) {
         );
     }
 
-    // Right side: status text (rightmost — the tray), then the pager.
+    // Right side: status icons + clock (rightmost — the tray), then the pager.
     if hov && hx >= tray_x {
         draw::fill_round_rect(
             &mut pixmap,
@@ -178,14 +176,39 @@ pub fn draw(state: &mut ShellState) {
             hover_bg,
         );
     }
+    // Tray icons then the clock — the Win11/macOS status-icons idiom.
+    let mut ix = tray_x + 8.0;
+    let icon_y = h as f32 / 2.0 - 7.0;
+    icons::icon(
+        &mut pixmap,
+        if net_on { "net-on" } else { "net-off" },
+        ix as f32,
+        icon_y,
+        14.0,
+        glyph,
+    );
+    ix += 20.0;
+    icons::icon(
+        &mut pixmap,
+        if vol_muted { "vol-mute" } else { "vol-on" },
+        ix as f32,
+        icon_y,
+        14.0,
+        glyph,
+    );
+    ix += 20.0;
+    if let Some(pct) = bat_pct {
+        icons::battery(&mut pixmap, ix as f32, icon_y, 14.0, glyph, pct);
+        ix += 20.0;
+    }
     draw::text(
         &mut pixmap,
-        tray_x as f32 + 8.0,
+        ix as f32 + 2.0,
         h as f32 / 2.0 - 8.0,
         status_w as f32,
         16.0,
         12.0,
-        &status,
+        &clock,
         fg,
     );
     let mut rx = tray_x - ws_count as f64 * WS_CELL_W - 10.0;
