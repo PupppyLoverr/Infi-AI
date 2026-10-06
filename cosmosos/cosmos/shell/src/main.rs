@@ -122,6 +122,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         assist_hover: None,
         assist_open: false,
         assist_dirty: false,
+        launcher_hover: None,
         notify_size: (0, 0),
         quick_size: (0, 0),
         windows: Vec::new(),
@@ -255,6 +256,8 @@ pub struct ShellState {
     pub assist_hover: Option<usize>,
     pub assist_open: bool,
     pub assist_dirty: bool,
+    /// Pointer hover inside the launcher card (cells, rows, footer).
+    pub launcher_hover: Option<launcher::Hit>,
     pub notify_size: (u32, u32),
     pub quick_size: (u32, u32),
 
@@ -402,6 +405,7 @@ impl ShellState {
             self.set_quick_open(false);
             self.launcher_query.clear();
             self.launcher_sel = 0;
+            self.launcher_hover = None;
             let surface = self.compositor_state.create_surface(&self.qh);
             let layer = self.layer_shell.create_layer_surface(
                 &self.qh,
@@ -1145,6 +1149,16 @@ impl PointerHandler for ShellState {
                     } else if self.panel.as_ref() == Some(&layer) {
                         self.panel_hover = (0.0, false);
                         self.panel_dirty = true;
+                    } else if self.launcher_surface.as_ref() == Some(&layer)
+                        && self.launcher_hover.is_some()
+                    {
+                        self.launcher_hover = None;
+                        self.launcher_dirty = true;
+                    } else if self.assist_surface.as_ref() == Some(&layer)
+                        && self.assist_hover.is_some()
+                    {
+                        self.assist_hover = None;
+                        self.assist_dirty = true;
                     }
                 }
                 _ => {}

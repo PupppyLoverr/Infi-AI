@@ -236,7 +236,9 @@ pub fn draw(state: &mut ShellState) {
             dw as i32,
             (h as i32 - PANEL_HEIGHT as i32).max(0),
         );
-        layer.wl_surface().set_input_region(Some(region.wl_region()));
+        layer
+            .wl_surface()
+            .set_input_region(Some(region.wl_region()));
     }
     layer.wl_surface().commit();
 }

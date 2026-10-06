@@ -257,6 +257,7 @@ pub fn draw(state: &mut ShellState) {
     let rec_apps = recommended(state);
     let searching = !state.launcher_query.is_empty();
     let n_items = apps.len().min(MAX_ROWS);
+    let hover = state.launcher_hover;
     let (box_bg, sel_bg, sep, input_bg, fg, fg_dim) = theme(state.dark);
     let glyph = Color::from_rgba8(fg.r(), fg.g(), fg.b(), fg.a());
 
@@ -376,6 +377,18 @@ pub fn draw(state: &mut ShellState) {
             let gy = (idx / GRID_COLS) as f32;
             let cx = left + gx * cell_w;
             let cy = sec_y + SEC_H as f32 + gy * CELL_H as f32;
+            // Start idiom: the hovered cell gets a quiet highlight.
+            if hover == Some(Hit::Cell(idx)) {
+                draw::fill_round_rect(
+                    &mut pixmap,
+                    cx + 3.0,
+                    cy + 4.0,
+                    cell_w - 6.0,
+                    CELL_H as f32 - 8.0,
+                    8.0,
+                    sel_bg,
+                );
+            }
             icons::icon(
                 &mut pixmap,
                 &icons::key_for(&app.id),
@@ -403,6 +416,17 @@ pub fn draw(state: &mut ShellState) {
         section(&mut pixmap, left + 16.0, top + rtop, "RECOMMENDED", fg_dim);
         for (idx, app) in rec_apps.iter().enumerate() {
             let ry = top + rtop + SEC_H as f32 + idx as f32 * ROW_H as f32;
+            if hover == Some(Hit::Recent(idx)) {
+                draw::fill_round_rect(
+                    &mut pixmap,
+                    left + 6.0,
+                    ry + 2.0,
+                    LAUNCHER_WIDTH as f32 - 12.0,
+                    ROW_H as f32 - 4.0,
+                    8.0,
+                    sel_bg,
+                );
+            }
             icons::icon(
                 &mut pixmap,
                 &icons::key_for(&app.id),
@@ -518,7 +542,19 @@ pub fn draw(state: &mut ShellState) {
         sep,
     );
     let by = fy + (FOOTER_H as f32 - 28.0) / 2.0;
-    draw::fill_round_rect(&mut pixmap, left + 8.0, by, 104.0, 28.0, 8.0, input_bg);
+    draw::fill_round_rect(
+        &mut pixmap,
+        left + 8.0,
+        by,
+        104.0,
+        28.0,
+        8.0,
+        if hover == Some(Hit::Action(0)) {
+            sel_bg
+        } else {
+            input_bg
+        },
+    );
     icons::icon(
         &mut pixmap,
         "cosmos-settings",
@@ -538,7 +574,19 @@ pub fn draw(state: &mut ShellState) {
         fg,
     );
     let rx = left + LAUNCHER_WIDTH as f32 - 8.0 - 104.0;
-    draw::fill_round_rect(&mut pixmap, rx, by, 104.0, 28.0, 8.0, input_bg);
+    draw::fill_round_rect(
+        &mut pixmap,
+        rx,
+        by,
+        104.0,
+        28.0,
+        8.0,
+        if hover == Some(Hit::Action(1)) {
+            sel_bg
+        } else {
+            input_bg
+        },
+    );
     icons::icon(&mut pixmap, "sys-logout", rx + 16.0, by + 7.0, 14.0, glyph);
     draw::text(
         &mut pixmap,
@@ -601,13 +649,21 @@ pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {
     let np = pinned(state).len();
     let searching = !state.launcher_query.is_empty();
     let nr = recommended(state).len();
-    if let Hit::Item(idx) = hit_test(x, y, state.launcher_size, n, np, nr, searching) {
+    let hit = hit_test(x, y, state.launcher_size, n, np, nr, searching);
+    let mut dirty = false;
+    // Track the hovered cell/row/button — the draw pass highlights it.
+    if state.launcher_hover != Some(hit) {
+        state.launcher_hover = Some(hit);
+        dirty = true;
+    }
+    // Result rows also move the keyboard selection like before.
+    if let Hit::Item(idx) = hit {
         if state.launcher_sel != idx {
             state.launcher_sel = idx;
-            return true;
+            dirty = true;
         }
     }
-    false
+    dirty
 }
 
 pub fn key_press(state: &mut ShellState, event: KeyEvent) {

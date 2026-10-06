@@ -43,6 +43,15 @@ pub struct DockEntry {
     pub focused: bool,
     /// Every window of this entry is minimized.
     pub minimized: bool,
+    /// Running extra (not in PINNED) — the extras group gets its own
+    /// separator like the macOS dock's pinned/recent divider.
+    pub extra: bool,
+}
+
+/// Index of the first running-extra entry, when it isn't adjacent to
+/// the start glyph's own separator.
+fn first_extra(items: &[DockEntry]) -> Option<usize> {
+    items.iter().position(|e| e.extra).filter(|fx| *fx > 1)
 }
 
 fn normalize(id: &str) -> String {
@@ -57,6 +66,7 @@ fn entries(state: &ShellState) -> Vec<DockEntry> {
         windows: Vec::new(),
         focused: false,
         minimized: false,
+        extra: false,
     }];
 
     let mut extras: Vec<String> = Vec::new();
@@ -65,10 +75,10 @@ fn entries(state: &ShellState) -> Vec<DockEntry> {
         if key.is_empty() {
             continue;
         }
-        if !PINNED.contains(&key.as_str())
-            && !state.apps.iter().any(|a| a.id == key)
-            && !extras.contains(&key)
-        {
+        // Every running app not pinned gets a dock cell — taskbar
+        // semantics: the dock mirrors all running windows, not just
+        // unregistered binaries.
+        if !PINNED.contains(&key.as_str()) && !extras.contains(&key) {
             extras.push(key);
         }
     }
@@ -99,6 +109,7 @@ fn entries(state: &ShellState) -> Vec<DockEntry> {
             windows,
             focused,
             minimized,
+            extra: false,
         });
     }
 
@@ -123,6 +134,7 @@ fn entries(state: &ShellState) -> Vec<DockEntry> {
             windows,
             focused,
             minimized: false,
+            extra: true,
         });
     }
     out
@@ -130,8 +142,14 @@ fn entries(state: &ShellState) -> Vec<DockEntry> {
 
 /// Dock content width in px for the current item set.
 pub fn desired_width(state: &ShellState) -> u32 {
-    let n = entries(state).len() as f64;
-    (PAD * 2.0 + n * CELL_W + SEP_W) as u32
+    let items = entries(state);
+    let n = items.len() as f64;
+    let extra_sep = if first_extra(&items).is_some() {
+        SEP_W
+    } else {
+        0.0
+    };
+    (PAD * 2.0 + n * CELL_W + SEP_W + extra_sep) as u32
 }
 
 fn theme(dark: bool) -> (Color, Color, Color, CtColor) {
@@ -216,10 +234,12 @@ pub fn draw(state: &mut ShellState) {
         sep,
     );
 
+    let extra_sep_idx = first_extra(&items);
     let mut x = PAD;
     for (idx, item) in items.iter().enumerate() {
-        if idx == 1 {
-            // Separator after the start glyph.
+        if idx == 1 || Some(idx) == extra_sep_idx {
+            // Separator after the start glyph, and between pinned
+            // apps and running extras (macOS dock divider).
             draw::fill_rect(
                 &mut pixmap,
                 (x + SEP_W / 2.0) as f32,
@@ -292,7 +312,7 @@ pub fn draw(state: &mut ShellState) {
     // macOS dock label: the hovered app's name floats in a pill above
     // its icon, inside the MAG_ROOM overhang (outside the input region,
     // so it can never block a click).
-    if let Some(idx) = dock_hover.and_then(|hx| hit(hx, items.len())) {
+    if let Some(idx) = dock_hover.and_then(|hx| hit(hx, &items)) {
         let item = &items[idx];
         let name: &str =
             item.app
@@ -303,8 +323,15 @@ pub fn draw(state: &mut ShellState) {
                 } else {
                     item.icon.as_str()
                 });
-        let cell_center =
-            PAD + idx as f64 * CELL_W + if idx >= 1 { SEP_W } else { 0.0 } + CELL_W / 2.0;
+        let cell_center = PAD
+            + idx as f64 * CELL_W
+            + if idx >= 1 { SEP_W } else { 0.0 }
+            + if extra_sep_idx.map(|fx| idx >= fx).unwrap_or(false) {
+                SEP_W
+            } else {
+                0.0
+            }
+            + CELL_W / 2.0;
         // Semibold 11px runs ~7px/char — 6.0 clipped the tail glyph
         // ("Termina", "Launche"); add slack so the text box never
         // truncates inside the pill.
@@ -340,10 +367,11 @@ pub fn draw(state: &mut ShellState) {
 }
 
 /// Click on the dock — returns the entry index under the cursor.
-fn hit(x: f64, n_items: usize) -> Option<usize> {
+fn hit(x: f64, items: &[DockEntry]) -> Option<usize> {
+    let extra_sep_idx = first_extra(items);
     let mut cx = PAD;
-    for idx in 0..n_items {
-        if idx == 1 {
+    for idx in 0..items.len() {
+        if idx == 1 || Some(idx) == extra_sep_idx {
             cx += SEP_W;
         }
         if x >= cx && x < cx + CELL_W {
@@ -358,7 +386,7 @@ fn hit(x: f64, n_items: usize) -> Option<usize> {
 /// most recent window (unminimizes via the compositor) or launches it.
 pub fn click(state: &mut ShellState, x: f64) -> bool {
     let items = entries(state);
-    let Some(idx) = hit(x, items.len()) else {
+    let Some(idx) = hit(x, &items) else {
         return false;
     };
     let item = &items[idx];
