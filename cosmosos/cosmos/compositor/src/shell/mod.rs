@@ -1,4 +1,7 @@
-use std::cell::RefCell;
+use std::{
+    cell::RefCell,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 #[cfg(feature = "xwayland")]
 use smithay::xwayland::XWaylandClientData;
@@ -402,6 +405,65 @@ fn ensure_initial_configure(
     };
 }
 
+/// Marker: window was placed before its surface committed a real size, so
+/// its position must be re-clamped into the usable zone on the first
+/// commit that has nonzero geometry (see `handle_toplevel_commit`).
+pub struct InitialFit(pub AtomicBool);
+
+fn usable_zone(space: &Space<WindowElement>, output: &Output) -> Rectangle<i32, Logical> {
+    let geo = space.output_geometry(output).unwrap();
+    let zone = layer_map_for_output(output).non_exclusive_zone();
+    Rectangle::new(geo.loc + zone.loc, zone.size)
+}
+
+/// Clamp `loc` so the whole window rectangle stays inside `zone`. Windows
+/// larger than the zone keep the zone origin (they clip on the right/bottom
+/// but stay grabbable by the titlebar).
+pub fn clamp_loc_to_zone(
+    loc: Point<i32, Logical>,
+    win_size: Size<i32, Logical>,
+    zone: Rectangle<i32, Logical>,
+) -> Point<i32, Logical> {
+    let max_x = (zone.loc.x + zone.size.w - win_size.w).max(zone.loc.x);
+    let max_y = (zone.loc.y + zone.size.h - win_size.h).max(zone.loc.y);
+    (
+        loc.x.clamp(zone.loc.x, max_x),
+        loc.y.clamp(zone.loc.y, max_y),
+    )
+        .into()
+}
+
+/// Re-clamp a window's position once its real geometry is known. Called
+/// from `handle_toplevel_commit` for windows flagged with `InitialFit`.
+pub fn refit_into_zone(space: &mut Space<WindowElement>, window: &WindowElement) {
+    let Some(fit) = window.user_data().get::<InitialFit>() else {
+        return;
+    };
+    if !fit.0.swap(false, Ordering::Relaxed) {
+        return;
+    }
+    let size = window.geometry().size;
+    if size.w <= 0 || size.h <= 0 {
+        fit.0.store(true, Ordering::Relaxed);
+        return;
+    }
+    let Some(loc) = space.element_location(window) else {
+        return;
+    };
+    let Some(output) = space
+        .outputs_for_element(window)
+        .first()
+        .cloned()
+        .or_else(|| space.outputs().next().cloned())
+    else {
+        return;
+    };
+    let new_loc = clamp_loc_to_zone(loc, size, usable_zone(space, &output));
+    if new_loc != loc {
+        space.map_element(window.clone(), new_loc, false);
+    }
+}
+
 fn place_new_window(
     space: &mut Space<WindowElement>,
     pointer_location: Point<f64, Logical>,
@@ -462,6 +524,11 @@ fn place_new_window(
         output_geometry.loc.y
     };
 
+    // Size can still grow at the first real commit (the toplevel bounds we
+    // just set allow up to the whole zone) — flag for a one-time refit.
+    window
+        .user_data()
+        .insert_if_missing(|| InitialFit(AtomicBool::new(true)));
     space.map_element(window.clone(), (x, y), activate);
 }
 
