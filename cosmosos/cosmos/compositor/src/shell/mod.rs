@@ -434,13 +434,33 @@ fn place_new_window(
         });
     }
 
-    let max_x = output_geometry.loc.x + (((output_geometry.size.w as f32) / 3.0) * 2.0) as i32;
-    let max_y = output_geometry.loc.y + (((output_geometry.size.h as f32) / 3.0) * 2.0) as i32;
-    let x_range = Uniform::new(output_geometry.loc.x, max_x);
-    let y_range = Uniform::new(output_geometry.loc.y, max_y);
+    // Keep the whole window inside the usable zone: sample a position, then
+    // clamp so `x + win_w <= zone.right` (and same for y). Window size may be
+    // unknown before the first commit — fall back to half the zone.
+    let win_size = {
+        let bbox = window.bbox().size;
+        if bbox.w > 0 && bbox.h > 0 {
+            bbox
+        } else {
+            Size::from((output_geometry.size.w / 2, output_geometry.size.h / 2))
+        }
+    };
+    let max_x =
+        (output_geometry.loc.x + output_geometry.size.w - win_size.w).max(output_geometry.loc.x);
+    let max_y =
+        (output_geometry.loc.y + output_geometry.size.h - win_size.h).max(output_geometry.loc.y);
     let mut rng = rand::thread_rng();
-    let x = x_range.sample(&mut rng);
-    let y = y_range.sample(&mut rng);
+    // max can equal the zone origin when the window fills the zone exactly
+    let x = if max_x > output_geometry.loc.x {
+        Uniform::new(output_geometry.loc.x, max_x).sample(&mut rng)
+    } else {
+        output_geometry.loc.x
+    };
+    let y = if max_y > output_geometry.loc.y {
+        Uniform::new(output_geometry.loc.y, max_y).sample(&mut rng)
+    } else {
+        output_geometry.loc.y
+    };
 
     space.map_element(window.clone(), (x, y), activate);
 }
