@@ -73,23 +73,38 @@ pub fn draw(state: &mut ShellState) {
 
     let mid_y = (h as f32 - 18.0) / 2.0 + 14.0; // text baseline-ish center
 
-    // Cosmos launcher button.
+    // Cosmos launcher button — rounded hover pill (Win11 taskbar feel).
     let hover_launch = state.panel_hover.0 < LAUNCH_BTN_W;
     if hover_launch {
-        draw::fill_rect(
+        draw::fill_round_rect(
             &mut pixmap,
-            0.0,
-            0.0,
-            LAUNCH_BTN_W as f32,
-            h as f32,
+            3.0,
+            3.0,
+            LAUNCH_BTN_W as f32 - 6.0,
+            h as f32 - 6.0,
+            6.0,
             hover_bg,
         );
     }
+    // Small mark before the wordmark.
+    draw::fill_round_rect(
+        &mut pixmap,
+        12.0,
+        h as f32 / 2.0 - 4.0,
+        8.0,
+        8.0,
+        4.0,
+        if state.dark {
+            Color::from_rgba8(0xEC, 0xEC, 0xEE, 0xFF)
+        } else {
+            Color::from_rgba8(0x30, 0x30, 0x33, 0xFF)
+        },
+    );
     draw::text(
         &mut pixmap,
-        10.0,
+        26.0,
         mid_y - 14.0,
-        LAUNCH_BTN_W as f32 - 10.0,
+        LAUNCH_BTN_W as f32 - 26.0,
         18.0,
         13.0,
         "Cosmos",
@@ -110,12 +125,13 @@ pub fn draw(state: &mut ShellState) {
             win.title.clone()
         };
         if focused {
-            draw::fill_rect(
+            draw::fill_round_rect(
                 &mut pixmap,
                 x as f32,
-                2.0,
+                3.0,
                 TASK_W as f32,
-                h as f32 - 4.0,
+                h as f32 - 6.0,
+                6.0,
                 hover_bg,
             );
         }
@@ -147,18 +163,23 @@ pub fn draw(state: &mut ShellState) {
         fg,
     );
 
-    // Workspace pager.
+    // Workspace pager — active workspace is an inverted pill (Win11 strip).
     let mut wsx = status_x - ws_count as f64 * WS_CELL_W - 10.0;
     for ws in &state.workspaces {
         let active = ws.focused;
         if active {
-            draw::fill_rect(
+            draw::fill_round_rect(
                 &mut pixmap,
-                wsx as f32,
-                4.0,
-                WS_CELL_W as f32 - 4.0,
-                h as f32 - 8.0,
-                hover_bg,
+                wsx as f32 + 1.0,
+                5.0,
+                WS_CELL_W as f32 - 6.0,
+                h as f32 - 10.0,
+                11.0,
+                if state.dark {
+                    Color::from_rgba8(0xEC, 0xEC, 0xEE, 0xFF)
+                } else {
+                    Color::from_rgba8(0x30, 0x30, 0x33, 0xFF)
+                },
             );
         }
         draw::text(
@@ -169,7 +190,16 @@ pub fn draw(state: &mut ShellState) {
             18.0,
             12.0,
             &(ws.id + 1).to_string(),
-            if active { fg } else { fg_dim },
+            if active {
+                // Inverted on the pill.
+                if state.dark {
+                    CtColor::rgba(0x18, 0x18, 0x1B, 0xFF)
+                } else {
+                    CtColor::rgba(0xF6, 0xF6, 0xF6, 0xFF)
+                }
+            } else {
+                fg_dim
+            },
         );
         wsx += WS_CELL_W;
     }
@@ -202,9 +232,23 @@ fn status_text(info: &crate::sysinfo::SysInfo) -> String {
     format!("{net} · {vol} ·{bat}{}", info.clock)
 }
 
+/// Tray click region width (matches `draw`'s status column).
+pub fn status_text_len(info: &crate::sysinfo::SysInfo) -> f64 {
+    status_text(info).len() as f64 * 7.0
+}
+
 /// Click handler — returns whether a repaint is needed.
 pub fn click(state: &mut ShellState, x: f64, y: f64) -> bool {
     let _ = y;
+    let (w, _) = state.panel_size;
+    // Tray region toggles the quick-settings flyout.
+    if state.tray_clicked(x) {
+        state.set_quick_open(!state.quick_open);
+        return true;
+    }
+    if state.quick_open {
+        state.set_quick_open(false);
+    }
     if x < LAUNCH_BTN_W {
         state.ipc.send(&cosmos_ipc::Request::ToggleLauncher);
         return true;
@@ -232,8 +276,7 @@ pub fn click(state: &mut ShellState, x: f64, y: f64) -> bool {
     }
     // Workspace pager.
     let count = crate::workspace_count(state);
-    let (w, _) = state.panel_size;
-    let status_w = status_text(&state.sysinfo).len() as f64 * 7.0;
+    let status_w = status_text_len(&state.sysinfo);
     let ws_start = (w as f64 - status_w - 12.0) - count as f64 * WS_CELL_W - 10.0;
     if x >= ws_start && x < ws_start + count as f64 * WS_CELL_W {
         let idx = ((x - ws_start) / WS_CELL_W) as usize;
@@ -243,11 +286,6 @@ pub fn click(state: &mut ShellState, x: f64, y: f64) -> bool {
             });
             return true;
         }
-    }
-    // Status area: open Settings for real adjustments.
-    if x >= w as f64 - status_w - 12.0 {
-        let _ = std::process::Command::new("cosmos-settings").spawn();
-        return false;
     }
     false
 }

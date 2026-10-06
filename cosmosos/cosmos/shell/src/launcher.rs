@@ -1,31 +1,38 @@
-//! The launcher overlay: dim backdrop + centered search box + app list.
+//! The launcher overlay: dim backdrop + a centred Spotlight-style card —
+//! rounded corners, search field up top, result rows, and a Start-menu-style
+//! footer strip with system actions (Settings, Log out).
 
 use cosmic_text::Color as CtColor;
 use smithay_client_toolkit::{
     seat::keyboard::{KeyEvent, Keysym},
     shell::WaylandSurface,
 };
-use tiny_skia::{Color, PixmapMut};
+use tiny_skia::{Color, PathBuilder, PixmapMut, Stroke, Transform};
 use wayland_client::protocol::wl_shm;
 
 use crate::{draw, ShellState, LAUNCHER_WIDTH};
 
-const INPUT_H: f64 = 44.0;
-const ROW_H: f64 = 36.0;
-const MAX_ROWS: usize = 10;
+const INPUT_H: f64 = 48.0;
+const ROW_H: f64 = 38.0;
+const SEC_H: f64 = 26.0;
+const FOOTER_H: f64 = 44.0;
+const CARD_R: f32 = 12.0;
+const MAX_ROWS: usize = 8;
 /// Gap between overlay top edge and the launcher box.
-const TOP_PAD_FRAC: f64 = 0.22;
+const TOP_PAD_FRAC: f64 = 0.20;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Hit {
     Item(usize),
+    /// Footer action: 0 = Settings, 1 = Log out.
+    Action(u8),
     Input,
     List,
     Backdrop,
 }
 
 fn box_top(h: u32) -> f64 {
-    (h as f64 * TOP_PAD_FRAC).max(60.0)
+    (h as f64 * TOP_PAD_FRAC).max(56.0)
 }
 
 fn box_left(w: u32) -> f64 {
@@ -33,7 +40,11 @@ fn box_left(w: u32) -> f64 {
 }
 
 fn box_height(n_items: usize) -> f64 {
-    INPUT_H + n_items.min(MAX_ROWS) as f64 * ROW_H + 16.0
+    INPUT_H + SEC_H + n_items.min(MAX_ROWS) as f64 * ROW_H + FOOTER_H
+}
+
+fn footer_top(h: u32, n_items: usize) -> f64 {
+    box_top(h) + box_height(n_items) - FOOTER_H
 }
 
 pub fn hit_test(x: f64, y: f64, size: (u32, u32), n_items: usize) -> Hit {
@@ -44,14 +55,50 @@ pub fn hit_test(x: f64, y: f64, size: (u32, u32), n_items: usize) -> Hit {
         return Hit::Backdrop;
     }
     let ry = y - top;
+    if ry >= height - FOOTER_H {
+        // Two footer buttons: Settings (left), Log out (right).
+        let btn_w = 104.0;
+        let mid = LAUNCHER_WIDTH as f64;
+        if x < left + 8.0 + btn_w {
+            return Hit::Action(0);
+        }
+        if x > left + mid - 8.0 - btn_w {
+            return Hit::Action(1);
+        }
+        return Hit::List;
+    }
     if ry < INPUT_H {
         return Hit::Input;
     }
-    let idx = ((ry - INPUT_H) / ROW_H) as usize;
-    if idx < n_items.min(MAX_ROWS) {
+    let idx = ((ry - INPUT_H - SEC_H) / ROW_H) as usize;
+    if ry >= INPUT_H + SEC_H && idx < n_items.min(MAX_ROWS) {
         Hit::Item(idx)
     } else {
         Hit::List
+    }
+}
+
+fn theme(dark: bool) -> (Color, Color, Color, Color, Color, CtColor, CtColor) {
+    if dark {
+        (
+            Color::from_rgba8(0x00, 0x00, 0x00, 0x90), // backdrop dim
+            Color::from_rgba8(0x1A, 0x1B, 0x1E, 0xF2), // card
+            Color::from_rgba8(0x30, 0x31, 0x35, 0xFF), // selection
+            Color::from_rgba8(0x3C, 0x3D, 0x42, 0xFF), // border
+            Color::from_rgba8(0x24, 0x25, 0x29, 0xFF), // input field
+            CtColor::rgba(0xEC, 0xEC, 0xEE, 0xFF),
+            CtColor::rgba(0x8C, 0x8C, 0x92, 0xFF),
+        )
+    } else {
+        (
+            Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x66),
+            Color::from_rgba8(0xFA, 0xFA, 0xFB, 0xF6),
+            Color::from_rgba8(0xE0, 0xE0, 0xE2, 0xFF),
+            Color::from_rgba8(0xC4, 0xC4, 0xC8, 0xFF),
+            Color::from_rgba8(0xEF, 0xEF, 0xF1, 0xFF),
+            CtColor::rgba(0x18, 0x18, 0x1B, 0xFF),
+            CtColor::rgba(0x6A, 0x6A, 0x6E, 0xFF),
+        )
     }
 }
 
@@ -65,26 +112,8 @@ pub fn draw(state: &mut ShellState) {
     };
     let apps: Vec<crate::desktop::AppEntry> = state.filtered_apps().into_iter().cloned().collect();
     let n_items = apps.len().min(MAX_ROWS);
-    let dark = state.dark;
-    let (bg, box_bg, sel_bg, sep, fg, fg_dim) = if dark {
-        (
-            Color::from_rgba8(0x00, 0x00, 0x00, 0x88),
-            Color::from_rgba8(0x18, 0x18, 0x1A, 0xF4),
-            Color::from_rgba8(0x2C, 0x2C, 0x30, 0xFF),
-            Color::from_rgba8(0x34, 0x34, 0x38, 0xFF),
-            CtColor::rgba(0xEC, 0xEC, 0xEE, 0xFF),
-            CtColor::rgba(0x88, 0x88, 0x8C, 0xFF),
-        )
-    } else {
-        (
-            Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x66),
-            Color::from_rgba8(0xFA, 0xFA, 0xFA, 0xF6),
-            Color::from_rgba8(0xDE, 0xDE, 0xDE, 0xFF),
-            Color::from_rgba8(0xC8, 0xC8, 0xC8, 0xFF),
-            CtColor::rgba(0x18, 0x18, 0x1B, 0xFF),
-            CtColor::rgba(0x6A, 0x6A, 0x6E, 0xFF),
-        )
-    };
+    let searching = !state.launcher_query.is_empty();
+    let (bg, box_bg, sel_bg, sep, input_bg, fg, fg_dim) = theme(state.dark);
 
     let stride = w as i32 * 4;
     let Ok((buffer, canvas)) =
@@ -99,44 +128,52 @@ pub fn draw(state: &mut ShellState) {
         return;
     };
 
-    // Backdrop dim.
     draw::fill_rect(&mut pixmap, 0.0, 0.0, w as f32, h as f32, bg);
 
     let left = box_left(w) as f32;
     let top = box_top(h) as f32;
     let height = box_height(n_items) as f32;
-    draw::fill_rect(
+    // Card: rounded fill + hairline border.
+    draw::fill_round_rect(
         &mut pixmap,
         left,
         top,
         LAUNCHER_WIDTH as f32,
         height,
+        CARD_R,
         box_bg,
     );
-    draw::fill_rect(&mut pixmap, left, top, LAUNCHER_WIDTH as f32, 1.0, sep);
-    draw::fill_rect(
+    draw::stroke_round_rect(
         &mut pixmap,
-        left,
-        top + height - 1.0,
-        LAUNCHER_WIDTH as f32,
+        left + 0.5,
+        top + 0.5,
+        LAUNCHER_WIDTH as f32 - 1.0,
+        height - 1.0,
+        CARD_R - 0.5,
         1.0,
-        sep,
-    );
-    draw::fill_rect(&mut pixmap, left, top, 1.0, height, sep);
-    draw::fill_rect(
-        &mut pixmap,
-        left + LAUNCHER_WIDTH as f32 - 1.0,
-        top,
-        1.0,
-        height,
         sep,
     );
 
-    // Input line: query + caret.
+    // Search field: inset rounded rect + magnifier glyph + query + caret.
+    let field_x = left + 12.0;
+    let field_y = top + 10.0;
+    let field_w = LAUNCHER_WIDTH as f32 - 24.0;
+    let field_h = INPUT_H as f32 - 20.0;
+    draw::fill_round_rect(
+        &mut pixmap,
+        field_x,
+        field_y,
+        field_w,
+        field_h,
+        6.0,
+        input_bg,
+    );
+    magnifier(&mut pixmap, field_x + 14.0, field_y + field_h / 2.0, fg_dim);
+
     let query_display = if state.launcher_query.is_empty() {
-        "Type to search".to_string()
+        "Search apps and actions"
     } else {
-        state.launcher_query.clone()
+        state.launcher_query.as_str()
     };
     let query_color = if state.launcher_query.is_empty() {
         fg_dim
@@ -145,53 +182,62 @@ pub fn draw(state: &mut ShellState) {
     };
     draw::text(
         &mut pixmap,
-        left + 14.0,
-        top + (INPUT_H as f32 - 20.0) / 2.0,
-        LAUNCHER_WIDTH as f32 - 28.0,
-        20.0,
+        field_x + 36.0,
+        field_y + (field_h - 18.0) / 2.0,
+        field_w - 44.0,
+        18.0,
         14.0,
-        &query_display,
+        query_display,
         query_color,
     );
-    // caret
-    let caret_x = left + 14.0 + state.launcher_query.len() as f32 * 7.8;
+    let caret_x = field_x + 36.0 + state.launcher_query.len() as f32 * 7.8;
     draw::fill_rect(
         &mut pixmap,
-        caret_x + 2.0,
-        top + (INPUT_H as f32 - 18.0) / 2.0,
+        caret_x + 1.0,
+        field_y + (field_h - 16.0) / 2.0,
         1.5,
-        18.0,
-        if dark {
+        16.0,
+        if state.dark {
             Color::from_rgba8(0xEC, 0xEC, 0xEE, 0xFF)
         } else {
             Color::from_rgba8(0x18, 0x18, 0x1B, 0xFF)
         },
     );
-    draw::fill_rect(
+
+    // Section header.
+    let sec_y = top + INPUT_H as f32;
+    draw::text(
         &mut pixmap,
-        left,
-        top + INPUT_H as f32 - 1.0,
-        LAUNCHER_WIDTH as f32,
-        1.0,
-        sep,
+        left + 16.0,
+        sec_y + (SEC_H as f32 - 14.0) / 2.0,
+        200.0,
+        14.0,
+        11.0,
+        if searching {
+            "RESULTS"
+        } else {
+            "APPS & ACTIONS"
+        },
+        fg_dim,
     );
 
-    // App rows.
+    // App rows, rounded selection.
     for (idx, app) in apps.iter().take(MAX_ROWS).enumerate() {
-        let ry = top + INPUT_H as f32 + idx as f32 * ROW_H as f32;
+        let ry = top + INPUT_H as f32 + SEC_H as f32 + idx as f32 * ROW_H as f32;
         if idx == state.launcher_sel.min(n_items.saturating_sub(1)) && n_items > 0 {
-            draw::fill_rect(
+            draw::fill_round_rect(
                 &mut pixmap,
-                left + 1.0,
-                ry,
-                LAUNCHER_WIDTH as f32 - 2.0,
-                ROW_H as f32,
+                left + 6.0,
+                ry + 2.0,
+                LAUNCHER_WIDTH as f32 - 12.0,
+                ROW_H as f32 - 4.0,
+                6.0,
                 sel_bg,
             );
         }
         draw::text(
             &mut pixmap,
-            left + 14.0,
+            left + 20.0,
             ry + (ROW_H as f32 - 18.0) / 2.0,
             LAUNCHER_WIDTH as f32 * 0.6,
             18.0,
@@ -200,18 +246,18 @@ pub fn draw(state: &mut ShellState) {
             fg,
         );
         let hint = if app.action.is_some() {
-            "System"
+            "Action"
         } else if app.terminal {
             "Terminal"
         } else {
-            app.icon.as_str()
+            "App"
         };
         draw::text(
             &mut pixmap,
-            left + LAUNCHER_WIDTH as f32 * 0.62,
-            ry + (ROW_H as f32 - 16.0) / 2.0,
-            LAUNCHER_WIDTH as f32 * 0.36 - 12.0,
-            16.0,
+            left + LAUNCHER_WIDTH as f32 - 14.0 - 60.0,
+            ry + (ROW_H as f32 - 14.0) / 2.0,
+            60.0,
+            14.0,
             11.0,
             hint,
             fg_dim,
@@ -220,9 +266,9 @@ pub fn draw(state: &mut ShellState) {
     if apps.is_empty() {
         draw::text(
             &mut pixmap,
-            left + 14.0,
-            top + INPUT_H as f32 + (ROW_H as f32 - 18.0) / 2.0,
-            LAUNCHER_WIDTH as f32 - 28.0,
+            left + 20.0,
+            sec_y + SEC_H as f32 + 8.0,
+            LAUNCHER_WIDTH as f32 - 40.0,
             18.0,
             13.0,
             "No matching applications",
@@ -230,10 +276,70 @@ pub fn draw(state: &mut ShellState) {
         );
     }
 
+    // Footer (Start-style): separator + Settings / Log out buttons.
+    let fy = footer_top(h, n_items) as f32;
+    draw::fill_rect(
+        &mut pixmap,
+        left + 1.0,
+        fy,
+        LAUNCHER_WIDTH as f32 - 2.0,
+        1.0,
+        sep,
+    );
+    let by = fy + (FOOTER_H as f32 - 28.0) / 2.0;
+    draw::fill_round_rect(&mut pixmap, left + 8.0, by, 104.0, 28.0, 6.0, input_bg);
+    draw::text(
+        &mut pixmap,
+        left + 24.0,
+        by + 5.0,
+        88.0,
+        18.0,
+        12.0,
+        "Settings",
+        fg,
+    );
+    let rx = left + LAUNCHER_WIDTH as f32 - 8.0 - 104.0;
+    draw::fill_round_rect(&mut pixmap, rx, by, 104.0, 28.0, 6.0, input_bg);
+    draw::text(
+        &mut pixmap,
+        rx + 22.0,
+        by + 5.0,
+        88.0,
+        18.0,
+        12.0,
+        "Log out",
+        fg,
+    );
+
     let wl_surface = layer.wl_surface().clone();
     buffer.attach_to(&wl_surface).ok();
     wl_surface.damage_buffer(0, 0, w as i32, h as i32);
     wl_surface.commit();
+}
+
+/// Small magnifier glyph: circle + handle.
+fn magnifier(pixmap: &mut PixmapMut<'_>, cx: f32, cy: f32, color: CtColor) {
+    let c = Color::from_rgba8(color.r(), color.g(), color.b(), 0xFF);
+    let paint = tiny_skia::Paint {
+        shader: tiny_skia::Shader::SolidColor(c),
+        anti_alias: true,
+        ..Default::default()
+    };
+    let stroke = Stroke {
+        width: 1.4,
+        ..Default::default()
+    };
+    let mut pb = PathBuilder::new();
+    pb.push_circle(cx, cy - 1.0, 4.0);
+    if let Some(path) = pb.finish() {
+        pixmap.stroke_path(&path, &paint, &stroke, Transform::default(), None);
+    }
+    let mut pb = PathBuilder::new();
+    pb.move_to(cx + 3.0, cy + 2.0);
+    pb.line_to(cx + 6.5, cy + 5.5);
+    if let Some(path) = pb.finish() {
+        pixmap.stroke_path(&path, &paint, &stroke, Transform::default(), None);
+    }
 }
 
 pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {

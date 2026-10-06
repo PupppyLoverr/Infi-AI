@@ -9,6 +9,7 @@ mod launcher;
 mod notify;
 mod panel;
 mod popups;
+mod quick;
 mod sysinfo;
 
 use std::{os::unix::net::UnixStream, time::Duration};
@@ -99,10 +100,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         panel: None,
         launcher_surface: None,
         notify_surface: None,
+        quick_surface: None,
         notify_conn: None,
         panel_size: (0, PANEL_HEIGHT),
         launcher_size: (0, 0),
         notify_size: (0, 0),
+        quick_size: (0, 0),
         windows: Vec::new(),
         workspaces: Vec::new(),
         launcher_open: false,
@@ -117,7 +120,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         panel_dirty: true,
         launcher_dirty: false,
         notify_dirty: false,
+        quick_dirty: false,
         panel_hover: (0.0, false),
+        quick_open: false,
+        vol_drag: false,
         exit: false,
     };
 
@@ -135,6 +141,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if let ChannelEvent::Msg(info) = event {
             state.sysinfo = info;
             state.panel_dirty = true;
+            state.quick_dirty = state.quick_open;
         }
     })?;
 
@@ -201,10 +208,12 @@ pub struct ShellState {
     pub panel: Option<LayerSurface>,
     pub launcher_surface: Option<LayerSurface>,
     pub notify_surface: Option<LayerSurface>,
+    pub quick_surface: Option<LayerSurface>,
     pub notify_conn: Option<zbus::blocking::Connection>,
     pub panel_size: (u32, u32),
     pub launcher_size: (u32, u32),
     pub notify_size: (u32, u32),
+    pub quick_size: (u32, u32),
 
     pub windows: Vec<cosmos_ipc::WindowInfo>,
     pub workspaces: Vec<cosmos_ipc::WorkspaceInfo>,
@@ -220,8 +229,13 @@ pub struct ShellState {
     pub panel_dirty: bool,
     pub launcher_dirty: bool,
     pub notify_dirty: bool,
+    pub quick_dirty: bool,
     /// (x, hovering) — last pointer x on the panel, for hit highlights.
     pub panel_hover: (f64, bool),
+    /// Quick-settings flyout state.
+    pub quick_open: bool,
+    /// Held while the pointer is dragging the volume slider.
+    pub vol_drag: bool,
     pub exit: bool,
 }
 
@@ -251,12 +265,48 @@ impl ShellState {
         self.panel_dirty = true;
     }
 
+    /// Toggle the quick-settings flyout (Win11-style tray popover).
+    pub fn set_quick_open(&mut self, open: bool) {
+        if open == self.quick_open {
+            return;
+        }
+        self.quick_open = open;
+        if open {
+            self.vol_drag = false;
+            let surface = self.compositor_state.create_surface(&self.qh);
+            let layer = self.layer_shell.create_layer_surface(
+                &self.qh,
+                surface,
+                Layer::Top,
+                Some("cosmos-quick"),
+                None,
+            );
+            layer.set_anchor(Anchor::TOP | Anchor::RIGHT);
+            layer.set_size(quick::QUICK_W, quick::desired_height(&self.sysinfo));
+            layer.set_exclusive_zone(0);
+            layer.set_margin((PANEL_HEIGHT + 4) as i32, 8, 0, 0);
+            layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+            layer.wl_surface().commit();
+            self.quick_surface = Some(layer);
+            self.quick_dirty = true;
+        } else {
+            self.quick_surface = None;
+            self.vol_drag = false;
+        }
+    }
+
+    /// Click inside the quick-settings card.
+    pub fn quick_click(&mut self, x: f64, y: f64) {
+        self.quick_dirty = quick::press(self, x, y) || self.quick_dirty;
+    }
+
     pub fn set_launcher_open(&mut self, open: bool) {
         if open == self.launcher_open {
             return;
         }
         self.launcher_open = open;
         if open {
+            self.set_quick_open(false);
             self.launcher_query.clear();
             self.launcher_sel = 0;
             let surface = self.compositor_state.create_surface(&self.qh);
@@ -299,7 +349,17 @@ impl ShellState {
                 self.launcher_sel = idx;
                 self.launch_selected();
             }
-            launcher::Hit::Input | launcher::Hit::List => {}
+            launcher::Hit::Action(0) => {
+                let _ = std::process::Command::new("cosmos-settings").spawn();
+                self.set_launcher_open(false);
+            }
+            launcher::Hit::Action(1) => {
+                if let Some(app) = self.apps.iter().find(|a| a.id == "sys.logout").cloned() {
+                    let _ = desktop::launch(&app);
+                }
+                self.set_launcher_open(false);
+            }
+            launcher::Hit::Action(_) | launcher::Hit::Input | launcher::Hit::List => {}
             launcher::Hit::Backdrop => self.set_launcher_open(false),
         }
     }
@@ -334,6 +394,13 @@ impl ShellState {
             SessionEnding => self.exit = true,
             Pong { .. } | Error { .. } => {}
         }
+    }
+
+    /// The tray's quick-settings click region — rightmost status text block.
+    pub fn tray_clicked(&mut self, x: f64) -> bool {
+        let (w, _) = self.panel_size;
+        let status_w = crate::panel::status_text_len(&self.sysinfo);
+        x >= w as f64 - status_w - 12.0
     }
 
     fn apply_config(&mut self, map: serde_json::Map<String, serde_json::Value>) {
@@ -431,6 +498,10 @@ impl ShellState {
             self.notify_dirty = false;
             popups::draw(self);
         }
+        if self.quick_dirty && self.quick_surface.is_some() {
+            self.quick_dirty = false;
+            quick::draw(self);
+        }
     }
 }
 
@@ -497,6 +568,10 @@ impl LayerShellHandler for ShellState {
         if self.notify_surface.as_ref() == Some(layer) {
             self.notify_surface = None;
         }
+        if self.quick_surface.as_ref() == Some(layer) {
+            self.quick_surface = None;
+            self.quick_open = false;
+        }
     }
 
     fn configure(
@@ -527,6 +602,10 @@ impl LayerShellHandler for ShellState {
                 layer.set_size(NOTIFY_WIDTH, h);
             }
             self.notify_dirty = true;
+        }
+        if self.quick_surface.as_ref() == Some(layer) {
+            self.quick_size = (quick::QUICK_W, quick::desired_height(&self.sysinfo));
+            self.quick_dirty = true;
         }
         // Acking configure happens via committing the surface.
         let _ = serial;
@@ -660,6 +739,7 @@ impl PointerHandler for ShellState {
                 .iter()
                 .chain(self.launcher_surface.iter())
                 .chain(self.notify_surface.iter())
+                .chain(self.quick_surface.iter())
                 .find(|l| l.wl_surface() == &ev.surface)
                 .cloned()
             else {
@@ -673,6 +753,8 @@ impl PointerHandler for ShellState {
                         self.launcher_click(ev.position.0, ev.position.1);
                     } else if self.notify_surface.as_ref() == Some(&layer) {
                         popups::click(self, ev.position.1);
+                    } else if self.quick_surface.as_ref() == Some(&layer) {
+                        self.quick_click(ev.position.0, ev.position.1);
                     }
                 }
                 PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
@@ -680,6 +762,13 @@ impl PointerHandler for ShellState {
                         self.panel_dirty |= panel::hover(self, ev.position.0, ev.position.1);
                     } else if self.launcher_surface.as_ref() == Some(&layer) {
                         self.launcher_dirty |= launcher::hover(self, ev.position.0, ev.position.1);
+                    } else if self.quick_surface.as_ref() == Some(&layer) && self.vol_drag {
+                        self.quick_dirty |= quick::drag(self, ev.position.0, ev.position.1);
+                    }
+                }
+                PointerEventKind::Release { .. } => {
+                    if self.quick_surface.as_ref() == Some(&layer) {
+                        quick::release(self);
                     }
                 }
                 _ => {}

@@ -28,6 +28,85 @@ pub fn fill_rect(pixmap: &mut PixmapMut<'_>, x: f32, y: f32, w: f32, h: f32, col
     );
 }
 
+/// Rounded-rect path built from cubic circle-arc corners (tiny-skia 0.11 has
+/// no RoundedRect primitive).
+fn round_rect_path(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Path> {
+    if w <= 0.0 || h <= 0.0 {
+        return None;
+    }
+    let r = r.min(w / 2.0).min(h / 2.0);
+    let k = 0.552_284_8 * r; // cubic approximation of a circular arc
+    let (x0, y0, x1, y1) = (x, y, x + w, y + h);
+    let mut pb = tiny_skia::PathBuilder::new();
+    pb.move_to(x0 + r, y0);
+    pb.line_to(x1 - r, y0);
+    pb.cubic_to(x1 - r + k, y0, x1, y0 + r - k, x1, y0 + r);
+    pb.line_to(x1, y1 - r);
+    pb.cubic_to(x1, y1 - r + k, x1 - r + k, y1, x1 - r, y1);
+    pb.line_to(x0 + r, y1);
+    pb.cubic_to(x0 + r - k, y1, x0, y1 - r + k, x0, y1 - r);
+    pb.line_to(x0, y0 + r);
+    pb.cubic_to(x0, y0 + r - k, x0 + r - k, y0, x0 + r, y0);
+    pb.close();
+    pb.finish()
+}
+
+/// Fill a rounded rect (anti-aliased).
+pub fn fill_round_rect(
+    pixmap: &mut PixmapMut<'_>,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    r: f32,
+    color: Color,
+) {
+    let Some(path) = round_rect_path(x, y, w, h, r) else {
+        return;
+    };
+    pixmap.fill_path(
+        &path,
+        &Paint {
+            shader: tiny_skia::Shader::SolidColor(color),
+            anti_alias: true,
+            ..Default::default()
+        },
+        tiny_skia::FillRule::Winding,
+        Transform::default(),
+        None,
+    );
+}
+
+/// Stroke a rounded rect (anti-aliased).
+pub fn stroke_round_rect(
+    pixmap: &mut PixmapMut<'_>,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    r: f32,
+    width: f32,
+    color: Color,
+) {
+    let Some(path) = round_rect_path(x, y, w, h, r) else {
+        return;
+    };
+    pixmap.stroke_path(
+        &path,
+        &Paint {
+            shader: tiny_skia::Shader::SolidColor(color),
+            anti_alias: true,
+            ..Default::default()
+        },
+        &tiny_skia::Stroke {
+            width,
+            ..Default::default()
+        },
+        Transform::default(),
+        None,
+    );
+}
+
 /// Draw text (single line, truncated) at a pixel offset. `max_w` clamps the
 /// renderable width. Source-over blends into the pixmap.
 pub fn text(

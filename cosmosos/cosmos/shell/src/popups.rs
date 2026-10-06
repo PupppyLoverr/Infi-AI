@@ -59,20 +59,23 @@ pub fn draw(state: &mut ShellState) {
     let ordered: Vec<&Notification> = state.notifications.iter().rev().collect();
     for (i, n) in ordered.iter().enumerate() {
         let y = i as f32 * (CARD_H + CARD_GAP) as f32;
-        draw::fill_rect(
+        // Rounded card (blend doc: shell surfaces r10).
+        draw::fill_round_rect(
             &mut pixmap,
             0.0,
             y,
             NOTIFY_WIDTH as f32,
             CARD_H as f32,
+            10.0,
             card,
         );
-        draw::fill_rect(&mut pixmap, 0.0, y, NOTIFY_WIDTH as f32, 1.0, border);
-        draw::fill_rect(
+        draw::stroke_round_rect(
             &mut pixmap,
-            0.0,
-            y + CARD_H as f32 - 1.0,
-            NOTIFY_WIDTH as f32,
+            0.5,
+            y + 0.5,
+            NOTIFY_WIDTH as f32 - 1.0,
+            CARD_H as f32 - 1.0,
+            9.5,
             1.0,
             border,
         );
