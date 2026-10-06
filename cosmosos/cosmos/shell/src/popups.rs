@@ -54,6 +54,9 @@ pub fn draw(state: &mut ShellState) {
     let Some(mut pixmap) = PixmapMut::from_bytes(canvas, w, h) else {
         return;
     };
+    // Clear before painting — inter-card gaps and rounded corners would
+    // otherwise show stale shm pool memory as garbage glyphs.
+    pixmap.fill(Color::TRANSPARENT);
 
     // Cards stack from the top; newest last → drawn at the top of the stack.
     let ordered: Vec<&Notification> = state.notifications.iter().rev().collect();

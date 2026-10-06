@@ -225,11 +225,19 @@ where
     } else {
         [0x00, 0x00, 0x00, 0x20]
     };
+    // Upload at the rect's own size — a 1x1 texel stretched to the snap
+    // rect renders as a garbage quad (opaque block + diagonal) on
+    // llvmpipe; a full-size buffer keeps the path 1:1.
+    let (w, h) = (rect.size.w.max(1), rect.size.h.max(1));
+    let mut pixels = vec![0u8; w as usize * h as usize * 4];
+    for chunk in pixels.chunks_exact_mut(4) {
+        chunk.copy_from_slice(&px);
+    }
     let buffer = TextureBuffer::<R::TextureId>::from_memory(
         renderer,
-        &px,
+        &pixels,
         smithay::backend::allocator::Fourcc::Abgr8888,
-        (1, 1),
+        (w, h),
         false,
         1,
         Transform::Normal,

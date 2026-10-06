@@ -443,7 +443,7 @@ where
         // committed its first buffer yet — gating the SSD on a
         // non-empty bbox means every new window paints chromeless
         // until its first buffer lands.
-        let ssd_width = if !window_bbox.is_empty() {
+        let mut ssd_width = if !window_bbox.is_empty() {
             SpaceElement::geometry(&self.0).size.w
         } else {
             self.0
@@ -451,10 +451,17 @@ where
                 .and_then(|t| t.current_state().size.map(|s| s.w))
                 .unwrap_or_default()
         };
+        if tb > 0 && ssd_width == 0 {
+            let cached = self.decoration_state().last_ssd_width as i32;
+            if cached > 0 {
+                ssd_width = cached;
+            }
+        }
 
         if tb > 0 && ssd_width > 0 {
             let mut state = self.decoration_state();
             let width = ssd_width;
+            state.last_ssd_width = width as u32;
 
             // Cosmos chrome: repaint the titlebar only when its inputs change.
             let (title, focused) = self
@@ -489,6 +496,14 @@ where
 
             let window_elements =
                 AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);
+            if crate::cosmos::element_debug() {
+                tracing::debug!(
+                    body = window_elements.len(),
+                    tb,
+                    ssd_width,
+                    "cosmos: ssd window elements"
+                );
+            }
             vec.extend(window_elements);
 
             // Drop shadow — painted under the whole window (titlebar +
@@ -520,10 +535,18 @@ where
 
             vec.into_iter().map(C::from).collect()
         } else {
-            AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha)
-                .into_iter()
-                .map(C::from)
-                .collect()
+            let body =
+                AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);
+            if crate::cosmos::element_debug() {
+                tracing::debug!(
+                    emitted = body.len(),
+                    tb,
+                    ssd_width,
+                    ?window_bbox,
+                    "cosmos: plain window elements"
+                );
+            }
+            body.into_iter().map(C::from).collect()
         }
     }
 }

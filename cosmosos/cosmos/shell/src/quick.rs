@@ -174,6 +174,9 @@ pub fn draw(state: &mut ShellState) {
     let Some(mut pixmap) = PixmapMut::from_bytes(canvas, w, h) else {
         return;
     };
+    // Clear before painting — the rounded corners and any unpainted rows
+    // would otherwise show stale shm pool memory as garbage glyphs.
+    pixmap.fill(Color::TRANSPARENT);
 
     draw::fill_round_rect(&mut pixmap, 0.0, 0.0, w as f32, h as f32, 10.0, card);
     draw::stroke_round_rect(

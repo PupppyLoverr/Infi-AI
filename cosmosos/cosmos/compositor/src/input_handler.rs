@@ -1,6 +1,10 @@
 use std::{convert::TryInto, process::Command, sync::atomic::Ordering};
 
-use crate::{focus::PointerFocusTarget, shell::FullscreenSurface, AnvilState};
+use crate::{
+    focus::{KeyboardFocusTarget, PointerFocusTarget},
+    shell::FullscreenSurface,
+    AnvilState,
+};
 
 #[cfg(feature = "udev")]
 use crate::udev::UdevData;
@@ -442,6 +446,18 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     }
                 }
             };
+
+            // Clicking bare desktop (or a non-focusable surface) must
+            // dismiss a keyboard-exclusive layer — the quick-settings
+            // flyout closes on its `leave` event. Window focus is
+            // preserved, matching normal desktop behaviour where
+            // clicking wallpaper keeps the frontmost app focused.
+            if matches!(
+                keyboard.current_focus(),
+                Some(KeyboardFocusTarget::LayerSurface(_))
+            ) {
+                keyboard.set_focus(self, None, serial);
+            }
         }
     }
 

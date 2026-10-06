@@ -80,6 +80,10 @@ pub struct WindowState {
     pub is_ssd: bool,
     pub header_bar: HeaderBar,
     pub shadow: WindowShadow,
+    /// Last non-empty width the chrome was painted at — keeps the
+    /// titlebar alive through frames where the surface bbox and the
+    /// configured size are both empty (first paint, transient maps).
+    pub last_ssd_width: u32,
 }
 
 /// macOS-style drop shadow — a black rounded-rect silhouette blurred by
@@ -725,6 +729,7 @@ impl WindowElement {
                 is_ssd: false,
                 header_bar: HeaderBar::default(),
                 shadow: WindowShadow::default(),
+                last_ssd_width: 0,
             })
         });
 
