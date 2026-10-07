@@ -174,7 +174,8 @@ impl UiState {
             }
         }
         let prims = self.ctx.tessellate(out.shapes, out.pixels_per_point);
-        self.paint(&prims, qh);
+        let bg = self.ctx.global_style().visuals.window_fill();
+        self.paint(&prims, [bg.r(), bg.g(), bg.b(), bg.a()], qh);
         for id in &out.textures_delta.free {
             self.painter.free_texture(*id);
         }
@@ -199,7 +200,12 @@ impl UiState {
             .min(Duration::from_secs(30))
     }
 
-    fn paint(&mut self, prims: &[egui::ClippedPrimitive], qh: &QueueHandle<UiState>) {
+    fn paint(
+        &mut self,
+        prims: &[egui::ClippedPrimitive],
+        clear: [u8; 4],
+        qh: &QueueHandle<UiState>,
+    ) {
         let Some(window) = &self.window else { return };
         let (w, h) = (self.width as i32, self.height as i32);
         let stride = w * 4;
@@ -210,7 +216,8 @@ impl UiState {
             tracing::warn!("uitk: failed to allocate shm buffer");
             return;
         };
-        self.painter.paint(canvas, w as u32, h as u32, prims, 1.0);
+        self.painter
+            .paint(canvas, w as u32, h as u32, prims, 1.0, clear);
         if self.debug {
             let covered = canvas.chunks_exact(4).filter(|px| px[3] != 0).count();
             if covered == 0 || prims.is_empty() {
@@ -223,8 +230,17 @@ impl UiState {
                 );
             }
         }
+        // `attach_to` marks the slot active until the server releases the
+        // buffer, so the pool never hands this memory back to a later
+        // `create_buffer` while the compositor can still read it. Dropping
+        // `buffer` afterwards is safe: it is destroyed on release, keeping
+        // the slot busy in the meantime — this is what stops `paint`'s
+        // clear pass from wiping the *displayed* frame mid-repaint (the
+        // transparent-body tear).
         let surface = window.wl_surface();
-        surface.attach(Some(buffer.wl_buffer()), 0, 0);
+        if let Err(e) = buffer.attach_to(surface) {
+            tracing::warn!("uitk: buffer attach_to failed: {e}");
+        }
         surface.damage_buffer(0, 0, w, h);
         surface.commit();
         let _ = qh;

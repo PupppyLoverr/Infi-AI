@@ -63,9 +63,21 @@ impl Painter {
         self.textures.remove(&id);
     }
 
-    /// Paint clipped primitives into `buf` (ARGB8888, packed, `w*h*4`).
-    pub fn paint(&mut self, buf: &mut [u8], w: u32, h: u32, prims: &[ClippedPrimitive], ppp: f32) {
-        buf.fill(0);
+    /// Paint clipped primitives into `buf` (ARGB8888, packed, `w*h*4`),
+    /// over an opaque `clear` colour — a committed frame can never be
+    /// transparent, even when `prims` is empty.
+    pub fn paint(
+        &mut self,
+        buf: &mut [u8],
+        w: u32,
+        h: u32,
+        prims: &[ClippedPrimitive],
+        ppp: f32,
+        clear: [u8; 4],
+    ) {
+        for px in buf.chunks_exact_mut(4) {
+            px.copy_from_slice(&clear);
+        }
         for prim in prims {
             let Primitive::Mesh(mesh) = &prim.primitive else {
                 continue; // Primitive::Callback unused by core widgets
