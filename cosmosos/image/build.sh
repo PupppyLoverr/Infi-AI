@@ -41,12 +41,49 @@ done
 # --- 2. stage the overlay tree ------------------------------------------------
 
 echo "== staging overlay =="
-rm -rf "$OVERLAY"
+sudo rm -rf "$OVERLAY"   # previous run's files are chowned root below
 mkdir -p "$OVERLAY"/{usr/local/bin,usr/share/applications,etc/profile.d,etc/systemd/network,etc/systemd/system/getty@tty1.service.d,etc/polkit-1/rules.d}
 
 install -m755 "$BINDIR"/cosmos-{compositor,shell,files,terminal,editor,settings,monitor} \
   "$OVERLAY/usr/local/bin/"
 install -m644 "$COSMOS"/apps/*/cosmos-*.desktop "$OVERLAY/usr/share/applications/"
+
+# opencode — standalone AI coding agent (github.com/sst/opencode), shipped
+# as the upstream single linux-x64 binary, no node/npm. "latest" resolves
+# through the releases/latest redirect (no API, no token); pin a reproducible
+# build with OPENCODE_VERSION=<tag>. The tarball is cached under work/ so
+# rebuilds don't re-download ~60MB.
+OC_VER="${OPENCODE_VERSION:-latest}"
+if [ "$OC_VER" = latest ]; then
+  OC_VER="$(curl -fsSIL -o /dev/null -w '%{url_effective}' \
+    https://github.com/sst/opencode/releases/latest | sed 's|.*/||')"
+  [ -n "$OC_VER" ] || { echo "could not resolve latest opencode tag" >&2; exit 1; }
+fi
+echo "opencode: $OC_VER"
+mkdir -p "$WORK/cache"
+OC_TGZ="$WORK/cache/opencode-linux-x64-$OC_VER.tar.gz"
+[ -f "$OC_TGZ" ] || curl -fsSL -o "$OC_TGZ" \
+  "https://github.com/sst/opencode/releases/download/$OC_VER/opencode-linux-x64.tar.gz"
+OC_TMP="$(mktemp -d)"
+tar -xzf "$OC_TGZ" -C "$OC_TMP" opencode
+install -m755 "$OC_TMP/opencode" "$OVERLAY/usr/local/bin/opencode"
+# host-side sanity: the staged binary must at least report its version
+"$OVERLAY/usr/local/bin/opencode" --version >/dev/null || \
+  { echo "opencode --version failed on staged binary" >&2; exit 1; }
+rm -rf "$OC_TMP"
+
+# launcher/dock entry. Exec wraps opencode in cosmos-terminal -e (>= 910d3ab:
+# args join into a command line run via $SHELL -c) so the TUI gets a real TTY.
+cat > "$OVERLAY/usr/share/applications/opencode.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=opencode
+Comment=AI coding agent
+Exec=cosmos-terminal -e opencode
+Icon=cosmos-terminal
+Terminal=false
+Categories=Utility;
+EOF
 
 # session wrapper: agetty -> login shell on tty1 -> profile.d -> this script.
 # compositor exits -> we power off (appliance-style boot-to-desktop).
@@ -181,6 +218,11 @@ polkit.addRule(function(action, subject) {
     }
 });
 EOF
+
+# overlay files are system files — they must land in the rootfs owned by
+# root, not mapped to the build host's uid (which is uid 1000 = cosmos
+# in-guest).
+sudo chown -R root:root "$OVERLAY"
 
 # --- 3. mmdebstrap the rootfs -------------------------------------------------
 # split-package reality check (trixie): networkd lives in `systemd`,

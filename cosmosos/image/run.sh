@@ -43,6 +43,11 @@ mkdir -p "$WORK"
 KVM=(-enable-kvm)
 [ -e /dev/kvm ] || { echo "note: /dev/kvm missing — TCG emulation"; KVM=(); }
 
+# default qemu64 lacks AVX — some binaries (e.g. Bun-compiled opencode)
+# misbehave on it. CPU_MODEL=host exposes the real CPU feature set.
+CPU=()
+[ -n "${CPU_MODEL:-}" ] && CPU=(-cpu "$CPU_MODEL")
+
 case "$DISPLAY_MODE" in
   none)   DISP=(-display none) ;;
   sdl)    DISP=(-display sdl) ;;
@@ -52,6 +57,7 @@ esac
 
 exec qemu-system-x86_64 \
   "${KVM[@]}" \
+  "${CPU[@]}" \
   -m 1G -smp 2 \
   -drive file="$IMG",format=raw,if=virtio \
   -device virtio-vga \
