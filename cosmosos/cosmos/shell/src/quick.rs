@@ -36,7 +36,7 @@ fn theme(dark: bool) -> (Color, Color, Color, Color, CtColor, CtColor) {
             Color::from_rgba8(0x1A, 0x1B, 0x1E, 0xF2), // card
             Color::from_rgba8(0x3C, 0x3D, 0x42, 0xFF), // border/track
             Color::from_rgba8(0x30, 0x31, 0x35, 0xFF), // button bg
-            Color::from_rgba8(0xE8, 0xE8, 0xEA, 0xFF), // fill/accent-white
+            draw::accent(true),                        // active fill
             CtColor::rgba(0xEC, 0xEC, 0xEE, 0xFF),
             CtColor::rgba(0x8C, 0x8C, 0x92, 0xFF),
         )
@@ -45,7 +45,7 @@ fn theme(dark: bool) -> (Color, Color, Color, Color, CtColor, CtColor) {
             Color::from_rgba8(0xFA, 0xFA, 0xFB, 0xF6),
             Color::from_rgba8(0xC8, 0xC8, 0xCC, 0xFF),
             Color::from_rgba8(0xE6, 0xE6, 0xE9, 0xFF),
-            Color::from_rgba8(0x30, 0x30, 0x33, 0xFF),
+            draw::accent(false),
             CtColor::rgba(0x18, 0x18, 0x1B, 0xFF),
             CtColor::rgba(0x6A, 0x6A, 0x6E, 0xFF),
         )
@@ -317,12 +317,8 @@ pub fn draw(state: &mut ShellState) {
         pixmap.fill_path(
             &path,
             &tiny_skia::Paint {
-                // On: dark knob on the white track; off: light knob on gray.
-                shader: tiny_skia::Shader::SolidColor(if info.network.online {
-                    card
-                } else {
-                    fill
-                }),
+                // On: card-coloured knob on the accent track; off: light knob.
+                shader: tiny_skia::Shader::SolidColor(if info.network.online { card } else { sep }),
                 anti_alias: true,
                 ..Default::default()
             },
@@ -393,9 +389,21 @@ pub fn draw(state: &mut ShellState) {
             fill,
         );
     }
-    // Knob.
+    // Knob stays near-white so it reads against the accent progress.
     let kx = TRACK_X as f32 + TRACK_W as f32 * level - 6.0;
-    draw::fill_round_rect(&mut pixmap, kx, ty - 4.0, 12.0, 12.0, 6.0, fill);
+    draw::fill_round_rect(
+        &mut pixmap,
+        kx,
+        ty - 4.0,
+        12.0,
+        12.0,
+        6.0,
+        if state.dark {
+            Color::from_rgba8(0xF2, 0xF2, 0xF4, 0xFF)
+        } else {
+            Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF)
+        },
+    );
     // Mute button.
     let mx = w as f32 - PAD as f32 - 30.0;
     draw::fill_round_rect(
@@ -415,11 +423,8 @@ pub fn draw(state: &mut ShellState) {
         ty - 4.0,
         12.0,
         if muted {
-            if state.dark {
-                Color::from_rgba8(0x18, 0x18, 0x1B, 0xFF)
-            } else {
-                Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF)
-            }
+            // White glyph on the accent mute pill.
+            Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xF0)
         } else {
             glyph
         },

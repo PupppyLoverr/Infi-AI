@@ -11,6 +11,26 @@ thread_local! {
         RefCell::new(cosmic_text::SwashCache::new());
 }
 
+/// The one Cosmos accent — a restrained system blue in the macOS/Win11
+/// idiom. Used ONLY for active state (toggles on, slider fill, focused
+/// selection, running indicators); chrome, cards and text stay neutral.
+pub fn accent(dark: bool) -> Color {
+    if dark {
+        Color::from_rgba8(0x3D, 0x8B, 0xFF, 0xFF)
+    } else {
+        Color::from_rgba8(0x0A, 0x6E, 0xE8, 0xFF)
+    }
+}
+
+/// A washed-out accent for selection/hover backgrounds behind text.
+pub fn accent_soft(dark: bool) -> Color {
+    if dark {
+        Color::from_rgba8(0x3D, 0x8B, 0xFF, 0x40)
+    } else {
+        Color::from_rgba8(0x0A, 0x6E, 0xE8, 0x2E)
+    }
+}
+
 /// Fill a rect.
 pub fn fill_rect(pixmap: &mut PixmapMut<'_>, x: f32, y: f32, w: f32, h: f32, color: Color) {
     let Some(rect) = Rect::from_xywh(x, y, w, h) else {

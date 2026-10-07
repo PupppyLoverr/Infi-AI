@@ -40,7 +40,8 @@ pub fn draw(state: &mut ShellState) {
     let Some(layer) = state.notify_surface.clone() else {
         return;
     };
-    let (card, border, fg, fg_dim) = theme(state.dark);
+    let dark = state.dark;
+    let (card, border, fg, fg_dim) = theme(dark);
 
     let stride = w as i32 * 4;
     let Ok((buffer, canvas)) =
@@ -83,15 +84,16 @@ pub fn draw(state: &mut ShellState) {
             1.0,
             border,
         );
-        // macOS idiom: the app's icon rides the left edge of the card.
+        // macOS idiom: the app's tinted icon rides the left edge.
         let glyph = Color::from_rgba8(fg.r(), fg.g(), fg.b(), fg.a());
+        let key = icons::key_for(&n.app_name.to_lowercase().replace(' ', "-"));
         icons::icon(
             &mut pixmap,
-            &icons::key_for(&n.app_name.to_lowercase().replace(' ', "-")),
+            &key,
             10.0,
             y + 30.0,
             18.0,
-            glyph,
+            icons::tint_for(&key, dark).unwrap_or(glyph),
         );
         draw::text(
             &mut pixmap,

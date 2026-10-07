@@ -34,8 +34,8 @@ fn theme(dark: bool) -> (Color, Color, Color, CtColor, Color, CtColor) {
             Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x26), // border
             Color::from_rgba8(0xE8, 0xE8, 0xEC, 0xFF), // icon/text
             CtColor::rgb(0xE8, 0xE8, 0xEC),
-            Color::from_rgba8(0xEA, 0xEA, 0xEE, 0xFF), // selected cell
-            CtColor::rgb(0x14, 0x15, 0x18),
+            draw::accent(true), // selected cell
+            CtColor::rgb(0xF2, 0xF4, 0xF8),
         )
     } else {
         (
@@ -43,8 +43,8 @@ fn theme(dark: bool) -> (Color, Color, Color, CtColor, Color, CtColor) {
             Color::from_rgba8(0x00, 0x00, 0x00, 0x1F),
             Color::from_rgba8(0x20, 0x21, 0x24, 0xFF),
             CtColor::rgb(0x20, 0x21, 0x24),
-            Color::from_rgba8(0x22, 0x23, 0x27, 0xFF),
-            CtColor::rgb(0xF2, 0xF2, 0xF5),
+            draw::accent(false),
+            CtColor::rgb(0xF8, 0xF8, 0xFA),
         )
     }
 }
@@ -136,10 +136,15 @@ pub fn draw(state: &mut ShellState) {
                 sel_bg,
             );
         }
+        // Selected cell = accent fill + white glyph; unselected keeps the
+        // per-app tint over the neutral card.
         let (glyph, fg) = if is_sel {
             (sel_glyph, sel_fg)
         } else {
-            (icon_fg, text_fg)
+            (
+                icons::tint_for(icon_key, state.dark).unwrap_or(icon_fg),
+                text_fg,
+            )
         };
         let cx = x + CELL_W / 2.0;
         icons::icon(

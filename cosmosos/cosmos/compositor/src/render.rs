@@ -419,11 +419,12 @@ where
         .collect()
 }
 
-/// Desktop background — a soft radial vignette in the theme's
-/// background colour: flat through the middle, easing a few percent
-/// darker toward the corners, so the desktop reads as a surface rather
-/// than a dead fill. A 64x64 texture stretched bilinear to the output;
-/// rebuilt each frame so theme changes apply instantly.
+/// Desktop background — a procedural "aurora" wallpaper rendered into a
+/// 128x128 texture stretched bilinear to the output: a deep navy base
+/// with two soft gaussian colour blooms (indigo + teal) and a gentle
+/// corner vignette. Light mode swaps to a pale slate with pastel blooms.
+/// No image asset — pure math, rebuilt each frame so the theme toggles
+/// apply instantly.
 fn background_element<R>(
     renderer: &mut R,
     output: &Output,
@@ -432,7 +433,7 @@ where
     R: Renderer + ImportAll + ImportMem,
     R::TextureId: Clone + 'static,
 {
-    const N: usize = 64;
+    const N: usize = 128;
     // Peak corner darkening — subtle enough to read as depth, not a filter.
     const VIGNETTE: f32 = 0.10;
     let scale = output.current_scale().fractional_scale();
@@ -441,19 +442,48 @@ where
         .current_mode()
         .map(|m| output.current_transform().transform_size(m.size))?;
     let theme = crate::shell::ssd::current_theme();
-    let c = theme.background;
+    // (base rgb, blooms: (x, y, sigma, strength, rgb))
+    let (base, blooms): ([f32; 3], [(f32, f32, f32, f32, [f32; 3]); 3]) = if theme.dark {
+        (
+            [16.0 / 255.0, 20.0 / 255.0, 31.0 / 255.0], // deep navy
+            [
+                (0.30, 0.26, 0.30, 0.55, [0.21, 0.25, 0.55]), // indigo bloom
+                (0.78, 0.70, 0.28, 0.40, [0.09, 0.31, 0.38]), // teal bloom
+                (0.62, 0.15, 0.22, 0.30, [0.24, 0.18, 0.40]), // violet whisper
+            ],
+        )
+    } else {
+        (
+            [0.918, 0.929, 0.957], // pale slate
+            [
+                (0.30, 0.26, 0.30, 0.45, [0.66, 0.74, 0.94]), // pastel blue
+                (0.78, 0.70, 0.28, 0.35, [0.62, 0.86, 0.88]), // pastel teal
+                (0.62, 0.15, 0.22, 0.28, [0.76, 0.68, 0.90]), // pastel violet
+            ],
+        )
+    };
     let mut pixels = Vec::with_capacity(N * N * 4);
     for py in 0..N {
         for px in 0..N {
-            // r: 0 at the centre → ~1 at the corners.
-            let nx = (px as f32 + 0.5) / N as f32 - 0.5;
-            let ny = (py as f32 + 0.5) / N as f32 - 0.5;
+            let u = (px as f32 + 0.5) / N as f32;
+            let v = (py as f32 + 0.5) / N as f32;
+            // Sum gaussian blooms onto the base colour (per channel).
+            let mut c = base;
+            for (bx, by, sigma, strength, bc) in blooms {
+                let dx = u - bx;
+                let dy = v - by;
+                let g = (-(dx * dx + dy * dy) / (2.0 * sigma * sigma)).exp() * strength;
+                for ch in 0..3 {
+                    c[ch] += (bc[ch] - c[ch]) * g.min(1.0);
+                }
+            }
+            // Vignette: smoothstep past 35% radius, easing dark to corners.
+            let nx = u - 0.5;
+            let ny = v - 0.5;
             let r = ((nx * nx + ny * ny).sqrt() * std::f32::consts::SQRT_2).min(1.0);
-            // Smoothstep past 35% radius: flat in the middle, easing dark
-            // toward the edges.
             let t = ((r - 0.35) / 0.65).clamp(0.0, 1.0);
             let dim = 1.0 - t * t * (3.0 - 2.0 * t) * VIGNETTE;
-            let f = |v: f32| (v * dim * 255.0).clamp(0.0, 255.0) as u8;
+            let f = |x: f32| (x * dim * 255.0).clamp(0.0, 255.0) as u8;
             pixels.extend_from_slice(&[f(c[0]), f(c[1]), f(c[2]), 255]);
         }
     }

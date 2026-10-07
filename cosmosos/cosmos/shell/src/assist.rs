@@ -33,7 +33,7 @@ fn theme(dark: bool) -> (Color, Color, Color, Color, CtColor, CtColor) {
         (
             Color::from_rgba8(0x00, 0x00, 0x00, 0x90), // free-half dim
             Color::from_rgba8(0x1A, 0x1B, 0x1E, 0xF2), // card
-            Color::from_rgba8(0x30, 0x31, 0x35, 0xFF), // selection
+            draw::accent_soft(true),                   // selection wash
             Color::from_rgba8(0x3C, 0x3D, 0x42, 0xFF), // border
             CtColor::rgba(0xEC, 0xEC, 0xEE, 0xFF),
             CtColor::rgba(0x8C, 0x8C, 0x92, 0xFF),
@@ -42,7 +42,7 @@ fn theme(dark: bool) -> (Color, Color, Color, Color, CtColor, CtColor) {
         (
             Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x66),
             Color::from_rgba8(0xFA, 0xFA, 0xFB, 0xF6),
-            Color::from_rgba8(0xE0, 0xE0, 0xE2, 0xFF),
+            draw::accent_soft(false),
             Color::from_rgba8(0xC4, 0xC4, 0xC8, 0xFF),
             CtColor::rgba(0x18, 0x18, 0x1B, 0xFF),
             CtColor::rgba(0x6A, 0x6A, 0x6E, 0xFF),
@@ -198,7 +198,7 @@ pub fn draw(state: &mut ShellState) {
             (cx + PAD + 8.0) as f32,
             (ry + ROW_H / 2.0 - 10.0) as f32,
             20.0,
-            glyph,
+            icons::tint_for(&icons::key_for(app_id), dark).unwrap_or(glyph),
         );
         draw::text(
             &mut pixmap,

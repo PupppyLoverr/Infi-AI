@@ -264,10 +264,23 @@ pub fn draw(state: &mut ShellState) {
                 hover_bg,
             );
         }
-        let icon_color = if item.minimized {
-            Color::from_rgba8(fg.r(), fg.g(), fg.b(), 0x90)
+        // App icons carry their per-app tint; the start glyph and unknown
+        // apps stay neutral. Minimized entries render dimmed either way.
+        let base_color = if item.icon == "start" {
+            draw::accent(state.dark)
         } else {
-            glyph
+            icons::tint_for(&item.icon, state.dark).unwrap_or(glyph)
+        };
+        let icon_color = if item.minimized {
+            Color::from_rgba(
+                base_color.red(),
+                base_color.green(),
+                base_color.blue(),
+                base_color.alpha() * 0.38,
+            )
+            .unwrap_or(base_color)
+        } else {
+            base_color
         };
         let cell_center = x + CELL_W / 2.0;
         // Bottom edge of the icon stays anchored as it magnifies.
@@ -292,8 +305,10 @@ pub fn draw(state: &mut ShellState) {
                 pixmap.fill_path(
                     &path,
                     &tiny_skia::Paint {
+                        // Focused app gets the accent dot; running-only
+                        // stays dim.
                         shader: tiny_skia::Shader::SolidColor(if item.focused {
-                            glyph
+                            draw::accent(state.dark)
                         } else {
                             Color::from_rgba8(fg.r(), fg.g(), fg.b(), 0x90)
                         }),

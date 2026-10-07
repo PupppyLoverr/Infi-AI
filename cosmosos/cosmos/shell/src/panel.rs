@@ -132,7 +132,7 @@ pub fn draw(state: &mut ShellState) {
         LAUNCH_BTN_W as f32 / 2.0 - 9.0,
         h as f32 / 2.0 - 9.0,
         18.0,
-        glyph,
+        draw::accent(dark),
     );
 
     // Focused app — macOS menubar shows the app icon then its bold name.
@@ -149,7 +149,7 @@ pub fn draw(state: &mut ShellState) {
                 APP_NAME_X as f32,
                 h as f32 / 2.0 - 7.0,
                 14.0,
-                glyph,
+                icons::tint_for(&key, dark).unwrap_or(glyph),
             );
         }
         draw::text_bold(
@@ -218,6 +218,7 @@ pub fn draw(state: &mut ShellState) {
         let cy = h as f32 / 2.0 - WS_CELL_H / 2.0;
         let label = (ws.id + 1).to_string();
         if ws.focused {
+            // Active workspace = accent pill with white digits.
             draw::fill_round_rect(
                 &mut pixmap,
                 rx as f32 + 3.0,
@@ -225,11 +226,7 @@ pub fn draw(state: &mut ShellState) {
                 WS_CELL_W as f32 - 6.0,
                 WS_CELL_H,
                 9.0,
-                if dark {
-                    Color::from_rgba8(0xEC, 0xEC, 0xEE, 0xFF)
-                } else {
-                    Color::from_rgba8(0x1A, 0x1A, 0x1C, 0xFF)
-                },
+                draw::accent(dark),
             );
             draw::text(
                 &mut pixmap,
@@ -239,11 +236,7 @@ pub fn draw(state: &mut ShellState) {
                 WS_CELL_H,
                 11.0,
                 &label,
-                if dark {
-                    CtColor::rgba(0x14, 0x14, 0x16, 0xFF)
-                } else {
-                    CtColor::rgba(0xF5, 0xF5, 0xF7, 0xFF)
-                },
+                CtColor::rgba(0xFF, 0xFF, 0xFF, 0xF0),
             );
         } else {
             let has_windows = ws.window_count > 0;

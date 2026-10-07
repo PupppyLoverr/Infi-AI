@@ -68,6 +68,32 @@ pub fn key_for(id: &str) -> String {
     id.replace('.', "-")
 }
 
+/// Per-app tint — the one place colour is allowed on app icons, in the
+/// macOS Dock idiom (each app gets a recognisable hue). Falls back to the
+/// caller's neutral glyph colour for system icons and unknown apps.
+pub fn tint_for(id: &str, dark: bool) -> Option<Color> {
+    let t = if dark {
+        match id {
+            "cosmos-terminal" => Color::from_rgba8(0xE4, 0xE4, 0xE8, 0xFF), // white glyph on dark tile
+            "cosmos-files" => Color::from_rgba8(0x5B, 0x9B, 0xFF, 0xFF),    // Finder blue
+            "cosmos-editor" => Color::from_rgba8(0xE8, 0xA0, 0x44, 0xFF),   // amber pencil
+            "cosmos-settings" => Color::from_rgba8(0x98, 0x99, 0xA3, 0xFF), // system grey
+            "cosmos-monitor" => Color::from_rgba8(0x30, 0xC1, 0x58, 0xFF),  // Activity green
+            _ => return None,
+        }
+    } else {
+        match id {
+            "cosmos-terminal" => Color::from_rgba8(0x1C, 0x1C, 0x1E, 0xFF),
+            "cosmos-files" => Color::from_rgba8(0x2F, 0x7D, 0xE0, 0xFF),
+            "cosmos-editor" => Color::from_rgba8(0xC8, 0x73, 0x1E, 0xFF),
+            "cosmos-settings" => Color::from_rgba8(0x63, 0x64, 0x6E, 0xFF),
+            "cosmos-monitor" => Color::from_rgba8(0x22, 0x9A, 0x45, 0xFF),
+            _ => return None,
+        }
+    };
+    Some(t)
+}
+
 /// Draw the glyph for `key` centred inside a `size`×`size` box at (x, y).
 pub fn icon(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32, color: Color) {
     let s = size / 24.0;

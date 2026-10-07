@@ -226,7 +226,7 @@ fn theme(dark: bool) -> (Color, Color, Color, Color, CtColor, CtColor) {
     if dark {
         (
             Color::from_rgba8(0x1A, 0x1B, 0x1E, 0xF2), // card
-            Color::from_rgba8(0x30, 0x31, 0x35, 0xFF), // selection
+            draw::accent_soft(true),                   // selection wash
             Color::from_rgba8(0x3C, 0x3D, 0x42, 0xFF), // border
             Color::from_rgba8(0x24, 0x25, 0x29, 0xFF), // input field
             CtColor::rgba(0xEC, 0xEC, 0xEE, 0xFF),
@@ -235,7 +235,7 @@ fn theme(dark: bool) -> (Color, Color, Color, Color, CtColor, CtColor) {
     } else {
         (
             Color::from_rgba8(0xFA, 0xFA, 0xFB, 0xF6),
-            Color::from_rgba8(0xE0, 0xE0, 0xE2, 0xFF),
+            draw::accent_soft(false),
             Color::from_rgba8(0xC4, 0xC4, 0xC8, 0xFF),
             Color::from_rgba8(0xEF, 0xEF, 0xF1, 0xFF),
             CtColor::rgba(0x18, 0x18, 0x1B, 0xFF),
@@ -395,7 +395,7 @@ pub fn draw(state: &mut ShellState) {
                 cx + (cell_w - CELL_ICON) / 2.0,
                 cy + 12.0,
                 CELL_ICON,
-                glyph,
+                icons::tint_for(&icons::key_for(&app.id), state.dark).unwrap_or(glyph),
             );
             draw::text(
                 &mut pixmap,
@@ -433,7 +433,7 @@ pub fn draw(state: &mut ShellState) {
                 left + 16.0,
                 ry + (ROW_H as f32 - 18.0) / 2.0,
                 18.0,
-                glyph,
+                icons::tint_for(&icons::key_for(&app.id), state.dark).unwrap_or(glyph),
             );
             draw::text(
                 &mut pixmap,
@@ -488,7 +488,7 @@ pub fn draw(state: &mut ShellState) {
             left + 16.0,
             ry + (ROW_H as f32 - 18.0) / 2.0,
             18.0,
-            glyph,
+            icons::tint_for(&icons::key_for(&app.id), state.dark).unwrap_or(glyph),
         );
         draw::text(
             &mut pixmap,

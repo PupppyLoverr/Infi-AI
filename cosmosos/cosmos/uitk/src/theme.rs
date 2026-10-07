@@ -1,6 +1,6 @@
-//! Cosmos visual identity for egui apps: restrained, monochrome, dark-first.
-//! No accent colours — selection and focus are expressed in greys, matching
-//! the compositor chrome.
+//! Cosmos visual identity for egui apps: restrained and dark-first, with a
+//! single blue accent reserved for true active state (text selection,
+//! hyperlinks, the pressed widget) — same rule as the compositor chrome.
 
 use egui::{Color32, CornerRadius, Stroke, Visuals};
 
@@ -41,15 +41,22 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
         Color32::from_gray(232)
     };
     v.override_text_color = Some(fg);
-    v.hyperlink_color = fg;
-
-    // Selection in monochrome — no brand accent.
-    v.selection.bg_fill = if dark {
-        Color32::from_gray(72)
+    // The one Cosmos accent — the shell's system blue, deepened a touch
+    // for text-on-panel legibility.
+    let accent = if dark {
+        Color32::from_rgb(0x3D, 0x8B, 0xFF)
     } else {
-        Color32::from_gray(198)
+        Color32::from_rgb(0x0A, 0x6E, 0xE8)
     };
-    v.selection.stroke = Stroke::new(1.0, fg);
+    v.hyperlink_color = accent;
+
+    // Selection carries the accent, washed out enough to keep text legible.
+    v.selection.bg_fill = if dark {
+        Color32::from_rgba_premultiplied(0x3D, 0x8B, 0xFF, 0x4D)
+    } else {
+        Color32::from_rgba_premultiplied(0x0A, 0x6E, 0xE8, 0x33)
+    };
+    v.selection.stroke = Stroke::new(1.0, accent);
 
     v.widgets.noninteractive.weak_bg_fill = Color32::TRANSPARENT;
     v.widgets.noninteractive.bg_stroke = Stroke::new(
@@ -70,10 +77,12 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
     } else {
         Color32::from_gray(216)
     };
+    // The pressed widget gets a whisper of accent — egui's "active" state
+    // is momentary, so this stays subtle.
     v.widgets.active.weak_bg_fill = if dark {
-        Color32::from_gray(68)
+        Color32::from_rgba_premultiplied(0x3D, 0x8B, 0xFF, 0x38)
     } else {
-        Color32::from_gray(204)
+        Color32::from_rgba_premultiplied(0x0A, 0x6E, 0xE8, 0x28)
     };
     v.widgets.open.weak_bg_fill = v.widgets.hovered.weak_bg_fill;
 

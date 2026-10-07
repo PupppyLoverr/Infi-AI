@@ -502,25 +502,22 @@ fn paint_titlebar(
         None,
     );
 
-    // macOS traffic-light cluster, monochrome: discs when focused, rings when
-    // unfocused, glyph on hover.
+    // macOS traffic-light cluster, real colour: red/yellow/green discs on a
+    // focused window, muted rings when unfocused, dark glyphs on hover.
+    // (macOS keeps the colours and only reveals the glyph under the pointer.)
+    const DISC_COLORS: [[f32; 4]; 3] = [
+        [1.000, 0.373, 0.341, 1.0], // close    #FF5F57
+        [0.996, 0.737, 0.180, 1.0], // minimize #FEBC2E
+        [0.157, 0.784, 0.251, 1.0], // maximize #28C840
+    ];
     let hover_zone = pointer_loc.and_then(|l| button_zone(l.x, w as f64));
     let cy = h as f32 / 2.0;
-    let disc = Paint {
-        shader: tiny_skia::Shader::SolidColor(
-            Color::from_rgba(f[0], f[1], f[2], if focused { 0.30 } else { 0.0 }).unwrap(),
-        ),
-        anti_alias: true,
-        ..Default::default()
-    };
     let ring = Stroke {
         width: 1.0,
         ..Default::default()
     };
     let ring_paint = Paint {
-        shader: tiny_skia::Shader::SolidColor(
-            Color::from_rgba(f[0], f[1], f[2], if focused { 0.0 } else { 0.35 }).unwrap(),
-        ),
+        shader: tiny_skia::Shader::SolidColor(Color::from_rgba(f[0], f[1], f[2], 0.35).unwrap()),
         anti_alias: true,
         ..Default::default()
     };
@@ -532,8 +529,15 @@ fn paint_titlebar(
         anti_alias: true,
         ..Default::default()
     };
+    // Glyph ink: near-black on the coloured discs, theme knock-out on the
+    // neutral hover disc of an unfocused window.
     let glyph_paint = Paint {
         shader: tiny_skia::Shader::SolidColor(glyph_color(theme)),
+        anti_alias: true,
+        ..Default::default()
+    };
+    let glyph_dark = Paint {
+        shader: tiny_skia::Shader::SolidColor(Color::from_rgba(0.0, 0.0, 0.0, 0.55).unwrap()),
         anti_alias: true,
         ..Default::default()
     };
@@ -548,7 +552,20 @@ fn paint_titlebar(
             continue;
         };
         let hovered = hover_zone == Some(zone);
-        if hovered {
+        if focused {
+            let [r, g, b, a] = DISC_COLORS[zone as usize];
+            pixmap.fill_path(
+                &circle,
+                &Paint {
+                    shader: tiny_skia::Shader::SolidColor(Color::from_rgba(r, g, b, a).unwrap()),
+                    anti_alias: true,
+                    ..Default::default()
+                },
+                FillRule::Winding,
+                Transform::default(),
+                None,
+            );
+        } else if hovered {
             pixmap.fill_path(
                 &circle,
                 &hover_paint,
@@ -556,19 +573,18 @@ fn paint_titlebar(
                 Transform::default(),
                 None,
             );
-        } else if focused {
-            pixmap.fill_path(
-                &circle,
-                &disc,
-                FillRule::Winding,
-                Transform::default(),
-                None,
-            );
         } else {
             pixmap.stroke_path(&circle, &ring_paint, &ring, Transform::default(), None);
         }
-        if hovered || focused {
-            draw_button_glyph(pixmap, zone, cx, cy, &glyph_paint, &glyph_stroke);
+        if hovered {
+            draw_button_glyph(
+                pixmap,
+                zone,
+                cx,
+                cy,
+                if focused { &glyph_dark } else { &glyph_paint },
+                &glyph_stroke,
+            );
         }
     }
 
