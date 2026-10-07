@@ -527,6 +527,44 @@ where
                         el.opaque_regions(scale).len(),
                     );
                 }
+                // Read the shm the compositor is about to composite — if the
+                // attached buffer reports opaque alpha while the screen shows
+                // the body transparent, the corruption is post-import
+                // (GL-side); if it reads zero-alpha, the shm itself is
+                // transparent at compositor-read time (shm visibility race).
+                if let Some(s) = self.0.wl_surface().as_deref() {
+                    smithay::wayland::compositor::with_states(s, |states| {
+                        use smithay::{
+                            reexports::wayland_server::Resource,
+                            wayland::compositor::{BufferAssignment, SurfaceAttributes},
+                        };
+                        let mut attrs = states.cached_state.get::<SurfaceAttributes>();
+                        if let Some(BufferAssignment::NewBuffer(buf)) =
+                            attrs.current().buffer.as_ref()
+                        {
+                            let buf_id = buf.id();
+                            let _ = smithay::wayland::shm::with_buffer_contents(
+                                buf,
+                                |ptr, len, meta| {
+                                    // SAFETY: heuristic debug read only — the
+                                    // client may be repainting concurrently; we
+                                    // count bytes and never keep the slice.
+                                    let data =
+                                        unsafe { std::slice::from_raw_parts(ptr, len) };
+                                    let opaque =
+                                        data.chunks_exact(4).filter(|px| px[3] != 0).count();
+                                    tracing::debug!(
+                                        "cosmos: body shm {:?} opaque_px={} len={} meta={:?}",
+                                        buf_id,
+                                        opaque,
+                                        len,
+                                        meta,
+                                    );
+                                },
+                            );
+                        }
+                    });
+                }
                 if window_elements.is_empty() && !window_bbox.is_empty() {
                     if let Some(s) = self.0.wl_surface().as_deref() {
                         smithay::wayland::compositor::with_states(s, |states| {
