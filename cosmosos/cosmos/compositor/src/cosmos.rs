@@ -1122,3 +1122,13 @@ pub(crate) fn element_debug() -> bool {
     static DBG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *DBG.get_or_init(|| std::env::var_os("COSMOS_DEBUG_ELEMENTS").is_some())
 }
+
+/// `COSMOS_SHM_ELEMENTS=1` — render window bodies by importing each attached
+/// shm buffer through the decal `TextureBuffer` path instead of smithay's
+/// `WaylandSurfaceRenderElement`/`MultiTexture` machinery. Same freshness
+/// semantics (re-import on every buffer attach, keyed by commit counter).
+/// A/B switch for the transparent-body wedge investigation.
+pub(crate) fn shm_elements() -> bool {
+    static DBG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DBG.get_or_init(|| std::env::var_os("COSMOS_SHM_ELEMENTS").is_some())
+}

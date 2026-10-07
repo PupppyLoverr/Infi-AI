@@ -1,10 +1,11 @@
-use std::{borrow::Cow, time::Duration};
+use std::{borrow::Cow, cell::RefCell, collections::HashMap, time::Duration};
 
 use smithay::{
     backend::renderer::{
         element::{
-            surface::WaylandSurfaceRenderElement, texture::TextureRenderElement, AsRenderElements,
-            Element,
+            surface::WaylandSurfaceRenderElement,
+            texture::{TextureBuffer, TextureRenderElement},
+            AsRenderElements, Element, Kind,
         },
         ImportAll, ImportMem, Renderer, Texture,
     },
@@ -28,7 +29,7 @@ use smithay::{
         wayland_server::protocol::wl_surface::WlSurface,
     },
     render_elements,
-    utils::{user_data::UserDataMap, IsAlive, Logical, Physical, Point, Rectangle, Scale, Serial},
+    utils::{user_data::UserDataMap, IsAlive, Logical, Physical, Point, Rectangle, Scale, Serial, Size},
     wayland::{
         compositor::SurfaceData as WlSurfaceData, dmabuf::DmabufFeedback, seat::WaylandFocus,
     },
@@ -414,6 +415,133 @@ impl SpaceElement for WindowElement {
     }
 }
 
+thread_local! {
+    /// Imported shm textures for window bodies, keyed by toplevel surface
+    /// object id. Each entry is only valid for the (commit counter,
+    /// attached buffer) pair it was imported from — same freshness
+    /// semantics as smithay's `RendererSurfaceState` texture cache, but
+    /// through the `TextureBuffer` upload path the decals use.
+    static BODY_TEX: RefCell<
+        HashMap<
+            smithay::reexports::wayland_server::backend::ObjectId,
+            (
+                smithay::backend::renderer::utils::CommitCounter,
+                smithay::reexports::wayland_server::backend::ObjectId,
+                Box<dyn std::any::Any>,
+            ),
+        >,
+    > = RefCell::new(HashMap::new());
+}
+
+/// Render a window body by importing its attached shm buffer through the
+/// decal `TextureBuffer` pipeline (`COSMOS_SHM_ELEMENTS=1`). Returns `None`
+/// for anything this path doesn't cover — subsurface trees, non-shm
+/// buffers — so callers fall back to smithay's surface elements.
+fn shm_body_elements<R>(
+    window: &Window,
+    renderer: &mut R,
+    location: Point<i32, Physical>,
+    _scale: Scale<f64>,
+    alpha: f32,
+) -> Option<Vec<TextureRenderElement<R::TextureId>>>
+where
+    R: Renderer + ImportMem,
+    R::TextureId: Texture + Clone + 'static,
+{
+    use smithay::{
+        backend::allocator::format::get_bpp,
+        reexports::wayland_server::Resource,
+        wayland::compositor::{get_children, with_states, BufferAssignment, SurfaceAttributes},
+    };
+
+    let surface = window.wl_surface()?;
+    if !get_children(&surface).is_empty() {
+        return None;
+    }
+    with_states(&surface, |states| {
+        let commit = states
+            .data_map
+            .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>()
+            .map(|d| d.lock().unwrap().current_commit())
+            .unwrap_or_default();
+        let mut attrs = states.cached_state.get::<SurfaceAttributes>();
+        let attrs = attrs.current();
+        let BufferAssignment::NewBuffer(buf) = attrs.buffer.as_ref()? else {
+            return None;
+        };
+        let surf_id = surface.id();
+        let buf_id = buf.id();
+        let buffer_scale = attrs.buffer_scale.max(1);
+        BODY_TEX.with(|map| {
+            let mut map = map.borrow_mut();
+            let fresh = map
+                .get(&surf_id)
+                .is_some_and(|(c, b, _)| *c == commit && *b == buf_id);
+            if !fresh {
+                let imported = smithay::wayland::shm::with_buffer_contents(
+                    buf,
+                    |ptr, len, meta| {
+                        let fourcc =
+                            smithay::wayland::shm::shm_format_to_fourcc(meta.format)?;
+                        let bpp = get_bpp(fourcc)? / 8;
+                        let (off, w, h, stride) = (
+                            meta.offset as usize,
+                            meta.width as usize,
+                            meta.height as usize,
+                            meta.stride as usize,
+                        );
+                        if w == 0 || h == 0 || off + h * stride > len {
+                            return None;
+                        }
+                        // SAFETY: bounded by `len` above; the client may be
+                        // repainting concurrently but we copy out and never
+                        // keep the slice.
+                        let data = unsafe { std::slice::from_raw_parts(ptr, len) };
+                        let tight = if stride == w * bpp {
+                            data[off..off + h * stride].to_vec()
+                        } else {
+                            let mut v = Vec::with_capacity(w * h * bpp);
+                            for row in 0..h {
+                                let s = off + row * stride;
+                                v.extend_from_slice(&data[s..s + w * bpp]);
+                            }
+                            v
+                        };
+                        TextureBuffer::<R::TextureId>::from_memory(
+                            renderer,
+                            &tight,
+                            fourcc,
+                            (meta.width, meta.height),
+                            false,
+                            1,
+                            smithay::utils::Transform::Normal,
+                            None,
+                        )
+                        .ok()
+                        .map(|t| (t, meta.width, meta.height))
+                    },
+                )
+                .ok()??;
+                map.insert(surf_id.clone(), (commit, buf_id, Box::new(imported)));
+            }
+            let (tex, w, h) = map
+                .get(&surf_id)?
+                .2
+                .downcast_ref::<(TextureBuffer<R::TextureId>, i32, i32)>()
+                .map(|(t, w, h)| (t, *w, *h))?;
+            let logical = Size::from((w / buffer_scale, h / buffer_scale));
+            Some(vec![TextureRenderElement::from_texture_buffer(
+                location.to_f64(),
+                tex,
+                Some(alpha),
+                None,
+                Some(logical),
+                Kind::Unspecified,
+            )])
+        })
+    })
+}
+
 render_elements!(
     pub WindowRenderElement<R> where R: ImportAll + ImportMem, R::TextureId: Texture;
     Window=WaylandSurfaceRenderElement<R>,
@@ -502,8 +630,21 @@ where
 
             location.y += (scale.y * tb as f64) as i32;
 
-            let window_elements: Vec<WaylandSurfaceRenderElement<R>> =
-                AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);
+            let window_elements: Vec<WindowRenderElement<R>> = if crate::cosmos::shm_elements() {
+                match shm_body_elements::<R>(&self.0, renderer, location, scale, alpha) {
+                    Some(els) => els
+                        .into_iter()
+                        .map(WindowRenderElement::Decoration)
+                        .collect(),
+                    None => AsRenderElements::<R>::render_elements::<WindowRenderElement<R>>(
+                        &self.0, renderer, location, scale, alpha,
+                    ),
+                }
+            } else {
+                AsRenderElements::<R>::render_elements::<WindowRenderElement<R>>(
+                    &self.0, renderer, location, scale, alpha,
+                )
+            };
             if crate::cosmos::element_debug() {
                 tracing::debug!(
                     body = window_elements.len(),
@@ -593,7 +734,7 @@ where
                     }
                 }
             }
-            vec.extend(window_elements.into_iter().map(Into::into));
+            vec.extend(window_elements);
 
             // Drop shadow — painted under the whole window (titlebar +
             // body). Pushed last: elements render back-to-front, so it
@@ -617,7 +758,21 @@ where
 
             vec.into_iter().map(C::from).collect()
         } else {
-            let body = AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);
+            let body: Vec<WindowRenderElement<R>> = if crate::cosmos::shm_elements() {
+                match shm_body_elements::<R>(&self.0, renderer, location, scale, alpha) {
+                    Some(els) => els
+                        .into_iter()
+                        .map(WindowRenderElement::Decoration)
+                        .collect(),
+                    None => AsRenderElements::<R>::render_elements::<WindowRenderElement<R>>(
+                        &self.0, renderer, location, scale, alpha,
+                    ),
+                }
+            } else {
+                AsRenderElements::<R>::render_elements::<WindowRenderElement<R>>(
+                    &self.0, renderer, location, scale, alpha,
+                )
+            };
             if crate::cosmos::element_debug() {
                 tracing::debug!(
                     emitted = body.len(),
