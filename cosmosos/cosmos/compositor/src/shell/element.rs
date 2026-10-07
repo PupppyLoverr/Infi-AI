@@ -513,7 +513,7 @@ where
                             fourcc,
                             (meta.width, meta.height),
                             false,
-                            1,
+                            buffer_scale,
                             smithay::utils::Transform::Normal,
                             None,
                         )
