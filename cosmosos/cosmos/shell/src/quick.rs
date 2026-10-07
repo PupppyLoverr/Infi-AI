@@ -317,8 +317,9 @@ pub fn draw(state: &mut ShellState) {
         pixmap.fill_path(
             &path,
             &tiny_skia::Paint {
-                // On: card-coloured knob on the accent track; off: light knob.
-                shader: tiny_skia::Shader::SolidColor(if info.network.online { card } else { sep }),
+                // The knob stays near-white either way — it must read
+                // against both the accent and the grey track.
+                shader: tiny_skia::Shader::SolidColor(Color::from_rgba8(0xF2, 0xF2, 0xF4, 0xFF)),
                 anti_alias: true,
                 ..Default::default()
             },
