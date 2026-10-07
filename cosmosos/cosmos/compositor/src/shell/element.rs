@@ -429,6 +429,7 @@ thread_local! {
             (
                 smithay::backend::renderer::utils::CommitCounter,
                 smithay::reexports::wayland_server::backend::ObjectId,
+                u64,
                 Box<dyn std::any::Any>,
             ),
         >,
@@ -476,56 +477,71 @@ where
         let buffer_scale = attrs.buffer_scale.max(1);
         BODY_TEX.with(|map| {
             let mut map = map.borrow_mut();
+            // Sample the buffer bytes every frame and hash them: on slow
+            // renderers the compositor can read the client's shm pool while
+            // the client is mid-paint of a freshly-committed buffer; a
+            // commit-keyed cache would then hold the torn import until the
+            // client's *next* commit (which may never come — the "transparent
+            // body" wedge). Hash-keying means the next frame sees different
+            // bytes and re-uploads, so a torn sample self-heals in one frame.
+            let sampled = smithay::wayland::shm::with_buffer_contents(buf, |ptr, len, meta| {
+                let fourcc = smithay::wayland::shm::shm_format_to_fourcc(meta.format)?;
+                let bpp = get_bpp(fourcc)? / 8;
+                let (off, w, h, stride) = (
+                    meta.offset as usize,
+                    meta.width as usize,
+                    meta.height as usize,
+                    meta.stride as usize,
+                );
+                if w == 0 || h == 0 || off + h * stride > len {
+                    return None;
+                }
+                // SAFETY: bounded by `len` above; the client may be
+                // repainting concurrently but we copy out and never
+                // keep the slice.
+                let data = unsafe { std::slice::from_raw_parts(ptr, len) };
+                let tight = if stride == w * bpp {
+                    data[off..off + h * stride].to_vec()
+                } else {
+                    let mut v = Vec::with_capacity(w * h * bpp);
+                    for row in 0..h {
+                        let s = off + row * stride;
+                        v.extend_from_slice(&data[s..s + w * bpp]);
+                    }
+                    v
+                };
+                // FNV-1a over the tight copy — cheap (~1ms/MB) and only
+                // needed to detect change, not collisions.
+                let mut hash: u64 = 0xcbf29ce484222325;
+                for &b in &tight {
+                    hash ^= b as u64;
+                    hash = hash.wrapping_mul(0x100000001b3);
+                }
+                Some((tight, hash, fourcc, meta.width, meta.height))
+            })
+            .ok()??;
+            let (tight, hash, fourcc, w, h) = sampled;
             let fresh = map
                 .get(&surf_id)
-                .is_some_and(|(c, b, _)| *c == commit && *b == buf_id);
+                .is_some_and(|(c, b, k, _)| *c == commit && *b == buf_id && *k == hash);
             if !fresh {
-                let imported =
-                    smithay::wayland::shm::with_buffer_contents(buf, |ptr, len, meta| {
-                        let fourcc = smithay::wayland::shm::shm_format_to_fourcc(meta.format)?;
-                        let bpp = get_bpp(fourcc)? / 8;
-                        let (off, w, h, stride) = (
-                            meta.offset as usize,
-                            meta.width as usize,
-                            meta.height as usize,
-                            meta.stride as usize,
-                        );
-                        if w == 0 || h == 0 || off + h * stride > len {
-                            return None;
-                        }
-                        // SAFETY: bounded by `len` above; the client may be
-                        // repainting concurrently but we copy out and never
-                        // keep the slice.
-                        let data = unsafe { std::slice::from_raw_parts(ptr, len) };
-                        let tight = if stride == w * bpp {
-                            data[off..off + h * stride].to_vec()
-                        } else {
-                            let mut v = Vec::with_capacity(w * h * bpp);
-                            for row in 0..h {
-                                let s = off + row * stride;
-                                v.extend_from_slice(&data[s..s + w * bpp]);
-                            }
-                            v
-                        };
-                        TextureBuffer::<R::TextureId>::from_memory(
-                            renderer,
-                            &tight,
-                            fourcc,
-                            (meta.width, meta.height),
-                            false,
-                            buffer_scale,
-                            smithay::utils::Transform::Normal,
-                            None,
-                        )
-                        .ok()
-                        .map(|t| (t, meta.width, meta.height))
-                    })
-                    .ok()??;
-                map.insert(surf_id.clone(), (commit, buf_id, Box::new(imported)));
+                let imported = TextureBuffer::<R::TextureId>::from_memory(
+                    renderer,
+                    &tight,
+                    fourcc,
+                    (w, h),
+                    false,
+                    buffer_scale,
+                    smithay::utils::Transform::Normal,
+                    None,
+                )
+                .ok()
+                .map(|t| (t, w, h))?;
+                map.insert(surf_id.clone(), (commit, buf_id, hash, Box::new(imported)));
             }
             let (tex, w, h) = map
                 .get(&surf_id)?
-                .2
+                .3
                 .downcast_ref::<(TextureBuffer<R::TextureId>, i32, i32)>()
                 .map(|(t, w, h)| (t, *w, *h))?;
             let logical = Size::from((w / buffer_scale, h / buffer_scale));
