@@ -4,6 +4,7 @@ use smithay::{
     backend::renderer::{
         element::{
             surface::WaylandSurfaceRenderElement, texture::TextureRenderElement, AsRenderElements,
+            Element,
         },
         ImportAll, ImportMem, Renderer, Texture,
     },
@@ -501,7 +502,7 @@ where
 
             location.y += (scale.y * tb as f64) as i32;
 
-            let window_elements =
+            let window_elements: Vec<WaylandSurfaceRenderElement<R>> =
                 AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);
             if crate::cosmos::element_debug() {
                 tracing::debug!(
@@ -516,6 +517,16 @@ where
                 // WaylandSurfaceRenderElement checks — buffer/view/
                 // surface_size/texture-for-context — to name which one
                 // silently skipped the element.
+                for el in &window_elements {
+                    tracing::debug!(
+                        "cosmos: body element id={:?} alpha={} src={:?} geo={:?} opaque={}",
+                        el.id(),
+                        el.alpha(),
+                        el.src(),
+                        el.geometry(scale),
+                        el.opaque_regions(scale).len(),
+                    );
+                }
                 if window_elements.is_empty() && !window_bbox.is_empty() {
                     if let Some(s) = self.0.wl_surface().as_deref() {
                         smithay::wayland::compositor::with_states(s, |states| {
@@ -544,7 +555,7 @@ where
                     }
                 }
             }
-            vec.extend(window_elements);
+            vec.extend(window_elements.into_iter().map(Into::into));
 
             // Drop shadow — painted under the whole window (titlebar +
             // body). Pushed last: elements render back-to-front, so it
