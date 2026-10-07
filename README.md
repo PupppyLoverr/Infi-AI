@@ -7,11 +7,13 @@ restrained design.
 Everything lives in [`cosmosos/`](cosmosos/):
 
 - `cosmosos/cosmos/` — the Rust desktop stack: a Smithay-based Wayland
-  compositor (workspaces, snap tiling, macOS-style chrome), a layer-shell
-  shell (menubar, dock, Spotlight/Start launcher, Quick Settings,
-  notifications, Snap Assist, window switcher), the `cosmos-uitk` egui
-  toolkit, and the native apps (terminal, files, editor, settings, system
-  monitor).
+  compositor (workspaces, edge-snap + master/stack tiling, macOS-style
+  chrome, full motion system, 6 accent presets), a layer-shell shell
+  (menubar, dock, Spotlight/Start launcher, Quick Settings with theme
+  dial + dark/light pill, notifications, Snap Assist, window switcher,
+  super+? keybind cheatsheet), the `cosmos-uitk` egui toolkit (Inter +
+  JetBrains Mono), and the native apps (terminal, files, editor,
+  settings, system monitor).
 - `cosmosos/image/` — the distro pipeline: `build.sh` produces a bootable
   raw x86_64 disk image (mmdebstrap trixie + GRUB) and `run.sh` boots it in
   QEMU/KVM.
