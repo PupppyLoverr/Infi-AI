@@ -153,6 +153,10 @@ fn encode_event(ev: &egui::Event, out: &mut Vec<u8>) {
             ..
         } => {
             let ctrl = modifiers.ctrl;
+            if modifiers.alt && !ctrl {
+                // xterm convention: Alt prefixes the sequence with ESC.
+                out.push(0x1b);
+            }
             match key {
                 Enter => out.push(b'\r'),
                 Backspace => out.push(0x7f),
@@ -286,24 +290,38 @@ fn draw(ui: &mut egui::Ui, term: &mut Term) {
         let font = egui::FontId::monospace(FONT);
 
         let screen = term.parser.screen();
-        // rows() yields every displayed row as text: scrollback lines first
-        // (when scrolled), then the live grid.
-        for (i, text) in screen.rows(0, term.cols).enumerate() {
-            if text.trim().is_empty() {
-                continue;
+        if screen.scrollback() > 0 {
+            // Scrolled-back view: plain-text history rows (attrs only matter
+            // on the live grid; the scroll view is a plain pager).
+            for (i, text) in screen.rows(0, term.cols).enumerate() {
+                if text.trim().is_empty() {
+                    continue;
+                }
+                painter.text(
+                    origin + egui::vec2(0.0, i as f32 * cell_h),
+                    egui::Align2::LEFT_TOP,
+                    text.trim_end(),
+                    font.clone(),
+                    fg,
+                );
             }
-            painter.text(
-                origin + egui::vec2(0.0, i as f32 * cell_h),
-                egui::Align2::LEFT_TOP,
-                text.trim_end(),
+        } else {
+            let default_bg = ui.visuals().window_fill();
+            draw_grid(
+                painter,
+                screen,
+                origin,
+                cell_w,
+                cell_h,
                 font.clone(),
                 fg,
+                default_bg,
             );
         }
 
         // Block cursor at the parser's cursor position (only when not
-        // scrolled back).
-        if screen.scrollback() == 0 {
+        // scrolled back and the application hasn't hidden it).
+        if screen.scrollback() == 0 && !screen.hide_cursor() {
             let (cy, cx) = screen.cursor_position();
             let rect = egui::Rect::from_min_size(
                 origin + egui::vec2(cx as f32 * cell_w, cy as f32 * cell_h),
@@ -322,4 +340,224 @@ fn draw(ui: &mut egui::Ui, term: &mut Term) {
             );
         }
     });
+}
+
+/// The xterm-standard 16 base colours.
+const ANSI_BASE: [[u8; 3]; 8] = [
+    [0, 0, 0],
+    [205, 0, 0],
+    [0, 205, 0],
+    [205, 205, 0],
+    [0, 0, 238],
+    [205, 0, 205],
+    [0, 205, 205],
+    [229, 229, 229],
+];
+const ANSI_BRIGHT: [[u8; 3]; 8] = [
+    [127, 127, 127],
+    [255, 0, 0],
+    [0, 255, 0],
+    [255, 255, 0],
+    [92, 92, 255],
+    [255, 0, 255],
+    [0, 255, 255],
+    [255, 255, 255],
+];
+
+/// Resolve a vt100 colour (Default / 0-255 palette / truecolor) to RGB.
+/// `bold` applies the xterm convention: bold text in a base colour uses the
+/// bright slot instead.
+fn ansi_rgb(idx: u8, bold: bool) -> [u8; 3] {
+    match idx {
+        0..=7 => {
+            if bold {
+                ANSI_BRIGHT[idx as usize]
+            } else {
+                ANSI_BASE[idx as usize]
+            }
+        }
+        8..=15 => ANSI_BRIGHT[idx as usize - 8],
+        16..=231 => {
+            let n = idx - 16;
+            let c = |v: u8| if v == 0 { 0 } else { 55 + 40 * v };
+            [c(n / 36), c((n % 36) / 6), c(n % 6)]
+        }
+        // 232..=255 grayscale ramp
+        _ => {
+            let v = 8 + 10 * (idx - 232);
+            [v, v, v]
+        }
+    }
+}
+
+fn to_color32(rgb: [u8; 3]) -> egui::Color32 {
+    egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2])
+}
+
+/// Resolved style for one cell: (fg, bg or None-for-default, bold, under,
+/// strike). `None` bg means "the panel's own fill" — skip painting it.
+struct CellStyle {
+    fg: egui::Color32,
+    bg: Option<egui::Color32>,
+    bold: bool,
+}
+
+fn cell_style(
+    cell: &vt100::Cell,
+    default_fg: egui::Color32,
+    default_bg: egui::Color32,
+) -> CellStyle {
+    let bold = cell.bold();
+    let mut fg = match cell.fgcolor() {
+        vt100::Color::Default => default_fg,
+        vt100::Color::Idx(i) => to_color32(ansi_rgb(i, bold)),
+        vt100::Color::Rgb(r, g, b) => egui::Color32::from_rgb(r, g, b),
+    };
+    let mut bg = match cell.bgcolor() {
+        vt100::Color::Default => None,
+        vt100::Color::Idx(i) => Some(to_color32(ansi_rgb(i, false))),
+        vt100::Color::Rgb(r, g, b) => Some(egui::Color32::from_rgb(r, g, b)),
+    };
+    if cell.inverse() {
+        // Inverse video swaps the resolved colours; an unstyled fg/bg pair
+        // still needs concrete values to swap into.
+        let fg_resolved = fg;
+        let bg_resolved = bg.unwrap_or(default_bg);
+        fg = bg_resolved;
+        bg = Some(fg_resolved);
+    }
+    if cell.dim() {
+        fg = fg.linear_multiply(0.6);
+    }
+    CellStyle { fg, bg, bold }
+}
+
+/// Per-cell renderer: honours fg/bg colours (ANSI-16/256/truecolor), bold,
+/// underline, strikethrough, and inverse video — the attributes TUIs like
+/// opencode, vim, htop actually emit. Paint order per row: background runs,
+/// then glyph runs grouped by style, then decoration lines.
+fn draw_grid(
+    painter: &egui::Painter,
+    screen: &vt100::Screen,
+    origin: egui::Pos2,
+    cell_w: f32,
+    cell_h: f32,
+    font: egui::FontId,
+    default_fg: egui::Color32,
+    default_bg: egui::Color32,
+) {
+    let (nrows, ncols) = screen.size();
+    // Grouping key: everything except the text itself.
+    #[derive(PartialEq, Clone, Copy)]
+    struct Key {
+        fg: egui::Color32,
+        bold: bool,
+    }
+    // Resolve "no bg" lazily per row via Option<Color32> compare.
+    for r in 0..nrows {
+        let y = origin.y + r as f32 * cell_h;
+
+        // Pass 1 — background runs. Option<Color32> equality treats
+        // "default" and "unpainted" as the same slot.
+        let mut run_start = 0usize;
+        let mut run_bg = None;
+        let paint_run = |start: usize, end: usize, col: Option<egui::Color32>| {
+            if let Some(c) = col {
+                if end > start {
+                    painter.rect_filled(
+                        egui::Rect::from_min_size(
+                            egui::pos2(origin.x + start as f32 * cell_w, y),
+                            egui::vec2((end - start) as f32 * cell_w, cell_h),
+                        ),
+                        0.0,
+                        c,
+                    );
+                }
+            }
+        };
+        for c in 0..ncols {
+            let Some(cell) = screen.cell(r, c) else {
+                continue;
+            };
+            let st = cell_style(cell, default_fg, default_bg);
+            if st.bg != run_bg {
+                paint_run(run_start, c as usize, run_bg);
+                run_start = c as usize;
+                run_bg = st.bg;
+            }
+        }
+        paint_run(run_start, ncols as usize, run_bg);
+
+        // Pass 2 — glyph runs grouped by (fg,bold); bold = faux double-draw
+        // since no bold face is registered in egui's default font set.
+        let mut run_text = String::new();
+        let mut run_col = 0usize;
+        let mut cur: Option<Key> = None;
+        let flush = |text: &mut String, start: usize, key: Key, y: f32| {
+            if text.is_empty() {
+                return;
+            }
+            let x = origin.x + start as f32 * cell_w;
+            painter.text(
+                egui::pos2(x, y),
+                egui::Align2::LEFT_TOP,
+                &*text,
+                font.clone(),
+                key.fg,
+            );
+            if key.bold {
+                painter.text(
+                    egui::pos2(x + 0.7, y),
+                    egui::Align2::LEFT_TOP,
+                    &*text,
+                    font.clone(),
+                    key.fg,
+                );
+            }
+            text.clear();
+        };
+        for c in 0..ncols {
+            let Some(cell) = screen.cell(r, c) else {
+                continue;
+            };
+            if cell.is_wide_continuation() {
+                continue;
+            }
+            let st = cell_style(cell, default_fg, default_bg);
+            let key = Key {
+                fg: st.fg,
+                bold: st.bold,
+            };
+            if cur != Some(key) {
+                if let Some(k) = cur {
+                    flush(&mut run_text, run_col, k, y);
+                }
+                cur = Some(key);
+                run_col = c as usize;
+            }
+            // Wide glyphs occupy two cells; egui spaces them naturally.
+            let text = cell.contents();
+            run_text.push_str(if text.is_empty() { " " } else { text });
+        }
+        if let Some(k) = cur {
+            flush(&mut run_text, run_col, k, y);
+        }
+
+        // Pass 3 — underline per contiguous flag run (vt100 has no strike).
+        for c in 0..ncols {
+            let Some(cell) = screen.cell(r, c) else {
+                continue;
+            };
+            if !cell.underline() {
+                continue;
+            }
+            let st = cell_style(cell, default_fg, default_bg);
+            let x0 = origin.x + c as f32 * cell_w;
+            painter.hline(
+                x0..=x0 + cell_w,
+                y + cell_h - 2.0,
+                egui::Stroke::new(1.0, st.fg),
+            );
+        }
+    }
 }
