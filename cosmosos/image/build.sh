@@ -41,7 +41,7 @@ done
 # --- 2. stage the overlay tree ------------------------------------------------
 
 echo "== staging overlay =="
-rm -rf "$OVERLAY"
+sudo rm -rf "$OVERLAY"   # previous run's files are chowned root below
 mkdir -p "$OVERLAY"/{usr/local/bin,usr/share/applications,etc/profile.d,etc/systemd/network,etc/systemd/system/getty@tty1.service.d,etc/polkit-1/rules.d}
 
 install -m755 "$BINDIR"/cosmos-{compositor,shell,files,terminal,editor,settings,monitor} \
@@ -182,6 +182,42 @@ polkit.addRule(function(action, subject) {
 });
 EOF
 
+# systemd-resolved's LLMNR binds 0.0.0.0:5355 (tcp+udp) by default — a real
+# external listener and a spoofing surface on shared networks. The kiosk
+# resolves DNS via DHCP, so LLMNR/mDNS stay off.
+mkdir -p "$OVERLAY/etc/systemd/resolved.conf.d"
+cat > "$OVERLAY/etc/systemd/resolved.conf.d/no-llmnr.conf" <<'EOF'
+[Resolve]
+LLMNR=no
+MulticastDNS=no
+EOF
+
+# sysctl hardening (see docs/security.md). Verified live defaults already cover
+# dmesg_restrict, protected_hardlinks/symlinks, syncookies, unprivileged bpf —
+# pinned here so they can't drift with a Debian default change.
+mkdir -p "$OVERLAY/etc/sysctl.d"
+cat > "$OVERLAY/etc/sysctl.d/90-cosmos.conf" <<'EOF'
+# kernel pointer/info leaks
+kernel.kptr_restrict = 2
+kernel.dmesg_restrict = 1
+# protected_* in world-writable sticky dirs (/tmp, /dev/shm)
+fs.protected_fifos = 2
+fs.protected_regular = 2
+fs.protected_hardlinks = 1
+fs.protected_symlinks = 1
+# ipv4 spoof sanity on the single uplink
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+net.ipv4.tcp_syncookies = 1
+# no unprivileged bpf (2 = hard disable, can't be reset at runtime)
+kernel.unprivileged_bpf_disabled = 2
+EOF
+
+# overlay files are system files — they must land in the rootfs owned by
+# root, not mapped to the build host's uid (which is uid 1000 = cosmos
+# in-guest).
+sudo chown -R root:root "$OVERLAY"
+
 # --- 3. mmdebstrap the rootfs -------------------------------------------------
 # split-package reality check (trixie): networkd lives in `systemd`,
 # resolved is `systemd-resolved`. No X11, no desktop environment.
@@ -194,7 +230,8 @@ libudev1 libxkbcommon0 libwayland-server0 libwayland-client0 \
 libwayland-egl1 libwayland-cursor0 libdrm2 libgbm1 libegl1 libgles2 \
 libgl1-mesa-dri libinput10 libseat1 libdisplay-info2 libpixman-1-0 \
 libgudev-1.0-0 libdbus-1-3 \
-fonts-dejavu-core fontconfig xdg-utils kbd procps mesa-utils socat login"
+fonts-dejavu-core fontconfig xdg-utils kbd procps mesa-utils socat login \
+iproute2"
 
 # in-chroot setup. NOTE: mmdebstrap hooks run on the HOST with $1=rootfs —
 # guest commands must go through `chroot "$1"` (a bare useradd here creates
