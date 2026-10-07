@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use smithay::{
     backend::renderer::{
         damage::{Error as OutputDamageTrackerError, OutputDamageTracker, RenderOutputResult},
@@ -17,13 +19,13 @@ use smithay::{
     desktop::{
         layer_map_for_output,
         space::{
-            constrain_space_element, ConstrainBehavior, ConstrainReference, Space,
+            constrain_space_element, ConstrainBehavior, ConstrainReference, Space, SpaceElement,
             SpaceRenderElements,
         },
     },
     output::Output,
     reexports::wayland_server::Resource as _,
-    utils::{Logical, Point, Rectangle, Scale, Size},
+    utils::{Logical, Physical, Point, Rectangle, Scale, Size},
     wayland::shell::wlr_layer::Layer as WlrLayer,
 };
 
@@ -82,6 +84,14 @@ smithay::backend::renderer::element::render_elements! {
     Preview=CropRenderElement<RelocateRenderElement<RescaleRenderElement<WindowRenderElement<R>>>>,
     Background=TextureRenderElement<R::TextureId>,
     Snap=SolidColorRenderElement,
+    // Transition-animated elements: rescale-about-origin inside a
+    // relative relocate covers zoom-in, shrink-out and slide motion with
+    // a single wrapper type per element class.
+    WindowAnim=RelocateRenderElement<RescaleRenderElement<WindowRenderElement<R>>>,
+    LayerAnim=RelocateRenderElement<RescaleRenderElement<WaylandSurfaceRenderElement<R>>>,
+    LayerShadowAnim=RelocateRenderElement<
+        RescaleRenderElement<RelocateRenderElement<TextureRenderElement<R::TextureId>>>,
+    >,
 }
 
 impl<R: Renderer + ImportAll + ImportMem, E: RenderElement<R> + std::fmt::Debug> std::fmt::Debug
@@ -97,6 +107,9 @@ impl<R: Renderer + ImportAll + ImportMem, E: RenderElement<R> + std::fmt::Debug>
             Self::Preview(arg0) => f.debug_tuple("Preview").field(arg0).finish(),
             Self::Background(arg0) => f.debug_tuple("Background").field(arg0).finish(),
             Self::Snap(arg0) => f.debug_tuple("Snap").field(arg0).finish(),
+            Self::WindowAnim(arg0) => f.debug_tuple("WindowAnim").field(arg0).finish(),
+            Self::LayerAnim(arg0) => f.debug_tuple("LayerAnim").field(arg0).finish(),
+            Self::LayerShadowAnim(arg0) => f.debug_tuple("LayerShadowAnim").field(arg0).finish(),
             Self::_GenericCatcher(arg0) => f.debug_tuple("_GenericCatcher").field(arg0).finish(),
         }
     }
@@ -174,6 +187,8 @@ pub fn output_elements<R>(
     renderer: &mut R,
     show_window_preview: bool,
     snap_preview: Option<Rectangle<i32, Logical>>,
+    cosmos: &crate::cosmos::CosmosState,
+    now: Instant,
 ) -> (
     Vec<OutputRenderElements<R, WindowRenderElement<R>>>,
     Color32F,
@@ -243,50 +258,93 @@ where
             let Some(geo) = layer_map.layer_geometry(surface) else {
                 continue;
             };
-            output_render_elements.extend(
-                AsRenderElements::<R>::render_elements::<WaylandSurfaceRenderElement<R>>(
-                    surface,
-                    renderer,
-                    geo.loc.to_physical_precise_round(output_scale),
-                    Scale::from(output_scale),
-                    1.0,
-                )
-                .into_iter()
-                .map(OutputRenderElements::Layer),
-            );
+            let anim = layer_anim_tx(cosmos, surface, geo, now);
+            output_render_elements.extend(animated_layer_elements(
+                surface,
+                renderer,
+                geo,
+                output_scale,
+                anim,
+            ));
             layer_shadow_elements(
                 renderer,
                 surface,
                 geo,
                 output_scale,
+                anim,
                 &mut output_render_elements,
             );
         }
 
+        // Space windows, emitted manually (same ordering as smithay's
+        // `render_elements_for_region` — front to back over the output
+        // region) so each window's elements can carry its transition
+        // transform: map-in zoom+fade, minimize shrink-out, workspace
+        // slide. Non-animating windows keep the plain `Window` variant.
         if let Some(output_geo) = space.output_geometry(output) {
-            output_render_elements.extend(
-                space
-                    .render_elements_for_region(renderer, &output_geo, output_scale, 1.0)
-                    .into_iter()
-                    .map(|e| OutputRenderElements::Window(Wrap::from(e))),
-            );
+            for window in space.elements().rev() {
+                let Some(bbox) = space.element_bbox(window) else {
+                    continue;
+                };
+                if !output_geo.overlaps(bbox) {
+                    continue;
+                }
+                let render_loc = space.element_location(window).unwrap_or_default()
+                    - window.geometry().loc
+                    - output_geo.loc;
+                let phys_loc: Point<i32, Physical> =
+                    render_loc.to_physical_precise_round(output_scale);
+                let id = cosmos.id_of(window);
+                let (alpha, wscale) = id
+                    .and_then(|id| cosmos.anims.window_tx(id, now))
+                    .unwrap_or((1.0, 1.0));
+                let dx = id
+                    .map(|id| cosmos.anims.ws_dx(id, now, output_geo.size.w))
+                    .unwrap_or(0);
+                let animating = wscale != 1.0 || dx != 0;
+                for el in AsRenderElements::<R>::render_elements::<WindowRenderElement<R>>(
+                    window,
+                    renderer,
+                    phys_loc,
+                    Scale::from(output_scale),
+                    alpha,
+                ) {
+                    if animating {
+                        let phys_bbox: Rectangle<i32, Physical> = Rectangle::new(
+                            (bbox.loc - output_geo.loc).to_physical_precise_round(output_scale),
+                            bbox.size.to_f64().to_physical(output_scale).to_i32_round(),
+                        );
+                        let center = Point::from((
+                            phys_bbox.loc.x + phys_bbox.size.w / 2,
+                            phys_bbox.loc.y + phys_bbox.size.h / 2,
+                        ));
+                        let scaled = RescaleRenderElement::from_element(el, center, wscale);
+                        output_render_elements.push(OutputRenderElements::WindowAnim(
+                            RelocateRenderElement::from_element(
+                                scaled,
+                                ((dx as f64 * output_scale).round() as i32, 0),
+                                Relocate::Relative,
+                            ),
+                        ));
+                    } else {
+                        output_render_elements.push(OutputRenderElements::Window(Wrap::from(el)));
+                    }
+                }
+            }
         }
 
         for surface in lower {
             let Some(geo) = layer_map.layer_geometry(surface) else {
                 continue;
             };
-            output_render_elements.extend(
-                AsRenderElements::<R>::render_elements::<WaylandSurfaceRenderElement<R>>(
-                    surface,
-                    renderer,
-                    geo.loc.to_physical_precise_round(output_scale),
-                    Scale::from(output_scale),
-                    1.0,
-                )
-                .into_iter()
-                .map(OutputRenderElements::Layer),
-            );
+            let anim = layer_anim_tx(cosmos, surface, geo, now);
+            output_render_elements.extend(animated_layer_elements(
+                surface,
+                renderer,
+                geo,
+                output_scale,
+                anim,
+            ));
         }
         drop(layer_map);
 
@@ -319,6 +377,64 @@ fn layer_shadow_top_inset(namespace: &str) -> Option<i32> {
     }
 }
 
+/// Animation transform for a layer surface at `now`:
+/// (alpha, dx, dy, scale) — `None` when it isn't animating.
+fn layer_anim_tx(
+    cosmos: &crate::cosmos::CosmosState,
+    surface: &smithay::desktop::LayerSurface,
+    geo: Rectangle<i32, Logical>,
+    now: Instant,
+) -> Option<(f32, i32, i32, f64)> {
+    let pid = surface.wl_surface().id().protocol_id();
+    cosmos.anims.layer_tx(pid, now, geo.size.w)
+}
+
+/// Emit a layer surface's elements, wrapping them in the
+/// rescale+relocate transform when its entrance animation is live.
+fn animated_layer_elements<R>(
+    surface: &smithay::desktop::LayerSurface,
+    renderer: &mut R,
+    geo: Rectangle<i32, Logical>,
+    output_scale: f64,
+    anim: Option<(f32, i32, i32, f64)>,
+) -> Vec<OutputRenderElements<R, WindowRenderElement<R>>>
+where
+    R: Renderer + ImportAll + ImportMem,
+    R::TextureId: Clone + 'static,
+{
+    let (alpha, dx, dy, scale) = anim.unwrap_or((1.0, 0, 0, 1.0));
+    let animating = anim.is_some() && (dx != 0 || dy != 0 || scale != 1.0 || alpha < 1.0);
+    let phys_loc = geo.loc.to_physical_precise_round(output_scale);
+    AsRenderElements::<R>::render_elements::<WaylandSurfaceRenderElement<R>>(
+        surface,
+        renderer,
+        phys_loc,
+        Scale::from(output_scale),
+        alpha,
+    )
+    .into_iter()
+    .map(|el| {
+        if animating {
+            let phys_geo: Rectangle<i32, Physical> = geo.to_physical_precise_round(output_scale);
+            let center = Point::from((
+                phys_geo.loc.x + phys_geo.size.w / 2,
+                phys_geo.loc.y + phys_geo.size.h / 2,
+            ));
+            OutputRenderElements::LayerAnim(RelocateRenderElement::from_element(
+                RescaleRenderElement::from_element(el, center, scale),
+                (
+                    (dx as f64 * output_scale).round() as i32,
+                    (dy as f64 * output_scale).round() as i32,
+                ),
+                Relocate::Relative,
+            ))
+        } else {
+            OutputRenderElements::Layer(el)
+        }
+    })
+    .collect()
+}
+
 /// A soft drop shadow behind a floating card layer surface (macOS
 /// popover/menubar idiom). Reuses the window-shadow SDF pixmap, cached
 /// per surface so the repaint only runs when the card resizes.
@@ -327,6 +443,7 @@ fn layer_shadow_elements<R>(
     surface: &smithay::desktop::LayerSurface,
     geo: Rectangle<i32, Logical>,
     output_scale: f64,
+    anim: Option<(f32, i32, i32, f64)>,
     out: &mut Vec<OutputRenderElements<R, WindowRenderElement<R>>>,
 ) where
     R: Renderer + ImportAll + ImportMem,
@@ -358,15 +475,30 @@ fn layer_shadow_elements<R>(
                 renderer,
                 origin,
                 Scale::from(output_scale),
-                1.0,
+                anim.map(|(a, _, _, _)| a).unwrap_or(1.0),
             )
             .into_iter()
             .map(|el| {
-                OutputRenderElements::LayerShadow(RelocateRenderElement::from_element(
-                    el,
-                    (0, 0),
-                    Relocate::Relative,
-                ))
+                let relocated = RelocateRenderElement::from_element(el, (0, 0), Relocate::Relative);
+                match anim {
+                    Some((_, dx, dy, scale)) if dx != 0 || dy != 0 || scale != 1.0 => {
+                        let phys_geo: Rectangle<i32, Physical> =
+                            geo.to_physical_precise_round(output_scale);
+                        let center = Point::from((
+                            phys_geo.loc.x + phys_geo.size.w / 2,
+                            phys_geo.loc.y + phys_geo.size.h / 2,
+                        ));
+                        OutputRenderElements::LayerShadowAnim(RelocateRenderElement::from_element(
+                            RescaleRenderElement::from_element(relocated, center, scale),
+                            (
+                                (dx as f64 * output_scale).round() as i32,
+                                (dy as f64 * output_scale).round() as i32,
+                            ),
+                            Relocate::Relative,
+                        ))
+                    }
+                    _ => OutputRenderElements::LayerShadow(relocated),
+                }
             }),
         );
     });
@@ -515,6 +647,7 @@ pub fn render_output<'a, 'd, R>(
     age: usize,
     show_window_preview: bool,
     snap_preview: Option<Rectangle<i32, Logical>>,
+    cosmos: &crate::cosmos::CosmosState,
 ) -> Result<RenderOutputResult<'d>, OutputDamageTrackerError<R::Error>>
 where
     R: Renderer + ImportAll + ImportMem,
@@ -527,6 +660,8 @@ where
         renderer,
         show_window_preview,
         snap_preview,
+        cosmos,
+        Instant::now(),
     );
     damage_tracker.render_output(renderer, framebuffer, age, &elements, clear_color)
 }

@@ -255,6 +255,9 @@ pub fn run_winit() {
 
         // drawing logic
         {
+            // Complete deferred animation unmaps before this frame's
+            // elements are enumerated.
+            state.tick_animations();
             let now = state.clock.now();
             let frame_target = now
                 + output
@@ -380,6 +383,7 @@ pub fn run_winit() {
                     age,
                     show_window_preview,
                     snap_preview,
+                    &state.cosmos,
                 )
                 .map_err(|err| match err {
                     OutputDamageTrackerError::Rendering(err) => err.into(),

@@ -64,6 +64,13 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
 
         // Register with the Cosmos window registry + tell IPC subscribers.
         let id = self.cosmos.window_id(&window);
+        if self.anim_on() {
+            self.cosmos
+                .anims
+                .windows
+                .insert(id, (std::time::Instant::now(), crate::anim::WinAnim::MapIn));
+            self.schedule_anim_tick();
+        }
         let loc = self
             .space
             .element_location(&window)
@@ -85,6 +92,7 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
         {
             if let Some(id) = self.cosmos.id_of(&window) {
                 tracing::info!(id, "cosmos: window closed");
+                self.cosmos.anims.windows.remove(&id);
                 if let Some(meta) = self.cosmos.windows.remove(&id) {
                     self.cosmos.ids.remove(&meta.surface_key);
                 }

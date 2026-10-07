@@ -1508,6 +1508,10 @@ impl AnvilState<UdevData> {
     fn render_surface(&mut self, node: DrmNode, crtc: crtc::Handle, frame_target: Time<Monotonic>) {
         profiling::scope!("render_surface", &format!("{crtc:?}"));
 
+        // Complete deferred animation unmaps (minimize shrink-out, ws
+        // slide leavers) before elements are enumerated for this frame.
+        self.tick_animations();
+
         let output = if let Some(output) = self.space.outputs().find(|o| {
             o.user_data().get::<UdevOutputId>()
                 == Some(&UdevOutputId {
@@ -1590,6 +1594,7 @@ impl AnvilState<UdevData> {
             &mut self.cursor_status,
             self.show_window_preview,
             self.cosmos.snap_preview.map(|(_, rect)| rect),
+            &self.cosmos,
         );
         let reschedule = match result {
             Ok((has_rendered, states)) => {
@@ -1600,7 +1605,9 @@ impl AnvilState<UdevData> {
             Err(err) => {
                 warn!("Error during rendering: {:#?}", err);
                 match err {
-                    SwapBuffersError::AlreadySwapped => false,
+                    SwapBuffersError::AlreadySwapped => {
+                        self.cosmos.anims.any_running(std::time::Instant::now())
+                    }
                     SwapBuffersError::TemporaryFailure(err) => match err.downcast_ref::<DrmError>()
                     {
                         Some(DrmError::DeviceInactive) => true,
@@ -1675,6 +1682,7 @@ fn render_surface<'a>(
     cursor_status: &mut CursorImageStatus,
     show_window_preview: bool,
     snap_preview: Option<Rectangle<i32, Logical>>,
+    cosmos: &crate::cosmos::CosmosState,
 ) -> Result<(bool, RenderElementStates), SwapBuffersError> {
     let output_geometry = space.output_geometry(output).unwrap();
     let scale = Scale::from(output.current_scale().fractional_scale());
@@ -1758,6 +1766,8 @@ fn render_surface<'a>(
         renderer,
         show_window_preview,
         snap_preview,
+        cosmos,
+        std::time::Instant::now(),
     );
 
     // Damage tracking under-reports on the paths we ship in the image

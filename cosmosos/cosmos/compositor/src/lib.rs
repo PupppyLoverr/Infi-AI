@@ -6,6 +6,7 @@
     allow(dead_code, unused_imports)
 )]
 
+pub mod anim;
 pub mod cosmos;
 #[cfg(feature = "udev")]
 pub mod cursor;

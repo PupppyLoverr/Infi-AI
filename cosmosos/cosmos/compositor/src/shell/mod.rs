@@ -268,12 +268,35 @@ impl<BackendData: Backend> WlrLayerShellHandler for AnvilState<BackendData> {
             .and_then(Output::from_resource)
             .unwrap_or_else(|| self.space.outputs().next().unwrap().clone());
         tracing::info!(namespace, "cosmos: layer surface created");
+        // Entrance animation per surface kind — keyed by the wl_surface
+        // protocol id; the render loop plays it for the first ~150ms.
+        if self.anim_on() {
+            let kind = match namespace.as_str() {
+                "cosmos-launcher" | "cosmos-assist" => Some(crate::anim::LayerAnim::Fade),
+                "cosmos-switcher" => Some(crate::anim::LayerAnim::Pop),
+                "cosmos-quick" | "cosmos-dock" => Some(crate::anim::LayerAnim::SlideUp),
+                "cosmos-notify" => Some(crate::anim::LayerAnim::SlideRight),
+                _ => None,
+            };
+            if let Some(kind) = kind {
+                let pid = surface.wl_surface().id().protocol_id();
+                self.cosmos
+                    .anims
+                    .layers
+                    .insert(pid, (std::time::Instant::now(), kind));
+                self.schedule_anim_tick();
+            }
+        }
         let mut map = layer_map_for_output(&output);
         map.map_layer(&LayerSurface::new(surface, namespace))
             .unwrap();
     }
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
+        self.cosmos
+            .anims
+            .layers
+            .remove(&surface.wl_surface().id().protocol_id());
         if let Some((mut map, layer)) = self.space.outputs().find_map(|o| {
             let map = layer_map_for_output(o);
             let layer = map

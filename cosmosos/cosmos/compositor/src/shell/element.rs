@@ -29,7 +29,9 @@ use smithay::{
         wayland_server::protocol::wl_surface::WlSurface,
     },
     render_elements,
-    utils::{user_data::UserDataMap, IsAlive, Logical, Physical, Point, Rectangle, Scale, Serial, Size},
+    utils::{
+        user_data::UserDataMap, IsAlive, Logical, Physical, Point, Rectangle, Scale, Serial, Size,
+    },
     wayland::{
         compositor::SurfaceData as WlSurfaceData, dmabuf::DmabufFeedback, seat::WaylandFocus,
     },
@@ -478,11 +480,9 @@ where
                 .get(&surf_id)
                 .is_some_and(|(c, b, _)| *c == commit && *b == buf_id);
             if !fresh {
-                let imported = smithay::wayland::shm::with_buffer_contents(
-                    buf,
-                    |ptr, len, meta| {
-                        let fourcc =
-                            smithay::wayland::shm::shm_format_to_fourcc(meta.format)?;
+                let imported =
+                    smithay::wayland::shm::with_buffer_contents(buf, |ptr, len, meta| {
+                        let fourcc = smithay::wayland::shm::shm_format_to_fourcc(meta.format)?;
                         let bpp = get_bpp(fourcc)? / 8;
                         let (off, w, h, stride) = (
                             meta.offset as usize,
@@ -519,9 +519,8 @@ where
                         )
                         .ok()
                         .map(|t| (t, meta.width, meta.height))
-                    },
-                )
-                .ok()??;
+                    })
+                    .ok()??;
                 map.insert(surf_id.clone(), (commit, buf_id, Box::new(imported)));
             }
             let (tex, w, h) = map
@@ -690,8 +689,7 @@ where
                                     // SAFETY: heuristic debug read only — the
                                     // client may be repainting concurrently; we
                                     // count bytes and never keep the slice.
-                                    let data =
-                                        unsafe { std::slice::from_raw_parts(ptr, len) };
+                                    let data = unsafe { std::slice::from_raw_parts(ptr, len) };
                                     let opaque =
                                         data.chunks_exact(4).filter(|px| px[3] != 0).count();
                                     tracing::debug!(
@@ -716,8 +714,7 @@ where
                             match data {
                                 Some(d) => {
                                     let d = d.lock().unwrap();
-                                    let tex =
-                                        d.texture(renderer.context_id()).is_some();
+                                    let tex = d.texture(renderer.context_id()).is_some();
                                     tracing::warn!(
                                         "cosmos: empty body — buffer={} view={} surface_size={:?} texture={}",
                                         d.buffer().is_some(),

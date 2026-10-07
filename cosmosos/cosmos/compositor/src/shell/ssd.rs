@@ -6,8 +6,8 @@
 //! updates whenever the config changes.
 
 use std::cell::{Cell, RefCell, RefMut};
-use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use smithay::{
@@ -88,7 +88,9 @@ where
             };
             map.insert(key, Box::new(buffer));
         }
-        let buffer = map.get(&key)?.downcast_ref::<TextureBuffer<R::TextureId>>()?;
+        let buffer = map
+            .get(&key)?
+            .downcast_ref::<TextureBuffer<R::TextureId>>()?;
         Some(TextureRenderElement::from_texture_buffer(
             location.to_f64(),
             buffer,
@@ -806,11 +808,10 @@ where
         // tiny-skia's premultiplied RGBA pixel layout.
         let key = decal_key(
             2,
-            (
-                self.paint_key
-                    .as_ref()
-                    .map(|k| (k.width, k.title.clone(), k.focused, k.dark, k.hover)),
-            ),
+            (self
+                .paint_key
+                .as_ref()
+                .map(|k| (k.width, k.title.clone(), k.focused, k.dark, k.hover)),),
         );
         let Some(el) = decal_element(
             renderer,

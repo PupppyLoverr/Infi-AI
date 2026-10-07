@@ -287,6 +287,8 @@ pub struct CosmosState {
     pub snap_preview: Option<(SnapState, Rectangle<i32, Logical>)>,
     /// Snap Assist picker while it is offered (shell renders visuals).
     pub assist: Option<AssistState>,
+    /// Live transition animations (map-in, minimize-out, ws slide, cards).
+    pub anims: crate::anim::Animations,
     /// If set, broadcast a `Windows`+`Workspaces` update at the next idle point.
     pub dirty: bool,
 }
@@ -449,9 +451,46 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         if target >= WORKSPACE_COUNT || target == self.cosmos.active_workspace {
             return;
         }
+        // A slide that is still mid-flight holds its outgoing windows
+        // mapped — finish it synchronously before re-arranging, or the
+        // next switch would park them onto the wrong desktop.
+        self.finish_ws_slide();
+        self.tick_animations();
         let from = self.cosmos.active_workspace;
         self.close_snap_assist();
-        self.park_current(from);
+        if self.anim_on() {
+            // Deferred park: outgoing windows stay mapped and slide out
+            // while the incoming desktop slides in — the macOS/Win11
+            // desktop-switch read. `tick_animations` parks them at the
+            // end of the animation.
+            let leavers: Vec<u64> = self
+                .space
+                .elements()
+                .map(|w| self.cosmos.window_id(w))
+                .collect();
+            if leavers.is_empty() {
+                self.park_current(from);
+            } else {
+                for w in self.space.elements() {
+                    let loc = self.space.element_location(w).unwrap_or_default();
+                    let id = self.cosmos.window_id(w);
+                    if let Some(meta) = self.cosmos.windows.get_mut(&id) {
+                        meta.workspace = from;
+                        meta.parked_loc = loc;
+                    }
+                    w.0.set_activated(false);
+                }
+            }
+            // Even with no leavers the incoming desktop slides in.
+            self.cosmos.anims.ws = Some(crate::anim::WsSlide {
+                start: std::time::Instant::now(),
+                dir: if target > from { 1 } else { -1 },
+                leaving: leavers,
+            });
+            self.schedule_anim_tick();
+        } else {
+            self.park_current(from);
+        }
         self.cosmos.active_workspace = target;
         self.unpark(target);
 
@@ -500,23 +539,34 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         self.cosmos.dirty = true;
     }
 
-    /// Minimize a window to the task area.
+    /// Minimize a window to the task area. With motion enabled the
+    /// window stays mapped while it shrinks/fades out — the actual park
+    /// happens in `tick_animations` when the animation expires.
     pub fn minimize_window(&mut self, window: &WindowElement) {
         let id = self.cosmos.window_id(window);
         let loc = self.space.element_location(window).unwrap_or_default();
         window.0.set_activated(false);
-        self.space.unmap_elem(window);
         tracing::info!(id, "cosmos: window minimized");
+        let animate = self.anim_on();
         if let Some(meta) = self.cosmos.windows.get_mut(&id) {
             meta.minimized = true;
             meta.parked_loc = loc;
         }
-        // Park on the "minimized" lane, indexed at WORKSPACE_COUNT.
-        self.cosmos
-            .parked
-            .entry(WORKSPACE_COUNT)
-            .or_default()
-            .push(window.clone());
+        if animate {
+            self.cosmos.anims.windows.insert(
+                id,
+                (std::time::Instant::now(), crate::anim::WinAnim::MinimizeOut),
+            );
+            self.schedule_anim_tick();
+        } else {
+            self.space.unmap_elem(window);
+            // Park on the "minimized" lane, indexed at WORKSPACE_COUNT.
+            self.cosmos
+                .parked
+                .entry(WORKSPACE_COUNT)
+                .or_default()
+                .push(window.clone());
+        }
         // Move focus + activation to whatever is next.
         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
         let keyboard = self.seat.get_keyboard().unwrap();
@@ -531,6 +581,28 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 
     /// Restore a minimized window.
     pub fn unminimize_window(&mut self, id: u64) {
+        // A minimize whose shrink animation is still running never
+        // parked — cancel the anim and keep the window where it is.
+        if let Some((_, kind)) = self.cosmos.anims.windows.get(&id).copied() {
+            if kind == crate::anim::WinAnim::MinimizeOut {
+                self.cosmos.anims.windows.remove(&id);
+                if let Some(meta) = self.cosmos.windows.get_mut(&id) {
+                    meta.minimized = false;
+                }
+                // Still mapped — raise, focus and re-activate it like a
+                // normal restore.
+                if let Some(window) = self.window_by_id(id) {
+                    self.space.raise_element(&window, true);
+                    window.0.set_activated(true);
+                    let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+                    let keyboard = self.seat.get_keyboard().unwrap();
+                    keyboard.set_focus(self, Some(KeyboardFocusTarget::from(window)), serial);
+                    self.flush_pending_configures();
+                }
+                self.cosmos.dirty = true;
+                return;
+            }
+        }
         let Some(key) = self.cosmos.windows.get(&id).map(|m| m.surface_key.clone()) else {
             return;
         };
@@ -559,6 +631,13 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 .map(|m| m.parked_loc)
                 .unwrap_or_default();
             self.space.map_element(entry.clone(), loc, true);
+            if self.anim_on() {
+                self.cosmos
+                    .anims
+                    .windows
+                    .insert(id, (std::time::Instant::now(), crate::anim::WinAnim::MapIn));
+                self.schedule_anim_tick();
+            }
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
             let keyboard = self.seat.get_keyboard().unwrap();
             keyboard.set_focus(self, Some(KeyboardFocusTarget::from(entry)), serial);
@@ -567,6 +646,93 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             self.cosmos.parked.entry(ws).or_default().push(entry);
         }
         self.cosmos.dirty = true;
+    }
+
+    /// Motion enabled? Honors the `reduce_motion` user config.
+    pub fn anim_on(&self) -> bool {
+        !self.cosmos.config.reduce_motion
+    }
+
+    /// Complete a workspace slide that is mid-flight: park every window
+    /// that was sliding out onto its own desktop. Called synchronously at
+    /// the top of `switch_workspace` and at animation expiry.
+    pub fn finish_ws_slide(&mut self) {
+        let Some(anim) = self.cosmos.anims.ws.take() else {
+            return;
+        };
+        for id in anim.leaving {
+            let Some(window) = self.window_by_id(id) else {
+                continue;
+            };
+            // Already gone (destroyed mid-slide) or already parked.
+            if !self.space.elements().any(|w| w == &window) {
+                continue;
+            }
+            // A window whose minimize-out is still in flight belongs to
+            // the minimized lane — parking it on its workspace lane would
+            // strand it where `unminimize_window` never looks.
+            let (minimized, ws) = self
+                .cosmos
+                .windows
+                .get(&id)
+                .map(|m| (m.minimized, m.workspace))
+                .unwrap_or((false, self.cosmos.active_workspace));
+            let lane = if minimized { WORKSPACE_COUNT } else { ws };
+            self.space.unmap_elem(&window);
+            self.cosmos.parked.entry(lane).or_default().push(window);
+        }
+        self.cosmos.dirty = true;
+    }
+
+    /// Park a window whose minimize-out animation finished.
+    fn park_minimized(&mut self, id: u64) {
+        let Some(window) = self.window_by_id(id) else {
+            return;
+        };
+        if !self.space.elements().any(|w| w == &window) {
+            return;
+        }
+        self.space.unmap_elem(&window);
+        self.cosmos
+            .parked
+            .entry(WORKSPACE_COUNT)
+            .or_default()
+            .push(window);
+        self.cosmos.dirty = true;
+    }
+
+    /// Advance animation bookkeeping: completes deferred unmaps
+    /// (minimize-out, workspace slide) and prunes finished entrances.
+    /// Called at the top of every rendered frame and from a fallback
+    /// timer so a stalled renderer can't strand a pending park.
+    pub fn tick_animations(&mut self) {
+        let now = std::time::Instant::now();
+        for id in self.cosmos.anims.expired_minimizes(now) {
+            self.cosmos.anims.windows.remove(&id);
+            self.park_minimized(id);
+        }
+        if self.cosmos.anims.ws_expired(now) {
+            self.finish_ws_slide();
+        }
+        self.cosmos.anims.prune(now);
+    }
+
+    /// Keep a fallback timer alive while any deferred-park animation is
+    /// pending — rendering normally outpaces this, but the timer is what
+    /// guarantees `tick_animations` runs even on a stalled renderer.
+    pub fn schedule_anim_tick(&mut self) {
+        let _ = self.handle.insert_source(
+            smithay::reexports::calloop::timer::Timer::from_duration(
+                std::time::Duration::from_millis(24),
+            ),
+            |_, _, data| {
+                data.tick_animations();
+                if data.cosmos.anims.needs_timer() {
+                    data.schedule_anim_tick();
+                }
+                smithay::reexports::calloop::timer::TimeoutAction::Drop
+            },
+        );
     }
 
     /// The work area of the output under the pointer (excludes panel layer shells).
