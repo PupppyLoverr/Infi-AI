@@ -42,11 +42,25 @@ done
 
 echo "== staging overlay =="
 sudo rm -rf "$OVERLAY"   # previous run's files are chowned root below
-mkdir -p "$OVERLAY"/{usr/local/bin,usr/share/applications,etc/profile.d,etc/skel,etc/systemd/network,etc/systemd/system/getty@tty1.service.d,etc/polkit-1/rules.d}
+mkdir -p "$OVERLAY"/{usr/local/bin,usr/share/applications,etc/profile.d,etc/skel,etc/systemd/network,etc/systemd/system/getty@tty1.service.d,etc/polkit-1/rules.d,etc/sudoers.d}
 
 install -m755 "$BINDIR"/cosmos-{compositor,shell,files,terminal,editor,settings,monitor} \
   "$OVERLAY/usr/local/bin/"
 install -m644 "$COSMOS"/apps/*/cosmos-*.desktop "$OVERLAY/usr/share/applications/"
+
+# kiosk privilege path: the cosmos account's password is locked, so sudo
+# password prompts could never be answered. NOPASSWD for the single user is
+# the Omarchy-style answer for a live/kiosk image — lets `sudo apt/dpkg`
+# work for installing downloaded apps. Documented in docs/security.md.
+cat > "$OVERLAY/etc/sudoers.d/cosmos" <<'EOF'
+cosmos ALL=(ALL:ALL) NOPASSWD: ALL
+EOF
+chmod 0440 "$OVERLAY/etc/sudoers.d/cosmos"
+
+# firefox on Wayland: auto-detects our wl compositor when this is set.
+cat > "$OVERLAY/etc/profile.d/50-firefox-wayland.sh" <<'EOF'
+export MOZ_ENABLE_WAYLAND=1
+EOF
 
 # opencode — standalone AI coding agent (github.com/sst/opencode), shipped
 # as the upstream single linux-x64 binary, no node/npm. "latest" resolves
@@ -308,7 +322,9 @@ libgl1-mesa-dri libinput10 libseat1 libdisplay-info2 libpixman-1-0 \
 libgudev-1.0-0 libdbus-1-3 \
 fonts-dejavu-core fontconfig xdg-utils kbd procps mesa-utils socat login \
 iproute2 \
-ripgrep fd-find fzf eza bat btop fastfetch neovim tmux lazygit htop jq tree"
+ripgrep fd-find fzf eza bat btop fastfetch neovim tmux lazygit htop jq tree \
+firefox-esr adwaita-icon-theme fonts-liberation \
+sudo wget ca-certificates dbus-x11 xdg-user-dirs libfuse2t64"
 
 # in-chroot setup. NOTE: mmdebstrap hooks run on the HOST with $1=rootfs —
 # guest commands must go through `chroot "$1"` (a bare useradd here creates

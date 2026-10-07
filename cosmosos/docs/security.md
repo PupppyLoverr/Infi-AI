@@ -25,10 +25,10 @@ Audited against the image built at main `910d3ab` + opencode (devin/opencode).
 | Check | State |
 |---|---|
 | Session user | `cosmos` uid 1000, groups `tty video input render netdev` — non-root |
-| `sudo` package | **not installed** — the NOPASSWD question is moot; there is no sudo at all |
+| `sudo` | installed; `cosmos` has `NOPASSWD: ALL` (`/etc/sudoers.d/cosmos`) — the account password is locked so a password prompt could never be answered; passwordless sudo is the kiosk-model trade-off that makes `apt`/`dpkg` installs usable. Still acceptable under the threat model: single-user, no remote shell, and a local user who can run `sudo` already owns the box. |
 | `pkexec` | **not installed** — no polkit-based shell escalation path |
 | Passwords | `root:*` and `cosmos:!` in /etc/shadow — both locked; `su`/password logins are dead ends |
-| suid binaries | stock set only: `chfn chsh gpasswd mount newgrp passwd su umount`, `dbus-daemon-launch-helper`, `polkit-agent-helper-1` |
+| suid binaries | stock set + `sudo`/`sudoedit` (added with the sudo package): `chfn chsh gpasswd mount newgrp passwd su umount`, `dbus-daemon-launch-helper`, `polkit-agent-helper-1` |
 | polkit | `polkitd` active; `/etc/polkit-1/rules.d/60-cosmos-nm.rules` grants `netdev` (which contains cosmos) all `org.freedesktop.NetworkManager.*` actions — required because the autologin seat isn't reliably "active" to polkit. Nothing else is granted. |
 
 ## Kernel / sysctl (90-cosmos.conf)

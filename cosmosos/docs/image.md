@@ -38,7 +38,9 @@ in QEMU with KVM. Verified on the Ubuntu 22.04 x86_64 build host
 | Power | `upower` | Tray battery backend over D-Bus |
 | Compositor libs | `libudev1 libxkbcommon0 libwayland-server0 libwayland-client0 libwayland-egl1 libwayland-cursor0 libdrm2 libgbm1 libegl1 libgles2 libinput10 libseat1 libdisplay-info2 libpixman-1-0 libgudev-1.0-0 libdbus-1-3` | From `ldd cosmos-compositor` + smithay dlopen deps |
 | GL runtime | `libgl1-mesa-dri` | llvmpipe (swrast) for virtio-gpu — no real GPU, EGL still fully works |
-| Misc | `fonts-dejavu-core xdg-utils kbd procps mesa-utils` | Fonts for fontdb/cosmic-text, desktop helpers, console keys, debug tools |
+| TUI toolset | `ripgrep fd-find fzf eza bat btop fastfetch neovim tmux lazygit htop jq tree` | Omarchy-style curated terminal tools; `etc/skel/.bashrc` wires aliases + fastfetch banner |
+| Browser | `firefox-esr adwaita-icon-theme fonts-liberation` | Real web browser for downloading apps; runs Wayland-native via `MOZ_ENABLE_WAYLAND=1` (`/etc/profile.d/50-firefox-wayland.sh`) |
+| App installs | `sudo wget ca-certificates dbus-x11 xdg-user-dirs libfuse2t64` | `sudo` NOPASSWD for cosmos (kiosk model — locked password means prompts are unanswerable, see security.md); `wget`+TLS for fetching `.deb`/installers; `libfuse2t64` for AppImages |
 
 No X11, no other DE, no display manager.
 
