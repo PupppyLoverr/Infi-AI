@@ -323,7 +323,7 @@ libgudev-1.0-0 libdbus-1-3 \
 fonts-dejavu-core fontconfig xdg-utils kbd procps mesa-utils socat login \
 iproute2 \
 ripgrep fd-find fzf eza bat btop fastfetch neovim tmux lazygit htop jq tree \
-firefox-esr adwaita-icon-theme fonts-liberation \
+firefox-esr adwaita-icon-theme fonts-liberation fonts-inter fonts-jetbrains-mono \
 sudo wget ca-certificates dbus-x11 xdg-user-dirs libfuse2t64"
 
 # in-chroot setup. NOTE: mmdebstrap hooks run on the HOST with $1=rootfs —
