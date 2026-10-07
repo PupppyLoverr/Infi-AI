@@ -289,6 +289,9 @@ pub struct CosmosState {
     pub assist: Option<AssistState>,
     /// Live transition animations (map-in, minimize-out, ws slide, cards).
     pub anims: crate::anim::Animations,
+    /// Per-workspace dynamic tiling (master+stack). `super+t` toggles it
+    /// for the active workspace.
+    pub tiling: [bool; WORKSPACE_COUNT],
     /// If set, broadcast a `Windows`+`Workspaces` update at the next idle point.
     pub dirty: bool,
 }
@@ -493,6 +496,8 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         }
         self.cosmos.active_workspace = target;
         self.unpark(target);
+        // Reflow incoming windows when the target desktop tiles.
+        self.retile_workspace();
 
         // Focus + activate the top window on the new workspace, if any.
         // Parked windows keep their pending Activated state otherwise, and
@@ -536,6 +541,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             .entry(ws)
             .or_default()
             .push(window.clone());
+        self.retile_workspace();
         self.cosmos.dirty = true;
     }
 
@@ -576,6 +582,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         }
         keyboard.set_focus(self, top.map(KeyboardFocusTarget::from), serial);
         self.flush_pending_configures();
+        self.retile_workspace();
         self.cosmos.dirty = true;
     }
 
@@ -642,6 +649,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             let keyboard = self.seat.get_keyboard().unwrap();
             keyboard.set_focus(self, Some(KeyboardFocusTarget::from(entry)), serial);
             self.flush_pending_configures();
+            self.retile_workspace();
         } else {
             self.cosmos.parked.entry(ws).or_default().push(entry);
         }
@@ -809,6 +817,120 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         None
     }
 
+    /// Gap between tiled windows (logical px) — Hyprland's rhythm.
+    const TILE_GAP: i32 = 8;
+    /// Master pane width as a fraction of the work area.
+    const TILE_MASTER: f64 = 0.58;
+
+    /// Toggle dynamic tiling for the active workspace. On: every
+    /// non-placed window reflows into master+stack and dragged-out
+    /// windows rejoin. Off: members stay where they are as plain floats.
+    pub fn toggle_tiling(&mut self) {
+        let ws = self.cosmos.active_workspace;
+        self.cosmos.tiling[ws] = !self.cosmos.tiling[ws];
+        let on = self.cosmos.tiling[ws];
+        tracing::info!(ws, on, "cosmos: tiling toggled");
+        if on {
+            for w in self.space.elements() {
+                if let Some(fit) = w.user_data().get::<crate::shell::InitialFit>() {
+                    fit.reset();
+                }
+            }
+            self.retile_workspace();
+        } else {
+            // Keep the tile rects as ordinary floats — the initial-fit
+            // clamp would otherwise keep nudging them.
+            for w in self.space.elements() {
+                if let Some(fit) = w.user_data().get::<crate::shell::InitialFit>() {
+                    fit.user_moved();
+                }
+            }
+        }
+    }
+
+    /// Reflow the active workspace into a master+stack layout: the
+    /// frontmost window takes the tall master pane on the left, the rest
+    /// split the right column evenly — Hyprland/Omarchy's daily-driver
+    /// arrangement, with gaps. Windows the user placed themselves
+    /// (drag, snap, maximize) are members no longer and keep their
+    /// floating geometry.
+    pub fn retile_workspace(&mut self) {
+        if !self.cosmos.tiling[self.cosmos.active_workspace] {
+            return;
+        }
+        // Front→back order: the focused/newest window owns the master
+        // pane, matching every tiling-wm mental model.
+        let members: Vec<(u64, WindowElement)> = self
+            .space
+            .elements()
+            .rev()
+            .map(|w| (self.cosmos.window_id(w), w.clone()))
+            .collect();
+        let members: Vec<(u64, WindowElement)> = members
+            .into_iter()
+            .filter(|(_, w)| {
+                !w.user_data()
+                    .get::<crate::shell::InitialFit>()
+                    .map(|f| f.moved())
+                    .unwrap_or(false)
+            })
+            .filter(|(id, _)| {
+                !self
+                    .cosmos
+                    .windows
+                    .get(id)
+                    .map(|m| m.minimized)
+                    .unwrap_or(false)
+            })
+            .collect();
+        let n = members.len() as i32;
+        if n == 0 {
+            return;
+        }
+        let area = self.work_area(None);
+        let g = Self::TILE_GAP;
+        let master_w = if n > 1 {
+            ((area.size.w - g * 3) as f64 * Self::TILE_MASTER) as i32
+        } else {
+            area.size.w - g * 2
+        };
+        for (i, (_, w)) in members.iter().enumerate() {
+            let rect = if i == 0 {
+                Rectangle::new(
+                    area.loc + Point::from((g, g)),
+                    Size::from((master_w, area.size.h - g * 2)),
+                )
+            } else {
+                let sx = area.loc.x + master_w + g * 2;
+                let sw = area.loc.x + area.size.w - sx - g;
+                let sh = (area.size.h - g * 2 - (n - 2) * g) / (n - 1);
+                let sy = area.loc.y + g + (i as i32 - 1) * (sh + g);
+                Rectangle::new(Point::from((sx, sy)), Size::from((sw, sh)))
+            };
+            let Some(surface) = w.0.toplevel() else {
+                continue;
+            };
+            let titlebar = w.titlebar_height();
+            surface.with_pending_state(|s| {
+                s.states.unset(xdg_toplevel::State::Maximized);
+                s.states.unset(xdg_toplevel::State::TiledTop);
+                s.states.unset(xdg_toplevel::State::TiledBottom);
+                s.states.unset(xdg_toplevel::State::TiledLeft);
+                s.states.unset(xdg_toplevel::State::TiledRight);
+                s.states.set(if i == 0 {
+                    xdg_toplevel::State::TiledLeft
+                } else {
+                    xdg_toplevel::State::TiledRight
+                });
+                s.size = Some(Size::from((rect.size.w, (rect.size.h - titlebar).max(1))));
+            });
+            surface.send_pending_configure();
+            self.space.map_element(w.clone(), rect.loc, false);
+        }
+        self.flush_pending_configures();
+        self.cosmos.dirty = true;
+    }
+
     /// Snap the focused window left/right/maximize or restore.
     pub fn snap_window(&mut self, window: &WindowElement, snap: SnapState) {
         self.snap_window_with_assist(window, snap, true)
@@ -902,6 +1024,9 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             fit.user_moved();
         }
         self.flush_pending_configures();
+        // In tiling mode a snapped window leaves the layout — the rest
+        // reflow around it.
+        self.retile_workspace();
         match (offer_assist, snap) {
             (true, SnapState::Left | SnapState::Right) => self.offer_snap_assist(snap, id),
             (true, _) => self.close_snap_assist(),

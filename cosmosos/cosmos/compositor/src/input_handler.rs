@@ -207,6 +207,9 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     }
                 }
             }
+            KeyAction::ToggleTiling => {
+                self.toggle_tiling();
+            }
 
             _ => unreachable!(
                 "Common key action handler encountered backend specific action {:?}",
@@ -1582,6 +1585,8 @@ enum KeyAction {
     Launcher,
     /// Super+F: toggle fullscreen on the focused window
     Fullscreen,
+    /// Super+T: toggle master+stack tiling on the active workspace
+    ToggleTiling,
     /// Do nothing more
     None,
 }
@@ -1649,6 +1654,7 @@ fn process_keyboard_shortcut(
         Keysym::m => Some(KeyAction::Minimize),
         Keysym::q => Some(KeyAction::Close),
         Keysym::f => Some(KeyAction::Fullscreen),
+        Keysym::t => Some(KeyAction::ToggleTiling),
         k if (xkb::KEY_1..=xkb::KEY_9).contains(&k.raw()) => {
             Some(KeyAction::Workspace((k.raw() - xkb::KEY_1) as usize))
         }

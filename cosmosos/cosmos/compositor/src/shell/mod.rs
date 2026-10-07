@@ -454,6 +454,18 @@ impl InitialFit {
     pub fn user_moved(&self) {
         self.user_moved.store(true, Ordering::Relaxed);
     }
+
+    /// Whether the user has taken over placement. Dynamic tiling skips
+    /// these windows — a drag-out floats the window Hyprland-style.
+    pub fn moved(&self) -> bool {
+        self.user_moved.load(Ordering::Relaxed)
+    }
+
+    /// Re-enroll the window: clears the flag so it rejoins the layout
+    /// (tiling toggled back on) and the initial-fit clamp watches it again.
+    pub fn reset(&self) {
+        self.user_moved.store(false, Ordering::Relaxed);
+    }
 }
 
 fn usable_zone(space: &Space<WindowElement>, output: &Output) -> Rectangle<i32, Logical> {

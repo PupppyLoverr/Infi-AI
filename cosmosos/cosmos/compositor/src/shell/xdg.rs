@@ -76,6 +76,8 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
             .element_location(&window)
             .unwrap_or_else(|| (i32::MIN, i32::MIN).into());
         tracing::info!(id, loc = ?loc, bbox = ?window.bbox().size, "cosmos: new window");
+        // New windows join the layout when the workspace tiles.
+        self.retile_workspace();
         self.cosmos.dirty = true;
 
         compositor::add_post_commit_hook(surface.wl_surface(), |state: &mut Self, _, surface| {
@@ -115,6 +117,8 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
             for list in self.cosmos.parked.values_mut() {
                 list.retain(|w| w != &window);
             }
+            // A departed member leaves a hole in the layout.
+            self.retile_workspace();
             self.cosmos.dirty = true;
         }
     }
@@ -205,6 +209,9 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
                 if let Some(fit) = window.user_data().get::<InitialFit>() {
                     fit.user_moved();
                 }
+                // Drag/resize floats a tiled window out — the rest
+                // of the layout reflows behind the interaction.
+                self.retile_workspace();
 
                 with_states(surface.wl_surface(), move |states| {
                     states
@@ -263,6 +270,9 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
         if let Some(fit) = window.user_data().get::<InitialFit>() {
             fit.user_moved();
         }
+        // Drag/resize floats a tiled window out — the rest of the
+        // layout reflows behind the interaction.
+        self.retile_workspace();
 
         with_states(surface.wl_surface(), move |states| {
             states
@@ -609,6 +619,9 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 if let Some(fit) = window.user_data().get::<InitialFit>() {
                     fit.user_moved();
                 }
+                // Drag/resize floats a tiled window out — the rest
+                // of the layout reflows behind the interaction.
+                self.retile_workspace();
 
                 // If surface is maximized then unmaximize it
                 let current_state = surface.current_state();
@@ -683,6 +696,9 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         if let Some(fit) = window.user_data().get::<InitialFit>() {
             fit.user_moved();
         }
+        // Drag/resize floats a tiled window out — the rest of the
+        // layout reflows behind the interaction.
+        self.retile_workspace();
 
         // If surface is maximized then unmaximize it
         let current_state = surface.current_state();
