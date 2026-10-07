@@ -387,6 +387,9 @@ pub struct CosmosState {
     pub config: CosmosConfig,
     /// Currently-open layer-shell launcher hint (panel handles visuals).
     pub launcher_open: bool,
+    /// Keybind cheatsheet overlay open (super+?). Shell owns visuals;
+    /// this flag only syncs compositor ↔ shell toggle state.
+    pub help_open: bool,
     /// Alt/Super+Tab switcher while the modifier is held.
     pub switcher: Option<SwitcherState>,
     /// Live drag-to-edge snap hint: the zone the pointer targets and the

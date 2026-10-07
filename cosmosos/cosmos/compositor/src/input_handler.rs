@@ -210,6 +210,11 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             KeyAction::ToggleTiling => {
                 self.toggle_tiling();
             }
+            KeyAction::Help => {
+                self.cosmos.help_open = !self.cosmos.help_open;
+                let open = self.cosmos.help_open;
+                self.ipc_broadcast(&cosmos_ipc::Event::HelpToggled { open });
+            }
 
             _ => unreachable!(
                 "Common key action handler encountered backend specific action {:?}",
@@ -721,6 +726,8 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     | KeyAction::Minimize
                     | KeyAction::Close
                     | KeyAction::Launcher
+                    | KeyAction::ToggleTiling
+                    | KeyAction::Help
                     | KeyAction::Fullscreen => self.process_common_key_action(action),
 
                     _ => tracing::warn!(
@@ -967,6 +974,8 @@ impl AnvilState<UdevData> {
                     | KeyAction::Minimize
                     | KeyAction::Close
                     | KeyAction::Launcher
+                    | KeyAction::ToggleTiling
+                    | KeyAction::Help
                     | KeyAction::Fullscreen => self.process_common_key_action(action),
 
                     _ => unreachable!(),
@@ -1587,6 +1596,8 @@ enum KeyAction {
     Fullscreen,
     /// Super+T: toggle master+stack tiling on the active workspace
     ToggleTiling,
+    /// Super+? (super+slash): toggle the keybind cheatsheet overlay
+    Help,
     /// Do nothing more
     None,
 }
@@ -1655,6 +1666,7 @@ fn process_keyboard_shortcut(
         Keysym::q => Some(KeyAction::Close),
         Keysym::f => Some(KeyAction::Fullscreen),
         Keysym::t => Some(KeyAction::ToggleTiling),
+        Keysym::slash | Keysym::question => Some(KeyAction::Help),
         k if (xkb::KEY_1..=xkb::KEY_9).contains(&k.raw()) => {
             Some(KeyAction::Workspace((k.raw() - xkb::KEY_1) as usize))
         }

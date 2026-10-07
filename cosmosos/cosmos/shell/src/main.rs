@@ -6,6 +6,7 @@ mod assist;
 mod desktop;
 mod dock;
 mod draw;
+mod help;
 mod icons;
 mod ipc_client;
 mod launcher;
@@ -149,6 +150,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         quick_dismissed_at: None,
         vol_drag: false,
         accent_name: cosmos_ipc::DEFAULT_ACCENT.to_string(),
+        help_surface: None,
+        help_size: (0, 0),
+        help_open: false,
+        help_dirty: false,
         exit: false,
     };
 
@@ -297,6 +302,11 @@ pub struct ShellState {
     /// Current accent preset name (from Config events) — the Quick
     /// Settings swatch strip draws its selection ring from this.
     pub accent_name: String,
+    /// Keybind cheatsheet (super+?) — fullscreen scrim + card.
+    pub help_surface: Option<LayerSurface>,
+    pub help_size: (u32, u32),
+    pub help_open: bool,
+    pub help_dirty: bool,
     pub exit: bool,
 }
 
@@ -358,6 +368,42 @@ impl ShellState {
             } else {
                 self.dock_dirty = true;
             }
+        }
+    }
+
+    /// Toggle the keybind cheatsheet (super+?).
+    pub fn set_help_open(&mut self, open: bool) {
+        if open == self.help_open {
+            return;
+        }
+        self.help_open = open;
+        if open {
+            let surface = self.compositor_state.create_surface(&self.qh);
+            let layer = self.layer_shell.create_layer_surface(
+                &self.qh,
+                surface,
+                Layer::Overlay,
+                Some("cosmos-help"),
+                None,
+            );
+            layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
+            layer.set_size(0, 0);
+            layer.set_exclusive_zone(-1);
+            layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+            layer.wl_surface().commit();
+            self.help_surface = Some(layer);
+            self.help_dirty = true;
+        } else {
+            self.help_surface = None;
+        }
+    }
+
+    /// Shell-initiated close — keep the compositor's `help_open` flag
+    /// in sync or the next super+? lands on a stale toggle.
+    fn close_help(&mut self) {
+        if self.help_open {
+            self.set_help_open(false);
+            self.ipc.send(&cosmos_ipc::Request::ToggleHelp);
         }
     }
 
@@ -659,6 +705,7 @@ impl ShellState {
                 self.panel_dirty = true;
             }
             LauncherToggled { open } => self.set_launcher_open(open),
+            HelpToggled { open } => self.set_help_open(open),
             SnapAssist {
                 open,
                 fill,
@@ -838,6 +885,10 @@ impl ShellState {
             self.assist_dirty = false;
             assist::draw(self);
         }
+        if self.help_dirty && self.help_surface.is_some() {
+            self.help_dirty = false;
+            help::draw(self);
+        }
     }
 }
 
@@ -915,6 +966,10 @@ impl LayerShellHandler for ShellState {
             self.assist_surface = None;
             self.assist_open = false;
         }
+        if self.help_surface.as_ref() == Some(layer) {
+            self.help_surface = None;
+            self.help_open = false;
+        }
     }
 
     fn configure(
@@ -970,6 +1025,10 @@ impl LayerShellHandler for ShellState {
         if self.assist_surface.as_ref() == Some(layer) {
             self.assist_size = configure.new_size;
             self.assist_dirty = true;
+        }
+        if self.help_surface.as_ref() == Some(layer) {
+            self.help_size = configure.new_size;
+            self.help_dirty = true;
         }
         // Acking configure happens via committing the surface.
         let _ = serial;
@@ -1077,7 +1136,17 @@ impl KeyboardHandler for ShellState {
         _serial: u32,
         event: KeyEvent,
     ) {
-        if self.assist_open {
+        if self.help_open {
+            // Esc / Return / the same chord that opened it all dismiss.
+            match event.keysym {
+                Keysym::Escape
+                | Keysym::Return
+                | Keysym::KP_Enter
+                | Keysym::slash
+                | Keysym::question => self.close_help(),
+                _ => {}
+            }
+        } else if self.assist_open {
             assist::key_press(self, event);
         } else if self.launcher_open {
             launcher::key_press(self, event);
@@ -1133,6 +1202,7 @@ impl PointerHandler for ShellState {
                 .chain(self.dock_surface.iter())
                 .chain(self.launcher_surface.iter())
                 .chain(self.assist_surface.iter())
+                .chain(self.help_surface.iter())
                 .chain(self.notify_surface.iter())
                 .chain(self.quick_surface.iter())
                 .find(|l| l.wl_surface() == &ev.surface)
@@ -1154,6 +1224,9 @@ impl PointerHandler for ShellState {
                         self.quick_click(ev.position.0, ev.position.1);
                     } else if self.assist_surface.as_ref() == Some(&layer) {
                         self.assist_click(ev.position.0, ev.position.1);
+                    } else if self.help_surface.as_ref() == Some(&layer) {
+                        // Any press on the sheet dismisses it.
+                        self.close_help();
                     }
                 }
                 PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {

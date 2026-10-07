@@ -272,7 +272,9 @@ impl<BackendData: Backend> WlrLayerShellHandler for AnvilState<BackendData> {
         // protocol id; the render loop plays it for the first ~150ms.
         if self.anim_on() {
             let kind = match namespace.as_str() {
-                "cosmos-launcher" | "cosmos-assist" => Some(crate::anim::LayerAnim::Fade),
+                "cosmos-launcher" | "cosmos-assist" | "cosmos-help" => {
+                    Some(crate::anim::LayerAnim::Fade)
+                }
                 "cosmos-switcher" => Some(crate::anim::LayerAnim::Pop),
                 "cosmos-quick" | "cosmos-dock" => Some(crate::anim::LayerAnim::SlideUp),
                 "cosmos-notify" => Some(crate::anim::LayerAnim::SlideRight),

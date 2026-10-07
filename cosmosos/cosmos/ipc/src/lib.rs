@@ -95,6 +95,10 @@ pub enum Request {
     },
     /// Toggle the launcher overlay (shell-only shortcut surface).
     ToggleLauncher,
+    /// Toggle the keybind-cheatsheet overlay (super+?). The shell sends
+    /// this when it closes the sheet itself (Esc / backdrop click) so
+    /// the compositor's flag stays in sync — mirrors ToggleLauncher.
+    ToggleHelp,
     /// Pick a window in the Snap Assist overlay — it snaps into the
     /// free half opposite the window that triggered the assist.
     SnapAssistPick {
@@ -130,6 +134,10 @@ pub enum Event {
     Config(serde_json::Map<String, serde_json::Value>),
     /// Something external toggled the launcher.
     LauncherToggled {
+        open: bool,
+    },
+    /// Something external toggled the keybind cheatsheet.
+    HelpToggled {
         open: bool,
     },
     /// Alt/Super+Tab window switcher state. `order` is the stable window-id
@@ -225,3 +233,36 @@ pub fn accent_rgb(name: &str, dark: bool) -> [u8; 3] {
 pub fn accent_known(name: &str) -> bool {
     ACCENT_PRESETS.iter().any(|(n, _, _, _)| *n == name)
 }
+
+/// The user-facing keybind table — what the super+? cheatsheet renders.
+/// Grouped (section, key, action) rows; keep in sync with
+/// `compositor/src/input_handler.rs::process_keyboard_shortcut`.
+pub const KEYBINDS: &[(&str, &str, &str)] = &[
+    ("Apps", "Super + Return", "Terminal"),
+    ("Apps", "Super + Space", "Launcher"),
+    ("Apps", "Super + Q", "Close window"),
+    ("Apps", "Super + F", "Fullscreen"),
+    ("Apps", "Super + M", "Minimize"),
+    (
+        "Windows",
+        "Super + \u{2190} / \u{2192}",
+        "Snap left / right",
+    ),
+    (
+        "Windows",
+        "Super + \u{2191} / \u{2193}",
+        "Maximize / restore",
+    ),
+    ("Windows", "Super + T", "Toggle tiling"),
+    ("Windows", "Alt + Tab", "Window switcher"),
+    ("Windows", "Drag to screen edge", "Snap preview"),
+    ("Windows", "Double-click titlebar", "Maximize / restore"),
+    ("Workspaces", "Super + 1\u{2013}9", "Switch workspace"),
+    (
+        "Workspaces",
+        "Super + Shift + 1\u{2013}9",
+        "Move window here",
+    ),
+    ("Session", "Ctrl + Alt + Backspace", "Log out"),
+    ("Session", "Super + ?", "This cheatsheet"),
+];

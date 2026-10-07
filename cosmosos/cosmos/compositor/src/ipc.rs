@@ -279,6 +279,13 @@ fn dispatch_request<BackendData: Backend>(
             });
             None
         }
+        Request::ToggleHelp => {
+            state.cosmos.help_open = !state.cosmos.help_open;
+            state.ipc_broadcast(&Event::HelpToggled {
+                open: state.cosmos.help_open,
+            });
+            None
+        }
         Request::SnapAssistPick { id } => {
             state.snap_assist_pick(id);
             None
