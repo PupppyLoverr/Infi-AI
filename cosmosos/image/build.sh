@@ -42,7 +42,7 @@ done
 
 echo "== staging overlay =="
 sudo rm -rf "$OVERLAY"   # previous run's files are chowned root below
-mkdir -p "$OVERLAY"/{usr/local/bin,usr/share/applications,etc/profile.d,etc/systemd/network,etc/systemd/system/getty@tty1.service.d,etc/polkit-1/rules.d}
+mkdir -p "$OVERLAY"/{usr/local/bin,usr/share/applications,etc/profile.d,etc/skel,etc/systemd/network,etc/systemd/system/getty@tty1.service.d,etc/polkit-1/rules.d}
 
 install -m755 "$BINDIR"/cosmos-{compositor,shell,files,terminal,editor,settings,monitor} \
   "$OVERLAY/usr/local/bin/"
@@ -206,6 +206,45 @@ EOF
 
 echo "cosmosos" > "$OVERLAY/etc/hostname"
 
+# --- curated shell env (Omarchy-style): lands in /home/cosmos/.bashrc via
+# useradd -m's skel copy (hook runs after overlay sync-in).
+cat > "$OVERLAY/etc/skel/.bashrc" <<'EOF'
+# ~/.bashrc — CosmosOS curated terminal env
+
+# interactive only — keeps non-interactive shells (agents, opencode tools)
+# fast and clean
+case $- in
+  *i*) ;;
+  *) return ;;
+esac
+
+export EDITOR=nvim
+export VISUAL=nvim
+export HISTCONTROL=ignoreboth
+shopt -s checkwinsize
+
+# colored prompt: blue user@cosmos, cyan cwd
+PS1='\[\e[1;34m\]\u@cosmos\[\e[0m\]:\[\e[1;36m\]\w\[\e[0m\]\$ '
+
+# Debian ships fd as fdfind and bat as batcat — restore upstream names
+command -v fdfind >/dev/null && alias fd='fdfind'
+command -v batcat >/dev/null && alias bat='batcat'
+
+command -v eza >/dev/null && {
+  alias ll='eza -la --group-directories-first'
+  alias la='eza -a'
+  alias ls='eza'
+}
+command -v batcat >/dev/null && alias cat='batcat --paging=never'
+command -v rg >/dev/null && alias grep='rg'
+
+alias vim='nvim'
+
+# Omarchy-style welcome banner on shell spawn (~60ms on this box — cheap
+# enough to keep; drop the line if it ever feels laggy)
+command -v fastfetch >/dev/null && fastfetch
+EOF
+
 # netdev group may call every org.freedesktop.NetworkManager.* action: the
 # autologin session isn't always 'active' to polkit, and the stock Debian rule
 # only grants settings.modify.system to netdev/sudo. The quick-settings NM
@@ -268,7 +307,8 @@ libwayland-egl1 libwayland-cursor0 libdrm2 libgbm1 libegl1 libgles2 \
 libgl1-mesa-dri libinput10 libseat1 libdisplay-info2 libpixman-1-0 \
 libgudev-1.0-0 libdbus-1-3 \
 fonts-dejavu-core fontconfig xdg-utils kbd procps mesa-utils socat login \
-iproute2"
+iproute2 \
+ripgrep fd-find fzf eza bat btop fastfetch neovim tmux lazygit htop jq tree"
 
 # in-chroot setup. NOTE: mmdebstrap hooks run on the HOST with $1=rootfs —
 # guest commands must go through `chroot "$1"` (a bare useradd here creates

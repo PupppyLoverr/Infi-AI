@@ -23,6 +23,12 @@ struct Term {
     dead: bool,
     /// Accumulated mouse-wheel scroll for the vt100 scrollback view.
     scroll: f32,
+    /// Grid layout from the last draw — needed to translate pointer pixels
+    /// into terminal cell coordinates for mouse reporting.
+    origin: egui::Pos2,
+    cell_wh: (f32, f32),
+    /// Currently-held mouse button code while mouse reporting is on.
+    mouse_down: Option<u8>,
 }
 
 impl Term {
@@ -94,6 +100,9 @@ impl Term {
             cols: 80,
             dead: false,
             scroll: 0.0,
+            origin: egui::Pos2::ZERO,
+            cell_wh: (1.0, 1.0),
+            mouse_down: None,
         })
     }
 
@@ -128,11 +137,35 @@ impl Term {
     /// Encode egui input events into terminal bytes.
     fn send_input(&mut self, ui: &mut egui::Ui) {
         let mut out = Vec::new();
+        let mode = self.parser.screen().mouse_protocol_mode();
+        let sgr =
+            self.parser.screen().mouse_protocol_encoding() == vt100::MouseProtocolEncoding::Sgr;
+        let origin = self.origin;
+        let (cw, ch) = self.cell_wh;
+        let mut down = self.mouse_down;
+        let mut pointer_pos = egui::Pos2::ZERO;
+        let app_cursor = self.parser.screen().application_cursor();
+        let bracketed = self.parser.screen().bracketed_paste();
         ui.ctx().input(|i| {
+            pointer_pos = i.pointer.latest_pos().unwrap_or(egui::Pos2::ZERO);
             for ev in &i.events {
-                encode_event(ev, &mut out);
+                if mode != vt100::MouseProtocolMode::None {
+                    encode_pointer(
+                        ev,
+                        mode,
+                        sgr,
+                        origin,
+                        cw,
+                        ch,
+                        pointer_pos,
+                        &mut down,
+                        &mut out,
+                    );
+                }
+                encode_event(ev, app_cursor, bracketed, &mut out);
             }
         });
+        self.mouse_down = down;
         if !out.is_empty() {
             let _ = self.writer.write_all(&out);
             let _ = self.writer.flush();
@@ -140,11 +173,21 @@ impl Term {
     }
 }
 
-fn encode_event(ev: &egui::Event, out: &mut Vec<u8>) {
+fn encode_event(ev: &egui::Event, app_cursor: bool, bracketed: bool, out: &mut Vec<u8>) {
     use egui::Key::*;
     match ev {
         egui::Event::Text(t) => {
             out.extend_from_slice(t.as_bytes());
+        }
+        egui::Event::Paste(t) => {
+            // Honour DECSET 2004: paste wrapped in start/end markers.
+            if bracketed {
+                out.extend_from_slice(b"\x1b[200~");
+                out.extend_from_slice(t.as_bytes());
+                out.extend_from_slice(b"\x1b[201~");
+            } else {
+                out.extend_from_slice(t.as_bytes());
+            }
         }
         egui::Event::Key {
             key,
@@ -162,12 +205,12 @@ fn encode_event(ev: &egui::Event, out: &mut Vec<u8>) {
                 Backspace => out.push(0x7f),
                 Tab => out.push(b'\t'),
                 Escape => out.push(0x1b),
-                ArrowUp => out.extend_from_slice(b"\x1b[A"),
-                ArrowDown => out.extend_from_slice(b"\x1b[B"),
-                ArrowRight => out.extend_from_slice(b"\x1b[C"),
-                ArrowLeft => out.extend_from_slice(b"\x1b[D"),
-                Home => out.extend_from_slice(b"\x1b[H"),
-                End => out.extend_from_slice(b"\x1b[F"),
+                ArrowUp => out.extend_from_slice(if app_cursor { b"\x1bOA" } else { b"\x1b[A" }),
+                ArrowDown => out.extend_from_slice(if app_cursor { b"\x1bOB" } else { b"\x1b[B" }),
+                ArrowRight => out.extend_from_slice(if app_cursor { b"\x1bOC" } else { b"\x1b[C" }),
+                ArrowLeft => out.extend_from_slice(if app_cursor { b"\x1bOD" } else { b"\x1b[D" }),
+                Home => out.extend_from_slice(if app_cursor { b"\x1bOH" } else { b"\x1b[H" }),
+                End => out.extend_from_slice(if app_cursor { b"\x1bOF" } else { b"\x1b[F" }),
                 PageUp => out.extend_from_slice(b"\x1b[5~"),
                 PageDown => out.extend_from_slice(b"\x1b[6~"),
                 Insert => out.extend_from_slice(b"\x1b[2~"),
@@ -253,6 +296,9 @@ impl Term {
             cols: 80,
             dead: true,
             scroll: 0.0,
+            origin: egui::Pos2::ZERO,
+            cell_wh: (1.0, 1.0),
+            mouse_down: None,
         }
     }
 }
@@ -280,6 +326,8 @@ fn draw(ui: &mut egui::Ui, term: &mut Term) {
         let cols = ((avail.x - PAD * 2.0) / cell_w) as u16;
         let rows = ((avail.y - PAD * 2.0) / cell_h) as u16;
         term.resize(cols.max(20), rows.max(4));
+        term.origin = ui.cursor().min + egui::vec2(PAD, PAD);
+        term.cell_wh = (cell_w, cell_h);
 
         let painter = ui.painter();
         let origin = ui.cursor().min + egui::vec2(PAD, PAD);
@@ -559,5 +607,98 @@ fn draw_grid(
                 egui::Stroke::new(1.0, st.fg),
             );
         }
+    }
+}
+
+/// Translate egui pointer events into xterm mouse-report bytes when the
+/// application enabled a mouse protocol (1000/1002/1003 + 1006 SGR). TUIs
+/// like opencode rely on this for clicks, drags and wheel scrolling.
+fn encode_pointer(
+    ev: &egui::Event,
+    mode: vt100::MouseProtocolMode,
+    sgr: bool,
+    origin: egui::Pos2,
+    cw: f32,
+    ch: f32,
+    pointer_pos: egui::Pos2,
+    down: &mut Option<u8>,
+    out: &mut Vec<u8>,
+) {
+    // Pixel → 1-based cell coordinate.
+    let cell = |pos: egui::Pos2| -> Option<(u16, u16)> {
+        let x = (pos.x - origin.x) / cw;
+        let y = (pos.y - origin.y) / ch;
+        if x < 0.0 || y < 0.0 {
+            return None;
+        }
+        Some((x as u16 + 1, y as u16 + 1))
+    };
+    let emit = |b: u8, x: u16, y: u16, release: bool, out: &mut Vec<u8>| {
+        if sgr {
+            let tail = if release { b'm' } else { b'M' };
+            out.extend_from_slice(format!("\x1b[<{b};{x};{y}").as_bytes());
+            out.push(tail);
+        } else {
+            // Legacy X10/UTF8 byte encoding (coords clamp to 223).
+            let x = x.min(223) as u8;
+            let y = y.min(223) as u8;
+            out.extend_from_slice(&[0x1b, b'[', b'M', 32 + b, 32 + x, 32 + y]);
+        }
+    };
+
+    match ev {
+        egui::Event::PointerButton {
+            pos,
+            button,
+            pressed,
+            ..
+        } => {
+            let Some((x, y)) = cell(*pos) else { return };
+            let code = match button {
+                egui::PointerButton::Primary => 0,
+                egui::PointerButton::Middle => 1,
+                egui::PointerButton::Secondary => 2,
+                _ => return,
+            };
+            if *pressed {
+                emit(code, x, y, false, out);
+                *down = Some(code);
+            } else if mode != vt100::MouseProtocolMode::Press {
+                // X10 reports only presses; VT200+ reports release as b+3.
+                emit(3, x, y, true, out);
+                *down = None;
+            }
+        }
+        egui::Event::PointerMoved(pos) => {
+            let report = match (mode, *down) {
+                // Button held + motion-capable mode → 32+button.
+                (vt100::MouseProtocolMode::ButtonMotion, Some(b))
+                | (vt100::MouseProtocolMode::AnyMotion, Some(b)) => Some(32 + b),
+                // AnyMotion, no button → 35 (motion-with-no-button code).
+                (vt100::MouseProtocolMode::AnyMotion, None) => Some(35),
+                _ => None,
+            };
+            if let Some(b) = report {
+                if let Some((x, y)) = cell(*pos) {
+                    emit(b, x, y, false, out);
+                }
+            }
+        }
+        egui::Event::MouseWheel {
+            unit: _,
+            delta,
+            modifiers: _,
+            ..
+        } => {
+            // Wheel = buttons 64/65 at the pointer's cell.
+            if let Some((x, y)) = cell(pointer_pos) {
+                let steps = delta.y.abs().max(1.0) as usize;
+                let b = if delta.y > 0.0 { 64 } else { 65 };
+                for _ in 0..steps.min(8) {
+                    emit(b, x, y, false, out);
+                }
+            }
+        }
+        _ => {}
     }
 }
