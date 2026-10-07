@@ -38,7 +38,28 @@ impl Term {
             .map_err(|e| e.to_string())?;
 
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-        let mut cmd = CommandBuilder::new(&shell);
+        // `cosmos-terminal -e cmd args...` runs the command via the shell
+        // (the .desktop Exec contract); bare invocation opens a login shell.
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        let run = match args.first().map(String::as_str) {
+            Some("-e" | "--") => {
+                let cmdline = args[1..].join(" ");
+                if cmdline.is_empty() {
+                    None
+                } else {
+                    Some(cmdline)
+                }
+            }
+            _ => None,
+        };
+        let mut cmd = if let Some(cmdline) = run {
+            let mut c = CommandBuilder::new(&shell);
+            c.arg("-c");
+            c.arg(cmdline);
+            c
+        } else {
+            CommandBuilder::new(&shell)
+        };
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         cmd.cwd(std::env::var("HOME").unwrap_or_else(|_| "/".into()));
