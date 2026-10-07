@@ -7,8 +7,8 @@ MON="$ROOT/work/image/monitor.sock"
 
 declare -A K=(
   [" "]="spc" [":"]="shift-semicolon" [";"]="semicolon" [","]="comma"
-  ["'"]="apostrophe" ['"']="shift-apostrophe" ["{"]="shift-left_brace"
-  ["}"]="shift-right_brace" ["["]="left_brace" ["]"]="right_brace"
+  ["'"]="apostrophe" ['"']="shift-apostrophe" ["{"]="shift-bracket_left"
+  ["}"]="shift-bracket_right" ["["]="bracket_left" ["]"]="bracket_right"
   ["|"]="shift-backslash" ["\\"]="backslash" ["-"]="minus" ["_"]="shift-minus"
   ["="]="equal" ["+"]="shift-equal" ["."]="dot" ["/"]="slash"
   ['`']="grave_accent" ["$"]="shift-4" ["%"]="shift-5" ["^"]="shift-6"
