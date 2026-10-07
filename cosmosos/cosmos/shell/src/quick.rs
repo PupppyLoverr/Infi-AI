@@ -28,6 +28,8 @@ enum Hit {
     Network,
     /// Accent preset swatch (index into cosmos_ipc::ACCENT_PRESETS).
     Swatch(usize),
+    /// Dark/light mode pill on the Theme row.
+    Mode,
     Settings,
     Logout,
     Card,
@@ -89,9 +91,16 @@ fn theme_row_y(state: &ShellState) -> f64 {
         }
 }
 
-/// Swatch circle center x for preset `i` (6 evenly spaced past the label).
+/// Swatch circle center x for preset `i` — 22px stride so all six fit
+/// between the label and the dark/light pill.
 fn swatch_x(i: usize) -> f64 {
-    PAD + 58.0 + i as f64 * 32.0 + 10.0
+    PAD + 68.0 + i as f64 * 22.0
+}
+
+/// Dark/light pill rect on the Theme row (right edge).
+const MODE_W: f64 = 66.0;
+fn mode_x() -> f64 {
+    QUICK_W as f64 - PAD - MODE_W
 }
 
 fn hit_test(x: f64, y: f64, state: &ShellState) -> Hit {
@@ -115,6 +124,9 @@ fn hit_test(x: f64, y: f64, state: &ShellState) -> Hit {
             if (x - cx).abs() <= 11.0 {
                 return Hit::Swatch(i);
             }
+        }
+        if x >= mode_x() && x < mode_x() + MODE_W {
+            return Hit::Mode;
         }
         return Hit::Card;
     }
@@ -186,6 +198,22 @@ pub fn press(state: &mut ShellState, x: f64, y: f64) -> bool {
                     state.sysinfo.network.label = "Offline".to_string();
                 }
             }
+            true
+        }
+        Hit::Mode => {
+            let next = if state.dark { "light" } else { "dark" };
+            state.dark = !state.dark;
+            state.panel_dirty = true;
+            state.launcher_dirty = true;
+            state.notify_dirty = true;
+            state.quick_dirty = true;
+            state.dock_dirty = true;
+            state.switcher_dirty = true;
+            state.help_dirty = true;
+            state.ipc.send(&cosmos_ipc::Request::SetConfig {
+                key: "appearance".to_string(),
+                value: serde_json::json!(next),
+            });
             true
         }
         Hit::Swatch(i) => {
@@ -570,6 +598,81 @@ pub fn draw(state: &mut ShellState) {
             }
         }
     }
+
+    // Dark/light mode pill — right edge of the Theme row, macOS Control
+    // Center's dark-mode tile shape.
+    let mx = mode_x() as f32;
+    let my = ty + 9.0;
+    draw::fill_round_rect(&mut pixmap, mx, my, MODE_W as f32, 22.0, 11.0, btn_bg);
+    let gx = mx + 13.0;
+    let gcy = my + 11.0;
+    let mut pb = tiny_skia::PathBuilder::new();
+    if state.dark {
+        // Moon crescent — a big disc minus an offset disc (EvenOdd).
+        pb.push_circle(gx, gcy, 5.5);
+        pb.push_circle(gx + 3.0, gcy - 2.0, 4.6);
+        if let Some(path) = pb.finish() {
+            pixmap.fill_path(
+                &path,
+                &tiny_skia::Paint {
+                    shader: tiny_skia::Shader::SolidColor(Color::from_rgba8(
+                        0xFF, 0xFF, 0xFF, 0xD8,
+                    )),
+                    anti_alias: true,
+                    ..Default::default()
+                },
+                tiny_skia::FillRule::EvenOdd,
+                tiny_skia::Transform::default(),
+                None,
+            );
+        }
+    } else {
+        // Sun — filled disc + 8 stroked rays.
+        let ink = tiny_skia::Paint {
+            shader: tiny_skia::Shader::SolidColor(Color::from_rgba8(0x20, 0x20, 0x24, 0xE0)),
+            anti_alias: true,
+            ..Default::default()
+        };
+        let mut disc = tiny_skia::PathBuilder::new();
+        disc.push_circle(gx, gcy, 3.6);
+        if let Some(path) = disc.finish() {
+            pixmap.fill_path(
+                &path,
+                &ink,
+                tiny_skia::FillRule::Winding,
+                tiny_skia::Transform::default(),
+                None,
+            );
+        }
+        let mut rays = tiny_skia::PathBuilder::new();
+        for i in 0..8 {
+            let a = i as f32 * std::f32::consts::FRAC_PI_4;
+            rays.move_to(gx + a.cos() * 5.2, gcy + a.sin() * 5.2);
+            rays.line_to(gx + a.cos() * 7.4, gcy + a.sin() * 7.4);
+        }
+        if let Some(path) = rays.finish() {
+            pixmap.stroke_path(
+                &path,
+                &ink,
+                &tiny_skia::Stroke {
+                    width: 1.2,
+                    ..Default::default()
+                },
+                tiny_skia::Transform::default(),
+                None,
+            );
+        }
+    }
+    draw::text(
+        &mut pixmap,
+        mx + 22.0,
+        my + 4.0,
+        MODE_W as f32 - 26.0,
+        15.0,
+        11.0,
+        if state.dark { "Dark" } else { "Light" },
+        fg,
+    );
 
     // Footer buttons.
     let by = h as f32 - BTN_H as f32;

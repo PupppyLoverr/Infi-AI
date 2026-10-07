@@ -217,6 +217,8 @@ pub fn draw(state: &mut ShellState) {
     for ws in &workspaces {
         let cy = h as f32 / 2.0 - WS_CELL_H / 2.0;
         let label = (ws.id + 1).to_string();
+        // Centre the single-digit label inside the 20px cell.
+        let digit_x = rx as f32 + 3.0 + ((WS_CELL_W as f32 - 6.0) - 7.0).max(0.0) / 2.0;
         if ws.focused {
             // Active workspace = accent pill with white digits.
             draw::fill_round_rect(
@@ -230,7 +232,7 @@ pub fn draw(state: &mut ShellState) {
             );
             draw::text(
                 &mut pixmap,
-                rx as f32 + 3.0,
+                digit_x,
                 cy + 1.0,
                 WS_CELL_W as f32 - 6.0,
                 WS_CELL_H,
@@ -253,7 +255,7 @@ pub fn draw(state: &mut ShellState) {
             }
             draw::text(
                 &mut pixmap,
-                rx as f32 + 3.0,
+                digit_x,
                 cy + 1.0,
                 WS_CELL_W as f32 - 6.0,
                 WS_CELL_H,
