@@ -390,6 +390,9 @@ pub struct CosmosState {
     /// Keybind cheatsheet overlay open (super+?). Shell owns visuals;
     /// this flag only syncs compositor ↔ shell toggle state.
     pub help_open: bool,
+    /// Super+D "show desktop": ids of the windows we minimized on the
+    /// first press so a second press restores exactly that set.
+    pub show_desktop: Option<Vec<u64>>,
     /// Alt/Super+Tab switcher while the modifier is held.
     pub switcher: Option<SwitcherState>,
     /// Live drag-to-edge snap hint: the zone the pointer targets and the

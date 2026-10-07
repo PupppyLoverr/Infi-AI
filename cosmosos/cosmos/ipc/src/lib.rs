@@ -239,6 +239,7 @@ pub fn accent_known(name: &str) -> bool {
 /// `compositor/src/input_handler.rs::process_keyboard_shortcut`.
 pub const KEYBINDS: &[(&str, &str, &str)] = &[
     ("Apps", "Super + Return", "Terminal"),
+    ("Apps", "Super + E", "File manager"),
     ("Apps", "Super + Space", "Launcher"),
     ("Apps", "Super + Q", "Close window"),
     ("Apps", "Super + F", "Fullscreen"),
@@ -254,6 +255,7 @@ pub const KEYBINDS: &[(&str, &str, &str)] = &[
         "Maximize / restore",
     ),
     ("Windows", "Super + T", "Toggle tiling"),
+    ("Windows", "Super + D", "Show desktop"),
     ("Windows", "Alt + Tab", "Window switcher"),
     ("Windows", "Drag to screen edge", "Snap preview"),
     ("Windows", "Double-click titlebar", "Maximize / restore"),

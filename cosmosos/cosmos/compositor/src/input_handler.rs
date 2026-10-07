@@ -215,6 +215,22 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 let open = self.cosmos.help_open;
                 self.ipc_broadcast(&cosmos_ipc::Event::HelpToggled { open });
             }
+            KeyAction::ShowDesktop => {
+                if let Some(ids) = self.cosmos.show_desktop.take() {
+                    for id in ids {
+                        self.unminimize_window(id);
+                    }
+                } else {
+                    let cosmos = &mut self.cosmos;
+                    let ids: Vec<u64> =
+                        self.space.elements().map(|w| cosmos.window_id(w)).collect();
+                    let windows = self.space.elements().cloned().collect::<Vec<_>>();
+                    for w in windows {
+                        self.minimize_window(&w);
+                    }
+                    self.cosmos.show_desktop = Some(ids);
+                }
+            }
 
             _ => unreachable!(
                 "Common key action handler encountered backend specific action {:?}",
@@ -728,6 +744,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     | KeyAction::Launcher
                     | KeyAction::ToggleTiling
                     | KeyAction::Help
+                    | KeyAction::ShowDesktop
                     | KeyAction::Fullscreen => self.process_common_key_action(action),
 
                     _ => tracing::warn!(
@@ -976,6 +993,7 @@ impl AnvilState<UdevData> {
                     | KeyAction::Launcher
                     | KeyAction::ToggleTiling
                     | KeyAction::Help
+                    | KeyAction::ShowDesktop
                     | KeyAction::Fullscreen => self.process_common_key_action(action),
 
                     _ => unreachable!(),
@@ -1598,6 +1616,8 @@ enum KeyAction {
     ToggleTiling,
     /// Super+? (super+slash): toggle the keybind cheatsheet overlay
     Help,
+    /// Super+D: minimize every window / restore the set (Win11 desktop peek)
+    ShowDesktop,
     /// Do nothing more
     None,
 }
@@ -1667,6 +1687,8 @@ fn process_keyboard_shortcut(
         Keysym::f => Some(KeyAction::Fullscreen),
         Keysym::t => Some(KeyAction::ToggleTiling),
         Keysym::slash | Keysym::question => Some(KeyAction::Help),
+        Keysym::d => Some(KeyAction::ShowDesktop),
+        Keysym::e => Some(KeyAction::Run("cosmos-files".to_string())),
         k if (xkb::KEY_1..=xkb::KEY_9).contains(&k.raw()) => {
             Some(KeyAction::Workspace((k.raw() - xkb::KEY_1) as usize))
         }
