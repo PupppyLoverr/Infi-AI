@@ -18,6 +18,7 @@ struct Cfg {
     scale: f64,
     terminal: String,
     launcher_rows: u32,
+    accent: String, // accent preset name (cosmos_ipc::ACCENT_PRESETS)
 }
 
 impl Default for Cfg {
@@ -28,6 +29,7 @@ impl Default for Cfg {
             scale: 1.0,
             terminal: "cosmos-terminal".into(),
             launcher_rows: 10,
+            accent: cosmos_ipc::DEFAULT_ACCENT.into(),
         }
     }
 }
@@ -61,6 +63,7 @@ fn load() -> Cfg {
             "scale" => c.scale = v.parse().unwrap_or(1.0),
             "terminal" => c.terminal = v.to_string(),
             "launcher_rows" => c.launcher_rows = v.parse().unwrap_or(10),
+            "accent" => c.accent = v.to_string(),
             _ => {}
         }
     }
@@ -73,8 +76,8 @@ fn save(c: &Cfg) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let text = format!(
-        "# CosmosOS configuration\nappearance = \"{}\"\nreduce_motion = {}\nscale = {}\nterminal = \"{}\"\nlauncher_rows = {}\n",
-        c.appearance, c.reduce_motion, c.scale, c.terminal, c.launcher_rows
+        "# CosmosOS configuration\nappearance = \"{}\"\nreduce_motion = {}\nscale = {}\nterminal = \"{}\"\nlauncher_rows = {}\naccent = \"{}\"\n",
+        c.appearance, c.reduce_motion, c.scale, c.terminal, c.launcher_rows, c.accent
     );
     std::fs::write(path, text)
 }
@@ -151,6 +154,7 @@ fn apply(app: &mut App) {
         ("scale", app.cfg.scale.into()),
         ("terminal", app.cfg.terminal.clone().into()),
         ("launcher_rows", app.cfg.launcher_rows.into()),
+        ("accent", app.cfg.accent.clone().into()),
     ];
     let mut errs = Vec::new();
     for (k, v) in pairs {
@@ -192,6 +196,42 @@ fn draw(ui: &mut egui::Ui, app: &mut App) {
                 .changed()
             {
                 app.dirty = true;
+            }
+        });
+
+        ui.add_space(6.0);
+        // Accent presets — the Omarchy-style theme dial: one colour
+        // reserved for active state, reskinned live over IPC.
+        ui.horizontal(|ui| {
+            ui.label("Accent");
+            let dark = app.cfg.appearance == "dark";
+            for (name, label, d_rgb, l_rgb) in cosmos_ipc::ACCENT_PRESETS {
+                let [r, g, b] = if dark { *d_rgb } else { *l_rgb };
+                let swatch = egui::Color32::from_rgb(r, g, b);
+                let selected = app.cfg.accent == *name;
+                let resp = ui
+                    .add(
+                        egui::Button::new(egui::RichText::new(*label).small())
+                            .fill(if selected {
+                                swatch
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            })
+                            .stroke(egui::Stroke::new(
+                                1.0,
+                                if selected {
+                                    swatch
+                                } else {
+                                    egui::Color32::from_gray(90)
+                                },
+                            ))
+                            .corner_radius(egui::CornerRadius::same(10)),
+                    )
+                    .on_hover_text(*label);
+                if resp.clicked() {
+                    app.cfg.accent = (*name).into();
+                    app.dirty = true;
+                }
             }
         });
 

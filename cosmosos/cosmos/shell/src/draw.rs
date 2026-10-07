@@ -9,26 +9,37 @@ thread_local! {
     static FONT_SYSTEM: RefCell<FontSystem> = RefCell::new(FontSystem::new());
     static SWASH_CACHE: RefCell<cosmic_text::SwashCache> =
         RefCell::new(cosmic_text::SwashCache::new());
+    /// Current accent preset rgb — (dark-mode rgb, light-mode rgb).
+    /// Set from the compositor's `accent_rgb` config-map field on every
+    /// Config event; defaults to Azure.
+    static ACCENT_RGB: std::cell::Cell<([u8; 3], [u8; 3])> =
+        std::cell::Cell::new(([0x3D, 0x8B, 0xFF], [0x0A, 0x6E, 0xE8]));
 }
 
-/// The one Cosmos accent — a restrained system blue in the macOS/Win11
-/// idiom. Used ONLY for active state (toggles on, slider fill, focused
-/// selection, running indicators); chrome, cards and text stay neutral.
+/// Update the accent rgb from a config event (called from `apply_config`).
+pub fn set_accent(dark_rgb: [u8; 3], light_rgb: [u8; 3]) {
+    ACCENT_RGB.with(|a| a.set((dark_rgb, light_rgb)));
+}
+
+/// The one Cosmos accent — the accent preset's colour in the
+/// macOS/Win11 idiom. Used ONLY for active state (toggles on, slider
+/// fill, focused selection, running indicators); chrome, cards and
+/// text stay neutral.
 pub fn accent(dark: bool) -> Color {
-    if dark {
-        Color::from_rgba8(0x3D, 0x8B, 0xFF, 0xFF)
-    } else {
-        Color::from_rgba8(0x0A, 0x6E, 0xE8, 0xFF)
-    }
+    ACCENT_RGB.with(|a| {
+        let (d, l) = a.get();
+        let [r, g, b] = if dark { d } else { l };
+        Color::from_rgba8(r, g, b, 0xFF)
+    })
 }
 
 /// A washed-out accent for selection/hover backgrounds behind text.
 pub fn accent_soft(dark: bool) -> Color {
-    if dark {
-        Color::from_rgba8(0x3D, 0x8B, 0xFF, 0x40)
-    } else {
-        Color::from_rgba8(0x0A, 0x6E, 0xE8, 0x2E)
-    }
+    ACCENT_RGB.with(|a| {
+        let (d, l) = a.get();
+        let ([r, g, b], alpha) = if dark { (d, 0x40) } else { (l, 0x2E) };
+        Color::from_rgba8(r, g, b, alpha)
+    })
 }
 
 /// Fill a rect.

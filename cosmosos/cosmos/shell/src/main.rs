@@ -148,6 +148,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         quick_open: false,
         quick_dismissed_at: None,
         vol_drag: false,
+        accent_name: cosmos_ipc::DEFAULT_ACCENT.to_string(),
         exit: false,
     };
 
@@ -293,6 +294,9 @@ pub struct ShellState {
     pub quick_dismissed_at: Option<std::time::Instant>,
     /// Held while the pointer is dragging the volume slider.
     pub vol_drag: bool,
+    /// Current accent preset name (from Config events) — the Quick
+    /// Settings swatch strip draws its selection ring from this.
+    pub accent_name: String,
     pub exit: bool,
 }
 
@@ -702,6 +706,33 @@ impl ShellState {
             self.panel_dirty = true;
             self.launcher_dirty = true;
             self.notify_dirty = true;
+        }
+        if let Some(v) = map.get("accent").and_then(|v| v.as_str()) {
+            self.accent_name = v.to_string();
+        }
+        // The compositor resolves the accent preset and ships both rgbs
+        // in the config map — adopt them into the draw helpers.
+        let rgb = |key: &str| {
+            map.get("accent_rgb")
+                .and_then(|m| m.get(key))
+                .and_then(|v| v.as_array())
+                .filter(|a| a.len() == 3)
+                .map(|a| {
+                    [
+                        a[0].as_u64().unwrap_or(0) as u8,
+                        a[1].as_u64().unwrap_or(0) as u8,
+                        a[2].as_u64().unwrap_or(0) as u8,
+                    ]
+                })
+        };
+        if let (Some(d), Some(l)) = (rgb("dark"), rgb("light")) {
+            draw::set_accent(d, l);
+            self.panel_dirty = true;
+            self.launcher_dirty = true;
+            self.notify_dirty = true;
+            self.quick_dirty = true;
+            self.dock_dirty = true;
+            self.switcher_dirty = true;
         }
     }
 

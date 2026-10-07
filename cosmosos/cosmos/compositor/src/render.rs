@@ -519,11 +519,8 @@ where
 {
     let scale = output.current_scale().fractional_scale();
     let theme = crate::shell::ssd::current_theme();
-    let color = if theme.dark {
-        Color32F::new(0.70, 0.71, 0.74, 1.0)
-    } else {
-        Color32F::new(0.32, 0.32, 0.35, 1.0)
-    };
+    // Accent-tinted drop zone — the Win11 drop-highlight idiom.
+    let color = Color32F::new(theme.accent[0], theme.accent[1], theme.accent[2], 1.0);
     let geo = rect.to_physical_precise_round(scale);
     let (x, y, w, h) = (geo.loc.x, geo.loc.y, geo.size.w, geo.size.h);
     // ~2 logical px, always an even physical thickness for crispness.
@@ -574,26 +571,10 @@ where
         .current_mode()
         .map(|m| output.current_transform().transform_size(m.size))?;
     let theme = crate::shell::ssd::current_theme();
-    // (base rgb, blooms: (x, y, sigma, strength, rgb))
-    let (base, blooms): ([f32; 3], [(f32, f32, f32, f32, [f32; 3]); 3]) = if theme.dark {
-        (
-            [16.0 / 255.0, 20.0 / 255.0, 31.0 / 255.0], // deep navy
-            [
-                (0.30, 0.26, 0.30, 0.55, [0.21, 0.25, 0.55]), // indigo bloom
-                (0.78, 0.70, 0.28, 0.40, [0.09, 0.31, 0.38]), // teal bloom
-                (0.62, 0.15, 0.22, 0.30, [0.24, 0.18, 0.40]), // violet whisper
-            ],
-        )
-    } else {
-        (
-            [0.918, 0.929, 0.957], // pale slate
-            [
-                (0.30, 0.26, 0.30, 0.45, [0.66, 0.74, 0.94]), // pastel blue
-                (0.78, 0.70, 0.28, 0.35, [0.62, 0.86, 0.88]), // pastel teal
-                (0.62, 0.15, 0.22, 0.28, [0.76, 0.68, 0.90]), // pastel violet
-            ],
-        )
-    };
+    // Base + blooms come from the accent preset (already resolved for
+    // dark/light inside the theme).
+    let (base, blooms): ([f32; 3], [(f32, f32, f32, f32, [f32; 3]); 3]) =
+        (theme.bg_base, theme.blooms);
     let mut pixels = Vec::with_capacity(N * N * 4);
     for py in 0..N {
         for px in 0..N {
@@ -619,9 +600,11 @@ where
             pixels.extend_from_slice(&[f(c[0]), f(c[1]), f(c[2]), 255]);
         }
     }
-    // Content depends only on theme + output size — cache the texture
-    // instead of re-uploading the gradient every frame.
-    let key = ssd::decal_key(3, (theme.dark, size.w, size.h));
+    // Content depends on theme + accent + output size — cache the
+    // texture instead of re-uploading the gradient every frame. The
+    // accent rgb bits stand in for the preset so a theme switch
+    // re-renders instead of serving a stale bloom texture.
+    let key = ssd::decal_key(3, (theme.dark, theme.accent[0].to_bits(), size.w, size.h));
     let loc = output.current_location().to_f64().to_physical(scale);
     ssd::decal_element(
         renderer,

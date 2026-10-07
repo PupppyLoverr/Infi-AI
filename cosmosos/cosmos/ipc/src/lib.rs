@@ -186,3 +186,42 @@ pub fn write_message<T: serde::Serialize, W: std::io::Write>(
     writer.write_all(b"\n")?;
     writer.flush()
 }
+
+/// Curated accent presets — the Omarchy-style "theme" dial. Each is one
+/// accent color reserved for active state; every surface that honors
+/// the accent resolves it through [`accent_rgb`], so a preset switch
+/// repaints the whole desktop at once.
+///
+/// (name, label, dark-mode rgb, light-mode rgb)
+pub const ACCENT_PRESETS: &[(&str, &str, [u8; 3], [u8; 3])] = &[
+    ("azure", "Azure", [0x3D, 0x8B, 0xFF], [0x0A, 0x6E, 0xE8]),
+    ("ember", "Ember", [0xFF, 0x9F, 0x2D], [0xC2, 0x57, 0x00]),
+    ("forest", "Forest", [0x34, 0xC7, 0x59], [0x1F, 0x8A, 0x3D]),
+    ("violet", "Violet", [0xA7, 0x8B, 0xFA], [0x7C, 0x3A, 0xED]),
+    ("rose", "Rose", [0xF4, 0x72, 0xB6], [0xDB, 0x27, 0x77]),
+    ("mono", "Mono", [0x9A, 0x9A, 0xA2], [0x6E, 0x6E, 0x73]),
+];
+
+/// Default accent preset name.
+pub const DEFAULT_ACCENT: &str = "azure";
+
+/// Resolve an accent preset to its (r,g,b) for `dark` mode.
+/// Unknown names fall back to the default so a stale config can never
+/// blank the accent.
+pub fn accent_rgb(name: &str, dark: bool) -> [u8; 3] {
+    ACCENT_PRESETS
+        .iter()
+        .find(|(n, _, _, _)| *n == name)
+        .or_else(|| {
+            ACCENT_PRESETS
+                .iter()
+                .find(|(n, _, _, _)| *n == DEFAULT_ACCENT)
+        })
+        .map(|(_, _, d, l)| if dark { *d } else { *l })
+        .unwrap_or([0x3D, 0x8B, 0xFF])
+}
+
+/// Whether `name` is a known accent preset.
+pub fn accent_known(name: &str) -> bool {
+    ACCENT_PRESETS.iter().any(|(n, _, _, _)| *n == name)
+}

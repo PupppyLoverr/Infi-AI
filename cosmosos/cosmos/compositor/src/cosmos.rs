@@ -47,6 +47,8 @@ pub struct CosmosConfig {
     pub scale: f64,
     /// Disable window/workspace transition animation.
     pub reduce_motion: bool,
+    /// Accent preset name (see cosmos_ipc::ACCENT_PRESETS).
+    pub accent: String,
 }
 
 impl Default for CosmosConfig {
@@ -55,6 +57,7 @@ impl Default for CosmosConfig {
             appearance: "dark".to_string(),
             scale: 1.0,
             reduce_motion: false,
+            accent: cosmos_ipc::DEFAULT_ACCENT.to_string(),
         }
     }
 }
@@ -106,12 +109,21 @@ impl CosmosConfig {
         }
     }
 
-    /// Serialize to a JSON map for IPC `Config` events.
+    /// Serialize to a JSON map for IPC `Config` events. Also injects
+    /// the resolved accent rgbs so consumers (shell) paint the preset
+    /// without shipping their own preset table.
     pub fn as_map(&self) -> serde_json::Map<String, serde_json::Value> {
-        match serde_json::to_value(self) {
+        let mut map = match serde_json::to_value(self) {
             Ok(serde_json::Value::Object(map)) => map,
             _ => serde_json::Map::new(),
-        }
+        };
+        let d = cosmos_ipc::accent_rgb(&self.accent, true);
+        let l = cosmos_ipc::accent_rgb(&self.accent, false);
+        map.insert(
+            "accent_rgb".to_string(),
+            serde_json::json!({ "dark": d, "light": l }),
+        );
+        map
     }
 
     pub fn apply_patch(&mut self, key: &str, value: serde_json::Value) -> Result<(), String> {
@@ -139,11 +151,23 @@ impl CosmosConfig {
                     .as_bool()
                     .ok_or_else(|| "reduce_motion must be a bool".to_string())?;
             }
+            "accent" => {
+                let v = value
+                    .as_str()
+                    .ok_or_else(|| "accent must be a preset name".to_string())?;
+                if !cosmos_ipc::accent_known(v) {
+                    return Err(format!("unknown accent preset: {v}"));
+                }
+                self.accent = v.to_string();
+            }
             other => return Err(format!("unknown config key: {other}")),
         }
         Ok(())
     }
 }
+
+/// One aurora bloom: (u, v) center, gaussian sigma, blend strength, rgb.
+pub type Bloom = (f32, f32, f32, f32, [f32; 3]);
 
 /// Theme derived from config — the Cosmos monochrome language.
 #[derive(Debug, Clone, Copy)]
@@ -161,10 +185,88 @@ pub struct CosmosTheme {
     pub button_hover: [f32; 4],
     /// Focused-window outline tint.
     pub focus_ring: [f32; 4],
+    /// The one accent — active-state colour for compositor-side surfaces
+    /// (snap drop-zone outline).
+    pub accent: [f32; 4],
+    /// Aurora wallpaper base rgb (resolved for dark/light).
+    pub bg_base: [f32; 3],
+    /// Aurora wallpaper blooms for this preset (resolved, incl. the
+    /// light-mode pastel lift).
+    pub blooms: [Bloom; 3],
+}
+
+/// Dark-mode aurora bloom tables per accent preset. Light mode lifts
+/// each bloom toward white programmatically (pastel).
+fn blooms_for(accent: &str) -> ([f32; 3], [Bloom; 3]) {
+    match accent {
+        "ember" => (
+            [0.086, 0.070, 0.066],
+            [
+                (0.30, 0.26, 0.30, 0.55, [0.55, 0.30, 0.12]), // amber
+                (0.78, 0.70, 0.28, 0.40, [0.45, 0.16, 0.14]), // rust
+                (0.62, 0.15, 0.22, 0.30, [0.40, 0.20, 0.26]), // rose whisper
+            ],
+        ),
+        "forest" => (
+            [0.058, 0.080, 0.072],
+            [
+                (0.30, 0.26, 0.30, 0.55, [0.10, 0.38, 0.24]), // pine
+                (0.78, 0.70, 0.28, 0.40, [0.12, 0.45, 0.33]), // emerald
+                (0.62, 0.15, 0.22, 0.30, [0.20, 0.34, 0.20]), // moss
+            ],
+        ),
+        "violet" => (
+            [0.072, 0.062, 0.100],
+            [
+                (0.30, 0.26, 0.30, 0.55, [0.35, 0.22, 0.58]), // violet
+                (0.78, 0.70, 0.28, 0.40, [0.21, 0.25, 0.55]), // indigo
+                (0.62, 0.15, 0.22, 0.30, [0.42, 0.20, 0.44]), // magenta
+            ],
+        ),
+        "rose" => (
+            [0.090, 0.062, 0.078],
+            [
+                (0.30, 0.26, 0.30, 0.55, [0.50, 0.22, 0.36]), // rose
+                (0.78, 0.70, 0.28, 0.40, [0.32, 0.18, 0.42]), // plum
+                (0.62, 0.15, 0.22, 0.30, [0.48, 0.24, 0.28]), // coral
+            ],
+        ),
+        "mono" => (
+            [0.070, 0.075, 0.082],
+            [
+                (0.30, 0.26, 0.30, 0.55, [0.22, 0.24, 0.28]), // slate
+                (0.78, 0.70, 0.28, 0.40, [0.16, 0.17, 0.20]), // graphite
+                (0.62, 0.15, 0.22, 0.30, [0.24, 0.24, 0.26]), // ash
+            ],
+        ),
+        // "azure" and anything unknown — the original navy aurora.
+        _ => (
+            [16.0 / 255.0, 20.0 / 255.0, 31.0 / 255.0],
+            [
+                (0.30, 0.26, 0.30, 0.55, [0.21, 0.25, 0.55]), // indigo
+                (0.78, 0.70, 0.28, 0.40, [0.09, 0.31, 0.38]), // teal
+                (0.62, 0.15, 0.22, 0.30, [0.24, 0.18, 0.40]), // violet whisper
+            ],
+        ),
+    }
+}
+
+/// Light-mode wallpaper: pale slate base + each bloom pulled toward
+/// white (pastel) and softened a touch.
+fn pastel(blooms: [Bloom; 3]) -> [Bloom; 3] {
+    blooms.map(|(x, y, s, st, c)| (x, y, s, st * 0.75, c.map(|v| v + (1.0 - v) * 0.55)))
 }
 
 impl CosmosTheme {
     pub fn from_config(cfg: &CosmosConfig) -> Self {
+        let rgb = cosmos_ipc::accent_rgb(&cfg.accent, cfg.appearance != "light");
+        let accent = [
+            rgb[0] as f32 / 255.0,
+            rgb[1] as f32 / 255.0,
+            rgb[2] as f32 / 255.0,
+            1.0,
+        ];
+        let (base, blooms) = blooms_for(&cfg.accent);
         if cfg.appearance == "light" {
             Self {
                 dark: false,
@@ -174,6 +276,9 @@ impl CosmosTheme {
                 titlebar_fg: [0.10, 0.10, 0.12, 1.0],
                 button_hover: [0.82, 0.83, 0.85, 1.0],
                 focus_ring: [0.60, 0.62, 0.66, 1.0],
+                accent,
+                bg_base: [0.918, 0.929, 0.957],
+                blooms: pastel(blooms),
             }
         } else {
             Self {
@@ -184,6 +289,9 @@ impl CosmosTheme {
                 titlebar_fg: [0.91, 0.91, 0.92, 1.0],
                 button_hover: [0.26, 0.27, 0.30, 1.0],
                 focus_ring: [0.38, 0.40, 0.45, 1.0],
+                accent,
+                bg_base: base,
+                blooms,
             }
         }
     }

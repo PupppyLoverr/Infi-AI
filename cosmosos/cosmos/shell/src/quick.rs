@@ -15,6 +15,7 @@ const HEADER_H: f64 = 34.0;
 const NET_H: f64 = 40.0;
 const VOL_H: f64 = 56.0;
 const BAT_H: f64 = 40.0;
+const THEME_H: f64 = 40.0;
 const BTN_H: f64 = 52.0;
 const TRACK_X: f64 = PAD + 8.0;
 const TRACK_W: f64 = QUICK_W as f64 - PAD * 2.0 - 16.0 - 30.0; // minus mute button
@@ -25,6 +26,8 @@ enum Hit {
     Mute,
     /// The whole network row — Win11's connectivity tile toggles.
     Network,
+    /// Accent preset swatch (index into cosmos_ipc::ACCENT_PRESETS).
+    Swatch(usize),
     Settings,
     Logout,
     Card,
@@ -54,7 +57,7 @@ fn theme(dark: bool) -> (Color, Color, Color, Color, CtColor, CtColor) {
 
 /// Card height for the current sysinfo (battery row only when present).
 pub fn desired_height(info: &crate::sysinfo::SysInfo) -> u32 {
-    let mut h = PAD * 2.0 + HEADER_H + NET_H + VOL_H + BTN_H;
+    let mut h = PAD * 2.0 + HEADER_H + NET_H + VOL_H + THEME_H + BTN_H;
     if info.battery.as_ref().map(|b| b.present).unwrap_or(false) {
         h += BAT_H;
     }
@@ -67,6 +70,28 @@ fn vol_row_y() -> f64 {
 
 fn bat_row_y() -> f64 {
     vol_row_y() + VOL_H
+}
+
+/// Theme swatch row — after the battery row when it exists, else right
+/// under the volume row.
+fn theme_row_y(state: &ShellState) -> f64 {
+    bat_row_y()
+        + if state
+            .sysinfo
+            .battery
+            .as_ref()
+            .map(|b| b.present)
+            .unwrap_or(false)
+        {
+            BAT_H
+        } else {
+            0.0
+        }
+}
+
+/// Swatch circle center x for preset `i` (6 evenly spaced past the label).
+fn swatch_x(i: usize) -> f64 {
+    PAD + 58.0 + i as f64 * 32.0 + 10.0
 }
 
 fn hit_test(x: f64, y: f64, state: &ShellState) -> Hit {
@@ -82,6 +107,16 @@ fn hit_test(x: f64, y: f64, state: &ShellState) -> Hit {
     let ny = PAD + HEADER_H;
     if y >= ny && y < ny + NET_H {
         return Hit::Network;
+    }
+    let ty = theme_row_y(state);
+    if y >= ty && y < ty + THEME_H {
+        for i in 0..cosmos_ipc::ACCENT_PRESETS.len() {
+            let cx = swatch_x(i);
+            if (x - cx).abs() <= 11.0 {
+                return Hit::Swatch(i);
+            }
+        }
+        return Hit::Card;
     }
     let by = state.quick_size.1 as f64 - BTN_H;
     if y >= by {
@@ -153,6 +188,19 @@ pub fn press(state: &mut ShellState, x: f64, y: f64) -> bool {
             }
             true
         }
+        Hit::Swatch(i) => {
+            if let Some((name, _, _, _)) = cosmos_ipc::ACCENT_PRESETS.get(i) {
+                state.ipc.send(&cosmos_ipc::Request::SetConfig {
+                    key: "accent".to_string(),
+                    value: (*name).into(),
+                });
+                // Optimistic: the Config broadcast lands on the next
+                // event loop pass, but repaint the card immediately.
+                state.accent_name = (*name).to_string();
+                state.quick_dirty = true;
+            }
+            true
+        }
         Hit::Settings => {
             let _ = std::process::Command::new("cosmos-settings").spawn();
             state.set_quick_open(false);
@@ -195,6 +243,7 @@ pub fn draw(state: &mut ShellState) {
     // Row positions borrow `state` — compute before the pool borrow below.
     let vy = vol_row_y() as f32;
     let bat_y = bat_row_y() as f32;
+    let theme_y = theme_row_y(state) as f32;
 
     let stride = w as i32 * 4;
     let Ok((buffer, canvas)) =
@@ -460,6 +509,65 @@ pub fn draw(state: &mut ShellState) {
                 &txt,
                 fg_dim,
             );
+        }
+    }
+
+    // Accent preset row — Omarchy's theme dial, as a swatch strip.
+    let ty = theme_y;
+    draw::text(
+        &mut pixmap,
+        PAD as f32,
+        ty + 13.0,
+        50.0,
+        15.0,
+        13.0,
+        "Theme",
+        fg,
+    );
+    for (i, (name, _, d_rgb, l_rgb)) in cosmos_ipc::ACCENT_PRESETS.iter().enumerate() {
+        let [r, g, b] = if state.dark { *d_rgb } else { *l_rgb };
+        let cx = swatch_x(i) as f32;
+        let cy = ty + 20.0;
+        // Filled disc; the selected preset gets a hairline ring outside it.
+        let mut pb = tiny_skia::PathBuilder::new();
+        pb.push_circle(cx, cy, 8.0);
+        if let Some(path) = pb.finish() {
+            pixmap.fill_path(
+                &path,
+                &tiny_skia::Paint {
+                    shader: tiny_skia::Shader::SolidColor(Color::from_rgba8(r, g, b, 0xFF)),
+                    anti_alias: true,
+                    ..Default::default()
+                },
+                tiny_skia::FillRule::Winding,
+                tiny_skia::Transform::default(),
+                None,
+            );
+        }
+        if state.accent_name == *name {
+            let mut pb = tiny_skia::PathBuilder::new();
+            pb.push_circle(cx, cy, 11.0);
+            if let Some(path) = pb.finish() {
+                pixmap.stroke_path(
+                    &path,
+                    &tiny_skia::Paint {
+                        shader: tiny_skia::Shader::SolidColor(Color::from_rgba8(
+                            fg.r(),
+                            fg.g(),
+                            fg.b(),
+                            0xFF,
+                        )),
+                        anti_alias: true,
+                        ..Default::default()
+                    },
+                    &tiny_skia::Stroke {
+                        width: 1.0,
+                        ..Default::default()
+                    },
+                    tiny_skia::Transform::default(),
+                    None,
+                );
+            }
         }
     }
 

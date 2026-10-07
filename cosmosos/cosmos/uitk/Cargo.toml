@@ -10,6 +10,8 @@ smithay-client-toolkit = "0.21"
 wayland-client = "0.31"
 calloop = { version = "0.14", features = ["executor"] }
 calloop-wayland-source = "0.4"
+cosmos-ipc = { path = "../ipc" }
+serde_json = { workspace = true }
 egui = { workspace = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
