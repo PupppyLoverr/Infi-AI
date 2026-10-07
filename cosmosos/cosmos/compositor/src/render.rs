@@ -4,7 +4,7 @@ use smithay::{
         element::{
             solid::SolidColorRenderElement,
             surface::WaylandSurfaceRenderElement,
-            texture::{TextureBuffer, TextureRenderElement},
+            texture::TextureRenderElement,
             utils::{
                 ConstrainAlign, ConstrainScaleBehavior, CropRenderElement, Relocate,
                 RelocateRenderElement, RescaleRenderElement,
@@ -23,7 +23,7 @@ use smithay::{
     },
     output::Output,
     reexports::wayland_server::Resource as _,
-    utils::{Logical, Point, Rectangle, Scale, Size, Transform},
+    utils::{Logical, Point, Rectangle, Scale, Size},
     wayland::shell::wlr_layer::Layer as WlrLayer,
 };
 
@@ -487,28 +487,21 @@ where
             pixels.extend_from_slice(&[f(c[0]), f(c[1]), f(c[2]), 255]);
         }
     }
-    let buffer = TextureBuffer::<R::TextureId>::from_memory(
-        renderer,
-        &pixels,
-        smithay::backend::allocator::Fourcc::Abgr8888,
-        (N as i32, N as i32),
-        false,
-        1,
-        Transform::Normal,
-        None,
-    )
-    .ok()?;
+    // Content depends only on theme + output size — cache the texture
+    // instead of re-uploading the gradient every frame.
+    let key = ssd::decal_key(3, (theme.dark, size.w, size.h));
     let loc = output.current_location().to_f64().to_physical(scale);
-    Some(OutputRenderElements::Background(
-        TextureRenderElement::from_texture_buffer(
-            loc,
-            &buffer,
-            None,
-            None,
-            Some(size.to_f64().to_logical(scale).to_i32_round()),
-            Kind::Unspecified,
-        ),
-    ))
+    ssd::decal_element(
+        renderer,
+        key,
+        &pixels,
+        N as i32,
+        N as i32,
+        loc.to_i32_round(),
+        1.0,
+        Some(size.to_f64().to_logical(scale).to_i32_round()),
+    )
+    .map(OutputRenderElements::Background)
 }
 
 #[allow(clippy::too_many_arguments)]

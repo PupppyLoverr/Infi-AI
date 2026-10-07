@@ -6,6 +6,9 @@
 //! updates whenever the config changes.
 
 use std::cell::{Cell, RefCell, RefMut};
+use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use smithay::{
     backend::renderer::{
@@ -17,7 +20,7 @@ use smithay::{
     },
     desktop::WindowSurface,
     input::Seat,
-    utils::{Logical, Point, Scale, Serial},
+    utils::{Logical, Point, Scale, Serial, Size},
     wayland::shell::xdg::XdgShellHandler,
 };
 
@@ -26,6 +29,76 @@ use tiny_skia::{Color, FillRule, Paint, PathBuilder, PixmapMut, Stroke, Transfor
 use crate::{cosmos::CosmosTheme, state::Backend, AnvilState};
 
 use super::WindowElement;
+
+thread_local! {
+    /// Uploaded decal textures keyed by pixmap content hash — window
+    /// shadows, titlebars, wallpaper. These pixmaps repaint only on state
+    /// change, but were being re-uploaded to the renderer on EVERY frame;
+    /// on llvmpipe the alloc storm starved client shm imports and window
+    /// bodies composited as transparent for seconds at a time.
+    static DECAL_TEX: RefCell<HashMap<u64, Box<dyn std::any::Any>>> =
+        RefCell::new(HashMap::new());
+}
+
+/// Hash a decal's content identity: `site` namespaces the call site so
+/// different decals never alias even when their params collide.
+pub(crate) fn decal_key<T: Hash>(site: u8, parts: T) -> u64 {
+    let mut h = DefaultHasher::new();
+    site.hash(&mut h);
+    parts.hash(&mut h);
+    h.finish()
+}
+
+/// Render `pixels` as a texture element, uploading via `from_memory` only
+/// when `key` (the pixmap's content identity) isn't already cached — so
+/// the GL upload happens once per content change, not once per frame.
+pub(crate) fn decal_element<R>(
+    renderer: &mut R,
+    key: u64,
+    pixels: &[u8],
+    w: i32,
+    h: i32,
+    location: Point<i32, smithay::utils::Physical>,
+    alpha: f32,
+    draw_size: Option<Size<i32, Logical>>,
+) -> Option<TextureRenderElement<R::TextureId>>
+where
+    R: Renderer + ImportMem,
+    R::TextureId: Texture + Clone + 'static,
+{
+    DECAL_TEX.with(|map| {
+        let mut map = map.borrow_mut();
+        if !map.contains_key(&key) {
+            // Cap the cache: on overflow drop everything — next frame's
+            // misses re-upload once each.
+            if map.len() >= 64 {
+                map.clear();
+            }
+            let Ok(buffer) = TextureBuffer::<R::TextureId>::from_memory(
+                renderer,
+                pixels,
+                smithay::backend::allocator::Fourcc::Abgr8888,
+                (w, h),
+                false,
+                1,
+                smithay::utils::Transform::Normal,
+                None,
+            ) else {
+                return None;
+            };
+            map.insert(key, Box::new(buffer));
+        }
+        let buffer = map.get(&key)?.downcast_ref::<TextureBuffer<R::TextureId>>()?;
+        Some(TextureRenderElement::from_texture_buffer(
+            location.to_f64(),
+            buffer,
+            Some(alpha),
+            None,
+            draw_size.or_else(|| Some((w, h).into())),
+            Kind::Unspecified,
+        ))
+    })
+}
 
 pub const HEADER_BAR_HEIGHT: i32 = 32;
 /// macOS-style traffic-light cluster on the left: 12px discs, 20px pitch.
@@ -200,27 +273,22 @@ where
         if self.size.0 == 0 || self.pixels.is_empty() {
             return vec![];
         }
-        let Ok(buffer) = TextureBuffer::<R::TextureId>::from_memory(
+        // The SDF is a pure function of window size — same-size windows
+        // share the cached texture.
+        let key = decal_key(1, self.win_size);
+        let Some(el) = decal_element(
             renderer,
+            key,
             &self.pixels,
-            smithay::backend::allocator::Fourcc::Abgr8888,
-            (self.size.0 as i32, self.size.1 as i32),
-            false,
-            1,
-            smithay::utils::Transform::Normal,
+            self.size.0 as i32,
+            self.size.1 as i32,
+            location,
+            alpha,
             None,
         ) else {
             return vec![];
         };
-        vec![TextureRenderElement::from_texture_buffer(
-            location.to_f64(),
-            &buffer,
-            Some(alpha),
-            None,
-            Some((self.size.0 as i32, self.size.1 as i32).into()),
-            Kind::Unspecified,
-        )
-        .into()]
+        vec![el.into()]
     }
 }
 
@@ -734,29 +802,29 @@ where
         if self.width == 0 || self.pixels.is_empty() {
             return vec![];
         }
-        let Ok(buffer) = TextureBuffer::<R::TextureId>::from_memory(
+        // Abgr8888 = RGBA byte order on little-endian, matching
+        // tiny-skia's premultiplied RGBA pixel layout.
+        let key = decal_key(
+            2,
+            (
+                self.paint_key
+                    .as_ref()
+                    .map(|k| (k.width, k.title.clone(), k.focused, k.dark, k.hover)),
+            ),
+        );
+        let Some(el) = decal_element(
             renderer,
+            key,
             &self.pixels,
-            // Abgr8888 = RGBA byte order on little-endian, matching
-            // tiny-skia's premultiplied RGBA pixel layout.
-            smithay::backend::allocator::Fourcc::Abgr8888,
-            (self.width as i32, HEADER_BAR_HEIGHT),
-            false,
-            1,
-            smithay::utils::Transform::Normal,
+            self.width as i32,
+            HEADER_BAR_HEIGHT,
+            location,
+            alpha,
             None,
         ) else {
             return vec![];
         };
-        vec![TextureRenderElement::from_texture_buffer(
-            location.to_f64(),
-            &buffer,
-            Some(alpha),
-            None,
-            Some((self.width as i32, HEADER_BAR_HEIGHT).into()),
-            Kind::Unspecified,
-        )
-        .into()]
+        vec![el.into()]
     }
 }
 
