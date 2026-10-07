@@ -48,6 +48,10 @@ KVM=(-enable-kvm)
 CPU=()
 [ -n "${CPU_MODEL:-}" ] && CPU=(-cpu "$CPU_MODEL")
 
+# GUEST_MEM overrides the 1G spec memory — e.g. opencode's Bun runtime wants
+# ~1G by itself, so drive tests that exercise it should use GUEST_MEM=2G.
+MEM="${GUEST_MEM:-1G}"
+
 case "$DISPLAY_MODE" in
   none)   DISP=(-display none) ;;
   sdl)    DISP=(-display sdl) ;;
@@ -58,7 +62,7 @@ esac
 exec qemu-system-x86_64 \
   "${KVM[@]}" \
   "${CPU[@]}" \
-  -m 1G -smp 2 \
+  -m "$MEM" -smp 2 \
   -drive file="$IMG",format=raw,if=virtio \
   -device virtio-vga \
   -device virtio-tablet-pci \
