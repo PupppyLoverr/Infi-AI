@@ -92,6 +92,7 @@ pub fn run(
         dirty: true,
         start: Instant::now(),
         exit: false,
+        debug: std::env::var_os("COSMOS_UITK_DEBUG").is_some(),
         app: Box::new(move |ui| app(ui)),
     };
 
@@ -145,6 +146,7 @@ pub struct UiState {
     dirty: bool,
     start: Instant,
     exit: bool,
+    debug: bool,
     app: Box<dyn FnMut(&mut egui::Ui)>,
 }
 
@@ -207,6 +209,18 @@ impl UiState {
             return;
         };
         self.painter.paint(canvas, w as u32, h as u32, prims, 1.0);
+        if self.debug {
+            let covered = canvas.chunks_exact(4).filter(|px| px[3] != 0).count();
+            if covered == 0 || prims.is_empty() {
+                tracing::warn!(
+                    "uitk: transparent frame — prims={} covered_px={} size={}x{}",
+                    prims.len(),
+                    covered,
+                    w,
+                    h
+                );
+            }
+        }
         let surface = window.wl_surface();
         surface.attach(Some(buffer.wl_buffer()), 0, 0);
         surface.damage_buffer(0, 0, w, h);
@@ -352,6 +366,15 @@ impl WindowHandler for UiState {
         configure: WindowConfigure,
         _serial: u32,
     ) {
+        if self.debug {
+            tracing::info!(
+                "uitk: configure new_size={:?} states={:?} -> {}x{}",
+                configure.new_size,
+                configure.state,
+                self.width,
+                self.height
+            );
+        }
         if let (Some(w), Some(h)) = configure.new_size {
             self.width = w.get();
             self.height = h.get();
