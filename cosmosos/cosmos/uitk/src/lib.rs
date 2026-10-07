@@ -4,6 +4,7 @@
 //! and egui for widgets — rasterized by `raster::Painter` into the buffer.
 //! Apps supply `FnMut(&egui::Context)`; uitk owns the event loop.
 
+mod fonts;
 mod raster;
 pub mod theme;
 
@@ -67,6 +68,7 @@ pub fn run(
     window.commit();
 
     let ctx = egui::Context::default();
+    fonts::install(&ctx);
     theme::apply(&ctx, theme::dark_from_config());
 
     let mut state = UiState {

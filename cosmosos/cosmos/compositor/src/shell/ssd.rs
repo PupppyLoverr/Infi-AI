@@ -730,7 +730,7 @@ fn draw_title(pixmap: &mut PixmapMut<'_>, title: &str, max_w: f32, fg: Color, fo
             buffer.set_text(
                 fs,
                 title,
-                &cosmic_text::Attrs::new().family(cosmic_text::Family::SansSerif),
+                &cosmic_text::Attrs::new().family(cosmic_text::Family::Name("Inter")),
                 cosmic_text::Shaping::Advanced,
             );
             buffer.shape_until_scroll(fs, false);

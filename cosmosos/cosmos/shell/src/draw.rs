@@ -290,7 +290,7 @@ pub fn text(
     color: CtColor,
 ) {
     text_styled(
-        pixmap, x, y, max_w, line_h, font_size, content, color, false,
+        pixmap, x, y, max_w, line_h, font_size, content, color, false, UI_FAMILY,
     );
 }
 
@@ -306,10 +306,44 @@ pub fn text_bold(
     content: &str,
     color: CtColor,
 ) {
-    text_styled(pixmap, x, y, max_w, line_h, font_size, content, color, true);
+    text_styled(
+        pixmap, x, y, max_w, line_h, font_size, content, color, true, UI_FAMILY,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
+/// UI family for every shell surface: Inter first, DejaVu fallback.
+pub const UI_FAMILY: Family<'static> = Family::Name("Inter");
+
+/// Monospace family for key chords / code-ish labels.
+pub const MONO_FAMILY: Family<'static> = Family::Name("JetBrains Mono");
+
+#[allow(clippy::too_many_arguments)]
+/// Monospaced text — key chords in the cheatsheet.
+pub fn text_mono(
+    pixmap: &mut PixmapMut<'_>,
+    x: f32,
+    y: f32,
+    max_w: f32,
+    line_h: f32,
+    font_size: f32,
+    content: &str,
+    color: CtColor,
+) {
+    text_styled(
+        pixmap,
+        x,
+        y,
+        max_w,
+        line_h,
+        font_size,
+        content,
+        color,
+        false,
+        MONO_FAMILY,
+    );
+}
+
 fn text_styled(
     pixmap: &mut PixmapMut<'_>,
     x: f32,
@@ -320,6 +354,7 @@ fn text_styled(
     content: &str,
     color: CtColor,
     bold: bool,
+    family: Family<'_>,
 ) {
     FONT_SYSTEM.with(|fs| {
         SWASH_CACHE.with(|cache| {
@@ -327,7 +362,9 @@ fn text_styled(
             let mut cache = cache.borrow_mut();
             let mut buf = Buffer::new(&mut fs, Metrics::new(font_size, line_h));
             buf.set_size(&mut fs, Some(max_w.max(1.0)), Some(line_h));
-            let attrs = Attrs::new().family(Family::SansSerif);
+            // Inter when the image ships it, DejaVu otherwise — fontdb
+            // falls back per-glyph, so Name() degrades gracefully.
+            let attrs = Attrs::new().family(family);
             let attrs = if bold {
                 attrs.weight(cosmic_text::Weight::SEMIBOLD)
             } else {

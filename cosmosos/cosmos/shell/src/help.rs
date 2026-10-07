@@ -140,7 +140,7 @@ pub fn draw(state: &mut ShellState) {
             draw::fill_rect(&mut pixmap, tx, y + 20.0, tw, 1.0, sep);
             y += 8.0;
         }
-        draw::text_bold(&mut pixmap, tx, y, KEY_COL_W, 20.0, 13.0, key, fg);
+        draw::text_mono(&mut pixmap, tx, y, KEY_COL_W, 20.0, 13.0, key, fg);
         draw::text(
             &mut pixmap,
             tx + KEY_COL_W,
