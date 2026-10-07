@@ -144,6 +144,8 @@ impl Term {
         let (cw, ch) = self.cell_wh;
         let mut down = self.mouse_down;
         let mut pointer_pos = egui::Pos2::ZERO;
+        let app_cursor = self.parser.screen().application_cursor();
+        let bracketed = self.parser.screen().bracketed_paste();
         ui.ctx().input(|i| {
             pointer_pos = i.pointer.latest_pos().unwrap_or(egui::Pos2::ZERO);
             for ev in &i.events {
@@ -160,7 +162,7 @@ impl Term {
                         &mut out,
                     );
                 }
-                encode_event(ev, &mut out);
+                encode_event(ev, app_cursor, bracketed, &mut out);
             }
         });
         self.mouse_down = down;
@@ -171,11 +173,21 @@ impl Term {
     }
 }
 
-fn encode_event(ev: &egui::Event, out: &mut Vec<u8>) {
+fn encode_event(ev: &egui::Event, app_cursor: bool, bracketed: bool, out: &mut Vec<u8>) {
     use egui::Key::*;
     match ev {
         egui::Event::Text(t) => {
             out.extend_from_slice(t.as_bytes());
+        }
+        egui::Event::Paste(t) => {
+            // Honour DECSET 2004: paste wrapped in start/end markers.
+            if bracketed {
+                out.extend_from_slice(b"\x1b[200~");
+                out.extend_from_slice(t.as_bytes());
+                out.extend_from_slice(b"\x1b[201~");
+            } else {
+                out.extend_from_slice(t.as_bytes());
+            }
         }
         egui::Event::Key {
             key,
@@ -193,12 +205,12 @@ fn encode_event(ev: &egui::Event, out: &mut Vec<u8>) {
                 Backspace => out.push(0x7f),
                 Tab => out.push(b'\t'),
                 Escape => out.push(0x1b),
-                ArrowUp => out.extend_from_slice(b"\x1b[A"),
-                ArrowDown => out.extend_from_slice(b"\x1b[B"),
-                ArrowRight => out.extend_from_slice(b"\x1b[C"),
-                ArrowLeft => out.extend_from_slice(b"\x1b[D"),
-                Home => out.extend_from_slice(b"\x1b[H"),
-                End => out.extend_from_slice(b"\x1b[F"),
+                ArrowUp => out.extend_from_slice(if app_cursor { b"\x1bOA" } else { b"\x1b[A" }),
+                ArrowDown => out.extend_from_slice(if app_cursor { b"\x1bOB" } else { b"\x1b[B" }),
+                ArrowRight => out.extend_from_slice(if app_cursor { b"\x1bOC" } else { b"\x1b[C" }),
+                ArrowLeft => out.extend_from_slice(if app_cursor { b"\x1bOD" } else { b"\x1b[D" }),
+                Home => out.extend_from_slice(if app_cursor { b"\x1bOH" } else { b"\x1b[H" }),
+                End => out.extend_from_slice(if app_cursor { b"\x1bOF" } else { b"\x1b[F" }),
                 PageUp => out.extend_from_slice(b"\x1b[5~"),
                 PageDown => out.extend_from_slice(b"\x1b[6~"),
                 Insert => out.extend_from_slice(b"\x1b[2~"),
