@@ -510,6 +510,39 @@ where
                     ssd_width,
                     "cosmos: ssd window elements"
                 );
+                // Forensics for the transparent-body wedge: when the
+                // surface tree emits nothing for a window that HAS a
+                // bbox, probe the same RendererSurfaceState gates
+                // WaylandSurfaceRenderElement checks — buffer/view/
+                // surface_size/texture-for-context — to name which one
+                // silently skipped the element.
+                if window_elements.is_empty() && !window_bbox.is_empty() {
+                    if let Some(s) = self.0.wl_surface().as_deref() {
+                        smithay::wayland::compositor::with_states(s, |states| {
+                            let data = states
+                                .data_map
+                                .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>(
+                                );
+                            match data {
+                                Some(d) => {
+                                    let d = d.lock().unwrap();
+                                    let tex =
+                                        d.texture(renderer.context_id()).is_some();
+                                    tracing::warn!(
+                                        "cosmos: empty body — buffer={} view={} surface_size={:?} texture={}",
+                                        d.buffer().is_some(),
+                                        d.view().is_some(),
+                                        d.surface_size(),
+                                        tex,
+                                    );
+                                }
+                                None => {
+                                    tracing::warn!("cosmos: empty body — no RendererSurfaceState");
+                                }
+                            }
+                        });
+                    }
+                }
             }
             vec.extend(window_elements);
 
