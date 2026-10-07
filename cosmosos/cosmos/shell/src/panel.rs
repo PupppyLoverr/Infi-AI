@@ -103,7 +103,7 @@ pub fn draw(state: &mut ShellState) {
         w as i32,
         h as i32,
         stride,
-        wayland_client::protocol::wl_shm::Format::Argb8888,
+        wayland_client::protocol::wl_shm::Format::Abgr8888,
     ) else {
         tracing::warn!("panel: pool create_buffer failed");
         return;

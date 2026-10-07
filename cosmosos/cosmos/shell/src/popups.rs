@@ -47,7 +47,7 @@ pub fn draw(state: &mut ShellState) {
     let Ok((buffer, canvas)) =
         state
             .pool
-            .create_buffer(w as i32, h as i32, stride, wl_shm::Format::Argb8888)
+            .create_buffer(w as i32, h as i32, stride, wl_shm::Format::Abgr8888)
     else {
         tracing::warn!("notify: pool create_buffer failed");
         return;

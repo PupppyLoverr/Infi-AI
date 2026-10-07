@@ -201,7 +201,7 @@ impl UiState {
         let stride = w * 4;
         let Ok((buffer, canvas)) = self
             .pool
-            .create_buffer(w, h, stride, wl_shm::Format::Argb8888)
+            .create_buffer(w, h, stride, wl_shm::Format::Abgr8888)
         else {
             tracing::warn!("uitk: failed to allocate shm buffer");
             return;
