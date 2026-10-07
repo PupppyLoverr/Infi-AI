@@ -32,7 +32,23 @@ Design goal: borrow the best interaction ideas from Windows 11 and macOS and fus
 - **Rounded bottom window corners**: titlebar top corners are rounded (10px); bottom corners need per-client alpha shaping in the renderer — deferred.
 - **Blur/translucency materials (Mica/Vibrancy)**: shm buffers + llvmpipe; translucency exists only as alpha-tinted fills on our own surfaces.
 - **Snap flyout on maximize hover**: keyboard snapping (Super+arrows) already ships; flyout deferred — no fake affordances.
-- **Animations**: honour `reduce_motion`; any motion added stays <150ms and positional.
+
+## Motion & tiling
+
+- **Motion system** (`compositor/src/anim.rs`): window map/unmap fade+scale, minimize shrink-out, workspace horizontal slide, and per-surface layer entrances — launcher/assist/help fade, switcher pop, quick-settings + dock slide-up, notifications slide-right. All anims run in the render loop (no extra threads), <200ms, and honour `reduce_motion` config.
+- **Dynamic tiling** (super+T per workspace): master+stack — the first window owns the left 58% (`TILE_MASTER`), the rest stack vertically right, 8px gaps (`TILE_GAP`). New windows join the stack; closing re-flows. Opt-in per workspace, floating remains the default.
+
+## Keybind cheatsheet (super+?)
+
+- Fullscreen scrim + card listing every binding, grouped Apps / Windows / Workspaces / Session, key column in JetBrains Mono. `cosmos_ipc::KEYBINDS` is the single source of truth both sides read; Esc/Return/click dismisses; shell-initiated close round-trips `Request::ToggleHelp` so toggles can't desync (same contract as the launcher).
+
+## Typefaces
+
+- **Inter** for all shell text + window titles (`draw::UI_FAMILY`, `ssd.rs`), **JetBrains Mono** for key chords and the terminal (`draw::MONO_FAMILY`, egui `FontFamily::Monospace`). `uitk::fonts::install` registers the real faces into egui from `/usr/share/fonts` when the image ships `fonts-inter` + `fonts-jetbrains-mono`; fontdb/egui fall back to DejaVu/bundled elsewhere.
+
+## Quick Settings additions
+
+- **Theme row**: 6 accent-swatch discs (selection ring on the active preset, 22px stride) + right-edge **dark/light pill** (crescent/sun glyph) — flips `appearance` via `SetConfig` with optimistic repaint.
 
 ## Type & metrics
 
@@ -46,3 +62,5 @@ Design goal: borrow the best interaction ideas from Windows 11 and macOS and fus
 - Snap Assist input region covers only the dimmed free half below the menubar: tray/dock/snapped-window clicks pass through (the picker dismisses on the resulting focus loss) instead of being swallowed.
 - Hover parity: launcher pinned cells / RECOMMENDED rows / footer buttons highlight under the pointer (`launcher_hover`), cleared on Leave/close; dock separators: after the start glyph and between pinned apps and running extras.
 - Icon-led flyout rows: Network/Volume/Battery each carry their tray glyph at the left edge; the mute pill shows the speaker icon, not letters.
+- Extra chords: `Super+D` show desktop (minimize-all / restore same set), `Super+E` file manager, `Super+T` workspace tiling, `Super+?` cheatsheet.
+- Workspace pager digits optically centered in their cells; active workspace = accent pill with white digits.
