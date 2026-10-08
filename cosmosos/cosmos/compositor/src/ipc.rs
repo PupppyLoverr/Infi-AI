@@ -329,9 +329,34 @@ fn dispatch_request<BackendData: Backend>(
         Request::QuitSession => {
             info!("ipc: quit session requested");
             state.ipc_broadcast(&Event::SessionEnding);
-            state
-                .running
-                .store(false, std::sync::atomic::Ordering::SeqCst);
+            // SIGTERM the clients first, then stop after a short grace:
+            // a client still connected when the socket closes dies on
+            // EPIPE (xwayland-satellite panicked in v3-REPORT).
+            let me = std::process::id() as i32;
+            for client in &state.clients {
+                if let Ok(cred) = client.get_credentials(&state.display_handle) {
+                    if cred.pid > 0 && cred.pid != me {
+                        // SAFETY: kill(2) has no memory-safety preconditions.
+                        unsafe {
+                            libc::kill(cred.pid, libc::SIGTERM);
+                        }
+                    }
+                }
+            }
+            let running = state.running.clone();
+            let stop = move || running.store(false, std::sync::atomic::Ordering::SeqCst);
+            let grace = calloop::timer::Timer::from_duration(std::time::Duration::from_millis(300));
+            let stop_later = stop.clone();
+            if state
+                .handle
+                .insert_source(grace, move |_, _, _| {
+                    stop_later();
+                    calloop::timer::TimeoutAction::Drop
+                })
+                .is_err()
+            {
+                stop();
+            }
             None
         }
     }
