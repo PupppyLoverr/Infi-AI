@@ -39,6 +39,11 @@ sudo apt-get install -y --no-install-recommends \
   libxcb-keysyms1-dev libxkbcommon-x11-dev libfontconfig-dev libssl-dev \
   `# smithay pixman renderer links -lpixman-1 at build time` \
   libpixman-1-dev \
+  `# image assembly: btrfs mkfs + GRUB2-EFI grub-mkimage` \
+  btrfs-progs grub-efi-amd64-bin \
+  `# xwayland-satellite build (cargo install --git, needs pkg-config xcb)` \
+  libxcb-cursor-dev libxcb-icccm4-dev libxcb-ewmh-dev \
+  libxcb-render-util0-dev libxcb-util-dev libxcb-image0-dev \
   `# socat: QEMU monitor socket for screendump smoke tests` \
   socat
 

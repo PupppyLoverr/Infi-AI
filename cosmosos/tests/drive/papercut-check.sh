@@ -90,6 +90,35 @@ sudo -n true 2>&1 && echo "sudo: NOPASSWD ok" || echo "sudo failed"
 command -v apt-get 2>/dev/null || true
 command -v firefox-esr 2>/dev/null || true
 
+echo "==X11=="
+# Lazy-XWayland proof: satellite runs from session start, real Xwayland must
+# NOT exist until the first X11 client connects. Wait for satellite first
+# (session starts it ~7-9s in; this check runs ~5s), then ps, then xeyes.
+for _ in $(seq 1 30); do
+  pgrep -f xwayland-satellite >/dev/null 2>&1 && break
+  sleep 1
+done
+echo "-- ps BEFORE first X11 client:"
+ps -ef | grep -iE '[x]wayland|[X]wayland' || echo "(none)"
+if pgrep -x Xwayland >/dev/null 2>&1; then
+  echo "FAIL: Xwayland already running before first client"
+else
+  echo "OK: no Xwayland process before first X11 client"
+fi
+command -v xeyes >/dev/null 2>&1 && {
+  # DISPLAY must be explicit: it lives in cosmos-session's env, not profile.d,
+  # so a su -l login shell doesn't inherit it.
+  su -l cosmos -c 'DISPLAY=:0 nohup xeyes >/dev/null 2>&1 &' 2>/dev/null || true
+  echo "-- xeyes spawned as cosmos (DISPLAY=:0)"
+  sleep 4
+  pgrep -a -x xeyes || echo "xeyes not running (spawn failed)"
+  echo "-- ps AFTER first X11 client:"
+  ps -ef | grep -iE '[x]wayland|[X]wayland' || echo "(none)"
+  pgrep -x Xwayland >/dev/null 2>&1 && \
+    echo "OK: Xwayland now running (lazy-spawned by satellite)" || \
+    echo "FAIL: Xwayland still absent after xeyes"
+} || echo "xeyes missing (x11-apps not installed)"
+
 echo "==PAPERCUT-CHECK-END=="
 exec 1>&2 2>/dev/null
 cat "$OUT" > /dev/ttyS0 2>/dev/null || true
