@@ -194,3 +194,8 @@ uitk apps via config mtime (#125), agents 16px padding, Start footer
 clip fixed; greeter: blurred wallpaper + clock + initials (#126);
 press-time pointer resync + agentd scope precheck (#123); notification
 ×N coalescing (665508e).
+
+## v3 P0-P2 verification (880af4a)
+Docks/menubar/menus/clock/icons/wallpapers/ANSI verify PASS @1920x1080 (docs/evidence/v3-REPORT.md).
+FAIL: app bodies ignore appearance; menu Lock->unregistered logind; lock card invisible bricks session;
+Settings wallpaper picker no-propagation; quit_session teardown panic (server/mod.rs:802).
