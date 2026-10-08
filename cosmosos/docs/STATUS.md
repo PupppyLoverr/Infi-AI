@@ -125,6 +125,16 @@ ISO+Calamares.
   respawn was a legit session-end (greetd restarts the greeter by
   design) or a real defect — child is checking serial.log markers.
 
+## cosmos-agentd — approvals + notification actions (PR #113)
+- The freedesktop daemon now parses `actions` (key/label pairs),
+  advertises the `actions` capability, draws button pills on the card,
+  and emits `ActionInvoked`/`NotificationClosed` back to the client.
+  `urgency=critical` bypasses Focus; negative timeouts are persistent.
+- agentd `sensitive` tools no longer fail closed: the call posts a
+  Deny / Allow once / Always allow card and blocks up to 120s for the
+  user's decision (Allow-once per call; Always for the agentd's
+  lifetime; dismiss/timeout → a clear error to the agent).
+
 ## cosmos-agentd — slice A merged (PR #108)
 - `cosmos-agentd` unix-socket MCP server (JSON-RPC `initialize`/
   `tools/list`/`tools/call`): 15 real tools — `desktop.*` over the
