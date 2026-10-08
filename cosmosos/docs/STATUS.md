@@ -78,8 +78,8 @@ ISO+Calamares.
 ## What's broken / open
 - Snap Assist tray-click is fixed in code (bbox pass-through #50, clipped
   input region + dismiss-on-outside-press #51, free-half respects the left
-  rail #90); a permanent drive-harness regression test is in flight on the
-  image host.
+  rail #90); regression-covered permanently by
+  `tests/drive/assist-tray.sh` (IPC-asserted every round).
 - llvmpipe-only known limits: no live blur until the GPU shell path lands.
 
 ## Build
