@@ -55,8 +55,9 @@ dynamic island → Search-or-Ask launcher → Start panel+widgets → Control
 Centre → greetd+lock → cosmos-agentd → ISO+Calamares.
 
 ## What's broken / open
-- Snap Assist card can eat a tray click while open (assist dismiss works;
-  input-region fix in flight + drive regression test).
+- Snap Assist card could eat a tray click while open — fixed (input region
+  now clips to the free half); regression-covered by
+  `tests/drive/assist-tray.sh` (IPC-asserted every round).
 - llvmpipe-only known limits: no live blur until the GPU shell path lands.
 
 ## Build
