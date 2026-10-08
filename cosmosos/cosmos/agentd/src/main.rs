@@ -454,9 +454,11 @@ fn audit(agent: &str, tool: &str, result: &Result<Value>) {
     }
 }
 
-fn handle(stream: UnixStream) -> Result<()> {
-    let reader = BufReader::new(stream.try_clone()?);
-    let mut writer = &stream;
+fn handle<R, W>(reader: R, mut writer: W) -> Result<()>
+where
+    R: BufRead,
+    W: std::io::Write,
+{
     let mut agent: Option<Agentd> = None;
     for line in reader.lines() {
         let line = line?;
@@ -540,6 +542,15 @@ fn handle(stream: UnixStream) -> Result<()> {
 }
 
 fn main() -> Result<()> {
+    // stdio mode: agents like opencode/Claude Code spawn a command and
+    // speak MCP over stdin/stdout — same handler, no socket. Logs must
+    // stay off stdout, so tracing writes to stderr there anyway.
+    if std::env::args().any(|a| a == "--stdio") {
+        let stdin = std::io::stdin();
+        let stdout = std::io::stdout();
+        return handle(BufReader::new(stdin.lock()), stdout.lock());
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -567,7 +578,14 @@ fn main() -> Result<()> {
         match stream {
             Ok(stream) => {
                 std::thread::spawn(move || {
-                    if let Err(e) = handle(stream) {
+                    let reader = match stream.try_clone() {
+                        Ok(s) => BufReader::new(s),
+                        Err(e) => {
+                            tracing::warn!("client setup failed: {e:#}");
+                            return;
+                        }
+                    };
+                    if let Err(e) = handle(reader, &stream) {
                         tracing::debug!("client disconnected: {e:#}");
                     }
                 });
