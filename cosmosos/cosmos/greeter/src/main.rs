@@ -31,6 +31,38 @@ struct Greeter {
     working: bool,
     error: Option<String>,
     rx: Receiver<AuthOutcome>,
+    /// Active wallpaper, blurred once and painted fullscreen.
+    wallpaper: Option<egui::TextureHandle>,
+}
+
+/// Load + blur the session's active wallpaper for the login backdrop.
+fn load_wallpaper(ctx: &egui::Context) -> Option<egui::TextureHandle> {
+    let home = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into()));
+    let cfg = std::fs::read_to_string(home.join(".config/cosmos/config.json")).unwrap_or_default();
+    let name = serde_json_lenient(&cfg, "wallpaper").unwrap_or_else(|| "violet".to_string());
+    let dir = std::env::var("COSMOS_WALLPAPER_DIR")
+        .unwrap_or_else(|_| "/usr/share/cosmos/wallpapers".to_string());
+    for res in ["1920x1080", "3840x2160"] {
+        let p = std::path::Path::new(&dir).join(format!("{name}-{res}.png"));
+        if let Ok(img) = image::open(&p) {
+            let rgba = image::imageops::blur(&img.to_rgba8(), 20.0);
+            let (w, h) = rgba.dimensions();
+            let ci = egui::ColorImage::from_rgba_unmultiplied(
+                [w as usize, h as usize],
+                rgba.as_raw(),
+            );
+            return Some(ctx.load_texture("wallpaper", ci, Default::default()));
+        }
+    }
+    None
+}
+
+/// Pull `"key": "value"` out of the config without a JSON dep.
+fn serde_json_lenient(text: &str, key: &str) -> Option<String> {
+    let pat = format!("\"{key}\"");
+    let i = text.find(&pat)? + pat.len();
+    let rest = text[i..].trim_start_matches([' ', ':', '\t']);
+    rest.strip_prefix('"')?.split('"').next().map(str::to_string)
 }
 
 fn session_cmd() -> Vec<String> {
@@ -121,23 +153,39 @@ fn draw_greeter(ui: &mut egui::Ui, greeter: &mut Greeter) {
     }
 
     let rect = ui.max_rect();
+    if greeter.wallpaper.is_none() {
+        greeter.wallpaper = load_wallpaper(ui.ctx());
+    }
+    if let Some(tex) = &greeter.wallpaper {
+        ui.painter().image(
+            tex.id(),
+            rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+    }
+    // Legibility scrim over the blurred wallpaper.
     ui.painter()
-        .rect_filled(rect, egui::CornerRadius::ZERO, Color32::from_black_alpha(120));
+        .rect_filled(rect, egui::CornerRadius::ZERO, Color32::from_black_alpha(140));
 
-    // Wordmark top-center.
+    // Large clock above the card.
+    let now = time::OffsetDateTime::now_local()
+        .unwrap_or_else(|_| time::OffsetDateTime::now_utc());
+    let (hh, mm) = (now.hour(), now.minute());
+    let date = format!("{}, {} {}", now.weekday(), now.month(), now.day());
     ui.painter().text(
-        egui::Pos2::new(rect.center().x, rect.height() * 0.20),
+        egui::Pos2::new(rect.center().x, rect.height() * 0.18),
         Align2::CENTER_CENTER,
-        "Cosmos",
-        FontId::proportional(56.0),
+        format!("{hh:02}:{mm:02}"),
+        FontId::proportional(64.0),
         Color32::WHITE,
     );
     ui.painter().text(
-        egui::Pos2::new(rect.center().x, rect.height() * 0.20 + 44.0),
+        egui::Pos2::new(rect.center().x, rect.height() * 0.18 + 46.0),
         Align2::CENTER_CENTER,
-        "Sign in to start your session",
+        date,
         FontId::proportional(15.0),
-        Color32::from_white_alpha(160),
+        Color32::from_white_alpha(170),
     );
 
     let ctx = ui.ctx().clone();
@@ -158,10 +206,17 @@ fn draw_greeter(ui: &mut egui::Ui, greeter: &mut Greeter) {
                         let accent = ui.visuals().hyperlink_color;
                         painter.circle_filled(c, 30.0, accent.gamma_multiply(0.3));
                         painter.circle_stroke(c, 30.0, egui::Stroke::new(1.5, accent));
+                        // Round avatar with the user's initial, not '>'.
+                        let initial = greeter
+                            .user
+                            .chars()
+                            .next()
+                            .map(|c| c.to_ascii_uppercase())
+                            .unwrap_or('?');
                         painter.text(
                             c,
                             Align2::CENTER_CENTER,
-                            ">",
+                            initial.to_string(),
                             FontId::proportional(24.0),
                             Color32::WHITE,
                         );
@@ -241,6 +296,7 @@ fn main() -> Result<()> {
     let mut greeter = Greeter {
         user: std::env::var("COSMOS_GREETER_USER").unwrap_or_else(|_| "cosmos".into()),
         password: String::new(),
+        wallpaper: None,
         working: false,
         error: None,
         rx,

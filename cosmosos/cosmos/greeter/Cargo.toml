@@ -11,3 +11,5 @@ tracing-subscriber = { workspace = true }
 egui = { workspace = true }
 greetd_ipc = { version = "0.10", features = ["sync-codec"] }
 cosmos-uitk = { path = "../uitk" }
+image = { version = "0.25.1", default-features = false, features = ["png"] }
+time = { version = "0.3", features = ["local-offset", "formatting"] }
