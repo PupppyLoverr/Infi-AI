@@ -369,14 +369,25 @@ pub fn draw(state: &mut ShellState) {
         // magnify.
         let icon_sz = ICON_SZ + mag(dock_hover, cell_center);
         let (icx, icy) = axis_xy(pos, cell_center, STRIP as f64 / 2.0);
-        icons::icon(
-            &mut pixmap,
-            &item.icon,
-            icx as f32 - icon_sz / 2.0,
-            icy as f32 - icon_sz / 2.0,
-            icon_sz,
-            icon_color,
-        );
+        if item.icon == "start" || item.minimized {
+            icons::icon(
+                &mut pixmap,
+                &item.icon,
+                icx as f32 - icon_sz / 2.0,
+                icy as f32 - icon_sz / 2.0,
+                icon_sz,
+                icon_color,
+            );
+        } else {
+            // Full-colour squircle tile — the dock's macOS idiom.
+            icons::app_tile(
+                &mut pixmap,
+                &item.icon,
+                icx as f32 - icon_sz / 2.0,
+                icy as f32 - icon_sz / 2.0,
+                icon_sz,
+            );
+        }
         // Running indicator: a small dot on the rail's inner edge.
         if !item.windows.is_empty() {
             let dot_r = 1.8f32;
