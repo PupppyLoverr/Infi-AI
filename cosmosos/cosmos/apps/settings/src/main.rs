@@ -20,6 +20,7 @@ struct Cfg {
     launcher_rows: u32,
     accent: String,        // accent preset name (cosmos_ipc::ACCENT_PRESETS)
     dock_position: String, // "left" | "right" | "bottom"
+    wallpaper: String,     // wallpaper stem under /usr/share/cosmos/wallpapers
 }
 
 impl Default for Cfg {
@@ -32,6 +33,7 @@ impl Default for Cfg {
             launcher_rows: 10,
             accent: cosmos_ipc::DEFAULT_ACCENT.into(),
             dock_position: "left".into(),
+            wallpaper: "violet".into(),
         }
     }
 }
@@ -67,6 +69,7 @@ fn load() -> Cfg {
             "launcher_rows" => c.launcher_rows = v.parse().unwrap_or(10),
             "accent" => c.accent = v.to_string(),
             "dock_position" => c.dock_position = v.to_string(),
+            "wallpaper" => c.wallpaper = v.to_string(),
             _ => {}
         }
     }
@@ -79,8 +82,8 @@ fn save(c: &Cfg) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let text = format!(
-        "# CosmosOS configuration\nappearance = \"{}\"\nreduce_motion = {}\nscale = {}\nterminal = \"{}\"\nlauncher_rows = {}\naccent = \"{}\"\ndock_position = \"{}\"\n",
-        c.appearance, c.reduce_motion, c.scale, c.terminal, c.launcher_rows, c.accent, c.dock_position
+        "# CosmosOS configuration\nappearance = \"{}\"\nreduce_motion = {}\nscale = {}\nterminal = \"{}\"\nlauncher_rows = {}\naccent = \"{}\"\ndock_position = \"{}\"\nwallpaper = \"{}\"\n",
+        c.appearance, c.reduce_motion, c.scale, c.terminal, c.launcher_rows, c.accent, c.dock_position, c.wallpaper
     );
     std::fs::write(path, text)
 }
@@ -159,6 +162,7 @@ fn apply(app: &mut App) {
         ("launcher_rows", app.cfg.launcher_rows.into()),
         ("accent", app.cfg.accent.clone().into()),
         ("dock_position", app.cfg.dock_position.clone().into()),
+        ("wallpaper", app.cfg.wallpaper.clone().into()),
     ];
     let mut errs = Vec::new();
     for (k, v) in pairs {
@@ -172,6 +176,32 @@ fn apply(app: &mut App) {
     } else {
         app.status = "saved and applied".into();
     }
+}
+
+const WALLPAPERS: &[&str] = &["violet", "ocean", "coral", "aurora", "peach", "indigo"];
+
+thread_local! {
+    static THUMBS: std::cell::RefCell<std::collections::HashMap<String, Option<egui::TextureHandle>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// 256×144 picker thumbnail of a shipped wallpaper — decoded once.
+fn thumb(ctx: &egui::Context, stem: &str) -> Option<egui::TextureHandle> {
+    THUMBS.with(|t| {
+        t.borrow_mut()
+            .entry(stem.to_string())
+            .or_insert_with(|| {
+                let dir = std::env::var("COSMOS_WALLPAPER_DIR")
+                    .unwrap_or_else(|_| "/usr/share/cosmos/wallpapers".to_string());
+                let img = image::open(std::path::Path::new(&dir).join(format!("{stem}-1920x1080.png")))
+                    .ok()?
+                    .to_rgba8();
+                let small = image::imageops::resize(&img, 256, 144, image::imageops::FilterType::Triangle);
+                let ci = egui::ColorImage::from_rgba_unmultiplied([256, 144], small.as_raw());
+                Some(ctx.load_texture(format!("wp-{stem}"), ci, Default::default()))
+            })
+            .clone()
+    })
 }
 
 fn draw(ui: &mut egui::Ui, app: &mut App) {
@@ -234,6 +264,36 @@ fn draw(ui: &mut egui::Ui, app: &mut App) {
                     .on_hover_text(*label);
                 if resp.clicked() {
                     app.cfg.accent = (*name).into();
+                    app.dirty = true;
+                }
+            }
+        });
+
+        ui.add_space(6.0);
+        ui.label("Wallpaper");
+        ui.horizontal_wrapped(|ui| {
+            let dark = app.cfg.appearance == "dark";
+            let ring = ui.visuals().selection.stroke.color;
+            let hover = ui.visuals().widgets.hovered.bg_fill;
+            for name in WALLPAPERS {
+                let (rect, resp) =
+                    ui.allocate_exact_size(egui::vec2(128.0, 72.0), egui::Sense::click());
+                if let Some(t) = thumb(ui.ctx(), &cosmos_ipc::wallpaper_for(name, dark)) {
+                    egui::Image::from_texture(&t)
+                        .corner_radius(8)
+                        .paint_at(ui, rect);
+                }
+                let selected = app.cfg.wallpaper == *name;
+                if selected || resp.hovered() {
+                    ui.painter().rect_stroke(
+                        rect.expand(2.0),
+                        egui::CornerRadius::same(10),
+                        egui::Stroke::new(2.0, if selected { ring } else { hover }),
+                        egui::StrokeKind::Outside,
+                    );
+                }
+                if resp.on_hover_text(*name).clicked() {
+                    app.cfg.wallpaper = (*name).into();
                     app.dirty = true;
                 }
             }

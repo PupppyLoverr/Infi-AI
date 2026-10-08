@@ -1,7 +1,7 @@
 //! Generates the six CosmosOS ambient wallpapers: soft multi-stop
 //! radial blobs on a deep base, plus a ~1.5% per-pixel noise dither so
-//! smooth gradients never band. Emits PNG at 1920x1080 and 3840x2160
-//! into ../wallpapers/.
+//! smooth gradients never band. Emits `<name>` at 1920x1080 and
+//! 3840x2160 plus a pastel `<name>-light` at 1920x1080 into ../wallpapers/.
 
 use std::path::PathBuf;
 
@@ -96,6 +96,33 @@ fn noise(x: u32, y: u32, seed: u32) -> f32 {
     (v as f32 / 32767.5) - 1.0
 }
 
+/// Luminous dark variant: blooms lifted ×1.3 and pushed to full
+/// strength. Light variant: pastel base, blooms pulled 40% toward white.
+fn variant(p: &Palette, light: bool) -> Palette {
+    let lerp = |a: [f32; 3], b: [f32; 3], t: f32| {
+        [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
+    };
+    if light {
+        Palette {
+            base: lerp(p.base, [0.96, 0.95, 0.98], 0.92),
+            blooms: p
+                .blooms
+                .iter()
+                .map(|&(u, v, s, k, c)| (u, v, s * 1.1, k * 0.85, lerp(c.map(|x| (x * 1.3).min(1.0)), [1.0; 3], 0.40)))
+                .collect(),
+        }
+    } else {
+        Palette {
+            base: p.base.map(|x| x * 1.15),
+            blooms: p
+                .blooms
+                .iter()
+                .map(|&(u, v, s, k, c)| (u, v, s * 1.08, (k * 1.15).min(1.0), c.map(|x| (x * 1.3).min(1.0))))
+                .collect(),
+        }
+    }
+}
+
 fn render(name: &str, p: &Palette, w: u32, h: u32, out_dir: &PathBuf) {
     let mut img = image::RgbImage::new(w, h);
     let (wf, hf) = (w as f32, h as f32);
@@ -131,7 +158,10 @@ fn main() {
     );
     std::fs::create_dir_all(&out_dir).unwrap();
     for (name, p) in palettes() {
-        render(name, &p, 1920, 1080, &out_dir);
-        render(name, &p, 3840, 2160, &out_dir);
+        let dark = variant(&p, false);
+        render(name, &dark, 1920, 1080, &out_dir);
+        render(name, &dark, 3840, 2160, &out_dir);
+        // Light variants ship at 1080p only (loaders fall back to it).
+        render(&format!("{name}-light"), &variant(&p, true), 1920, 1080, &out_dir);
     }
 }

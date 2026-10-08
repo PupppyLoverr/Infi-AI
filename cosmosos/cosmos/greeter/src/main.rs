@@ -40,6 +40,8 @@ fn load_wallpaper(ctx: &egui::Context) -> Option<egui::TextureHandle> {
     let home = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into()));
     let cfg = std::fs::read_to_string(home.join(".config/cosmos/config.json")).unwrap_or_default();
     let name = serde_json_lenient(&cfg, "wallpaper").unwrap_or_else(|| "violet".to_string());
+    let dark = serde_json_lenient(&cfg, "appearance").as_deref() != Some("light");
+    let name = cosmos_ipc::wallpaper_for(&name, dark);
     let dir = std::env::var("COSMOS_WALLPAPER_DIR")
         .unwrap_or_else(|_| "/usr/share/cosmos/wallpapers".to_string());
     for res in ["1920x1080", "3840x2160"] {

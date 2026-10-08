@@ -302,6 +302,16 @@ pub fn set_wallpaper_accent(rgb: [u8; 3]) {
 }
 
 /// The last extracted wallpaper accent, if any.
+/// File stem for the active wallpaper in this appearance: light mode
+/// uses the pastel `<name>-light` variant shipped alongside each one.
+pub fn wallpaper_for(name: &str, dark: bool) -> String {
+    if dark || name.ends_with("-light") {
+        name.to_string()
+    } else {
+        format!("{name}-light")
+    }
+}
+
 pub fn wallpaper_accent() -> Option<[u8; 3]> {
     WALLPAPER_ACCENT.read().ok().and_then(|s| *s)
 }

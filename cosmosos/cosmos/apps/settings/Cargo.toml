@@ -9,6 +9,7 @@ version = "0.1.0"
 cosmos-uitk = { path = "../../uitk" }
 cosmos-ipc = { path = "../../ipc" }
 egui = { workspace = true }
+image = { version = "0.25.1", default-features = false, features = ["png"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = "0.1"

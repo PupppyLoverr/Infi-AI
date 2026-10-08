@@ -27,6 +27,8 @@ thread_local! {
     /// Mirror of ShellState::wallpaper so static helpers can reach it.
     static WALLPAPER: std::cell::RefCell<String> =
         const { std::cell::RefCell::new(String::new()) };
+    /// Mirror of ShellState::dark — picks the `-light` wallpaper variant.
+    static DARK: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
 }
 
 use std::{os::unix::net::UnixStream, time::Duration};
@@ -463,7 +465,8 @@ impl ShellState {
     pub fn wallpaper_name() -> String {
         // Sourced from the thread-local mirror kept in draw:: — updated
         // in apply_config alongside everything else.
-        WALLPAPER.with(|w| w.borrow().clone())
+        let name = WALLPAPER.with(|w| w.borrow().clone());
+        cosmos_ipc::wallpaper_for(&name, DARK.with(|d| d.get()))
     }
 
     pub fn create_panel(&mut self, qh: &QueueHandle<Self>) {
@@ -1079,7 +1082,9 @@ impl ShellState {
     fn apply_config(&mut self, map: serde_json::Map<String, serde_json::Value>) {
         if let Some(v) = map.get("appearance").and_then(|v| v.as_str()) {
             self.dark = v == "dark";
+            DARK.with(|d| d.set(self.dark));
             self.panel_dirty = true;
+            self.dock_dirty = true;
             self.launcher_dirty = true;
             self.notify_dirty = true;
         }
