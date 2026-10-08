@@ -26,6 +26,8 @@ struct Files {
     /// bottom bar offers Cancel/Choose (or Save). Selected paths are
     /// printed to stdout on confirm — cosmos-portal reads them.
     chooser: Option<Chooser>,
+    /// Dotfiles are hidden unless toggled with Ctrl+H.
+    show_hidden: bool,
 }
 
 struct Chooser {
@@ -95,6 +97,7 @@ impl Files {
             confirm_delete: None,
             path_edit: None,
             chooser: None,
+            show_hidden: false,
         };
         f.refresh();
         f
@@ -337,10 +340,13 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
         });
 
     egui::CentralPanel::default().show(ui, |ui| {
+        if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::H)) {
+            f.show_hidden = !f.show_hidden;
+        }
         egui::ScrollArea::vertical().show(ui, |ui| {
             egui::Grid::new("list")
                 .num_columns(4)
-                .striped(true)
+                .striped(false)
                 .min_col_width(80.0)
                 .show(ui, |ui| {
                     ui.strong("Name");
@@ -356,19 +362,22 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
                     for e in f
                         .entries
                         .iter()
+                        .filter(|e| f.show_hidden || !e.name.starts_with('.'))
                         .filter(|e| f.chooser.as_ref().map(|c| c.matches(e)).unwrap_or(true))
                     {
-                        let name = if e.is_dir {
-                            format!("{} /", e.name)
-                        } else {
-                            e.name.clone()
-                        };
+                        let kind = cosmos_uitk::icons::FileKind::of(&e.name, e.is_dir);
                         let picked = f
                             .chooser
                             .as_ref()
                             .map(|c| c.selected.contains(&e.path))
                             .unwrap_or(false);
-                        let resp = ui.selectable_label(picked, name);
+                        let resp = ui
+                            .horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
+                                cosmos_uitk::icons::show(ui, kind, 18.0);
+                                ui.selectable_label(picked, &e.name)
+                            })
+                            .inner;
                         if resp.clicked() {
                             if f.chooser.is_some() {
                                 if e.is_dir {
@@ -406,7 +415,7 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
                                 ui.close();
                             }
                         });
-                        ui.label(if e.is_dir { "folder" } else { "file" });
+                        ui.weak(kind.label());
                         ui.label(if e.is_dir {
                             String::new()
                         } else {

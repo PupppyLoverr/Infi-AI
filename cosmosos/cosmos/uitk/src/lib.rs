@@ -5,6 +5,7 @@
 //! Apps supply `FnMut(&egui::Context)`; uitk owns the event loop.
 
 pub mod fonts;
+pub mod icons;
 pub mod raster;
 pub mod theme;
 
