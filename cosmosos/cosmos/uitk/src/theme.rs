@@ -1,90 +1,61 @@
-//! Cosmos visual identity for egui apps: restrained and dark-first, with a
-//! single blue accent reserved for true active state (text selection,
-//! hyperlinks, the pressed widget) — same rule as the compositor chrome.
+//! Cosmos visual identity for egui apps — every value comes from the
+//! `cosmos-theme` tokens (spec-v3 §2): violet-tinted translucent
+//! window fill, 8/12/14 radii, 4px spacing grid, 28px rows, accent
+//! derived from the active wallpaper.
 
-use egui::{Color32, CornerRadius, Stroke, Visuals};
+use cosmos_theme::{palette, radius, space, Accent, Rgba, ROW_H};
+use egui::{Color32, CornerRadius, FontFamily, FontId, Stroke, TextStyle, Visuals};
+
+fn c32(c: Rgba) -> Color32 {
+    Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3])
+}
+
+fn rgb(c: [u8; 3]) -> Color32 {
+    Color32::from_rgb(c[0], c[1], c[2])
+}
+
+fn mix(c: Rgba, alpha: u8) -> Color32 {
+    Color32::from_rgba_unmultiplied(c[0], c[1], c[2], alpha)
+}
 
 pub fn apply(ctx: &egui::Context, dark: bool) {
-    let mut v = if dark {
-        Visuals::dark()
-    } else {
-        Visuals::light()
-    };
+    let p = palette(dark);
+    let mut v = if dark { Visuals::dark() } else { Visuals::light() };
+    let accent = Accent::new(accent_from_config(dark));
 
-    let fg = if dark {
-        Color32::from_gray(220)
-    } else {
-        Color32::from_gray(30)
-    };
-    let panel = if dark {
-        Color32::from_gray(24)
-    } else {
-        Color32::from_gray(244)
-    };
-    let window = if dark {
-        Color32::from_gray(30)
-    } else {
-        Color32::from_gray(250)
-    };
-    let extreme = if dark {
-        Color32::from_gray(16)
-    } else {
-        Color32::from_gray(236)
-    };
+    v.panel_fill = c32(p.window);
+    v.window_fill = c32(p.window);
+    v.extreme_bg_color = if dark { c32(p.base) } else { c32(p.raised) };
+    v.faint_bg_color = mix(p.text, if dark { 10 } else { 8 });
+    v.code_bg_color = c32(p.raised);
+    v.override_text_color = Some(c32(p.text));
+    v.weak_text_color = Some(c32(p.text_secondary));
+    v.hyperlink_color = rgb(accent.base);
+    v.selection.bg_fill = c32(accent.tint);
+    v.selection.stroke = Stroke::new(1.0, rgb(accent.base));
+    v.window_stroke = Stroke::new(1.0, c32(p.hairline));
 
-    v.panel_fill = panel;
-    v.window_fill = window;
-    v.extreme_bg_color = extreme;
-    v.faint_bg_color = if dark {
-        Color32::from_gray(36)
-    } else {
-        Color32::from_gray(232)
-    };
-    v.override_text_color = Some(fg);
-    // The one Cosmos accent — the active preset's colour, read from
-    // config.json so egui widgets match the shell's preset switch.
-    let [ar, ag, ab] = accent_from_config(dark);
-    let accent = Color32::from_rgb(ar, ag, ab);
-    v.hyperlink_color = accent;
-
-    // Selection carries the accent, washed out enough to keep text legible.
-    v.selection.bg_fill = if dark {
-        Color32::from_rgba_premultiplied(ar, ag, ab, 0x4D)
-    } else {
-        Color32::from_rgba_premultiplied(ar, ag, ab, 0x33)
-    };
-    v.selection.stroke = Stroke::new(1.0, accent);
-
+    let hair = c32(p.hairline);
+    let fill = mix(p.text, if dark { 18 } else { 12 });
+    let hover = mix(p.text, if dark { 28 } else { 20 });
+    v.widgets.noninteractive.bg_fill = c32(p.window);
     v.widgets.noninteractive.weak_bg_fill = Color32::TRANSPARENT;
-    v.widgets.noninteractive.bg_stroke = Stroke::new(
-        1.0,
-        if dark {
-            Color32::from_gray(52)
-        } else {
-            Color32::from_gray(210)
-        },
-    );
-    v.widgets.inactive.weak_bg_fill = if dark {
-        Color32::from_gray(46)
-    } else {
-        Color32::from_gray(226)
-    };
-    v.widgets.hovered.weak_bg_fill = if dark {
-        Color32::from_gray(58)
-    } else {
-        Color32::from_gray(216)
-    };
-    // The pressed widget gets a whisper of accent — egui's "active" state
-    // is momentary, so this stays subtle.
-    v.widgets.active.weak_bg_fill = if dark {
-        Color32::from_rgba_premultiplied(ar, ag, ab, 0x38)
-    } else {
-        Color32::from_rgba_premultiplied(ar, ag, ab, 0x28)
-    };
-    v.widgets.open.weak_bg_fill = v.widgets.hovered.weak_bg_fill;
-
-    // Widget corners soften to match the shell's rounded-card language —
-    // egui's default 2px reads sharp/technical against 12px cards.
+    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, hair);
+    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, c32(p.text_secondary));
+    v.widgets.inactive.bg_fill = fill;
+    v.widgets.inactive.weak_bg_fill = fill;
+    v.widgets.inactive.bg_stroke = Stroke::NONE;
+    v.widgets.inactive.fg_stroke = Stroke::new(1.0, c32(p.text));
+    v.widgets.hovered.bg_fill = hover;
+    v.widgets.hovered.weak_bg_fill = hover;
+    v.widgets.hovered.bg_stroke = Stroke::NONE;
+    v.widgets.hovered.fg_stroke = Stroke::new(1.0, c32(p.text));
+    // Pressed/active = accent family; focused = 2px accent ring.
+    v.widgets.active.bg_fill = rgb(accent.pressed);
+    v.widgets.active.weak_bg_fill = c32(accent.tint);
+    v.widgets.active.bg_stroke = Stroke::new(2.0, rgb(accent.base));
+    v.widgets.active.fg_stroke = Stroke::new(1.0, c32(p.text));
+    v.widgets.open = v.widgets.hovered;
     for w in [
         &mut v.widgets.noninteractive,
         &mut v.widgets.inactive,
@@ -92,26 +63,35 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
         &mut v.widgets.active,
         &mut v.widgets.open,
     ] {
-        w.corner_radius = CornerRadius::same(4);
+        w.corner_radius = CornerRadius::same(radius::CONTROL as u8);
+        w.expansion = 0.0;
     }
-    v.menu_corner_radius = CornerRadius::same(6);
-    v.window_corner_radius = CornerRadius::same(6);
+    v.menu_corner_radius = CornerRadius::same(radius::PANEL as u8);
+    v.window_corner_radius = CornerRadius::same(radius::WINDOW as u8);
     v.window_shadow = egui::Shadow::NONE;
     v.popup_shadow = egui::Shadow::NONE;
-    v.window_stroke = Stroke::new(
-        1.0,
-        if dark {
-            Color32::from_gray(58)
-        } else {
-            Color32::from_gray(200)
-        },
-    );
+    v.striped = false;
+    v.slider_trailing_fill = true;
 
     ctx.set_visuals(v);
     ctx.all_styles_mut(|style| {
-        style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-        style.spacing.button_padding = egui::vec2(8.0, 3.0);
-        style.spacing.window_margin = egui::Margin::same(10);
+        use cosmos_theme::text;
+        let f = |s: cosmos_theme::TextStyle| FontId::new(s.size, FontFamily::Proportional);
+        style.text_styles = [
+            (TextStyle::Small, f(text::CAPTION)),
+            (TextStyle::Body, f(text::BODY)),
+            (TextStyle::Button, f(text::BODY)),
+            (TextStyle::Heading, f(text::TITLE2)),
+            (TextStyle::Monospace, FontId::new(text::MONO.size, FontFamily::Monospace)),
+        ]
+        .into();
+        style.spacing.item_spacing = egui::vec2(space::S8, space::S8);
+        style.spacing.button_padding = egui::vec2(space::S12, space::S4);
+        style.spacing.interact_size.y = ROW_H;
+        style.spacing.window_margin = egui::Margin::same(space::S16 as i8);
+        style.spacing.menu_margin = egui::Margin::same(space::S8 as i8);
+        style.spacing.indent = space::S16;
+        style.spacing.text_edit_width = 240.0;
     });
 }
 
@@ -153,12 +133,23 @@ pub fn config_mtime() -> Option<std::time::SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
-/// The accent preset's rgb for this mode (Azure when unset/unknown).
+/// The accent rgb for this mode: the compositor-resolved `accent_rgb`
+/// (includes the wallpaper-extracted "auto" accent), else the preset
+/// table, else the theme fallback violet.
 pub fn accent_from_config(dark: bool) -> [u8; 3] {
     let text = config_text();
-    let name = serde_json::from_str::<serde_json::Value>(&text)
-        .ok()
-        .and_then(|v| v.get("accent")?.as_str().map(str::to_string))
-        .unwrap_or_else(|| cosmos_ipc::DEFAULT_ACCENT.to_string());
-    cosmos_ipc::accent_rgb(&name, dark)
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return cosmos_theme::ACCENT_FALLBACK;
+    };
+    let mode = if dark { "dark" } else { "light" };
+    if let Some(arr) = v.get("accent_rgb").and_then(|a| a.get(mode)).and_then(|a| a.as_array()) {
+        let c: Vec<u8> = arr.iter().filter_map(|x| x.as_u64().map(|n| n as u8)).collect();
+        if c.len() == 3 {
+            return [c[0], c[1], c[2]];
+        }
+    }
+    match v.get("accent").and_then(|a| a.as_str()) {
+        Some(name) if name != "auto" => cosmos_ipc::accent_rgb(name, dark),
+        _ => cosmos_theme::ACCENT_FALLBACK,
+    }
 }
