@@ -60,6 +60,7 @@ in QEMU with KVM. Verified on the Ubuntu 22.04 x86_64 build host
 | App installs | `sudo wget ca-certificates dbus-x11 xdg-user-dirs libfuse2t64` | `sudo` NOPASSWD for cosmos (kiosk model — locked password means prompts are unanswerable, see security.md); `wget`+TLS for fetching `.deb`/installers; `libfuse2t64` for AppImages |
 | Locale/swap | `locales systemd-zram-generator` | en_US.UTF-8 generated + `update-locale LANG=` default; zram0 compressed swap (lz4, half of RAM) activated at boot |
 | Disk/snapshots | `btrfs-progs grub-efi-amd64 snapper efibootmgr` | btrfs root + subvolumes; GRUB2-EFI; snapper `root` config on `@snapshots` (timeline on, `SNAPPER_CONFIGS="root"` in /etc/default/snapper — Debian discovers configs from that var, not the configs dir); `80snapper` apt hook pre/post snapshots; efibootmgr for the NVRAM entry |
+| Portals | `xdg-desktop-portal dbus-user-session libpipewire-0.3-0t64 libglib2.0-bin` | xdg-desktop-portal frontend (Debian ships it at `/usr/libexec/`); user session bus (`/run/user/1000/bus` via pam_systemd); pipewire runtime lib for cosmos-portal's ScreenCast dep; gdbus for portal clients |
 
 X11 comes in via **xwayland-satellite** (`xwayland` + `x11-apps` packages;
 the satellite binary itself is built on-host from upstream git — no trixie
