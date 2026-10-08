@@ -38,7 +38,10 @@ use smithay_client_toolkit::{
         },
         WaylandSurface,
     },
-    shm::{slot::SlotPool, Shm, ShmHandler},
+    shm::{
+        slot::{Buffer, SlotPool},
+        Shm, ShmHandler,
+    },
 };
 use wayland_client::{
     globals::registry_queue_init,
@@ -49,6 +52,9 @@ use wayland_client::{
     Connection, Proxy, QueueHandle,
 };
 /// MIME types we offer on copy / accept on paste — the usual text set.
+/// Double-buffering plus one spare for a frame the compositor is slow to release.
+const MAX_BUFFERS: usize = 3;
+
 const TEXT_MIMES: [&str; 4] = [
     "text/plain;charset=utf-8",
     "text/plain",
@@ -108,6 +114,7 @@ pub fn run(
         seat_state,
         output_state,
         pool,
+        buffers: Vec::new(),
         data_device_manager,
         data_devices: Vec::new(),
         cp_source: None,
@@ -169,6 +176,8 @@ pub struct UiState {
     seat_state: SeatState,
     output_state: OutputState,
     pool: SlotPool,
+    /// Frame buffers recycled across paints (at most `MAX_BUFFERS`).
+    buffers: Vec<Buffer>,
     data_device_manager: DataDeviceManagerState,
     data_devices: Vec<DataDevice>,
     /// Live copy-paste source — must stay alive or the compositor cancels
@@ -281,11 +290,31 @@ impl UiState {
         let Some(window) = &self.window else { return };
         let (w, h) = (self.width as i32, self.height as i32);
         let stride = w * 4;
-        let Ok((buffer, canvas)) = self
-            .pool
-            .create_buffer(w, h, stride, wl_shm::Format::Abgr8888)
-        else {
-            tracing::warn!("uitk: failed to allocate shm buffer");
+        // Recycle a released buffer of the current size. A fresh slot per
+        // frame fragmented the pool so it kept growing (idle terminal soak:
+        // +40% RSS, all of it shm pages). A buffer the compositor still holds
+        // has no canvas, so the displayed frame is never painted over.
+        self.buffers
+            .retain(|b| b.height() == h && b.stride() == stride);
+        let pool = &mut self.pool;
+        let idx = match self.buffers.iter().position(|b| b.canvas(pool).is_some()) {
+            Some(i) => i,
+            None => {
+                let Ok((buffer, _)) = pool.create_buffer(w, h, stride, wl_shm::Format::Abgr8888)
+                else {
+                    tracing::warn!("uitk: failed to allocate shm buffer");
+                    return;
+                };
+                if self.buffers.len() >= MAX_BUFFERS {
+                    // Busy buffers are destroyed on release, freeing the slot.
+                    self.buffers.remove(0);
+                }
+                self.buffers.push(buffer);
+                self.buffers.len() - 1
+            }
+        };
+        let buffer = &self.buffers[idx];
+        let Some(canvas) = buffer.canvas(&mut self.pool) else {
             return;
         };
         self.painter
@@ -302,11 +331,8 @@ impl UiState {
                 );
             }
         }
-        // `attach_to` marks the slot active until the server releases the
-        // buffer, so the pool never hands this memory back to a later
-        // `create_buffer` while the compositor can still read it. Dropping
-        // `buffer` afterwards is safe: it is destroyed on release, keeping
-        // the slot busy in the meantime — this is what stops `paint`'s
+        // `attach_to` marks the buffer active until the server releases it,
+        // so `canvas()` refuses it meanwhile — this is what stops `paint`'s
         // clear pass from wiping the *displayed* frame mid-repaint (the
         // transparent-body tear).
         let surface = window.wl_surface();
