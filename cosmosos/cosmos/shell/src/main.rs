@@ -1043,6 +1043,22 @@ impl ShellState {
             }
             Action::Shortcuts => self.ipc.send(&cosmos_ipc::Request::ToggleHelp),
             Action::Search => self.ipc.send(&cosmos_ipc::Request::ToggleLauncher),
+            Action::Settings => {
+                let _ = std::process::Command::new("cosmos-settings").spawn();
+            }
+            Action::Lock | Action::Logout | Action::Restart | Action::Shutdown => {
+                let key = match action {
+                    Action::Lock => "sys.lock",
+                    Action::Logout => "sys.logout",
+                    Action::Restart => "sys.reboot",
+                    _ => "sys.shutdown",
+                };
+                if let Some(app) = self.apps.iter().find(|a| a.id == key).cloned() {
+                    if let Err(err) = desktop::launch(&app) {
+                        tracing::warn!("menu: {key} failed: {err}");
+                    }
+                }
+            }
         }
     }
 

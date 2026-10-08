@@ -422,6 +422,7 @@ pub fn click(state: &mut ShellState, x: f64, _y: f64) -> bool {
     }
     // App menu titles toggle their dropdown; any other panel press
     // closes an open one.
+    let was_open = state.menu_open;
     let name = focused_app_name(state);
     if !name.is_empty() {
         for (i, (tx, tw)) in crate::menubar::title_rects(menus_x(&name))
@@ -439,7 +440,11 @@ pub fn click(state: &mut ShellState, x: f64, _y: f64) -> bool {
         state.set_menu(None, 0);
     }
     if x < LAUNCH_BTN_W {
-        state.ipc.send(&cosmos_ipc::Request::ToggleLauncher);
+        // The Cosmos mark opens the system menu; Start lives in the dock.
+        let sys = crate::menubar::SYSTEM;
+        if was_open != Some(sys) {
+            state.set_menu(Some(sys), 4);
+        }
         return true;
     }
     // Dynamic island pill — centred capsule toggles the island card.
