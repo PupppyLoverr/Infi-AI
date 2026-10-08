@@ -3,7 +3,7 @@
 # fine headless; only pointer needs QMP). RUN=1 appends Return at the end.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-MON="$ROOT/work/image/monitor.sock"
+MON="${MON_SOCK:-$ROOT/work/image/monitor.sock}"
 
 declare -A K=(
   [" "]="spc" [":"]="shift-semicolon" [";"]="semicolon" [","]="comma"

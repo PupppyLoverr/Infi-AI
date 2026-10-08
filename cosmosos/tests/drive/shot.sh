@@ -4,7 +4,7 @@
 # render blank for a frame; any keypress wakes the renderer).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-MON="$ROOT/work/image/monitor.sock"
+MON="${MON_SOCK:-$ROOT/work/image/monitor.sock}"
 DIR="${DRIVE_DIR:-$ROOT/work/drive-latest}"
 NAME="$1"
 mkdir -p "$DIR"

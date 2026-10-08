@@ -26,6 +26,16 @@
 # Display: default SDL window on the host desktop (:0). For headless CI-ish
 # runs use  DISPLAY_MODE=none ./run.sh  — the GPU device still exists in the
 # guest, the compositor still renders, and screendump still works.
+#
+# Resolution: GUEST_RES=WxH (default 1024x768) is requested via
+# virtio-vga xres/yres — the guest's EDID then advertises that mode as
+# preferred and virtio_gpu modesetting picks it up. e.g.
+#   GUEST_RES=1280x720 ./run.sh
+# Verify in-guest: cat /sys/class/drm/card0-Virtual-1/modes | head -1
+#
+# -smbios type=1,product=CosmosOS   DMI product name — makes tools that
+#   report the machine (fastfetch 'Host:', hostnamectl) say CosmosOS
+#   instead of the QEMU board name (pc-i440fx-jammy).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -59,15 +69,21 @@ case "$DISPLAY_MODE" in
   *)      DISP=(-display "$DISPLAY_MODE") ;;
 esac
 
+# GUEST_RES=WxH — advertised as the preferred EDID mode (see header note).
+# Default keeps 1024x768 so drive-harness click coordinates stay valid.
+GUEST_RES="${GUEST_RES:-1024x768}"
+RES_W="${GUEST_RES%%x*}" RES_H="${GUEST_RES##*x}"
+
 exec qemu-system-x86_64 \
   "${KVM[@]}" \
   "${CPU[@]}" \
   -m "$MEM" -smp 2 \
   -drive file="$IMG",format=raw,if=virtio \
-  -device virtio-vga \
+  -device virtio-vga,xres="$RES_W",yres="$RES_H" \
   -device virtio-tablet-pci \
   -audiodev none,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0 \
   -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
+  -smbios type=1,product=CosmosOS \
   -serial file:"$SERIAL_LOG" \
   -monitor unix:"$MON_SOCK",server,nowait \
   -qmp unix:"$QMP_SOCK",server,nowait \
