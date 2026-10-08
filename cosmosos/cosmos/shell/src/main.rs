@@ -79,7 +79,7 @@ use sysinfo::SysInfo;
 pub const PANEL_HEIGHT: u32 = 32;
 pub const NOTIFY_WIDTH: u32 = 340;
 pub const NOTIFY_TIMEOUT_MS: i64 = 5000;
-pub const LAUNCHER_WIDTH: u32 = 480;
+pub const LAUNCHER_WIDTH: u32 = 680;
 
 fn main() {
     tracing_subscriber::fmt()
