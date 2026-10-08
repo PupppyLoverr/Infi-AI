@@ -200,27 +200,31 @@ where
     // ext-session-lock: while locked only the wallpaper and the lock
     // surfaces composite — no window or layer content may leak through.
     if cosmos.session_locked {
-        let scale: smithay::utils::Scale<f64> =
-            output.current_scale().fractional_scale().into();
-        let mut elements: Vec<_> = background_element(renderer, output).into_iter().collect();
+        let scale: smithay::utils::Scale<f64> = output.current_scale().fractional_scale().into();
+        // Elements composite front-to-back: lock surfaces first, the
+        // wallpaper last — pushing it first hid the whole card behind it.
+        let mut elements = Vec::new();
         for (surface, target) in &cosmos.lock_surfaces {
             if target != output {
                 continue;
             }
-            for el in smithay::backend::renderer::element::surface::render_elements_from_surface_tree::<
-                R,
-                WaylandSurfaceRenderElement<R>,
-            >(
-                renderer,
-                surface.wl_surface(),
-                smithay::utils::Point::<i32, smithay::utils::Physical>::from((0, 0)),
-                scale,
-                1.0,
-                smithay::backend::renderer::element::Kind::Unspecified,
-            ) {
+            for el in
+                smithay::backend::renderer::element::surface::render_elements_from_surface_tree::<
+                    R,
+                    WaylandSurfaceRenderElement<R>,
+                >(
+                    renderer,
+                    surface.wl_surface(),
+                    smithay::utils::Point::<i32, smithay::utils::Physical>::from((0, 0)),
+                    scale,
+                    1.0,
+                    smithay::backend::renderer::element::Kind::Unspecified,
+                )
+            {
                 elements.push(OutputRenderElements::Layer(el));
             }
         }
+        elements.extend(background_element(renderer, output));
         return (elements, clear_color());
     }
     if let Some(window) = output
@@ -588,11 +592,7 @@ fn wallpaper_dir() -> std::path::PathBuf {
 }
 
 /// Decoded wallpaper pixels + dims keyed by filename — loaded once.
-fn wallpaper_pixels(
-    name: &str,
-    w: u32,
-    h: u32,
-) -> Option<(std::sync::Arc<Vec<u8>>, u32, u32)> {
+fn wallpaper_pixels(name: &str, w: u32, h: u32) -> Option<(std::sync::Arc<Vec<u8>>, u32, u32)> {
     use std::sync::{Mutex, OnceLock};
     static CACHE: OnceLock<
         Mutex<std::collections::HashMap<String, (std::sync::Arc<Vec<u8>>, u32, u32)>>,
