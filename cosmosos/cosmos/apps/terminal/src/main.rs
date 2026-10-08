@@ -331,10 +331,7 @@ fn draw(ui: &mut egui::Ui, term: &mut Term) {
 
         let painter = ui.painter();
         let origin = ui.cursor().min + egui::vec2(PAD, PAD);
-        let fg = ui
-            .visuals()
-            .override_text_color
-            .unwrap_or(egui::Color32::WHITE);
+        let fg = ui.visuals().text_color();
         let font = egui::FontId::monospace(FONT);
 
         let screen = term.parser.screen();
