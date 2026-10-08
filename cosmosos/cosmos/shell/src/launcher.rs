@@ -172,7 +172,9 @@ pub struct Widget {
     pub bar: Option<f32>,
 }
 
-/// Build the three Start-panel widgets from real system data.
+/// Build the Start-panel widgets: the three system widgets plus any
+/// agent-generated custom widgets under
+/// `~/.local/share/cosmos/widgets/<name>/` (widget.toml + data.sh).
 pub fn widgets(state: &ShellState) -> Vec<Widget> {
     let mut out = Vec::new();
     out.push(Widget {
@@ -220,7 +222,146 @@ pub fn widgets(state: &ShellState) -> Vec<Widget> {
             bar: Some(frac.clamp(0.0, 1.0)),
         });
     }
+    out.extend(custom_widgets());
     out
+}
+
+// ---------------- Agent-generated custom widgets ----------------
+
+/// `~/.local/share/cosmos/widgets/<name>/` → a widget defined by
+/// `widget.toml` (`title`, `icon`, `refresh_secs`) plus `data.sh`,
+/// which prints `big=`, `small=`, `bar=` (0-1) key=value lines. Runs
+/// under /bin/sh as the user, once per refresh interval — results are
+/// cached so per-frame draws never exec. A widget that fails or times
+/// out (2s) is skipped, never blanked into the panel.
+fn custom_widgets() -> Vec<Widget> {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::time::Instant;
+
+    struct Cached {
+        widget: Widget,
+        at: Instant,
+        refresh: u64,
+    }
+    static CACHE: Mutex<Option<HashMap<std::path::PathBuf, Cached>>> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap();
+    let cache = cache.get_or_insert_with(HashMap::new);
+
+    let dir = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+        .join(".local/share/cosmos/widgets");
+    let mut found = Vec::new();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return found;
+    };
+    for entry in entries.flatten() {
+        let wdir = entry.path();
+        if !wdir.is_dir() {
+            continue;
+        }
+        let meta = wdir.join("widget.toml");
+        let script = wdir.join("data.sh");
+        if !meta.is_file() || !script.is_file() {
+            continue;
+        }
+        let (title, icon, refresh) = parse_widget_meta(&meta);
+        let stale = cache
+            .get(&wdir)
+            .map(|c| c.at.elapsed().as_secs() >= c.refresh)
+            .unwrap_or(true);
+        if stale {
+            if let Some(widget) = run_widget_script(&script, icon) {
+                cache.insert(wdir.clone(), Cached { widget, at: Instant::now(), refresh });
+            }
+        }
+        if let Some(c) = cache.get(&wdir) {
+            let mut w = c.widget.clone();
+            if w.small.is_empty() && !title.is_empty() {
+                w.small = title.clone();
+            }
+            found.push(w);
+        }
+    }
+    found
+}
+
+fn parse_widget_meta(path: &std::path::Path) -> (String, &'static str, u64) {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let mut title = String::new();
+    let mut icon = "widget-clock";
+    let mut refresh = 30u64;
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        let v = v.trim().trim_matches('"');
+        match k.trim() {
+            "title" => title = v.to_string(),
+            // icons.rs glyphs agents may pick from; unknown → generic.
+            "icon" => {
+                icon = match v {
+                    "cpu" | "widget-cpu" => "widget-cpu",
+                    "disk" | "widget-disk" => "widget-disk",
+                    "clock" | "widget-clock" => "widget-clock",
+                    _ => "widget-clock",
+                }
+            }
+            "refresh_secs" | "refresh" => {
+                refresh = v.parse().unwrap_or(30).clamp(5, 3600);
+            }
+            _ => {}
+        }
+    }
+    (title, icon, refresh)
+}
+
+fn run_widget_script(script: &std::path::Path, icon: &'static str) -> Option<Widget> {
+    // Agent-generated code runs here: 2s wall-clock cap, then SIGKILL —
+    // a hung script must never stall a panel frame.
+    let mut child = std::process::Command::new("/bin/sh")
+        .arg(script)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let out = loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break child.wait_with_output().ok(),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            Err(_) => break None,
+        }
+    }?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut w = Widget {
+        icon,
+        big: String::new(),
+        small: String::new(),
+        bar: None,
+    };
+    for line in text.lines() {
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        match k.trim() {
+            "big" => w.big = v.trim().chars().take(24).collect(),
+            "small" => w.small = v.trim().chars().take(48).collect(),
+            "bar" => w.bar = v.trim().parse::<f32>().ok().map(|f| f.clamp(0.0, 1.0)),
+            _ => {}
+        }
+    }
+    (!w.big.is_empty() || !w.small.is_empty()).then_some(w)
 }
 
 fn meminfo() -> (u64, u64) {
