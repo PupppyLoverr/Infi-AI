@@ -199,3 +199,5 @@ press-time pointer resync + agentd scope precheck (#123); notification
 Docks/menubar/menus/clock/icons/wallpapers/ANSI verify PASS @1920x1080 (docs/evidence/v3-REPORT.md).
 FAIL: app bodies ignore appearance; menu Lock->unregistered logind; lock card invisible bricks session;
 Settings wallpaper picker no-propagation; quit_session teardown panic (server/mod.rs:802).
+
+- 2026-10-08 v3 fix round 2 (bd61fce+b7238f4+eb79832+40644fa, host-verified): menu Lock Screen and launcher pinned tiles now activate (pointer-leave-aware dismiss); ocean thumb applies in ~1s to config+desktop; right password unlocks back to windows; quit_session returns to greeter with zero panic lines. Idle ~484 MiB.
