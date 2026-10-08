@@ -252,11 +252,11 @@ pub fn draw(state: &mut ShellState) {
     let Some(layer) = state.launcher_surface.clone() else {
         return;
     };
-    let apps: Vec<AppEntry> = state.filtered_apps().into_iter().cloned().collect();
+    let rows = state.filtered_results();
     let pinned_apps = pinned(state);
     let rec_apps = recommended(state);
     let searching = !state.launcher_query.is_empty();
-    let n_items = apps.len().min(MAX_ROWS);
+    let n_items = rows.len().min(MAX_ROWS);
     let hover = state.launcher_hover;
     let (box_bg, sel_bg, sep, input_bg, fg, fg_dim) = theme(state.dark);
     let glyph = Color::from_rgba8(fg.r(), fg.g(), fg.b(), fg.a());
@@ -284,7 +284,7 @@ pub fn draw(state: &mut ShellState) {
 
     let left = box_left(w) as f32;
     let top = box_top(h) as f32;
-    let height = box_height(apps.len(), pinned_apps.len(), rec_apps.len(), searching) as f32;
+    let height = box_height(rows.len(), pinned_apps.len(), rec_apps.len(), searching) as f32;
     draw::shadow(
         &mut pixmap,
         left,
@@ -330,7 +330,7 @@ pub fn draw(state: &mut ShellState) {
     magnifier(&mut pixmap, field_x + 14.0, field_y + field_h / 2.0, fg_dim);
 
     let query_display = if state.launcher_query.is_empty() {
-        "Type here to search"
+        "Search or Ask — > command, ? question"
     } else {
         state.launcher_query.as_str()
     };
@@ -458,7 +458,7 @@ pub fn draw(state: &mut ShellState) {
         }
     }
 
-    // Rows — all filtered apps below the grid (or the results when searching).
+    // Rows — all results below the grid (apps/files/calc/cmd/ask).
     let rtop = rows_top(pinned_apps.len(), rec_apps.len(), searching) as f32;
     if !searching && n_items > 0 {
         section(
@@ -469,7 +469,7 @@ pub fn draw(state: &mut ShellState) {
             fg_dim,
         );
     }
-    for (idx, app) in apps.iter().take(MAX_ROWS).enumerate() {
+    for (idx, row) in rows.iter().take(MAX_ROWS).enumerate() {
         let ry = top + rtop + idx as f32 * ROW_H as f32;
         if idx == state.launcher_sel.min(n_items.saturating_sub(1)) && n_items > 0 {
             draw::fill_round_rect(
@@ -484,29 +484,37 @@ pub fn draw(state: &mut ShellState) {
         }
         icons::icon(
             &mut pixmap,
-            &icons::key_for(&app.id),
+            &row.icon,
             left + 16.0,
             ry + (ROW_H as f32 - 18.0) / 2.0,
             18.0,
-            icons::tint_for(&icons::key_for(&app.id), state.dark).unwrap_or(glyph),
+            icons::tint_for(&row.icon, state.dark).unwrap_or(glyph),
         );
+        let title: String = row.title.chars().take(34).collect();
         draw::text(
             &mut pixmap,
             left + 44.0,
             ry + (ROW_H as f32 - 18.0) / 2.0,
-            LAUNCHER_WIDTH as f32 * 0.62,
+            LAUNCHER_WIDTH as f32 * 0.52,
             18.0,
             13.0,
-            &app.name,
+            &title,
             fg,
         );
-        let hint = if app.action.is_some() {
-            "Action"
-        } else if app.terminal {
-            "Terminal"
-        } else {
-            "App"
-        };
+        if !row.sub.is_empty() {
+            let sub: String = row.sub.chars().take(24).collect();
+            let sub_x = left + 48.0 + (title.chars().count() as f32 * 7.0).min(240.0);
+            draw::text(
+                &mut pixmap,
+                sub_x,
+                ry + (ROW_H as f32 - 14.0) / 2.0,
+                LAUNCHER_WIDTH as f32 - (sub_x - left) - 74.0,
+                14.0,
+                11.0,
+                &sub,
+                fg_dim,
+            );
+        }
         draw::text(
             &mut pixmap,
             left + LAUNCHER_WIDTH as f32 - 14.0 - 60.0,
@@ -514,11 +522,11 @@ pub fn draw(state: &mut ShellState) {
             60.0,
             14.0,
             11.0,
-            hint,
+            row.hint,
             fg_dim,
         );
     }
-    if apps.is_empty() {
+    if rows.is_empty() {
         draw::text(
             &mut pixmap,
             left + 20.0,
@@ -526,13 +534,13 @@ pub fn draw(state: &mut ShellState) {
             LAUNCHER_WIDTH as f32 - 40.0,
             18.0,
             13.0,
-            "No matching applications",
+            "No results",
             fg_dim,
         );
     }
 
     // Footer (Start-style): separator + Settings / Log out buttons.
-    let fy = footer_top(h, apps.len(), pinned_apps.len(), rec_apps.len(), searching) as f32;
+    let fy = footer_top(h, rows.len(), pinned_apps.len(), rec_apps.len(), searching) as f32;
     draw::fill_rect(
         &mut pixmap,
         left + 1.0,
@@ -645,7 +653,7 @@ fn magnifier(pixmap: &mut PixmapMut<'_>, cx: f32, cy: f32, color: CtColor) {
 }
 
 pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {
-    let n = state.filtered_apps().len();
+    let n = state.filtered_results().len();
     let np = pinned(state).len();
     let searching = !state.launcher_query.is_empty();
     let nr = recommended(state).len();
@@ -678,7 +686,7 @@ pub fn key_press(state: &mut ShellState, event: KeyEvent) {
             state.launcher_dirty = true;
         }
         Keysym::Down => {
-            let n = state.filtered_apps().len();
+            let n = state.filtered_results().len();
             if n > 0 {
                 state.launcher_sel = (state.launcher_sel + 1).min(n.min(MAX_ROWS) - 1);
                 state.launcher_dirty = true;
@@ -689,7 +697,7 @@ pub fn key_press(state: &mut ShellState, event: KeyEvent) {
             state.launcher_dirty = true;
         }
         Keysym::Tab => {
-            let n = state.filtered_apps().len();
+            let n = state.filtered_results().len();
             if n > 0 {
                 state.launcher_sel = (state.launcher_sel + 1) % n.min(MAX_ROWS);
                 state.launcher_dirty = true;

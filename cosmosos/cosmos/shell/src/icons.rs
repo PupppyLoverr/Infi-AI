@@ -145,6 +145,63 @@ pub fn icon(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32, co
             rr!(pb, 5.5, 7.5, 11.5, 11.0, 2.0);
             stroke(pixmap, pb, s, w, color);
         }
+        "search-calc" => {
+            // Calculator: rounded square + 4-cell keypad.
+            rr!(pb, 4.5, 3.5, 15.0, 17.0, 2.0);
+            stroke(pixmap, pb, s, w, color);
+            let mut pb = PathBuilder::new();
+            mv!(pb, 7.5, 7.0);
+            ln!(pb, 16.5, 7.0);
+            stroke(pixmap, pb, s, w, color);
+            for (gx, gy) in [
+                (7.5f32, 11.0f32),
+                (11.0, 11.0),
+                (14.5, 11.0),
+                (7.5, 15.0),
+                (11.0, 15.0),
+                (14.5, 15.0),
+            ] {
+                let mut pb = PathBuilder::new();
+                mv!(pb, gx, gy);
+                ln!(pb, gx + 2.0, gy);
+                stroke(pixmap, pb, s, w, color);
+            }
+        }
+        "search-doc" => {
+            // Document: folded-corner page + text lines.
+            mv!(pb, 6.0, 3.5);
+            ln!(pb, 13.5, 3.5);
+            ln!(pb, 18.0, 8.0);
+            ln!(pb, 18.0, 20.5);
+            ln!(pb, 6.0, 20.5);
+            pb.close();
+            stroke(pixmap, pb, s, w, color);
+            let mut pb = PathBuilder::new();
+            mv!(pb, 13.5, 3.5);
+            ln!(pb, 13.5, 8.0);
+            ln!(pb, 18.0, 8.0);
+            stroke(pixmap, pb, s, w, color);
+            let mut pb = PathBuilder::new();
+            mv!(pb, 8.5, 12.5);
+            ln!(pb, 15.5, 12.5);
+            mv!(pb, 8.5, 15.5);
+            ln!(pb, 15.5, 15.5);
+            stroke(pixmap, pb, s, w, color);
+        }
+        "search-ask" => {
+            // Ask: chat bubble with a sparkle dot — "ask Cosmos".
+            mv!(pb, 4.0, 5.0);
+            rr!(pb, 4.0, 4.0, 16.0, 11.0, 3.0);
+            stroke(pixmap, pb, s, w, color);
+            let mut pb = PathBuilder::new();
+            mv!(pb, 8.0, 15.0);
+            ln!(pb, 8.0, 19.5);
+            ln!(pb, 12.0, 15.0);
+            stroke(pixmap, pb, s, w, color);
+            let mut pb = PathBuilder::new();
+            circle!(pb, 12.0, 9.5, 1.6);
+            fill(pixmap, pb, color);
+        }
         "cosmos-terminal" => {
             rr!(pb, 3.5, 5.0, 17.0, 14.0, 2.0);
             stroke(pixmap, pb, s, w, color);

@@ -94,7 +94,7 @@ pub fn card_height(state: &ShellState) -> u32 {
     (h + PAD) as u32
 }
 
-fn clip_row_y(state: &ShellState, i: usize) -> f64 {
+fn clip_row_y(_state: &ShellState, i: usize) -> f64 {
     PAD + HEAD_H + SEC_H + i as f64 * ROW_H
 }
 
@@ -252,7 +252,6 @@ pub fn draw(state: &mut ShellState) {
             "STAGED FILES",
             fg_dim,
         );
-        y += SEC_H;
         for (i, path) in files.iter().enumerate() {
             let ry = files_base_y + i as f64 * ROW_H;
             if hover == Some(Hit::FileRow(i)) {

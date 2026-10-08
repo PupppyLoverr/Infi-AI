@@ -7,6 +7,7 @@ mod clipwatch;
 mod desktop;
 mod dock;
 mod draw;
+mod fileindex;
 mod help;
 mod icons;
 mod ipc_client;
@@ -16,6 +17,7 @@ mod notify;
 mod panel;
 mod popups;
 mod quick;
+mod search;
 mod switcher;
 mod sysinfo;
 mod zoomflyout;
@@ -102,8 +104,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Clipboard channel — `clipwatch` readers push copied text here;
     // drop channel delivers decoded uri-lists onto `staged_files`.
+    // Index channel — the file-index thread ships its scan back here.
     let (clip_tx, clip_rx) = channel::channel::<String>();
     let (drop_tx, drop_rx) = channel::channel::<Vec<String>>();
+    let (index_tx, index_rx) = channel::channel::<Vec<(String, String)>>();
 
     let mut state = ShellState {
         registry_state: RegistryState::new(&globals),
@@ -189,6 +193,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         data_devices: Vec::new(),
         drop_tx,
         dnd_on_island: false,
+        file_index: Vec::new(),
+        index_tx,
+        index_refreshed: std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_secs(120))
+            .unwrap_or_else(std::time::Instant::now),
         exit: false,
     };
 
@@ -219,6 +228,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     handle.insert_source(clip_rx, |event, _, state| {
         if let ChannelEvent::Msg(text) = event {
             clipwatch::note_clip(state, text);
+        }
+    })?;
+    handle.insert_source(index_rx, |event, _, state| {
+        if let ChannelEvent::Msg(entries) = event {
+            state.file_index = entries;
         }
     })?;
     handle.insert_source(drop_rx, |event, _, state| {
@@ -367,6 +381,12 @@ pub struct ShellState {
     pub dnd_on_island: bool,
     /// Pointer hover inside the launcher card (cells, rows, footer).
     pub launcher_hover: Option<launcher::Hit>,
+    /// Background file index feeding Search-mode file rows.
+    pub file_index: Vec<(String, String)>,
+    /// Completed index scans arrive here from the indexer thread.
+    pub index_tx: calloop::channel::Sender<Vec<(String, String)>>,
+    /// When the index was last (re)started.
+    pub index_refreshed: std::time::Instant,
     pub notify_size: (u32, u32),
     pub quick_size: (u32, u32),
 
@@ -623,6 +643,7 @@ impl ShellState {
             self.launcher_query.clear();
             self.launcher_sel = 0;
             self.launcher_hover = None;
+            fileindex::maybe_refresh(self);
             let surface = self.compositor_state.create_surface(&self.qh);
             let layer = self.layer_shell.create_layer_surface(
                 &self.qh,
@@ -641,6 +662,12 @@ impl ShellState {
         } else {
             self.launcher_surface = None;
         }
+    }
+
+    /// Unified Search-or-Ask rows for the current query (apps, files,
+    /// calculator, commands, Ask) — see `search::results`.
+    pub fn filtered_results(&self) -> Vec<search::Row> {
+        search::results(self)
     }
 
     pub fn filtered_apps(&self) -> Vec<&AppEntry> {
@@ -681,7 +708,7 @@ impl ShellState {
             x,
             y,
             self.launcher_size,
-            self.filtered_apps().len(),
+            self.filtered_results().len(),
             launcher::pinned(self).len(),
             launcher::recommended(self).len(),
             !self.launcher_query.is_empty(),
@@ -730,18 +757,47 @@ impl ShellState {
     }
 
     pub fn launch_selected(&mut self) {
-        let apps = self.filtered_apps();
-        let idx = self.launcher_sel.min(apps.len().saturating_sub(1));
-        let Some(app) = apps.get(idx) else {
+        let rows = self.filtered_results();
+        let idx = self.launcher_sel.min(rows.len().saturating_sub(1));
+        let Some(row) = rows.get(idx).cloned() else {
             return;
         };
-        let app = (*app).clone();
-        if let Err(err) = desktop::launch(&app) {
-            tracing::warn!("launch {} failed: {err}", app.id);
-        } else {
-            self.record_launch(&app.id);
-            self.close_launcher();
+        match row.kind {
+            search::Kind::App(app) => {
+                if let Err(err) = desktop::launch(&app) {
+                    tracing::warn!("launch {} failed: {err}", app.id);
+                } else {
+                    self.record_launch(&app.id);
+                }
+            }
+            search::Kind::Calc(v) => {
+                clipwatch::set_clipboard(self, v);
+            }
+            search::Kind::Cmd(cmd) => {
+                spawn_quiet("cosmos-terminal", &["-e", &cmd]);
+            }
+            search::Kind::File(path) => {
+                // xdg-open resolves the right app; the file manager is
+                // the deterministic fallback inside its parent dir.
+                let opened = std::process::Command::new("xdg-open")
+                    .arg(&path)
+                    .spawn()
+                    .is_ok();
+                if !opened {
+                    let dir = path
+                        .rsplit_once('/')
+                        .map(|(d, _)| d)
+                        .unwrap_or("/")
+                        .to_string();
+                    spawn_quiet("cosmos-files", &[&dir]);
+                }
+            }
+            search::Kind::Ask(q) => {
+                let cmd = format!("opencode run {}", search::shell_quote(&q));
+                spawn_quiet("cosmos-terminal", &["-e", &cmd]);
+            }
         }
+        self.close_launcher();
     }
 
     /// Snap Assist picker on the free half. `fill_left` = the picker
@@ -1702,6 +1758,19 @@ impl DataDeviceHandler for ShellState {
                 let _ = tx.send(paths);
             }
         });
+    }
+}
+
+fn spawn_quiet(cmd: &str, args: &[&str]) {
+    use std::process::Stdio;
+    if let Err(e) = std::process::Command::new(cmd)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        tracing::warn!("{cmd} spawn failed: {e}");
     }
 }
 
