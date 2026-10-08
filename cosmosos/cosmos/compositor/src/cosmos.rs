@@ -1517,9 +1517,27 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 state.borrow_mut().header_bar.invalidate();
             }
         }
+        if key == "scale" {
+            self.apply_configured_scale();
+        }
         let ev = cosmos_ipc::Event::Config(self.cosmos.config.as_map());
         self.ipc_broadcast(&ev);
         Ok(())
+    }
+
+    /// Push `config.scale` to every connected output and reflow window
+    /// positions. The fractional-scale manager propagates the new
+    /// preferred scale to all surfaces on the next frame.
+    fn apply_configured_scale(&mut self) {
+        use smithay::output::Scale;
+        let scale = self.cosmos.config.scale;
+        let outputs: Vec<smithay::output::Output> = self.space.outputs().cloned().collect();
+        for output in &outputs {
+            output.change_current_state(None, None, Some(Scale::Fractional(scale)), None);
+            self.backend_data.reset_buffers(output);
+        }
+        crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
+        self.cosmos.dirty = true;
     }
 
     /// Flush queued state broadcasts and any pending client outboxes.

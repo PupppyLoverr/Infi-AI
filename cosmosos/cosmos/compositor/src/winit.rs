@@ -131,7 +131,9 @@ pub fn run_winit() {
     output.change_current_state(
         Some(mode),
         Some(Transform::Flipped180),
-        None,
+        Some(smithay::output::Scale::Fractional(
+            crate::cosmos::CosmosConfig::load().scale,
+        )),
         Some((0, 0).into()),
     );
     output.set_preferred(mode);

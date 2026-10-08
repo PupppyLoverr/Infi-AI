@@ -1050,7 +1050,15 @@ impl AnvilState<UdevData> {
             let position = (x, 0).into();
 
             output.set_preferred(wl_mode);
-            output.change_current_state(Some(wl_mode), None, None, Some(position));
+            // Honor the configured logical scale at connect time; the
+            // fractional-scale manager then pushes it to every surface.
+            let scale = self.cosmos.config.scale;
+            output.change_current_state(
+                Some(wl_mode),
+                None,
+                Some(smithay::output::Scale::Fractional(scale)),
+                Some(position),
+            );
             self.space.map_output(&output, position);
 
             output.user_data().insert_if_missing(|| UdevOutputId {
