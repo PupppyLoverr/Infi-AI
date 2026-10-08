@@ -7,6 +7,7 @@ version = "0.1.0"
 
 [dependencies]
 bitflags = "2.2.1"
+libc = "0.2"
 rand = "0.8"
 tracing = { version = "0.1.37", features = ["max_level_trace", "release_max_level_debug"] }
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }

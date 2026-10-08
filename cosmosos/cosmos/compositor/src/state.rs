@@ -19,9 +19,9 @@ use smithay::{
     delegate_input_method_manager, delegate_keyboard_shortcuts_inhibit, delegate_layer_shell,
     delegate_output, delegate_pointer_constraints, delegate_pointer_gestures,
     delegate_presentation, delegate_primary_selection, delegate_relative_pointer, delegate_seat,
-    delegate_security_context, delegate_shm, delegate_tablet_manager, delegate_text_input_manager,
-    delegate_viewporter, delegate_virtual_keyboard_manager, delegate_xdg_activation,
-    delegate_xdg_decoration, delegate_xdg_shell, delegate_session_lock,
+    delegate_security_context, delegate_session_lock, delegate_shm, delegate_tablet_manager,
+    delegate_text_input_manager, delegate_viewporter, delegate_virtual_keyboard_manager,
+    delegate_xdg_activation, delegate_xdg_decoration, delegate_xdg_shell,
     desktop::{
         space::SpaceElement,
         utils::{
@@ -77,9 +77,6 @@ use smithay::{
             SecurityContext, SecurityContextHandler, SecurityContextListenerSource,
             SecurityContextState,
         },
-        session_lock::{
-            LockSurface, SessionLockHandler, SessionLockManagerState, SessionLocker,
-        },
         selection::{
             data_device::{
                 set_data_device_focus, ClientDndGrabHandler, DataDeviceHandler, DataDeviceState,
@@ -91,6 +88,7 @@ use smithay::{
             wlr_data_control::{DataControlHandler, DataControlState},
             SelectionHandler,
         },
+        session_lock::{LockSurface, SessionLockHandler, SessionLockManagerState, SessionLocker},
         shell::{
             wlr_layer::WlrLayerShellState,
             xdg::{
@@ -146,6 +144,9 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     pub socket_name: Option<String>,
     pub display_handle: DisplayHandle,
     pub running: Arc<AtomicBool>,
+    /// Every Wayland client ever accepted (dead ones pruned on accept);
+    /// quit_session SIGTERMs the live ones before the socket closes.
+    pub clients: Vec<smithay::reexports::wayland_server::Client>,
     pub handle: LoopHandle<'static, AnvilState<BackendData>>,
 
     // desktop
@@ -577,6 +578,14 @@ impl<BackendData: Backend> FractionalScaleHandler for AnvilState<BackendData> {
 }
 delegate_fractional_scale!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
 
+impl<BackendData: Backend + 'static> AnvilState<BackendData> {
+    pub fn note_client(&mut self, client: smithay::reexports::wayland_server::Client) {
+        let dh = self.display_handle.clone();
+        self.clients.retain(|c| c.get_credentials(&dh).is_ok());
+        self.clients.push(client);
+    }
+}
+
 impl<BackendData: Backend + 'static> SecurityContextHandler for AnvilState<BackendData> {
     fn context_created(
         &mut self,
@@ -589,12 +598,13 @@ impl<BackendData: Backend + 'static> SecurityContextHandler for AnvilState<Backe
                     security_context: Some(security_context.clone()),
                     ..ClientState::default()
                 };
-                if let Err(err) = data
+                match data
                     .display_handle
                     .insert_client(client_stream, Arc::new(client_state))
                 {
-                    warn!("Error adding wayland client: {}", err);
-                };
+                    Ok(client) => data.note_client(client),
+                    Err(err) => warn!("Error adding wayland client: {}", err),
+                }
             })
             .expect("Failed to init wayland socket source");
     }
@@ -647,12 +657,13 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             let socket_name = source.socket_name().to_string_lossy().into_owned();
             handle
                 .insert_source(source, |client_stream, _, data| {
-                    if let Err(err) = data
+                    match data
                         .display_handle
                         .insert_client(client_stream, Arc::new(ClientState::default()))
                     {
-                        warn!("Error adding wayland client: {}", err);
-                    };
+                        Ok(client) => data.note_client(client),
+                        Err(err) => warn!("Error adding wayland client: {}", err),
+                    }
                 })
                 .expect("Failed to init wayland socket source");
             info!(name = socket_name, "Listening on wayland socket");
@@ -736,6 +747,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             display_handle: dh,
             socket_name,
             running: Arc::new(AtomicBool::new(true)),
+            clients: Vec::new(),
             handle,
             space: Space::default(),
             popups: PopupManager::default(),
@@ -1247,19 +1259,18 @@ impl<BackendData: Backend> SessionLockHandler for AnvilState<BackendData> {
         surface.with_pending_state(|state| state.size = Some(size));
         surface.send_configure();
         tracing::info!(?size, "cosmos: lock surface configured");
-        self.cosmos
-            .lock_surfaces
-            .push((surface.clone(), target.unwrap_or_else(|| {
+        self.cosmos.lock_surfaces.push((
+            surface.clone(),
+            target.unwrap_or_else(|| {
                 // Should not happen — fall back to the first output so the
                 // surface still lands somewhere visible.
                 self.space.outputs().next().cloned().unwrap()
-            })));
+            }),
+        ));
         let keyboard = self.seat.get_keyboard().unwrap();
         keyboard.set_focus(
             self,
-            Some(KeyboardFocusTarget::WlSurface(
-                surface.wl_surface().clone(),
-            )),
+            Some(KeyboardFocusTarget::WlSurface(surface.wl_surface().clone())),
             smithay::utils::SERIAL_COUNTER.next_serial(),
         );
     }
