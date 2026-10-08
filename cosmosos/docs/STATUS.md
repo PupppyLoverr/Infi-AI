@@ -201,3 +201,4 @@ FAIL: app bodies ignore appearance; menu Lock->unregistered logind; lock card in
 Settings wallpaper picker no-propagation; quit_session teardown panic (server/mod.rs:802).
 
 - 2026-10-08 v3 fix round 2 (bd61fce+b7238f4+eb79832+40644fa, host-verified): menu Lock Screen and launcher pinned tiles now activate (pointer-leave-aware dismiss); ocean thumb applies in ~1s to config+desktop; right password unlocks back to windows; quit_session returns to greeter with zero panic lines. Idle ~484 MiB.
+- 2026-10-08 v3 perf round @2498db6: 1366x768 verified — 5 captures clean (desktop/Start/system-menu/Settings/snapped), dock exclusive zone respected; minor: Files toolbar "New fol" clips at 640px. 30-min soak @1920x1080: compositor +1.6% RSS, shell +2.0%, files +7%, editor flat, terminal +39.9% (FAIL on strict <10% rule, +15 MB abs), zero panics. Image 2.0G real/3.0G sparse. QMP screendump renders black at 1366x768 (compositor IPC screenshots used instead).
