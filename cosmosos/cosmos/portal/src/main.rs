@@ -53,7 +53,8 @@ async fn run_request<F, Fut>(
 ) -> zbus::Result<()>
 where
     F: FnOnce() -> Fut + Send + 'static,
-    Fut: std::future::Future<Output = Result<HashMap<String, Value<'static>>, String>> + Send,
+    Fut:
+        std::future::Future<Output = Result<(u32, HashMap<String, Value<'static>>), String>> + Send,
 {
     let closed = Arc::new(Mutex::new(false));
     let request = PortalRequest {
@@ -64,17 +65,17 @@ where
 
     let conn2 = conn.clone();
     tokio::spawn(async move {
-        let results = match work().await {
-            Ok(r) => r,
+        let (response_code, results) = match work().await {
+            Ok((code, r)) => (code, r),
             Err(message) => {
                 warn!("portal request failed: {message}");
                 let mut r = HashMap::new();
                 r.insert("error".to_string(), Value::new(message));
-                r
+                (1, r)
             }
         };
         let is_closed = closed.lock().map(|f| *f).unwrap_or(false);
-        let response_code = if is_closed { 2 } else { 0 };
+        let response_code = if is_closed { 2 } else { response_code };
         match conn2
             .object_server()
             .interface::<_, PortalRequest>(path.as_str())
@@ -202,7 +203,7 @@ impl ScreenshotPortal {
                 .map_err(|e| format!("capture task: {e}"))??;
             let mut results = HashMap::new();
             results.insert("uri".to_string(), Value::new(uri));
-            Ok(results)
+            Ok((0, results))
         })
         .await
         .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
@@ -230,7 +231,7 @@ impl ScreenshotPortal {
                 // spec: color is a `(ddd)` structure, not an array
                 Value::Structure((r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0).into()),
             );
-            Ok(results)
+            Ok((0, results))
         })
         .await
         .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
@@ -251,9 +252,172 @@ async fn main() -> zbus::Result<()> {
     conn.object_server()
         .at("/org/freedesktop/portal/desktop", ScreenshotPortal)
         .await?;
+    conn.object_server()
+        .at("/org/freedesktop/portal/desktop", FileChooserPortal)
+        .await?;
 
     info!("cosmos-portal: org.freedesktop.impl.portal.desktop.cosmos up");
 
     std::future::pending::<()>().await;
     Ok(())
+}
+
+/// `COSMOS_CHOOSER_OPTS` encoded from portal `options`.
+#[derive(Debug, Clone)]
+struct ChooserOpts {
+    opts: String,
+    folder: Option<String>,
+}
+
+/// Pull the interesting bits out of a FileChooser `options` dict:
+/// `multiple`, `directory`, `filters` (glob patterns only), and
+/// `current_folder`/`current_name` for save dialogs.
+fn chooser_opts(options: &HashMap<String, Value<'_>>, mode: &str) -> ChooserOpts {
+    let get_bool = |k: &str| matches!(options.get(k), Some(Value::Bool(true)));
+    let mut parts = vec![format!("mode={mode}")];
+    if get_bool("multiple") {
+        parts.push("multiple=1".into());
+    }
+    if get_bool("directory") {
+        parts.push("directory=1".into());
+    }
+
+    // filters: a(ssas) → collect the glob strings (filtertype 0)
+    if let Some(Value::Array(filters)) = options.get("filters") {
+        let mut globs = Vec::new();
+        for f in filters.iter() {
+            if let Value::Structure(s) = f {
+                let fields = s.fields();
+                if let Some(Value::Array(kinds)) = fields.get(1) {
+                    for k in kinds.iter() {
+                        if let Value::Structure(kd) = k {
+                            let kf = kd.fields();
+                            // (u filtertype, s pattern) — 0 = glob
+                            if matches!(kf.first(), Some(Value::U32(0))) {
+                                if let Some(Value::Str(pat)) = kf.get(1) {
+                                    globs.push(pat.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if !globs.is_empty() {
+            parts.push(format!("filters={}", globs.join(",")));
+        }
+    }
+
+    if let Some(Value::Str(name)) = options.get("current_name") {
+        parts.push(format!("name={name}"));
+    }
+
+    let folder = options.get("current_folder").and_then(|v| {
+        // current_folder is ay — bytes, NUL-terminated
+        match v {
+            Value::Array(b) => {
+                let bytes: Vec<u8> = b
+                    .iter()
+                    .filter_map(|x| match x {
+                        Value::U8(n) => Some(*n),
+                        _ => None,
+                    })
+                    .collect();
+                let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
+                String::from_utf8(bytes[..end].to_vec()).ok()
+            }
+            Value::Str(s) => Some(s.to_string()),
+            _ => None,
+        }
+    });
+
+    ChooserOpts {
+        opts: parts.join(";"),
+        folder,
+    }
+}
+
+/// Run `cosmos-files --chooser` and turn its contract into portal
+/// results: stdout lines become `uris`, exit 3 = user cancelled.
+async fn run_chooser(co: ChooserOpts) -> Result<(u32, HashMap<String, Value<'static>>), String> {
+    let mut cmd = tokio::process::Command::new("cosmos-files");
+    cmd.arg("--chooser").env("COSMOS_CHOOSER_OPTS", co.opts);
+    if let Some(folder) = co.folder {
+        cmd.env("COSMOS_CHOOSER_FOLDER", folder);
+    }
+    let out = cmd
+        .output()
+        .await
+        .map_err(|e| format!("spawn cosmos-files --chooser: {e}"))?;
+
+    let mut results = HashMap::new();
+    match out.status.code() {
+        Some(0) => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let uris: Vec<String> = text
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(|l| format!("file://{l}"))
+                .collect();
+            results.insert("uris".to_string(), Value::new(uris));
+            Ok((0, results))
+        }
+        // 3 = Cancel pressed
+        Some(3) => Ok((1, results)),
+        other => Err(format!("chooser exited {other:?}")),
+    }
+}
+
+struct FileChooserPortal;
+
+#[interface(name = "org.freedesktop.impl.portal.FileChooser")]
+impl FileChooserPortal {
+    async fn open_file(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+        handle: ObjectPath<'_>,
+        app_id: String,
+        parent_window: String,
+        title: String,
+        options: HashMap<String, Value<'_>>,
+    ) -> zbus::fdo::Result<()> {
+        info!("open_file request from {app_id} ({parent_window}) {title} {options:?}");
+        let co = chooser_opts(&options, "open");
+        run_request(conn, handle, move || run_chooser(co))
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+    }
+
+    async fn save_file(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+        handle: ObjectPath<'_>,
+        app_id: String,
+        parent_window: String,
+        title: String,
+        options: HashMap<String, Value<'_>>,
+    ) -> zbus::fdo::Result<()> {
+        info!("save_file request from {app_id} ({parent_window}) {title} {options:?}");
+        let co = chooser_opts(&options, "save");
+        run_request(conn, handle, move || run_chooser(co))
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+    }
+
+    async fn save_files(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+        handle: ObjectPath<'_>,
+        app_id: String,
+        parent_window: String,
+        title: String,
+        options: HashMap<String, Value<'_>>,
+    ) -> zbus::fdo::Result<()> {
+        info!("save_files request from {app_id} ({parent_window}) {title} {options:?}");
+        let co = chooser_opts(&options, "save");
+        run_request(conn, handle, move || run_chooser(co))
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+    }
 }

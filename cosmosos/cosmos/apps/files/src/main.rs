@@ -22,6 +22,63 @@ struct Files {
     rename: Option<(PathBuf, String)>,
     confirm_delete: Option<PathBuf>,
     path_edit: Option<String>,
+    /// Portal file-chooser mode: rows select instead of opening, and a
+    /// bottom bar offers Cancel/Choose (or Save). Selected paths are
+    /// printed to stdout on confirm — cosmos-portal reads them.
+    chooser: Option<Chooser>,
+}
+
+struct Chooser {
+    /// "open" | "save"
+    mode: String,
+    multiple: bool,
+    directory: bool,
+    selected: std::collections::BTreeSet<PathBuf>,
+    save_name: String,
+    /// Glob suffixes like `*.png` from the caller's filter list —
+    /// empty means "show everything".
+    filters: Vec<String>,
+}
+
+impl Chooser {
+    fn matches(&self, e: &Entry) -> bool {
+        if e.is_dir {
+            return true;
+        }
+        self.filters.is_empty() || self.filters.iter().any(|g| glob_match(g, &e.name))
+    }
+}
+
+/// `*.ext` / `*` glob matching — enough for portal filter patterns.
+fn glob_match(pattern: &str, name: &str) -> bool {
+    if pattern == "*" || pattern == name {
+        return true;
+    }
+    if let Some(suffix) = pattern.strip_prefix('*') {
+        return name.ends_with(suffix);
+    }
+    if let Some(prefix) = pattern.strip_suffix('*') {
+        return name.starts_with(prefix);
+    }
+    false
+}
+
+/// Finish the chooser: print selected paths (one per line) and exit.
+/// Exit code 0 = chosen, 3 = cancelled — the portal maps those to
+/// Response codes 0 and 1.
+fn chooser_finish(paths: &[PathBuf]) -> ! {
+    use std::io::Write;
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    for p in paths {
+        let _ = writeln!(out, "{}", p.display());
+    }
+    let _ = out.flush();
+    std::process::exit(0);
+}
+
+fn chooser_cancel() -> ! {
+    std::process::exit(3);
 }
 
 impl Files {
@@ -37,6 +94,7 @@ impl Files {
             rename: None,
             confirm_delete: None,
             path_edit: None,
+            chooser: None,
         };
         f.refresh();
         f
@@ -132,7 +190,46 @@ fn main() {
         )
         .init();
     let mut files = Files::new();
-    if let Err(e) = cosmos_uitk::run("Files", "cosmos.files", (560, 400), move |ui| {
+    // Portal chooser mode: `cosmos-files --chooser` with options in
+    // COSMOS_CHOOSER_OPTS ("mode=open|save;multiple=1;directory=1;
+    // name=…;filters=*.png,*.jpg") and optional COSMOS_CHOOSER_FOLDER.
+    let mut title = "Files";
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--chooser") {
+        let opts = std::env::var("COSMOS_CHOOSER_OPTS").unwrap_or_default();
+        let get = |k: &str| {
+            opts.split(';')
+                .find_map(|kv| kv.strip_prefix(&format!("{k}=")))
+                .map(str::to_string)
+                .unwrap_or_default()
+        };
+        let mode = get("mode");
+        files.chooser = Some(Chooser {
+            mode: mode.clone(),
+            multiple: get("multiple") == "1",
+            directory: get("directory") == "1",
+            selected: Default::default(),
+            save_name: get("name"),
+            filters: get("filters")
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect(),
+        });
+        if let Ok(folder) = std::env::var("COSMOS_CHOOSER_FOLDER") {
+            let p = PathBuf::from(folder);
+            if p.is_dir() {
+                files.dir = p;
+                files.refresh();
+            }
+        }
+        title = if mode == "save" {
+            "Save File"
+        } else {
+            "Open File"
+        };
+    }
+    if let Err(e) = cosmos_uitk::run(title, "cosmos.files", (560, 400), move |ui| {
         draw(ui, &mut files)
     }) {
         tracing::error!("cosmos-files fatal: {e}");
@@ -184,10 +281,37 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
 
     egui::Panel::bottom("status").show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(format!("{} items", f.entries.len()));
-            ui.separator();
-            if !f.status.is_empty() {
+            if f.chooser.is_some() {
+                let dir = f.dir.clone();
+                let c = f.chooser.as_mut().unwrap();
+                if ui.button("Cancel").clicked() {
+                    chooser_cancel();
+                }
+                ui.separator();
+                if c.mode == "save" {
+                    ui.label("Name:");
+                    ui.add(egui::TextEdit::singleline(&mut c.save_name).desired_width(160.0));
+                }
                 ui.label(&f.status);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let label = if c.mode == "save" { "Save" } else { "Open" };
+                    if ui.button(label).clicked() {
+                        let paths: Vec<PathBuf> = if c.mode == "save" {
+                            vec![dir.join(c.save_name.trim())]
+                        } else if c.directory {
+                            vec![dir.clone()]
+                        } else {
+                            c.selected.iter().cloned().collect()
+                        };
+                        chooser_finish(&paths);
+                    }
+                });
+            } else {
+                ui.label(format!("{} items", f.entries.len()));
+                ui.separator();
+                if !f.status.is_empty() {
+                    ui.label(&f.status);
+                }
             }
         });
     });
@@ -225,24 +349,48 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
                     ui.strong("Modified");
                     ui.end_row();
                     let mut open_target: Option<Entry> = None;
+                    let mut toggle_target: Option<PathBuf> = None;
                     let mut delete_target: Option<PathBuf> = None;
                     let mut rename_target: Option<(PathBuf, String)> = None;
                     let mut copy_path: Option<String> = None;
-                    for e in &f.entries {
+                    for e in f
+                        .entries
+                        .iter()
+                        .filter(|e| f.chooser.as_ref().map(|c| c.matches(e)).unwrap_or(true))
+                    {
                         let name = if e.is_dir {
                             format!("{} /", e.name)
                         } else {
                             e.name.clone()
                         };
-                        let resp = ui.selectable_label(false, name);
+                        let picked = f
+                            .chooser
+                            .as_ref()
+                            .map(|c| c.selected.contains(&e.path))
+                            .unwrap_or(false);
+                        let resp = ui.selectable_label(picked, name);
                         if resp.clicked() {
-                            open_target = Some(Entry {
-                                name: e.name.clone(),
-                                path: e.path.clone(),
-                                is_dir: e.is_dir,
-                                size: e.size,
-                                modified: e.modified.clone(),
-                            });
+                            if f.chooser.is_some() {
+                                if e.is_dir {
+                                    open_target = Some(Entry {
+                                        name: e.name.clone(),
+                                        path: e.path.clone(),
+                                        is_dir: e.is_dir,
+                                        size: e.size,
+                                        modified: e.modified.clone(),
+                                    });
+                                } else {
+                                    toggle_target = Some(e.path.clone());
+                                }
+                            } else {
+                                open_target = Some(Entry {
+                                    name: e.name.clone(),
+                                    path: e.path.clone(),
+                                    is_dir: e.is_dir,
+                                    size: e.size,
+                                    modified: e.modified.clone(),
+                                });
+                            }
                         }
                         resp.context_menu(|ui| {
                             if ui.button("Copy path").clicked() {
@@ -266,6 +414,20 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
                         });
                         ui.label(&e.modified);
                         ui.end_row();
+                    }
+                    if let Some(p) = toggle_target {
+                        if let Some(c) = &mut f.chooser {
+                            if !c.directory {
+                                if c.multiple {
+                                    if !c.selected.remove(&p) {
+                                        c.selected.insert(p);
+                                    }
+                                } else {
+                                    c.selected.clear();
+                                    c.selected.insert(p);
+                                }
+                            }
+                        }
                     }
                     if let Some(e) = open_target {
                         f.open(&e);
