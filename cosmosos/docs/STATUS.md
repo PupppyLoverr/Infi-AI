@@ -36,6 +36,13 @@ via text/uri-list drops; uitk apps publish/consume a real clipboard
 (PR #102): unified rows — apps, file index hits (bg thread over
 ~/Documents etc, 20k cap), live calculator, `>` run commands, `?` Ask
 (opencode) — kind icons + subtitles + Enter/click activate.
+Start widgets (PR #103): the idle launcher view is a true Start panel —
+PINNED grid + RECOMMENDED + WIDGETS (Clock / System / Storage cards with
+live /proc + statvfs data) + footer; result rows only while searching.
+Control Centre (PR #104): Quick Settings becomes grouped macOS modules —
+connectivity+sound and appearance+focus cards — plus a real Focus
+(Do-Not-Disturb) toggle that suppresses notification popups and shows a
+moon in the menubar tray.
 
 **cosmos-portal** (`cosmos/portal`) — xdg-desktop-portal backend
 `org.freedesktop.impl.portal.desktop.cosmos`: Screenshot (compositor IPC →
@@ -81,7 +88,8 @@ the Lite fallback. Disk layout is GPT + btrfs subvolumes + snapper (done,
 PR #97). Dock is left-edge vertical (done, PR #90). Feature ladder: zoom
 flyout (done, PR #99) → dynamic island (done, PR #101 — guest
 verification in flight) → Search-or-Ask (done, PR #102) → Start
-panel+widgets → Control Centre → greetd+lock → cosmos-agentd →
+panel+widgets (done, PR #103) → Control Centre (done, PR #104) →
+greetd+lock → cosmos-agentd →
 ISO+Calamares.
 
 ## What's broken / open
