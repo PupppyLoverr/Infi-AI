@@ -16,9 +16,11 @@
 //!  - Every call is appended to `~/.local/share/cosmos/agent-audit/`
 //!    as JSONL (spec §6.8).
 //!
-//! Approvals (spec §6.6) and sandboxed agent identities (§6.3) are
-//! later slices — a tool listed in the policy's `sensitive` array is
-//! denied outright until the approval flow lands.
+//! Approvals (spec §6.6): a tool listed in the policy's `sensitive`
+//! array pauses the call and posts a Deny / Allow once / Always allow
+//! card over org.freedesktop.Notifications; Allow-once is per call and
+//! Always is remembered for this agentd's lifetime. Sandboxed agent
+//! identities (§6.3) are a later slice.
 
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -30,12 +32,26 @@ use anyhow::{bail, Context, Result};
 use cosmos_ipc::{Event, Request};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use std::collections::HashSet;
 
 fn runtime_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
         return PathBuf::from(dir);
     }
     PathBuf::from("/tmp")
+}
+
+#[derive(PartialEq)]
+enum Perm {
+    Allowed,
+    Sensitive,
+}
+
+#[derive(PartialEq)]
+enum Decision {
+    Once,
+    Always,
+    Denied,
 }
 
 fn socket_path() -> PathBuf {
@@ -57,9 +73,12 @@ struct Policy {
     write_roots: Vec<PathBuf>,
     /// Tool allowlist; empty = all tools.
     tools: Vec<String>,
-    /// Tools that must be approval-gated. Until approvals land these
-    /// are denied with a clear reason (fail closed, spec §6.6).
+    /// Tools that must be approval-gated (spec §6.6): each call pauses
+    /// until the user clicks Allow/Deny on the notification card.
     sensitive: Vec<String>,
+    /// Tools approved "always" this session (not persisted to disk).
+    #[serde(skip)]
+    approved: HashSet<String>,
 }
 
 impl Default for Policy {
@@ -69,6 +88,7 @@ impl Default for Policy {
             write_roots: Vec::new(),
             tools: Vec::new(),
             sensitive: Vec::new(),
+            approved: HashSet::new(),
         }
     }
 }
@@ -91,14 +111,17 @@ impl Policy {
         policy
     }
 
-    fn tool_allowed(&self, name: &str) -> Result<()> {
+    fn tool_perm(&self, name: &str) -> Result<Perm> {
+        if self.approved.contains(name) {
+            return Ok(Perm::Allowed);
+        }
         if self.sensitive.iter().any(|t| t == name) {
-            bail!("tool `{name}` is marked sensitive and requires approval flow (not yet implemented)");
+            return Ok(Perm::Sensitive);
         }
         if !self.tools.is_empty() && !self.tools.iter().any(|t| t == name) {
             bail!("tool `{name}` is not in this agent's policy allowlist");
         }
-        Ok(())
+        Ok(Perm::Allowed)
     }
 
     /// `dir` must live under one of `roots` (after canonicalizing the
@@ -237,8 +260,106 @@ impl Agentd {
         }
     }
 
+    /// Post a persistent, urgency=critical notification card with
+    /// Deny / Allow once / Always allow buttons and block up to 120s for
+    /// the user's ActionInvoked (or NotificationClosed = Deny). spec §6.6.
+    fn approve(&self, tool: &str, args: &Map<String, Value>) -> Result<Decision> {
+        use zbus::blocking::{Connection, Proxy};
+        let conn = Connection::session()
+            .context("no session bus — cannot show the approval card")?;
+        let proxy = Proxy::new(
+            &conn,
+            "org.freedesktop.Notifications",
+            "/org/freedesktop/Notifications",
+            "org.freedesktop.Notifications",
+        )?;
+        // Subscribe BEFORE Notify so the reply can't race past us.
+        let mut invoked = proxy.receive_signal("ActionInvoked")?;
+        let mut closed = proxy.receive_signal("NotificationClosed")?;
+
+        let mut summary = format!("{} wants {}", self.agent, tool);
+        if summary.len() > 80 {
+            summary.truncate(77);
+            summary.push('…');
+        }
+        let mut body = serde_json::to_string(args).unwrap_or_default();
+        if body.len() > 160 {
+            body.truncate(157);
+            body.push('…');
+        }
+        let actions = vec![
+            "deny".to_string(),
+            "Deny".to_string(),
+            "allow".to_string(),
+            "Allow once".to_string(),
+            "always".to_string(),
+            "Always allow".to_string(),
+        ];
+        let mut hints = std::collections::HashMap::new();
+        hints.insert("urgency", zbus::zvariant::Value::U8(2));
+        let want_id: u32 = proxy.call(
+            "Notify",
+            &(
+                "Cosmos Agents",
+                0u32,
+                "",
+                summary.as_str(),
+                body.as_str(),
+                actions,
+                hints,
+                -1i32,
+            ),
+        )?;
+
+        let (tx, rx) = std::sync::mpsc::channel::<(u32, Option<String>)>();
+        {
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                while let Some(sig) = invoked.next() {
+                    if let Ok((id, key)) = sig.body().deserialize::<(u32, String)>() {
+                        let _ = tx.send((id, Some(key)));
+                    }
+                }
+            });
+        }
+        std::thread::spawn(move || {
+            while let Some(sig) = closed.next() {
+                if let Ok((id, _reason)) = sig.body().deserialize::<(u32, u32)>() {
+                    let _ = tx.send((id, None));
+                }
+            }
+        });
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        loop {
+            let left = deadline
+                .checked_duration_since(std::time::Instant::now())
+                .context("approval timed out — treated as Deny")?;
+            match rx.recv_timeout(left) {
+                Ok((id, key)) if id == want_id => {
+                    return Ok(match key.as_deref() {
+                        Some("allow") => Decision::Once,
+                        Some("always") => Decision::Always,
+                        _ => Decision::Denied,
+                    });
+                }
+                Ok(_) => continue, // another client's notification — keep waiting
+                Err(_) => bail!("approval timed out — treated as Deny"),
+            }
+        }
+    }
+
     fn call(&mut self, name: &str, args: &Map<String, Value>) -> Result<Value> {
-        self.policy.tool_allowed(name)?;
+        if self.policy.tool_perm(name)? == Perm::Sensitive {
+            match self.approve(name, args) {
+                Ok(Decision::Always) => {
+                    self.policy.approved.insert(name.to_string());
+                }
+                Ok(Decision::Once) => {}
+                Ok(Decision::Denied) => bail!("tool `{name}` denied by user"),
+                Err(e) => bail!("tool `{name}` needs approval but no decision arrived: {e:#}"),
+            }
+        }
         let get = |key: &str| -> Result<&Value> {
             args.get(key).with_context(|| format!("missing argument `{key}`"))
         };
