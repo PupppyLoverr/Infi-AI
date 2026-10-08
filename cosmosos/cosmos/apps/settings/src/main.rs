@@ -146,6 +146,23 @@ fn main() {
     }
 }
 
+/// Picker click: save, then push only `wallpaper`, off the UI thread.
+/// `push` waits out its 500ms read timeout (SetConfig has no success
+/// ack), so `apply()`'s eight pushes froze the window for ~4s per click.
+fn apply_wallpaper(app: &mut App) {
+    if let Err(e) = save(&app.cfg) {
+        app.status = format!("save failed: {e}");
+        return;
+    }
+    let value: serde_json::Value = app.cfg.wallpaper.clone().into();
+    std::thread::spawn(move || {
+        if let Err(e) = push("wallpaper", value) {
+            tracing::warn!("wallpaper push: {e}");
+        }
+    });
+    app.status = "wallpaper applied".into();
+}
+
 fn apply(app: &mut App) {
     match save(&app.cfg) {
         Ok(()) => app.status = "saved".into(),
@@ -193,10 +210,12 @@ fn thumb(ctx: &egui::Context, stem: &str) -> Option<egui::TextureHandle> {
             .or_insert_with(|| {
                 let dir = std::env::var("COSMOS_WALLPAPER_DIR")
                     .unwrap_or_else(|_| "/usr/share/cosmos/wallpapers".to_string());
-                let img = image::open(std::path::Path::new(&dir).join(format!("{stem}-1920x1080.png")))
-                    .ok()?
-                    .to_rgba8();
-                let small = image::imageops::resize(&img, 256, 144, image::imageops::FilterType::Triangle);
+                let img =
+                    image::open(std::path::Path::new(&dir).join(format!("{stem}-1920x1080.png")))
+                        .ok()?
+                        .to_rgba8();
+                let small =
+                    image::imageops::resize(&img, 256, 144, image::imageops::FilterType::Triangle);
                 let ci = egui::ColorImage::from_rgba_unmultiplied([256, 144], small.as_raw());
                 Some(ctx.load_texture(format!("wp-{stem}"), ci, Default::default()))
             })
@@ -292,9 +311,11 @@ fn draw(ui: &mut egui::Ui, app: &mut App) {
                         egui::StrokeKind::Outside,
                     );
                 }
+                // A picker click applies at once (like macOS) — the ring
+                // alone moving while the desktop stays put read as broken.
                 if resp.on_hover_text(*name).clicked() {
                     app.cfg.wallpaper = (*name).into();
-                    app.dirty = true;
+                    apply_wallpaper(app);
                 }
             }
         });
