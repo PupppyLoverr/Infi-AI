@@ -6,7 +6,7 @@
 use cosmic_text::Color as CtColor;
 use tiny_skia::{Color, PixmapMut};
 
-use crate::{draw, icons, ShellState};
+use crate::{draw, glass, icons, ShellState};
 
 const LAUNCH_BTN_W: f64 = 46.0;
 const APP_NAME_X: f64 = 54.0;
@@ -113,7 +113,8 @@ pub fn draw(state: &mut ShellState) {
     let Some(mut pixmap) = PixmapMut::from_bytes(canvas, w, h) else {
         return;
     };
-    pixmap.fill(bg);
+    pixmap.fill(Color::TRANSPARENT);
+    glass::fill_glass(&mut pixmap, &crate::ShellState::wallpaper_name(), 0.0, 0.0, w as f32, h as f32, 0.0, 0.0, 0.0, state.dark, bg);
 
     // Cosmos mark — the launcher button.
     if hov && hx < LAUNCH_BTN_W {

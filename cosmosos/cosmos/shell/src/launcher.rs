@@ -11,7 +11,7 @@ use smithay_client_toolkit::{
 use tiny_skia::{Color, PathBuilder, PixmapMut, Stroke, Transform};
 use wayland_client::protocol::wl_shm;
 
-use crate::{desktop::AppEntry, dock, draw, icons, ShellState, LAUNCHER_WIDTH};
+use crate::{desktop::AppEntry, dock, draw, glass, icons, ShellState, LAUNCHER_WIDTH};
 
 const INPUT_H: f64 = 48.0;
 const ROW_H: f64 = 36.0;
@@ -549,13 +549,17 @@ pub fn draw(state: &mut ShellState) {
         height,
         CARD_R,
     );
-    draw::fill_round_rect(
+    glass::fill_glass(
         &mut pixmap,
+        &crate::ShellState::wallpaper_name(),
         left,
         top,
         LAUNCHER_WIDTH as f32,
         height,
         CARD_R,
+        left,
+        top,
+        state.dark,
         box_bg,
     );
     draw::stroke_round_rect(

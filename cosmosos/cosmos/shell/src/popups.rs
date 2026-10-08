@@ -6,7 +6,7 @@ use smithay_client_toolkit::shell::WaylandSurface;
 use tiny_skia::{Color, PixmapMut};
 use wayland_client::protocol::wl_shm;
 
-use crate::{draw, icons, notify::Notification, ShellState, NOTIFY_WIDTH};
+use crate::{draw, glass, icons, notify::Notification, ShellState, NOTIFY_WIDTH};
 
 const CARD_H: u32 = 76;
 const ACT_H: u32 = 34;
@@ -103,7 +103,7 @@ pub fn draw(state: &mut ShellState) {
         let ch = card_h(n) as f32;
         // Rounded card — the drop shadow comes from the compositor's
         // layer decal, so the card itself only needs fill + hairline.
-        draw::fill_round_rect(&mut pixmap, 0.0, y, NOTIFY_WIDTH as f32, ch, 12.0, card);
+        glass::fill_glass(&mut pixmap, &crate::ShellState::wallpaper_name(), 0.0, y, NOTIFY_WIDTH as f32, ch, 12.0, (state.panel_size.0 as f32 - NOTIFY_WIDTH as f32 - 8.0).max(0.0), crate::PANEL_HEIGHT as f32 + 8.0 + y, state.dark, card);
         draw::stroke_round_rect(
             &mut pixmap,
             0.5,
