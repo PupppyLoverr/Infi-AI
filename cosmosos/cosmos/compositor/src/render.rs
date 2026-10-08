@@ -618,6 +618,9 @@ fn wallpaper_pixels(
     if let Some(rgb) = dominant_saturated(&img) {
         cosmos_ipc::set_wallpaper_accent(rgb);
         tracing::info!(?rgb, wallpaper = %name, "cosmos: wallpaper accent extracted");
+        // Re-persist config.json so its `accent_rgb` carries the new
+        // auto accent to out-of-process uitk apps (mtime → re-theme).
+        crate::cosmos::CosmosConfig::load().save();
     }
     let (iw, ih) = (img.width(), img.height());
     let entry = (std::sync::Arc::new(img.into_raw()), iw, ih);

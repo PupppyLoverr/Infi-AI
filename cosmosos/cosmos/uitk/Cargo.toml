@@ -11,6 +11,7 @@ wayland-client = "0.31"
 calloop = { version = "0.14", features = ["executor"] }
 calloop-wayland-source = "0.4"
 cosmos-ipc = { path = "../ipc" }
+cosmos-theme = { path = "../theme" }
 serde_json = { workspace = true }
 egui = { workspace = true }
 tracing = "0.1"

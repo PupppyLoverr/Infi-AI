@@ -117,7 +117,9 @@ impl CosmosConfig {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        match serde_json::to_string_pretty(self) {
+        // Persist the resolved accent rgbs too, so out-of-process uitk
+        // apps get the wallpaper-extracted "auto" accent.
+        match serde_json::to_string_pretty(&serde_json::Value::Object(self.as_map())) {
             Ok(text) => {
                 if let Err(err) = std::fs::write(&path, text) {
                     warn!(?path, "failed to persist cosmos config: {err}");

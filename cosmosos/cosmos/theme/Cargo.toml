@@ -1,0 +1,8 @@
+[package]
+name = "cosmos-theme"
+description = "CosmosOS design tokens — one source of truth for uitk, shell, compositor chrome and greeter"
+edition = "2021"
+license = "MIT"
+version = "0.1.0"
+
+[dependencies]
