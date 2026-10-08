@@ -125,6 +125,15 @@ ISO+Calamares.
   respawn was a legit session-end (greetd restarts the greeter by
   design) or a real defect — child is checking serial.log markers.
 
+## cosmos-agents — the Agents app (PR #114)
+- `cosmos-agents` (uitk): agent list from `~/.config/cosmos/agents/*.toml`
+  + audit-only agents (flagged "default policy"), parsed policy detail,
+  live audit feed per agent (latest 200, errors red, 3s refresh), and a
+  snapper rollback pane via `pkexec snapper -c root rollback <n>`.
+- Image wiring needed: add `cosmos-agents` to the build loop + install
+  line in `image/build.sh`; a polkit rule for `pkexec snapper` as the
+  cosmos user; `.desktop` lands via the existing glob.
+
 ## cosmos-agentd — approvals + notification actions (PR #113)
 - The freedesktop daemon now parses `actions` (key/label pairs),
   advertises the `actions` capability, draws button pills on the card,
