@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# inject-lock-check.sh — install tests/drive/lock-check.sh into a
+# CosmosOS raw image plus a systemd oneshot that runs it at boot.
+# Mirrors inject-island-check.sh (GPT/btrfs @ layout, serial-getty mask).
+#
+# Usage: tests/drive/inject-lock-check.sh [IMAGE] [--remove]
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+RAW="${1:-$ROOT/dist/cosmosos-x86_64.raw}"
+case "$RAW" in --*) RAW="$ROOT/dist/cosmosos-x86_64.raw"; shift;; esac
+REMOVE=0; { [ "${1:-}" = "--remove" ] || [ "${2:-}" = "--remove" ]; } && REMOVE=1
+
+LOOP=$(sudo losetup -fP --show "$RAW")
+trap 'sudo umount /mnt 2>/dev/null; sudo losetup -d "$LOOP" 2>/dev/null' EXIT
+sudo mount -o subvol=@ "${LOOP}p2" /mnt
+
+if [ "$REMOVE" = 1 ]; then
+    sudo rm -f /mnt/usr/local/sbin/lock-check.sh \
+              /mnt/etc/systemd/system/lock-check.service \
+              /mnt/etc/systemd/system/multi-user.target.wants/lock-check.service
+    echo "removed lock-check"
+    exit 0
+fi
+
+sudo install -m 0755 "$ROOT/tests/drive/lock-check.sh" /mnt/usr/local/sbin/lock-check.sh
+sudo mkdir -p /mnt/etc/systemd/system/multi-user.target.wants
+sudo ln -sf /dev/null /mnt/etc/systemd/system/serial-getty@ttyS0.service
+sudo tee /mnt/etc/systemd/system/lock-check.service >/dev/null <<'EOF'
+[Unit]
+Description=Verify greetd + session lock via QMP inputs
+After=multi-user.target
+After=systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/lock-check.sh
+StandardOutput=null
+TimeoutStartSec=600
+EOF
+sudo ln -sf ../lock-check.service /mnt/etc/systemd/system/multi-user.target.wants/lock-check.service
+echo "injected lock-check into $RAW"

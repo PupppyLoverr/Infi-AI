@@ -1,0 +1,28 @@
+==LOCK-CHECK==
+utc=2026-10-08T06:26:53Z
+PASS: cosmos session up through greetd (ipc sock after 22s)
+==LOCK-READY==
+==AGENTD==
+PASS: /run/user/1000/cosmos-agentd.sock present
+  srwx------ 1 cosmos cosmos 0 Oct  8 06:26 /run/user/1000/cosmos-agentd.sock
+  mcp: {"id":1,"jsonrpc":"2.0","result":{"agent":"test-agent","capabilities":{"tools":{}},"protocolVersion":"2024-11-05","serverInfo":{"name":"cosmos-agentd","version":"0.1.0"}}}
+  mcp: {"id":2,"jsonrpc":"2.0","result":{"tools":[{"description":"List all windows: id, title, app_id, workspace, geometry, state.","inputSchema":{"properties":{},"type":"object"},"name":"desktop.windows.list"},{"description":"Focus a window by id.","inputSchema":{"properties":{"id":{"type":"integer"}},"type":"object"},"name":"desktop.windows.focus"},{"description":"Politely close a window by id.","inputSchema":{"properties":{"id":{"type":"integer"}},"type":"object"},"name":"desktop.windows.close"},{"description":"Snap a window into a named zone (left/right/top/bottom/quarters/…).","inputSchema":{"properties":{"id":{"type":"integer"},"zone":{"type":"string"}},"type":"object"},"name":"desktop.windows.snap"},{"description":"Move a window to a 0-based workspace index.","inputSchema":{"properties":{"id":{"type":"integer"},"workspace":{"type":"integer"}},"type":"object"},"name":"desktop.windows.move_workspace"},{"description":"List workspaces: index, focused flag, window count.","inputSchema":{"properties":{},"type":"object"},"name":"desktop.workspaces.list"},{"description":"Switch the active workspace.","inputSchema":{"properties":{"workspace":{"type":"integer"}},"type":"object"},"name":"desktop.workspaces.switch"},{"description":"Launch a command on the desktop (app binary or shell line).","inputSchema":{"properties":{"command":{"type":"string"}},"type":"object"},"name":"desktop.launch"},{"description":"Capture the primary output to a PNG under ~/Agents/<agent>/shots/. Permission-gated.","inputSchema":{"properties":{"name":{"type":"string"}},"type":"object"},"name":"desktop.screenshot"},{"description":"Read all CosmosOS settings (or pass key to read one).","inputSchema":{"properties":{"key":{"type":"string"}},"type":"object"},"name":"system.settings.get"},{"description":"Write a CosmosOS setting (persisted by the compositor).","inputSchema":{"properties":{"key":{"type":"string"},"value":{"type":"string"}},"type":"object"},"name":"system.settings.set"},{"description":"Read a file under the agent's read roots.","inputSchema":{"properties":{"path":{"type":"string"}},"type":"object"},"name":"files.read"},{"description":"Write a file under the agent's write roots.","inputSchema":{"properties":{"content":{"type":"string"},"path":{"type":"string"}},"type":"object"},"name":"files.write"},{"description":"Search file names under a read root (substring match).","inputSchema":{"properties":{"query":{"type":"string"},"root":{"type":"string"}},"type":"object"},"name":"files.search"},{"description":"Move/rename a file; destination must stay inside write roots.","inputSchema":{"properties":{"from":{"type":"string"},"to":{"type":"string"}},"type":"object"},"name":"files.move"}]}}
+  mcp: {"id":3,"jsonrpc":"2.0","result":{"content":[{"text":"[]","type":"text"}],"isError":false}}
+  mcp: {"id":4,"jsonrpc":"2.0","result":{"content":[{"text":"\"/home/cosmos/Documents/evil.txt\" is outside this agent's write roots","type":"text"}],"isError":true}}
+  mcp: {"id":5,"jsonrpc":"2.0","result":{"content":[{"text":"wrote \"/home/cosmos/Agents/test-agent/ok.txt\"","type":"text"}],"isError":false}}
+PASS: initialize -> serverInfo cosmos-agentd
+tools/list returned 15 tools (expect 15)
+PASS: 15 tools
+PASS: desktop.windows.list answered
+PASS: files.write outside write roots denied
+PASS: no evil.txt on disk
+PASS: ok.txt written inside write root
+agent-audit lines: 3 (expect >=2: ok + denied)
+  audit: {"ts":1791440835,"agent":"test-agent","tool":"desktop.windows.list","ok":true,"detail":"[{\"text\":\"[]\",\"type\":\"text\"}]"}
+  audit: {"ts":1791440835,"agent":"test-agent","tool":"files.write","ok":false,"detail":"\"/home/cosmos/Documents/evil.txt\" is outside this agent's write roots"}
+  audit: {"ts":1791440835,"agent":"test-agent","tool":"files.write","ok":true,"detail":"[{\"text\":\"wrote \\\"/home/cosmos/Agents/test-agent/ok.txt\\\"\",\"type\":\"text\"}]"}
+==AGENTD-DONE==
+compositor/session panic count this boot: 0
+PASS: zero panics
+   06:32:16 up 5 min,  0 users,  load average: 0.10, 0.22, 0.11
+==LOCK-END==
