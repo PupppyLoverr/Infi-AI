@@ -23,7 +23,8 @@ qemu-system-x86_64 -enable-kvm -m 2G -smp 2 \
   -drive file="$RAW",format=raw,if=virtio \
   -device virtio-tablet-pci \
   -device virtio-vga,xres=1920,yres=1080 -display none \
-  -serial file:$SERIAL \
+  -chardev socket,id=ser0,path=$W/serial.sock,server=on,wait=off,logfile=$SERIAL \
+  -serial chardev:ser0 \
   -monitor unix:$MON_SOCK,server,nowait -qmp unix:$QMP_SOCK,server,nowait \
   -smbios type=1,product=CosmosOS -no-reboot &
 QPID=$!
