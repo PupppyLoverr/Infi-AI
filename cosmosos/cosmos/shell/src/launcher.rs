@@ -27,6 +27,8 @@ const TOP_PAD_FRAC: f64 = 0.16;
 
 /// Recently launched apps shown under the pinned grid, newest first.
 const MAX_REC: usize = 3;
+/// Widget card strip height in the non-searching (Start) layout.
+const WIDGET_H: f64 = 60.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Hit {
@@ -133,9 +135,10 @@ fn box_height(n_items: usize, n_pinned: usize, n_rec: usize, searching: bool) ->
     if searching || n_pinned == 0 {
         h += SEC_H + n_items.min(MAX_ROWS) as f64 * ROW_H;
     } else {
+        // Win11 Start: PINNED grid + RECOMMENDED + WIDGETS + footer.
         h += SEC_H + grid_rows(n_pinned) as f64 * CELL_H;
         h += rec_height(n_rec, searching);
-        h += SEC_H + n_items.min(MAX_ROWS) as f64 * ROW_H;
+        h += SEC_H + WIDGET_H;
     }
     h + FOOTER_H
 }
@@ -144,7 +147,7 @@ fn footer_top(h: u32, n_items: usize, n_pinned: usize, n_rec: usize, searching: 
     box_top(h) + box_height(n_items, n_pinned, n_rec, searching) - FOOTER_H
 }
 
-/// Y offset (relative to card top) where the ALL APPS row list starts.
+/// Y offset (relative to card top) where the results list starts.
 fn rows_top(n_pinned: usize, n_rec: usize, searching: bool) -> f64 {
     if searching || n_pinned == 0 {
         INPUT_H + SEC_H
@@ -153,12 +156,122 @@ fn rows_top(n_pinned: usize, n_rec: usize, searching: bool) -> f64 {
     }
 }
 
+/// Y offset where the widget strip starts (non-searching layout).
+fn widgets_top(n_pinned: usize, n_rec: usize) -> f64 {
+    INPUT_H + SEC_H + grid_rows(n_pinned) as f64 * CELL_H + rec_height(n_rec, false) + SEC_H
+}
+
+// ---------------- Start widgets — all data read live ----------------
+
+#[derive(Debug, Clone)]
+pub struct Widget {
+    pub icon: &'static str,
+    pub big: String,
+    pub small: String,
+    /// 0..1 fill for the thin bar under the text (None = no bar).
+    pub bar: Option<f32>,
+}
+
+/// Build the three Start-panel widgets from real system data.
+pub fn widgets(state: &ShellState) -> Vec<Widget> {
+    let mut out = Vec::new();
+    out.push(Widget {
+        icon: "widget-clock",
+        big: state.sysinfo.clock.clone(),
+        small: state.sysinfo.date.clone(),
+        bar: None,
+    });
+
+    // Memory + load: /proc/meminfo + /proc/loadavg.
+    let (total_kb, avail_kb) = meminfo();
+    let mem_used = if total_kb > 0 {
+        (total_kb - avail_kb) as f32 / total_kb as f32
+    } else {
+        0.0
+    };
+    let free_gb = avail_kb as f64 / 1_048_576.0;
+    let load = std::fs::read_to_string("/proc/loadavg")
+        .ok()
+        .and_then(|t| t.split_whitespace().next().map(str::to_string))
+        .unwrap_or_else(|| "0".into());
+    out.push(Widget {
+        icon: "widget-cpu",
+        big: format!("{:.0}%", mem_used * 100.0),
+        small: format!("load {load} · {free_gb:.1}G free"),
+        bar: Some(mem_used.clamp(0.0, 1.0)),
+    });
+
+    // Root filesystem fill: statvfs("/").
+    if let Some((used_b, total_b)) = fs_usage("/") {
+        let frac = if total_b > 0 {
+            used_b as f32 / total_b as f32
+        } else {
+            0.0
+        };
+        let gb = 1_073_741_824.0;
+        out.push(Widget {
+            icon: "widget-disk",
+            big: format!("{:.0}%", frac * 100.0),
+            small: format!(
+                "{:.1} of {:.1} GB used",
+                used_b as f64 / gb,
+                total_b as f64 / gb
+            ),
+            bar: Some(frac.clamp(0.0, 1.0)),
+        });
+    }
+    out
+}
+
+fn meminfo() -> (u64, u64) {
+    let Ok(text) = std::fs::read_to_string("/proc/meminfo") else {
+        return (0, 0);
+    };
+    let mut total = 0;
+    let mut avail = 0;
+    for line in text.lines() {
+        let kb = |v: &str| {
+            v.split_whitespace()
+                .nth(1)
+                .and_then(|n| n.parse::<u64>().ok())
+        };
+        if line.starts_with("MemTotal:") {
+            total = kb(line).unwrap_or(0);
+        } else if line.starts_with("MemAvailable:") {
+            avail = kb(line).unwrap_or(0);
+        }
+    }
+    (total, avail)
+}
+
+/// (used bytes, total bytes) for the filesystem containing `path`.
+fn fs_usage(path: &str) -> Option<(u64, u64)> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(std::ffi::OsStr::new(path).as_bytes()).ok()?;
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+        return None;
+    }
+    let bs = st.f_frsize;
+    Some(((st.f_blocks - st.f_bfree) * bs, st.f_blocks * bs))
+}
+
 /// Y offset where RECOMMENDED rows start (0 when hidden).
 fn rec_top(n_pinned: usize, searching: bool) -> f64 {
     if searching {
         0.0
     } else {
         INPUT_H + SEC_H + grid_rows(n_pinned) as f64 * CELL_H
+    }
+}
+
+/// Rows are only drawn while searching or when no pinned grid exists —
+/// callers gate `hit_test` on this so invisible rows can't be clicked.
+pub fn rows_shown(searching: bool, n_pinned: usize, n_items: usize) -> usize {
+    if searching || n_pinned == 0 {
+        n_items
+    } else {
+        0
     }
 }
 
@@ -260,6 +373,8 @@ pub fn draw(state: &mut ShellState) {
     let hover = state.launcher_hover;
     let (box_bg, sel_bg, sep, input_bg, fg, fg_dim) = theme(state.dark);
     let glyph = Color::from_rgba8(fg.r(), fg.g(), fg.b(), fg.a());
+    // Hoisted before the pool's mutable borrow below.
+    let wigs = widgets(state);
 
     let stride = w as i32 * 4;
     let Ok((buffer, canvas)) =
@@ -458,18 +573,79 @@ pub fn draw(state: &mut ShellState) {
         }
     }
 
-    // Rows — all results below the grid (apps/files/calc/cmd/ask).
-    let rtop = rows_top(pinned_apps.len(), rec_apps.len(), searching) as f32;
-    if !searching && n_items > 0 {
-        section(
-            &mut pixmap,
-            left + 16.0,
-            top + rtop - SEC_H as f32,
-            "ALL APPS",
-            fg_dim,
-        );
+    // Start layout: WIDGETS strip between RECOMMENDED and the footer.
+    let show_rows = searching || pinned_apps.is_empty();
+    if !show_rows {
+        let wtop = top + widgets_top(pinned_apps.len(), rec_apps.len()) as f32;
+        section(&mut pixmap, left + 16.0, wtop, "WIDGETS", fg_dim);
+        if !wigs.is_empty() {
+            let gap = 8.0f32;
+            let card_w = (LAUNCHER_WIDTH as f32 - 32.0 - gap * (wigs.len() as f32 - 1.0))
+                / wigs.len() as f32;
+            for (i, wig) in wigs.iter().enumerate() {
+                let wx = left + 16.0 + i as f32 * (card_w + gap);
+                let wy = wtop + SEC_H as f32 + 4.0;
+                draw::fill_round_rect(
+                    &mut pixmap,
+                    wx,
+                    wy,
+                    card_w,
+                    WIDGET_H as f32 - 10.0,
+                    10.0,
+                    input_bg,
+                );
+                icons::icon(&mut pixmap, wig.icon, wx + 9.0, wy + 8.0, 14.0, glyph);
+                draw::text_bold(
+                    &mut pixmap,
+                    wx + 30.0,
+                    wy + 6.0,
+                    card_w - 36.0,
+                    18.0,
+                    15.0,
+                    &wig.big,
+                    fg,
+                );
+                draw::text(
+                    &mut pixmap,
+                    wx + 10.0,
+                    wy + 26.0,
+                    card_w - 18.0,
+                    14.0,
+                    10.0,
+                    &wig.small,
+                    fg_dim,
+                );
+                if let Some(frac) = wig.bar {
+                    let bar_w = card_w - 20.0;
+                    draw::fill_round_rect(
+                        &mut pixmap,
+                        wx + 10.0,
+                        wy + WIDGET_H as f32 - 18.0,
+                        bar_w,
+                        3.0,
+                        1.5,
+                        sep,
+                    );
+                    draw::fill_round_rect(
+                        &mut pixmap,
+                        wx + 10.0,
+                        wy + WIDGET_H as f32 - 18.0,
+                        bar_w * frac,
+                        3.0,
+                        1.5,
+                        sel_bg,
+                    );
+                }
+            }
+        }
     }
+
+    // Results list (searching, or the no-pinned fallback).
+    let rtop = rows_top(pinned_apps.len(), rec_apps.len(), searching) as f32;
     for (idx, row) in rows.iter().take(MAX_ROWS).enumerate() {
+        if !show_rows {
+            break;
+        }
         let ry = top + rtop + idx as f32 * ROW_H as f32;
         if idx == state.launcher_sel.min(n_items.saturating_sub(1)) && n_items > 0 {
             draw::fill_round_rect(
@@ -526,7 +702,7 @@ pub fn draw(state: &mut ShellState) {
             fg_dim,
         );
     }
-    if rows.is_empty() {
+    if show_rows && rows.is_empty() {
         draw::text(
             &mut pixmap,
             left + 20.0,
@@ -653,9 +829,9 @@ fn magnifier(pixmap: &mut PixmapMut<'_>, cx: f32, cy: f32, color: CtColor) {
 }
 
 pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {
-    let n = state.filtered_results().len();
     let np = pinned(state).len();
     let searching = !state.launcher_query.is_empty();
+    let n = rows_shown(searching, np, state.filtered_results().len());
     let nr = recommended(state).len();
     let hit = hit_test(x, y, state.launcher_size, n, np, nr, searching);
     let mut dirty = false;

@@ -704,12 +704,18 @@ impl ShellState {
 
     /// Pointer click inside the launcher surface.
     pub fn launcher_click(&mut self, x: f64, y: f64) {
+        let np = launcher::pinned(self).len();
+        let n_items = launcher::rows_shown(
+            !self.launcher_query.is_empty(),
+            np,
+            self.filtered_results().len(),
+        );
         let hit = launcher::hit_test(
             x,
             y,
             self.launcher_size,
-            self.filtered_results().len(),
-            launcher::pinned(self).len(),
+            n_items,
+            np,
             launcher::recommended(self).len(),
             !self.launcher_query.is_empty(),
         );
