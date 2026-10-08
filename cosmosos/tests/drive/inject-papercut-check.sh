@@ -15,7 +15,8 @@ REMOVE=0; [ "${1:-}" = "--remove" ] || [ "${2:-}" = "--remove" ] && REMOVE=1
 
 LOOP=$(sudo losetup -fP --show "$RAW")
 trap 'sudo umount /mnt 2>/dev/null; sudo losetup -d "$LOOP" 2>/dev/null' EXIT
-sudo mount "${LOOP}p1" /mnt
+# GPT layout: p1 = FAT32 ESP, p2 = btrfs (guest root lives in subvol @).
+sudo mount -o subvol=@ "${LOOP}p2" /mnt
 
 if [ "$REMOVE" = 1 ]; then
     sudo rm -f /mnt/usr/local/sbin/papercut-check.sh \
@@ -27,6 +28,10 @@ fi
 
 sudo install -m 0755 "$ROOT/tests/drive/papercut-check.sh" /mnt/usr/local/sbin/papercut-check.sh
 sudo mkdir -p /mnt/etc/systemd/system/multi-user.target.wants
+# serial-getty on ttyS0 vhangup's the line ~12s in and kills the check's
+# ttyS0 fd mid-run (writes -> EIO, silent exit 1). In test boots the serial
+# line is OUR channel — mask the getty so nothing contests it.
+sudo ln -sf /dev/null /mnt/etc/systemd/system/serial-getty@ttyS0.service
 sudo tee /mnt/etc/systemd/system/papercut-check.service >/dev/null <<'EOF'
 [Unit]
 Description=Dump papercut verification evidence to ttyS0

@@ -27,11 +27,23 @@ in QEMU with KVM. Verified on the Ubuntu 22.04 x86_64 build host
    package list below, then a `setup.sh` customize hook (user creation,
    service enables, resolv.conf symlink). NB: mmdebstrap hooks run on the
    HOST with `$1` = rootfs — guest commands go through `chroot "$1"`.
-4. **Image assembly**: `truncate` sparse raw → `parted` msdos + one bootable
-   ext4 → `losetup -P` → `mkfs.ext4` → rsync rootfs → host `grub-install
-   --target=i386-pc` → hand-written `/boot/grub/grub.cfg` (kernel +
-   initrd + `root=/dev/vda1 rw console=tty0 console=ttyS0,115200
-   systemd.journald.forward_to_console=1`).
+4. **Image assembly**: `truncate` sparse raw → `parted` GPT, two partitions:
+   `p1` = EFI system partition (FAT32, 256MiB, `esp` flag, mounted
+   `/boot/efi`) and `p2` = btrfs root. Subvolumes created at the top level:
+   `@` → `/`, `@home` → `/home`, `@snapshots` → `/.snapshots`,
+   `@var_log` → `/var/log`. Rootfs rsynced into `@`; fstab is all-UUID
+   (`subvol=` per mount, `umask=0077` on the ESP). Bootloader is
+   **GRUB2-EFI** built with `grub-mkimage -O x86_64-efi` against the
+   GUEST's module dir (`/usr/lib/grub/x86_64-efi`) — the Ubuntu host's
+   modules map `linux`→`linuxefi` (shim loader) and its `grub-install`
+   hardcodes the `EFI/ubuntu` prefix, both wrong here. The embedded
+   config `search --fs-uuid`s the btrfs partition and configfiles
+   `/@/boot/grub/grub.cfg`; kernel line is
+   `root=UUID=<fs-uuid> rootfstype=btrfs rootflags=subvol=@ rw
+   console=tty0 console=ttyS0,115200`. Shipped as
+   `EFI/BOOT/BOOTX64.EFI` (removable-media fallback) and
+   `EFI/cosmosos/grubx64.efi`; `cosmos-efi-bootentry.service` registers
+   the `CosmosOS` NVRAM boot entry on first UEFI boot.
 
 ## Package list rationale
 
@@ -47,6 +59,7 @@ in QEMU with KVM. Verified on the Ubuntu 22.04 x86_64 build host
 | Browser | `firefox-esr adwaita-icon-theme fonts-liberation` | Real web browser for downloading apps; runs Wayland-native via `MOZ_ENABLE_WAYLAND=1` (`/etc/profile.d/50-firefox-wayland.sh`) |
 | App installs | `sudo wget ca-certificates dbus-x11 xdg-user-dirs libfuse2t64` | `sudo` NOPASSWD for cosmos (kiosk model — locked password means prompts are unanswerable, see security.md); `wget`+TLS for fetching `.deb`/installers; `libfuse2t64` for AppImages |
 | Locale/swap | `locales systemd-zram-generator` | en_US.UTF-8 generated + `update-locale LANG=` default; zram0 compressed swap (lz4, half of RAM) activated at boot |
+| Disk/snapshots | `btrfs-progs grub-efi-amd64 snapper efibootmgr` | btrfs root + subvolumes; GRUB2-EFI; snapper `root` config on `@snapshots` (timeline on, `SNAPPER_CONFIGS="root"` in /etc/default/snapper — Debian discovers configs from that var, not the configs dir); `80snapper` apt hook pre/post snapshots; efibootmgr for the NVRAM entry |
 
 No X11, no other DE, no display manager.
 
@@ -84,6 +97,8 @@ restarts the whole session: built-in crash-retry, rate-limited 2s.
 
 ```
 -enable-kvm  -m 1G  -smp 2
+-drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd   # UEFI firmware
+-drive if=pflash,format=raw,file=work/.../OVMF_VARS.fd      # per-boot writable vars
 -drive file=...,format=raw,if=virtio
 -device virtio-vga,xres=W,yres=H  # EDID preferred mode = GUEST_RES (default 1024x768)
 -smbios type=1,product=CosmosOS  # DMI product name (fastfetch Host: CosmosOS)
