@@ -8,6 +8,7 @@ mod desktop;
 mod dock;
 mod draw;
 mod fileindex;
+mod glass;
 mod help;
 mod icons;
 mod ipc_client;
@@ -21,6 +22,12 @@ mod search;
 mod switcher;
 mod sysinfo;
 mod zoomflyout;
+
+thread_local! {
+    /// Mirror of ShellState::wallpaper so static helpers can reach it.
+    static WALLPAPER: std::cell::RefCell<String> =
+        const { std::cell::RefCell::new(String::new()) };
+}
 
 use std::{os::unix::net::UnixStream, time::Duration};
 
@@ -172,6 +179,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         quick_dismissed_at: None,
         vol_drag: false,
         accent_name: cosmos_ipc::DEFAULT_ACCENT.to_string(),
+        wallpaper: "violet".to_string(),
         help_surface: None,
         help_size: (0, 0),
         help_open: false,
@@ -432,6 +440,8 @@ pub struct ShellState {
     /// Current accent preset name (from Config events) — the Quick
     /// Settings swatch strip draws its selection ring from this.
     pub accent_name: String,
+    /// Active wallpaper name — drives glass sampling; from config.
+    pub wallpaper: String,
     /// Keybind cheatsheet (super+?) — fullscreen scrim + card.
     pub help_surface: Option<LayerSurface>,
     pub help_size: (u32, u32),
@@ -448,6 +458,14 @@ pub fn workspace_count(state: &ShellState) -> usize {
 // Fields needing `Option`/defaults for the manual Default impl.
 
 impl ShellState {
+    /// Wallpaper name for glass sampling (stringly-cloned at call
+    /// sites that can't hold a borrow across the draw).
+    pub fn wallpaper_name() -> String {
+        // Sourced from the thread-local mirror kept in draw:: — updated
+        // in apply_config alongside everything else.
+        WALLPAPER.with(|w| w.borrow().clone())
+    }
+
     pub fn create_panel(&mut self, qh: &QueueHandle<Self>) {
         let surface = self.compositor_state.create_surface(qh);
         let layer = self.layer_shell.create_layer_surface(
@@ -1068,6 +1086,14 @@ impl ShellState {
         if let Some(v) = map.get("accent").and_then(|v| v.as_str()) {
             self.accent_name = v.to_string();
         }
+        if let Some(v) = map.get("wallpaper").and_then(|v| v.as_str()) {
+            if v != self.wallpaper {
+                self.wallpaper = v.to_string();
+                WALLPAPER.with(|w| *w.borrow_mut() = v.to_string());
+                self.panel_dirty = true;
+                self.dock_dirty = true;
+            }
+        }
         // Dock edge — a position change re-anchors the surface entirely
         // (anchors + exclusive zone), so the layer is recreated.
         if let Some(pos) = map
@@ -1332,6 +1358,9 @@ impl LayerShellHandler for ShellState {
         if self.dock_surface.as_ref() == Some(layer) {
             self.dock_size = configure.new_size;
             self.dock_dirty = true;
+            // The dock rail spans the output's height — with the panel's
+            // width that's the full screen size for glass sampling.
+            glass::set_screen_size(self.panel_size.0 as f32, configure.new_size.1 as f32);
         }
         if self.switcher_surface.as_ref() == Some(layer) {
             self.switcher_size = (

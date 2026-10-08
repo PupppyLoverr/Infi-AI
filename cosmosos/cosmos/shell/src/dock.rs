@@ -16,7 +16,7 @@ use smithay_client_toolkit::{compositor::Region, shell::WaylandSurface};
 use tiny_skia::{Color, PixmapMut};
 use wayland_client::protocol::wl_shm;
 
-use crate::{desktop::AppEntry, draw, icons, ShellState};
+use crate::{desktop::AppEntry, draw, glass, icons, ShellState};
 
 /// Rail thickness — also the exclusive zone it reserves.
 pub const STRIP: u32 = 60;
@@ -277,7 +277,7 @@ pub fn draw(state: &mut ShellState) {
     // The rail: flush against the screen edge, square on the three
     // sides that touch it, rounded only on the two free inner corners.
     let (rx, ry, rw, rh) = rail_rect(pos, w, h);
-    draw::fill_rect(&mut pixmap, rx as f32, ry as f32, rw as f32, rh as f32, bg);
+    glass::fill_glass(&mut pixmap, &crate::ShellState::wallpaper_name(), rx as f32, ry as f32, rw as f32, rh as f32, 0.0, rx as f32, ry as f32, state.dark, bg);
     // Hairline on the rail's inner edge — separates it from windows.
     let (ix, iy, iw, ih) = match pos {
         DockPos::Left => (rx + rw - 1, ry, 1, rh),
