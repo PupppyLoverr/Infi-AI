@@ -582,7 +582,11 @@ pub fn run_udev() {
         } else {
             state.space.refresh();
             state.popups.cleanup();
-            display_handle.flush_clients().unwrap();
+            // A client that hung up mid-flush (EPIPE, e.g. during
+            // quit_session teardown) must not take the compositor down.
+            if let Err(err) = display_handle.flush_clients() {
+                tracing::warn!("flush_clients: {err}");
+            }
             state.ipc_flush();
         }
     }

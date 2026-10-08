@@ -152,6 +152,11 @@ fn main() -> Result<()> {
             next_frame = Instant::now() + repaint.max(Duration::from_millis(4));
         }
     }
+    // `unlock()` only queues unlock_and_destroy; exiting without a
+    // flush drops it, and a lock client that dies without unlocking
+    // leaves the session locked (ext-session-lock §lock).
+    conn.flush().context("flush unlock")?;
+    let _ = conn.roundtrip();
     Ok(())
 }
 

@@ -19,9 +19,9 @@ const SEC_H: f64 = 24.0;
 const FOOTER_H: f64 = 44.0;
 const CARD_R: f32 = cosmos_theme::radius::PANEL;
 const MAX_ROWS: usize = 5;
-const GRID_COLS: usize = 6;
-const CELL_H: f64 = 78.0;
-const CELL_ICON: f32 = 30.0;
+const GRID_COLS: usize = 8;
+const CELL_H: f64 = 104.0;
+const CELL_ICON: f32 = 56.0;
 /// Gap between overlay top edge and the launcher box.
 const TOP_PAD_FRAC: f64 = 0.16;
 
@@ -29,6 +29,8 @@ const TOP_PAD_FRAC: f64 = 0.16;
 const MAX_REC: usize = 3;
 /// Widget card strip height in the non-searching (Start) layout.
 const WIDGET_H: f64 = 60.0;
+/// Footer avatar + name hit/draw width.
+const USER_W: f64 = 220.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Hit {
@@ -84,7 +86,7 @@ pub fn load_recent() -> Vec<String> {
     };
     let mut out: Vec<String> = Vec::new();
     for line in text.lines() {
-        let id = line.trim();
+        let id = line.split('\t').next().unwrap_or("").trim();
         if !id.is_empty() && !out.iter().any(|x| x == id) {
             out.push(id.to_string());
         }
@@ -93,15 +95,87 @@ pub fn load_recent() -> Vec<String> {
     out
 }
 
-/// Write the launch MRU back to disk.
+/// Last-launch unix time per desktop id (`id\tsecs` lines; bare-id
+/// lines from older shells carry no time).
+pub fn recent_times() -> std::collections::HashMap<String, u64> {
+    let text = recent_file()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default();
+    text.lines()
+        .filter_map(|l| {
+            let (id, ts) = l.split_once('\t')?;
+            Some((id.trim().to_string(), ts.trim().parse().ok()?))
+        })
+        .collect()
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// "Just now" / "5 min ago" / "3 h ago" / "Yesterday" / "4 days ago".
+fn ago(ts: u64) -> String {
+    let d = now_secs().saturating_sub(ts);
+    match d {
+        0..=59 => "Just now".into(),
+        60..=3599 => format!("{} min ago", d / 60),
+        3600..=86_399 => format!("{} h ago", d / 3600),
+        86_400..=172_799 => "Yesterday".into(),
+        _ => format!("{} days ago", d / 86_400),
+    }
+}
+
+/// Write the launch MRU back to disk. `recent[0]` was just launched and
+/// gets the current time; the rest keep their recorded times.
 pub fn save_recent(recent: &[String]) {
     let Some(path) = recent_file() else {
         return;
     };
+    let times = recent_times();
+    let now = now_secs();
+    let body: String = recent
+        .iter()
+        .enumerate()
+        .map(|(i, id)| match (i, times.get(id)) {
+            (0, _) => format!("{id}\t{now}\n"),
+            (_, Some(t)) => format!("{id}\t{t}\n"),
+            _ => format!("{id}\n"),
+        })
+        .collect();
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(path, recent.join("\n") + "\n");
+    let _ = std::fs::write(path, body);
+}
+
+/// Display name for the Start footer: passwd GECOS name, else $USER.
+fn user_name() -> String {
+    let user = std::env::var("USER").unwrap_or_default();
+    let gecos = std::fs::read_to_string("/etc/passwd")
+        .ok()
+        .and_then(|t| {
+            t.lines()
+                .find(|l| l.split(':').next() == Some(user.as_str()))
+                .and_then(|l| l.split(':').nth(4))
+                .map(|g| g.split(',').next().unwrap_or("").trim().to_string())
+        })
+        .unwrap_or_default();
+    if gecos.is_empty() {
+        user
+    } else {
+        gecos
+    }
+}
+
+fn initials(name: &str) -> String {
+    name.split_whitespace()
+        .take(2)
+        .filter_map(|w| w.chars().next())
+        .flat_map(char::to_uppercase)
+        .collect()
 }
 
 fn box_top(h: u32) -> f64 {
@@ -138,8 +212,11 @@ fn box_height(n_items: usize, n_pinned: usize, n_rec: usize, searching: bool) ->
         // Win11 Start: PINNED grid + RECOMMENDED + WIDGETS + footer.
         h += SEC_H + grid_rows(n_pinned) as f64 * CELL_H;
         h += rec_height(n_rec, searching);
-        // 16px gap so widget cards aren't clipped by the footer.
-        h += SEC_H + WIDGET_H + 16.0;
+        // WIDGETS header (already in widgets_top) + cards drawn at
+        // +SEC_H+4 with height WIDGET_H-10, then a 16px gap above the
+        // footer — the old sum came up 24px short and the footer cut
+        // the cards (v3-04-start).
+        h += 2.0 * SEC_H + WIDGET_H + 10.0;
     }
     h + FOOTER_H
 }
@@ -272,7 +349,14 @@ fn custom_widgets() -> Vec<Widget> {
             .unwrap_or(true);
         if stale {
             if let Some(widget) = run_widget_script(&script, icon) {
-                cache.insert(wdir.clone(), Cached { widget, at: Instant::now(), refresh });
+                cache.insert(
+                    wdir.clone(),
+                    Cached {
+                        widget,
+                        at: Instant::now(),
+                        refresh,
+                    },
+                );
             }
         }
         if let Some(c) = cache.get(&wdir) {
@@ -436,7 +520,7 @@ pub fn hit_test(
     if ry >= height - FOOTER_H {
         let btn_w = 104.0;
         let mid = LAUNCHER_WIDTH as f64;
-        if x < left + 8.0 + btn_w {
+        if x < left + 8.0 + USER_W {
             return Hit::Action(0);
         }
         if x > left + mid - 8.0 - btn_w {
@@ -660,10 +744,10 @@ pub fn draw(state: &mut ShellState) {
             draw::text(
                 &mut pixmap,
                 cx + 4.0,
-                cy + 12.0 + CELL_ICON + 6.0,
+                cy + 12.0 + CELL_ICON + 8.0,
                 cell_w - 8.0,
                 14.0,
-                10.5,
+                11.0,
                 &app.name,
                 fg,
             );
@@ -674,6 +758,7 @@ pub fn draw(state: &mut ShellState) {
     if !searching && !rec_apps.is_empty() {
         let rtop = rec_top(pinned_apps.len(), searching) as f32;
         section(&mut pixmap, left + 16.0, top + rtop, "RECOMMENDED", fg_dim);
+        let times = recent_times();
         for (idx, app) in rec_apps.iter().enumerate() {
             let ry = top + rtop + SEC_H as f32 + idx as f32 * ROW_H as f32;
             if hover == Some(Hit::Recent(idx)) {
@@ -704,14 +789,15 @@ pub fn draw(state: &mut ShellState) {
                 &app.name,
                 fg,
             );
+            let when = times.get(&app.id).map(|t| ago(*t));
             draw::text(
                 &mut pixmap,
-                left + LAUNCHER_WIDTH as f32 - 14.0 - 60.0,
+                left + LAUNCHER_WIDTH as f32 - 14.0 - 90.0,
                 ry + (ROW_H as f32 - 14.0) / 2.0,
-                60.0,
+                90.0,
                 14.0,
                 11.0,
-                "Recent",
+                when.as_deref().unwrap_or("Recent"),
                 fg_dim,
             );
         }
@@ -869,35 +955,46 @@ pub fn draw(state: &mut ShellState) {
         sep,
     );
     let by = fy + (FOOTER_H as f32 - 28.0) / 2.0;
+    // User avatar (initials on accent) + name — opens Settings.
+    if hover == Some(Hit::Action(0)) {
+        draw::fill_round_rect(
+            &mut pixmap,
+            left + 8.0,
+            by - 2.0,
+            USER_W as f32,
+            32.0,
+            8.0,
+            sel_bg,
+        );
+    }
+    let name = user_name();
     draw::fill_round_rect(
         &mut pixmap,
-        left + 8.0,
+        left + 14.0,
         by,
-        104.0,
         28.0,
-        8.0,
-        if hover == Some(Hit::Action(0)) {
-            sel_bg
-        } else {
-            input_bg
-        },
-    );
-    icons::icon(
-        &mut pixmap,
-        "cosmos-settings",
-        left + 18.0,
-        by + 7.0,
+        28.0,
         14.0,
-        glyph,
+        draw::accent(state.dark),
     );
     draw::text(
         &mut pixmap,
-        left + 38.0,
+        left + 14.0 + (28.0 - initials(&name).chars().count() as f32 * 7.5) / 2.0,
+        by + 7.0,
+        28.0,
+        14.0,
+        11.0,
+        &initials(&name),
+        CtColor::rgba(0xFF, 0xFF, 0xFF, 0xFF),
+    );
+    draw::text(
+        &mut pixmap,
+        left + 52.0,
         by + 5.0,
-        88.0,
+        USER_W as f32 - 52.0,
         18.0,
-        12.0,
-        "Settings",
+        13.0,
+        &name,
         fg,
     );
     let rx = left + LAUNCHER_WIDTH as f32 - 8.0 - 104.0;

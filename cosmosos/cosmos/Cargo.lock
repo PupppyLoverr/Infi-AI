@@ -669,9 +669,11 @@ dependencies = [
  "calloop 0.14.5",
  "cosmic-text",
  "cosmos-ipc",
+ "cosmos-theme",
  "fps_ticker",
  "gl_generator",
  "image",
+ "libc",
  "profiling",
  "rand 0.8.8",
  "renderdoc",
@@ -713,6 +715,7 @@ name = "cosmos-greeter"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cosmos-ipc",
  "cosmos-uitk",
  "egui",
  "greetd_ipc",
@@ -780,6 +783,7 @@ dependencies = [
  "cosmos-ipc",
  "cosmos-uitk",
  "egui",
+ "image",
  "serde",
  "serde_json",
  "tracing",

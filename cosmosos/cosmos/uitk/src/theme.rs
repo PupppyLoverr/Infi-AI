@@ -20,7 +20,11 @@ fn mix(c: Rgba, alpha: u8) -> Color32 {
 
 pub fn apply(ctx: &egui::Context, dark: bool) {
     let p = palette(dark);
-    let mut v = if dark { Visuals::dark() } else { Visuals::light() };
+    let mut v = if dark {
+        Visuals::dark()
+    } else {
+        Visuals::light()
+    };
     let accent = Accent::new(accent_from_config(dark));
 
     v.panel_fill = c32(p.window);
@@ -82,7 +86,10 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
             (TextStyle::Body, f(text::BODY)),
             (TextStyle::Button, f(text::BODY)),
             (TextStyle::Heading, f(text::TITLE2)),
-            (TextStyle::Monospace, FontId::new(text::MONO.size, FontFamily::Monospace)),
+            (
+                TextStyle::Monospace,
+                FontId::new(text::MONO.size, FontFamily::Monospace),
+            ),
         ]
         .into();
         style.spacing.item_spacing = egui::vec2(space::S8, space::S8);
@@ -112,8 +119,14 @@ fn config_text() -> String {
 }
 
 /// Dark theme is the Cosmos default; the config file can flip it.
+/// `appearance` from config.json — parsed, because a substring test
+/// also matched the `"light"` key inside `accent_rgb` and forced every
+/// app body light once the wallpaper accent was persisted.
 pub fn dark_from_config() -> bool {
-    !config_text().contains("\"light\"")
+    serde_json::from_str::<serde_json::Value>(&config_text())
+        .ok()
+        .and_then(|v| v.get("appearance")?.as_str().map(|a| a != "light"))
+        .unwrap_or(true)
 }
 
 /// The config file's mtime — frame loops poll this and re-apply the
@@ -142,8 +155,15 @@ pub fn accent_from_config(dark: bool) -> [u8; 3] {
         return cosmos_theme::ACCENT_FALLBACK;
     };
     let mode = if dark { "dark" } else { "light" };
-    if let Some(arr) = v.get("accent_rgb").and_then(|a| a.get(mode)).and_then(|a| a.as_array()) {
-        let c: Vec<u8> = arr.iter().filter_map(|x| x.as_u64().map(|n| n as u8)).collect();
+    if let Some(arr) = v
+        .get("accent_rgb")
+        .and_then(|a| a.get(mode))
+        .and_then(|a| a.as_array())
+    {
+        let c: Vec<u8> = arr
+            .iter()
+            .filter_map(|x| x.as_u64().map(|n| n as u8))
+            .collect();
         if c.len() == 3 {
             return [c[0], c[1], c[2]];
         }

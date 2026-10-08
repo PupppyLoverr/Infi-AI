@@ -14,6 +14,7 @@ mod icons;
 mod ipc_client;
 mod island;
 mod launcher;
+mod menubar;
 mod notify;
 mod panel;
 mod popups;
@@ -78,7 +79,7 @@ use sysinfo::SysInfo;
 pub const PANEL_HEIGHT: u32 = 32;
 pub const NOTIFY_WIDTH: u32 = 340;
 pub const NOTIFY_TIMEOUT_MS: i64 = 5000;
-pub const LAUNCHER_WIDTH: u32 = 480;
+pub const LAUNCHER_WIDTH: u32 = 680;
 
 fn main() {
     tracing_subscriber::fmt()
@@ -154,6 +155,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         zoom_window: 0,
         zoom_hover: None,
         zoom_dirty: false,
+        menu_surface: None,
+        menu_open: None,
+        pointer_on: None,
+        menu_hover: None,
+        menu_dirty: false,
+        menu_pos: (0, 0),
         launcher_hover: None,
         notify_size: (0, 0),
         quick_size: (0, 0),
@@ -351,6 +358,16 @@ pub struct ShellState {
     pub zoom_window: u64,
     pub zoom_hover: Option<(usize, usize)>,
     pub zoom_dirty: bool,
+    /// Menubar dropdown: surface, open menu index, hovered row, screen pos.
+    pub menu_surface: Option<LayerSurface>,
+    pub menu_open: Option<usize>,
+    /// Surface under the pointer (wl_pointer enter/leave). The compositor
+    /// moves keyboard focus before it delivers the press, so a click
+    /// inside a menu can arrive after that menu's keyboard `leave`.
+    pub pointer_on: Option<wl_surface::WlSurface>,
+    pub menu_hover: Option<usize>,
+    pub menu_dirty: bool,
+    pub menu_pos: (i32, i32),
     /// Dynamic island card (clipboard history + staged files) — a Top
     /// layer surface centred under the menubar pill.
     pub island_surface: Option<LayerSurface>,
@@ -946,6 +963,116 @@ impl ShellState {
         self.zoom_dirty = true;
     }
 
+    /// Open menubar menu `menu` with its card's left edge at screen `x`
+    /// (None closes). Recreated per open so the position is exact.
+    pub fn set_menu(&mut self, menu: Option<usize>, x: i32) {
+        self.menu_surface = None;
+        self.menu_hover = None;
+        self.menu_open = menu;
+        let Some(m) = menu else {
+            self.panel_dirty = true;
+            return;
+        };
+        let (w, h) = menubar::surface_size(m);
+        let inset = menubar::INSET as i32;
+        let left = (x - inset).clamp(0, (self.panel_size.0 as i32 - w as i32).max(0));
+        let top = self.panel_size.1 as i32 + 2 - inset;
+        self.menu_pos = (left, top);
+        let surface = self.compositor_state.create_surface(&self.qh);
+        let layer = self.layer_shell.create_layer_surface(
+            &self.qh,
+            surface,
+            Layer::Overlay,
+            Some("cosmos-menu"),
+            None,
+        );
+        layer.set_anchor(Anchor::TOP | Anchor::LEFT);
+        layer.set_size(w, h);
+        layer.set_margin(top, 0, 0, left);
+        layer.set_exclusive_zone(-1);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
+        layer.wl_surface().commit();
+        self.menu_surface = Some(layer);
+        self.menu_dirty = true;
+        self.panel_dirty = true;
+    }
+
+    pub fn menu_click(&mut self, x: f64, y: f64) {
+        let Some(m) = self.menu_open else { return };
+        let Some(row) = menubar::item_at(m, x, y) else {
+            return;
+        };
+        let action = menubar::items(m)[row].1;
+        let focused = self.windows.iter().find(|w| w.focused).cloned();
+        if action.needs_window() && focused.is_none() {
+            return;
+        }
+        self.set_menu(None, 0);
+        use menubar::Action;
+        let id = focused.as_ref().map(|w| w.id).unwrap_or(0);
+        let snap = |zone: &str| cosmos_ipc::Request::SnapToZone {
+            id,
+            zone: zone.to_string(),
+        };
+        match action {
+            Action::NewWindow => {
+                let key = focused.as_ref().map(|w| icons::key_for(&w.app_id));
+                if let Some(app) = self
+                    .apps
+                    .iter()
+                    .find(|a| Some(&a.id) == key.as_ref())
+                    .cloned()
+                {
+                    if let Err(err) = desktop::launch(&app) {
+                        tracing::warn!("menu: launch {} failed: {err}", app.id);
+                    }
+                }
+            }
+            Action::Close => self.ipc.send(&cosmos_ipc::Request::CloseWindow { id }),
+            Action::Minimize => self.ipc.send(&cosmos_ipc::Request::MinimizeWindow { id }),
+            Action::Zoom => self.ipc.send(&snap("max")),
+            Action::TileLeft => self.ipc.send(&snap("left")),
+            Action::TileRight => self.ipc.send(&snap("right")),
+            Action::NextWorkspace => {
+                let count = workspace_count(self).max(1);
+                let cur = self
+                    .workspaces
+                    .iter()
+                    .find(|w| w.focused)
+                    .map(|w| w.id as usize)
+                    .unwrap_or(0);
+                self.ipc.send(&cosmos_ipc::Request::MoveWindowToWorkspace {
+                    id,
+                    workspace: ((cur + 1) % count) as u8,
+                });
+            }
+            Action::Shortcuts => self.ipc.send(&cosmos_ipc::Request::ToggleHelp),
+            Action::Search => self.ipc.send(&cosmos_ipc::Request::ToggleLauncher),
+            Action::Settings => {
+                let _ = std::process::Command::new("cosmos-settings").spawn();
+            }
+            // Same path as super+L: logind's Lock never reaches this session
+            // (greetd+cage doesn't register it with logind).
+            Action::Lock => {
+                if let Err(err) = std::process::Command::new("cosmos-lock").spawn() {
+                    tracing::warn!("menu: cosmos-lock failed: {err}");
+                }
+            }
+            Action::Logout | Action::Restart | Action::Shutdown => {
+                let key = match action {
+                    Action::Logout => "sys.logout",
+                    Action::Restart => "sys.reboot",
+                    _ => "sys.shutdown",
+                };
+                if let Some(app) = self.apps.iter().find(|a| a.id == key).cloned() {
+                    if let Err(err) = desktop::launch(&app) {
+                        tracing::warn!("menu: {key} failed: {err}");
+                    }
+                }
+            }
+        }
+    }
+
     /// Close the flyout on the shell's own initiative (Esc). Outside
     /// presses already miss this surface — the compositor sees them,
     /// closes its flag, and broadcasts `ZoomFlyout{open:false}` which
@@ -1246,6 +1373,10 @@ impl ShellState {
             self.assist_dirty = false;
             assist::draw(self);
         }
+        if self.menu_dirty && self.menu_surface.is_some() {
+            self.menu_dirty = false;
+            menubar::draw(self);
+        }
         if self.zoom_dirty && self.zoom_surface.is_some() {
             self.zoom_dirty = false;
             zoomflyout::draw(self);
@@ -1338,6 +1469,10 @@ impl LayerShellHandler for ShellState {
         if self.zoom_surface.as_ref() == Some(layer) {
             self.zoom_surface = None;
         }
+        if self.menu_surface.as_ref() == Some(layer) {
+            self.menu_surface = None;
+            self.menu_open = None;
+        }
         if self.help_surface.as_ref() == Some(layer) {
             self.help_surface = None;
             self.help_open = false;
@@ -1404,6 +1539,9 @@ impl LayerShellHandler for ShellState {
         }
         if self.zoom_surface.as_ref() == Some(layer) {
             self.zoom_dirty = true;
+        }
+        if self.menu_surface.as_ref() == Some(layer) {
+            self.menu_dirty = true;
         }
         if self.help_surface.as_ref() == Some(layer) {
             self.help_size = configure.new_size;
@@ -1484,6 +1622,18 @@ impl KeyboardHandler for ShellState {
         surface: &wl_surface::WlSurface,
         _serial: u32,
     ) {
+        // Focus pulled away from an open menubar menu → dismiss it, unless
+        // the pointer is on the menu: then this leave is the press itself,
+        // and dismissing here dropped the click (system menu → Lock).
+        if self.menu_open.is_some()
+            && self.pointer_on.as_ref() != Some(surface)
+            && self
+                .menu_surface
+                .as_ref()
+                .is_some_and(|l| l.wl_surface() == surface)
+        {
+            self.set_menu(None, 0);
+        }
         // Focus pulled away from the quick-settings flyout → dismiss it.
         // `leave` fires for ANY surface losing focus — a click inside the
         // card also moves keyboard focus (window → flyout) and the window's
@@ -1545,6 +1695,10 @@ impl KeyboardHandler for ShellState {
             }
         } else if self.assist_open {
             assist::key_press(self, event);
+        } else if self.menu_open.is_some() {
+            if event.keysym == Keysym::Escape {
+                self.set_menu(None, 0);
+            }
         } else if self.zoom_surface.is_some() {
             zoomflyout::key_press(self, event);
         } else if self.island_open {
@@ -1597,6 +1751,13 @@ impl PointerHandler for ShellState {
         events: &[PointerEvent],
     ) {
         for ev in events {
+            match ev.kind {
+                PointerEventKind::Enter { .. } => self.pointer_on = Some(ev.surface.clone()),
+                PointerEventKind::Leave { .. } if self.pointer_on.as_ref() == Some(&ev.surface) => {
+                    self.pointer_on = None
+                }
+                _ => {}
+            }
             let Some(layer) = self
                 .panel
                 .iter()
@@ -1604,6 +1765,7 @@ impl PointerHandler for ShellState {
                 .chain(self.launcher_surface.iter())
                 .chain(self.assist_surface.iter())
                 .chain(self.zoom_surface.iter())
+                .chain(self.menu_surface.iter())
                 .chain(self.help_surface.iter())
                 .chain(self.island_surface.iter())
                 .chain(self.notify_surface.iter())
@@ -1641,6 +1803,8 @@ impl PointerHandler for ShellState {
                         self.assist_click(ev.position.0, ev.position.1);
                     } else if self.zoom_surface.as_ref() == Some(&layer) {
                         self.zoom_click(ev.position.0, ev.position.1);
+                    } else if self.menu_surface.as_ref() == Some(&layer) {
+                        self.menu_click(ev.position.0, ev.position.1);
                     } else if self.help_surface.as_ref() == Some(&layer) {
                         // Any press on the sheet dismisses it.
                         self.close_help();
@@ -1661,6 +1825,8 @@ impl PointerHandler for ShellState {
                         self.assist_dirty |= assist::hover(self, ev.position.0, ev.position.1);
                     } else if self.zoom_surface.as_ref() == Some(&layer) {
                         self.zoom_dirty |= zoomflyout::hover(self, ev.position.0, ev.position.1);
+                    } else if self.menu_surface.as_ref() == Some(&layer) {
+                        self.menu_dirty |= menubar::hover(self, ev.position.0, ev.position.1);
                     } else if self.island_surface.as_ref() == Some(&layer) {
                         self.island_dirty |= island::hover(self, ev.position.0, ev.position.1);
                     }
@@ -1686,6 +1852,11 @@ impl PointerHandler for ShellState {
                     {
                         self.assist_hover = None;
                         self.assist_dirty = true;
+                    } else if self.menu_surface.as_ref() == Some(&layer)
+                        && self.menu_hover.is_some()
+                    {
+                        self.menu_hover = None;
+                        self.menu_dirty = true;
                     } else if self.zoom_surface.as_ref() == Some(&layer)
                         && self.zoom_hover.is_some()
                     {
