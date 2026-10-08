@@ -61,7 +61,18 @@ in QEMU with KVM. Verified on the Ubuntu 22.04 x86_64 build host
 | Locale/swap | `locales systemd-zram-generator` | en_US.UTF-8 generated + `update-locale LANG=` default; zram0 compressed swap (lz4, half of RAM) activated at boot |
 | Disk/snapshots | `btrfs-progs grub-efi-amd64 snapper efibootmgr` | btrfs root + subvolumes; GRUB2-EFI; snapper `root` config on `@snapshots` (timeline on, `SNAPPER_CONFIGS="root"` in /etc/default/snapper — Debian discovers configs from that var, not the configs dir); `80snapper` apt hook pre/post snapshots; efibootmgr for the NVRAM entry |
 
-No X11, no other DE, no display manager.
+X11 comes in via **xwayland-satellite** (`xwayland` + `x11-apps` packages;
+the satellite binary itself is built on-host from upstream git — no trixie
+package and not on crates.io). cosmos-session starts `xwayland-satellite :0`
+after the wayland socket exists and exports `DISPLAY=:0`. Satellite needs
+`xdg_wm_base` + `viewporter` only — it presents X11 windows as normal
+toplevels with our SSD chrome (verified: `xeyes` under SSD titlebar, see
+`docs/evidence/02-xwayland.png`). NOTE: plain `xwayland-satellite :0` spawns
+the real `Xwayland` process EAGERLY at startup — on-demand activation exists
+only via the `-listenfd` compositor-integration path, which the compositor
+doesn't implement yet (would need cosmos-side work).
+
+No DE, no display manager.
 
 ## Session chain (what runs at boot)
 

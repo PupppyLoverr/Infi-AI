@@ -88,6 +88,19 @@ install -m755 "$OC_TMP/opencode" "$OVERLAY/usr/local/bin/opencode"
   { echo "opencode --version failed on staged binary" >&2; exit 1; }
 rm -rf "$OC_TMP"
 
+# xwayland-satellite — no Debian package (trixie) and not on crates.io;
+# build from upstream git on the host and ship the binary. It owns :0 and
+# lazily spawns the real Xwayland server when the first X11 client connects.
+# Host needs: libxcb-cursor-dev libxcb-keysyms1-dev libxcb-icccm4-dev
+# libxcb-ewmh-dev libxcb-render-util0-dev libxcb-util-dev (pkg-config).
+XWS_BIN="$WORK/xwayland-sat/bin/xwayland-satellite"
+if [ ! -x "$XWS_BIN" ]; then
+  cargo install xwayland-satellite --locked \
+    --git https://github.com/Supreeeme/xwayland-satellite \
+    --root "$WORK/xwayland-sat"
+fi
+install -m755 "$XWS_BIN" "$OVERLAY/usr/local/bin/xwayland-satellite"
+
 # launcher/dock entry. Exec wraps opencode in cosmos-terminal -e (>= 910d3ab:
 # args join into a command line run via $SHELL -c) so the TUI gets a real TTY.
 cat > "$OVERLAY/usr/share/applications/opencode.desktop" <<'EOF'
@@ -133,6 +146,14 @@ done
 
 if [ -n "$SOCKET" ]; then
   export WAYLAND_DISPLAY="${SOCKET##*/}"
+  # XWayland via xwayland-satellite: satellite owns :0 and spawns the real
+  # Xwayland server ONLY when the first X11 client connects (lazy). Export
+  # DISPLAY so terminal-spawned X11 apps find it.
+  export DISPLAY=":0"
+  if command -v xwayland-satellite >/dev/null 2>&1; then
+    xwayland-satellite :0 &
+    echo "cosmos-session: xwayland-satellite :0 started (XWayland stays off until first X11 client)"
+  fi
   echo "cosmos-session: wayland socket $WAYLAND_DISPLAY up, starting cosmos-shell"
   cosmos-shell &
   # opt-in smoke rig: present only when /etc/cosmos-smoke-apps flag exists
@@ -421,7 +442,9 @@ ripgrep fd-find fzf eza bat btop fastfetch neovim tmux lazygit htop jq tree \
 firefox-esr adwaita-icon-theme fonts-liberation fonts-inter fonts-jetbrains-mono \
 sudo wget ca-certificates dbus-x11 xdg-user-dirs libfuse2t64 \
 locales systemd-zram-generator \
-grub-efi-amd64 btrfs-progs snapper efibootmgr"
+grub-efi-amd64 btrfs-progs snapper efibootmgr \
+xwayland x11-apps \
+libxcb-cursor0 libxcb-image0 libxcb-render-util0 libxcb-util1 libxcb1 libxcb-render0 libxcb-shm0"
 
 # in-chroot setup. NOTE: mmdebstrap hooks run on the HOST with $1=rootfs —
 # guest commands must go through `chroot "$1"` (a bare useradd here creates
