@@ -8,6 +8,7 @@ members = [
     "portal",
     "lock",
     "greeter",
+    "agentd",
     "apps/terminal",
     "apps/files",
     "apps/editor",
