@@ -285,28 +285,53 @@ pub const ACCENT_PRESETS: &[(&str, &str, [u8; 3], [u8; 3])] = &[
     ("mono", "Mono", [0x9A, 0x9A, 0xA2], [0x6E, 0x6E, 0x73]),
 ];
 
-/// Default accent preset name.
-pub const DEFAULT_ACCENT: &str = "azure";
+/// Default accent preset name — "auto" follows the active wallpaper.
+pub const DEFAULT_ACCENT: &str = "auto";
+
+/// The accent extracted from the active wallpaper (set by the
+/// compositor when it decodes the file). `None` until a wallpaper
+/// has been sampled — `accent_rgb("auto")` falls back to Azure.
+static WALLPAPER_ACCENT: std::sync::RwLock<Option<[u8; 3]>> = std::sync::RwLock::new(None);
+
+/// Called by the compositor after decoding a wallpaper: stores the
+/// dominant saturated colour that `"auto"` accent resolves to.
+pub fn set_wallpaper_accent(rgb: [u8; 3]) {
+    if let Ok(mut slot) = WALLPAPER_ACCENT.write() {
+        *slot = Some(rgb);
+    }
+}
+
+/// The last extracted wallpaper accent, if any.
+pub fn wallpaper_accent() -> Option<[u8; 3]> {
+    WALLPAPER_ACCENT.read().ok().and_then(|s| *s)
+}
 
 /// Resolve an accent preset to its (r,g,b) for `dark` mode.
-/// Unknown names fall back to the default so a stale config can never
+/// `"auto"` resolves to the wallpaper's extracted dominant colour;
+/// unknown names fall back to the default so a stale config can never
 /// blank the accent.
 pub fn accent_rgb(name: &str, dark: bool) -> [u8; 3] {
+    if name == "auto" {
+        if let Some(rgb) = wallpaper_accent() {
+            return rgb;
+        }
+        return accent_rgb("azure", dark);
+    }
     ACCENT_PRESETS
         .iter()
         .find(|(n, _, _, _)| *n == name)
         .or_else(|| {
             ACCENT_PRESETS
                 .iter()
-                .find(|(n, _, _, _)| *n == DEFAULT_ACCENT)
+                .find(|(n, _, _, _)| *n == "azure")
         })
         .map(|(_, _, d, l)| if dark { *d } else { *l })
         .unwrap_or([0x3D, 0x8B, 0xFF])
 }
 
-/// Whether `name` is a known accent preset.
+/// Whether `name` is a known accent preset (`"auto"` included).
 pub fn accent_known(name: &str) -> bool {
-    ACCENT_PRESETS.iter().any(|(n, _, _, _)| *n == name)
+    name == "auto" || ACCENT_PRESETS.iter().any(|(n, _, _, _)| *n == name)
 }
 
 /// The user-facing keybind table — what the super+? cheatsheet renders.

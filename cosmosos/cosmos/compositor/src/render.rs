@@ -580,6 +580,108 @@ where
 /// corner vignette. Light mode swaps to a pale slate with pastel blooms.
 /// No image asset — pure math, rebuilt each frame so the theme toggles
 /// apply instantly.
+/// Directory holding the shipped wallpaper set — overridable for dev.
+fn wallpaper_dir() -> std::path::PathBuf {
+    std::env::var("COSMOS_WALLPAPER_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("/usr/share/cosmos/wallpapers"))
+}
+
+/// Decoded wallpaper pixels + dims keyed by filename — loaded once.
+fn wallpaper_pixels(
+    name: &str,
+    w: u32,
+    h: u32,
+) -> Option<(std::sync::Arc<Vec<u8>>, u32, u32)> {
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<
+        Mutex<std::collections::HashMap<String, (std::sync::Arc<Vec<u8>>, u32, u32)>>,
+    > = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    let key = format!("{name}@{w}x{h}");
+    if let Some(hit) = cache.lock().ok()?.get(&key) {
+        return Some(hit.clone());
+    }
+    let dir = wallpaper_dir();
+    // Prefer the exact mode size, then 4K, then 1080p.
+    let decoded = [
+        format!("{name}-{w}x{h}.png"),
+        format!("{name}-3840x2160.png"),
+        format!("{name}-1920x1080.png"),
+    ]
+    .iter()
+    .find_map(|f| image::open(dir.join(f)).ok())
+    .map(|img| img.to_rgba8());
+    let img = decoded?;
+    // Accent = dominant saturated colour, extracted once per load and
+    // published through the accent IPC (`accent = "auto"`).
+    if let Some(rgb) = dominant_saturated(&img) {
+        cosmos_ipc::set_wallpaper_accent(rgb);
+        tracing::info!(?rgb, wallpaper = %name, "cosmos: wallpaper accent extracted");
+    }
+    let (iw, ih) = (img.width(), img.height());
+    let entry = (std::sync::Arc::new(img.into_raw()), iw, ih);
+    cache.lock().ok()?.insert(key, entry.clone());
+    Some(entry)
+}
+
+/// The most saturated bucket's average colour — a good "dominant
+/// colour" proxy for smooth ambient wallpapers.
+fn dominant_saturated(img: &image::RgbaImage) -> Option<[u8; 3]> {
+    const BINS: usize = 24;
+    let mut sum = [[0f64; 3]; BINS];
+    let mut cnt = [0u32; BINS];
+    let mut sat_acc = [0f64; BINS];
+    // Sample every 16th pixel — plenty for a smooth gradient.
+    let px = img.as_raw();
+    for i in (0..px.len() / 4).step_by(16) {
+        let (r, g, b) = (
+            px[i * 4] as f64 / 255.0,
+            px[i * 4 + 1] as f64 / 255.0,
+            px[i * 4 + 2] as f64 / 255.0,
+        );
+        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+        let sat = if max > 0.0 { (max - min) / max } else { 0.0 };
+        if sat < 0.15 || max < 0.10 {
+            continue;
+        }
+        let hue = if (max - min) < f64::EPSILON {
+            0.0
+        } else if max == r {
+            60.0 * (((g - b) / (max - min)) % 6.0)
+        } else if max == g {
+            60.0 * ((b - r) / (max - min) + 2.0)
+        } else {
+            60.0 * ((r - g) / (max - min) + 4.0)
+        };
+        let bin = (((hue + 360.0) % 360.0) / 360.0 * BINS as f64) as usize % BINS;
+        // Weight by saturation × brightness so vivid hues win.
+        let wgt = sat * max;
+        sum[bin][0] += r * wgt;
+        sum[bin][1] += g * wgt;
+        sum[bin][2] += b * wgt;
+        sat_acc[bin] += wgt;
+        cnt[bin] += 1;
+    }
+    let best = (0..BINS).max_by(|a, b| sat_acc[*a].partial_cmp(&sat_acc[*b]).unwrap())?;
+    if cnt[best] == 0 {
+        return None;
+    }
+    // Lift the average toward full saturation — raw averages read muddy
+    // as an accent. Scale channels so max ≈ 0.85.
+    let m = sat_acc[best].max(f64::EPSILON);
+    let mut rgb = [sum[best][0] / m, sum[best][1] / m, sum[best][2] / m];
+    let peak = rgb[0].max(rgb[1]).max(rgb[2]).max(0.01);
+    for c in &mut rgb {
+        *c = (*c / peak * 0.85).clamp(0.12, 1.0);
+    }
+    Some([
+        (rgb[0] * 255.0) as u8,
+        (rgb[1] * 255.0) as u8,
+        (rgb[2] * 255.0) as u8,
+    ])
+}
+
 fn background_element<R>(
     renderer: &mut R,
     output: &Output,
@@ -589,16 +691,37 @@ where
     R::TextureId: Clone + 'static,
 {
     const N: usize = 128;
-    // Peak corner darkening — subtle enough to read as depth, not a filter.
-    const VIGNETTE: f32 = 0.10;
     let scale = output.current_scale().fractional_scale();
     // Element geometry is in physical pixels: the transformed mode size.
     let size = output
         .current_mode()
         .map(|m| output.current_transform().transform_size(m.size))?;
+    // Shipped wallpaper file first — procedural aurora stays as the
+    // fallback when no file is installed (dev shells, unit env).
+    let name = ssd::wallpaper_name();
+    if !name.is_empty() {
+        if let Some((px, iw, ih)) = wallpaper_pixels(&name, size.w as u32, size.h as u32) {
+            let loc = output.current_location().to_f64().to_physical(scale);
+            // Cover-fit: the texture is stretched to the output — the
+            // generator's aspect matches common modes closely enough
+            // that fill beats letterboxing.
+            let key = ssd::decal_key(5, (true, name.len() as u32 ^ size.w as u32, size.w, size.h));
+            return ssd::decal_element(
+                renderer,
+                key,
+                &px,
+                iw as i32,
+                ih as i32,
+                loc.to_i32_round(),
+                1.0,
+                Some(size.to_f64().to_logical(scale).to_i32_round()),
+            )
+            .map(OutputRenderElements::Background);
+        }
+    }
     let theme = crate::shell::ssd::current_theme();
     // Base + blooms come from the accent preset (already resolved for
-    // dark/light inside the theme).
+    // dark/light inside the theme). No vignette — flat blooms only.
     let (base, blooms): ([f32; 3], [(f32, f32, f32, f32, [f32; 3]); 3]) =
         (theme.bg_base, theme.blooms);
     let mut pixels = Vec::with_capacity(N * N * 4);
@@ -616,13 +739,7 @@ where
                     c[ch] += (bc[ch] - c[ch]) * g.min(1.0);
                 }
             }
-            // Vignette: smoothstep past 35% radius, easing dark to corners.
-            let nx = u - 0.5;
-            let ny = v - 0.5;
-            let r = ((nx * nx + ny * ny).sqrt() * std::f32::consts::SQRT_2).min(1.0);
-            let t = ((r - 0.35) / 0.65).clamp(0.0, 1.0);
-            let dim = 1.0 - t * t * (3.0 - 2.0 * t) * VIGNETTE;
-            let f = |x: f32| (x * dim * 255.0).clamp(0.0, 255.0) as u8;
+            let f = |x: f32| (x * 255.0).clamp(0.0, 255.0) as u8;
             pixels.extend_from_slice(&[f(c[0]), f(c[1]), f(c[2]), 255]);
         }
     }

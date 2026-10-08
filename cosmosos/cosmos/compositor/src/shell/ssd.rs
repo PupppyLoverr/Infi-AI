@@ -119,11 +119,22 @@ thread_local! {
     static CURRENT_THEME: Cell<CosmosTheme> = Cell::new(CosmosTheme::from_config(&crate::cosmos::CosmosConfig::default()));
     static FONT_SYSTEM: RefCell<Option<cosmic_text::FontSystem>> = const { RefCell::new(None) };
     static SWASH_CACHE: RefCell<Option<cosmic_text::SwashCache>> = const { RefCell::new(None) };
+    static WALLPAPER_NAME: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
 /// Update the global theme used for all titlebars (called on config change).
 pub fn set_global_theme(theme: CosmosTheme) {
     CURRENT_THEME.with(|t| t.set(theme));
+}
+
+/// Called alongside `set_global_theme` so the render path knows which
+/// wallpaper file to load without threading config through every call.
+pub fn set_wallpaper_name(name: &str) {
+    WALLPAPER_NAME.with(|n| *n.borrow_mut() = name.to_string());
+}
+
+pub fn wallpaper_name() -> String {
+    WALLPAPER_NAME.with(|n| n.borrow().clone())
 }
 
 pub(crate) fn current_theme() -> CosmosTheme {

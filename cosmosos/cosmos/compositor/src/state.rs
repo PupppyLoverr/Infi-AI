@@ -782,6 +782,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             },
         };
         crate::shell::ssd::set_global_theme(state.cosmos.theme());
+        crate::shell::ssd::set_wallpaper_name(&state.cosmos.config.wallpaper);
         crate::ipc::init_ipc(&mut state);
         state
     }

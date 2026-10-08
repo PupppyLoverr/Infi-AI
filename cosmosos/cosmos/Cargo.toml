@@ -15,6 +15,7 @@ members = [
     "apps/settings",
     "apps/monitor",
     "apps/agents",
+    "tools/wallgen",
 ]
 
 [workspace.dependencies]
