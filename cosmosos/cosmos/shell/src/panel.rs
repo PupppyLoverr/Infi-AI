@@ -55,9 +55,10 @@ fn focused_app_name(state: &ShellState) -> String {
 }
 
 /// Width of the status column — shared by draw, click and `tray_clicked`.
-/// Layout: [net][vol][battery?] icons at 20px stride, then the clock text.
-pub fn status_text_len(info: &crate::sysinfo::SysInfo) -> f64 {
+/// Layout: [dnd?][net][vol][battery?] icons at 20px stride, then the clock text.
+pub fn status_text_len(info: &crate::sysinfo::SysInfo, dnd: bool) -> f64 {
     let icons = 2.0
+        + if dnd { 1.0 } else { 0.0 }
         + info
             .battery
             .as_ref()
@@ -78,7 +79,7 @@ pub fn draw(state: &mut ShellState) {
     let (bg, hover_bg, sep, fg, fg_dim) = theme(state.dark);
     let (hx, hov) = state.panel_hover;
     let name = focused_app_name(state);
-    let status_w = status_text_len(&state.sysinfo);
+    let status_w = status_text_len(&state.sysinfo, state.dnd);
     let net_on = state.sysinfo.network.online;
     let vol_muted = state
         .sysinfo
@@ -97,6 +98,7 @@ pub fn draw(state: &mut ShellState) {
     let workspaces = state.workspaces.clone();
     let dark = state.dark;
     let tray_x = w as f64 - status_w - 12.0;
+    let pill = crate::island::pill_rect(state);
 
     let stride = w as i32 * 4;
     let Ok((buffer, canvas)) = state.pool.create_buffer(
@@ -164,6 +166,90 @@ pub fn draw(state: &mut ShellState) {
         );
     }
 
+    // Dynamic island pill — a centred capsule holding the latest
+    // clipboard snippet + staged-file count; click/hover expands the
+    // island card below the menubar (droppy-style).
+    {
+        let (px, py, pw, ph) = pill;
+        // Keep clear of the focused-app name on the left and the pager on
+        // the right — in tight widths the pill just isn't drawn.
+        let name_right = if name.is_empty() {
+            LAUNCH_BTN_W + 4.0
+        } else {
+            APP_NAME_X + 20.0 + name.len() as f64 * 8.0 + 12.0
+        };
+        let pager_left = w as f64 - status_w - 12.0 - ws_count as f64 * WS_CELL_W - 10.0;
+        if px > name_right && px + pw < pager_left {
+            let pill_bg = if state.island_open {
+                draw::accent_soft(dark)
+            } else if dark {
+                Color::from_rgba8(0x24, 0x25, 0x2A, 0xD8)
+            } else {
+                Color::from_rgba8(0xED, 0xED, 0xF0, 0xE8)
+            };
+            let hover_pill = hov && hx >= px && hx < px + pw;
+            let pill_bg = if hover_pill && !state.island_open {
+                hover_bg
+            } else {
+                pill_bg
+            };
+            draw::fill_round_rect(
+                &mut pixmap,
+                px as f32,
+                py as f32,
+                pw as f32,
+                ph as f32,
+                (ph / 2.0) as f32,
+                pill_bg,
+            );
+            let mut tx = px + 10.0;
+            icons::icon(
+                &mut pixmap,
+                "clipboard",
+                tx as f32,
+                (py + (ph - 13.0) / 2.0) as f32,
+                13.0,
+                glyph,
+            );
+            tx += 18.0;
+            if let Some(snip) = state.clip_history.front() {
+                let snippet: String = snip.chars().take(22).collect();
+                draw::text(
+                    &mut pixmap,
+                    tx as f32,
+                    (py + ph / 2.0 - 7.0) as f32,
+                    (pw - (tx - px) - 10.0) as f32,
+                    14.0,
+                    11.5,
+                    &snippet.replace('\n', " "),
+                    fg_dim,
+                );
+            }
+            if !state.staged_files.is_empty() {
+                let n = state.staged_files.len().to_string();
+                draw::fill_round_rect(
+                    &mut pixmap,
+                    (px + pw - 20.0) as f32,
+                    (py + (ph - 14.0) / 2.0) as f32,
+                    14.0,
+                    14.0,
+                    7.0,
+                    draw::accent(dark),
+                );
+                draw::text(
+                    &mut pixmap,
+                    (px + pw - 20.0) as f32 + 4.0,
+                    (py + (ph - 14.0) / 2.0) as f32,
+                    12.0,
+                    12.0,
+                    9.5,
+                    &n,
+                    CtColor::rgba(0xFF, 0xFF, 0xFF, 0xFF),
+                );
+            }
+        }
+    }
+
     // Right side: status icons + clock (rightmost — the tray), then the pager.
     if hov && hx >= tray_x {
         draw::fill_round_rect(
@@ -179,6 +265,27 @@ pub fn draw(state: &mut ShellState) {
     // Tray icons then the clock — the Win11/macOS status-icons idiom.
     let mut ix = tray_x + 8.0;
     let icon_y = h as f32 / 2.0 - 7.0;
+    // Focus (DND) moon — macOS shows it in the status area while on.
+    if state.dnd {
+        let moon = tiny_skia::Paint {
+            shader: tiny_skia::Shader::SolidColor(glyph),
+            anti_alias: true,
+            ..Default::default()
+        };
+        let mut pb = tiny_skia::PathBuilder::new();
+        pb.push_circle(ix as f32 + 7.0, icon_y + 7.5, 6.0);
+        pb.push_circle(ix as f32 + 10.0, icon_y + 5.0, 5.0);
+        if let Some(path) = pb.finish() {
+            pixmap.fill_path(
+                &path,
+                &moon,
+                tiny_skia::FillRule::EvenOdd,
+                tiny_skia::Transform::default(),
+                None,
+            );
+        }
+        ix += 20.0;
+    }
     icons::icon(
         &mut pixmap,
         if net_on { "net-on" } else { "net-off" },
@@ -300,9 +407,25 @@ pub fn click(state: &mut ShellState, x: f64, _y: f64) -> bool {
         state.ipc.send(&cosmos_ipc::Request::ToggleLauncher);
         return true;
     }
+    // Dynamic island pill — centred capsule toggles the island card.
+    // Same just-dismissed guard as the tray: when the click itself moved
+    // keyboard focus off an open card, `leave` already closed it.
+    {
+        let (px, _, pw, _) = crate::island::pill_rect(state);
+        if x >= px && x < px + pw {
+            let just_dismissed = state
+                .island_dismissed_at
+                .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(300));
+            state.island_dismissed_at = None;
+            if !just_dismissed {
+                state.set_island_open(!state.island_open);
+            }
+            return true;
+        }
+    }
     // Workspace pager.
     let count = crate::workspace_count(state);
-    let status_w = status_text_len(&state.sysinfo);
+    let status_w = status_text_len(&state.sysinfo, state.dnd);
     let ws_start = (w as f64 - status_w - 12.0) - count as f64 * WS_CELL_W - 10.0;
     if x >= ws_start && x < ws_start + count as f64 * WS_CELL_W {
         let idx = ((x - ws_start) / WS_CELL_W) as usize;
@@ -321,7 +444,8 @@ pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {
     let _ = y;
     let prev = state.panel_hover;
     state.panel_hover = (x, true);
-    let edge =
-        |px: f64, w: f64| px < LAUNCH_BTN_W || px >= w - status_text_len(&state.sysinfo) - 12.0;
+    let edge = |px: f64, w: f64| {
+        px < LAUNCH_BTN_W || px >= w - status_text_len(&state.sysinfo, state.dnd) - 12.0
+    };
     edge(prev.0, state.panel_size.0 as f64) != edge(x, state.panel_size.0 as f64)
 }

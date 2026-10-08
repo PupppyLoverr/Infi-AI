@@ -28,6 +28,21 @@ launcher (search + pinned grid + recommended), Quick Settings flyout
 pill), notification daemon, Snap Assist card, zoom flyout (Win11 snap-layouts
 card on green-button dwell → snap into thirds/quarters/wides/max), super+?
 cheatsheet, window switcher. Inter + JetBrains Mono throughout.
+Dynamic island (PR #101): centred menubar pill (clipboard snippet +
+staged-file badge) expanding into a `cosmos-island` card — CLIPBOARD
+history ring of 10 fed by a wlr-data-control watcher + STAGED FILES
+via text/uri-list drops; uitk apps publish/consume a real clipboard
+(copy-paste source + egui Paste events). Launcher is Search-or-Ask
+(PR #102): unified rows — apps, file index hits (bg thread over
+~/Documents etc, 20k cap), live calculator, `>` run commands, `?` Ask
+(opencode) — kind icons + subtitles + Enter/click activate.
+Start widgets (PR #103): the idle launcher view is a true Start panel —
+PINNED grid + RECOMMENDED + WIDGETS (Clock / System / Storage cards with
+live /proc + statvfs data) + footer; result rows only while searching.
+Control Centre (PR #104): Quick Settings becomes grouped macOS modules —
+connectivity+sound and appearance+focus cards — plus a real Focus
+(Do-Not-Disturb) toggle that suppresses notification popups and shows a
+moon in the menubar tray.
 
 **cosmos-portal** (`cosmos/portal`) — xdg-desktop-portal backend
 `org.freedesktop.impl.portal.desktop.cosmos`: Screenshot (compositor IPC →
@@ -71,8 +86,10 @@ a read-only lift catalog (see `docs/LIFT.md`). Shell stays egui on uitk;
 GPU render path (egui-wgpu) added by tier with the software rasterizer as
 the Lite fallback. Disk layout is GPT + btrfs subvolumes + snapper (done,
 PR #97). Dock is left-edge vertical (done, PR #90). Feature ladder: zoom
-flyout (this PR) → dynamic island → Search-or-Ask launcher → Start
-panel+widgets → Control Centre → greetd+lock → cosmos-agentd →
+flyout (done, PR #99) → dynamic island (done, PR #101 — guest
+verification in flight) → Search-or-Ask (done, PR #102) → Start
+panel+widgets (done, PR #103) → Control Centre (done, PR #104) →
+greetd+lock → cosmos-agentd →
 ISO+Calamares.
 
 ## What's broken / open

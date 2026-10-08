@@ -16,6 +16,12 @@ use calloop_wayland_source::WaylandSource;
 use egui::{Key, Pos2, RawInput, Rect, Vec2};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
+    data_device_manager::{
+        data_device::{DataDevice, DataDeviceHandler},
+        data_offer::{DataOfferHandler, DragOffer, SelectionOffer},
+        data_source::{CopyPasteSource, DataSourceHandler},
+        DataDeviceManagerState, WritePipe,
+    },
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
@@ -35,9 +41,19 @@ use smithay_client_toolkit::{
 };
 use wayland_client::{
     globals::registry_queue_init,
-    protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
-    Connection, QueueHandle,
+    protocol::{
+        wl_data_device::WlDataDevice, wl_data_source::WlDataSource, wl_keyboard, wl_output,
+        wl_pointer, wl_seat, wl_shm, wl_surface,
+    },
+    Connection, Proxy, QueueHandle,
 };
+/// MIME types we offer on copy / accept on paste — the usual text set.
+const TEXT_MIMES: [&str; 4] = [
+    "text/plain;charset=utf-8",
+    "text/plain",
+    "UTF8_STRING",
+    "STRING",
+];
 
 /// Run a Cosmos app: one window, `app` paints its egui UI each frame.
 pub fn run(
@@ -71,6 +87,18 @@ pub fn run(
     fonts::install(&ctx);
     theme::apply(&ctx, theme::dark_from_config());
 
+    let data_device_manager =
+        DataDeviceManagerState::bind(&globals, &qh).context("data device mgr")?;
+    let (paste_tx, paste_rx) = calloop::channel::channel::<String>();
+    handle
+        .insert_source(paste_rx, |event, _, state| {
+            if let calloop::channel::Event::Msg(text) = event {
+                state.pending.push(egui::Event::Paste(text));
+                state.dirty = true;
+            }
+        })
+        .map_err(|e| anyhow::anyhow!("paste channel: {e}"))?;
+
     let mut state = UiState {
         registry_state: RegistryState::new(&globals),
         compositor_state,
@@ -79,6 +107,12 @@ pub fn run(
         seat_state,
         output_state,
         pool,
+        data_device_manager,
+        data_devices: Vec::new(),
+        cp_source: None,
+        cp_text: String::new(),
+        paste_tx,
+        last_serial: 0,
         qh: qh.clone(),
         loop_handle: handle.clone(),
         window: Some(window),
@@ -133,6 +167,16 @@ pub struct UiState {
     seat_state: SeatState,
     output_state: OutputState,
     pool: SlotPool,
+    data_device_manager: DataDeviceManagerState,
+    data_devices: Vec<DataDevice>,
+    /// Live copy-paste source — must stay alive or the compositor cancels
+    /// our selection as soon as it's set.
+    cp_source: Option<CopyPasteSource>,
+    cp_text: String,
+    /// Pipe receiving paste payloads read on a helper thread — the
+    /// selection owner may take a moment to write them.
+    paste_tx: calloop::channel::Sender<String>,
+    last_serial: u32,
     qh: QueueHandle<UiState>,
     loop_handle: LoopHandle<'static, UiState>,
     window: Option<Window>,
@@ -183,10 +227,26 @@ impl UiState {
         out.textures_delta.clear();
 
         for cmd in &out.platform_output.commands {
-            if let egui::OutputCommand::OpenUrl(open) = cmd {
-                let _ = std::process::Command::new("xdg-open")
-                    .arg(&open.url)
-                    .spawn();
+            match cmd {
+                egui::OutputCommand::OpenUrl(open) => {
+                    let _ = std::process::Command::new("xdg-open")
+                        .arg(&open.url)
+                        .spawn();
+                }
+                // Real clipboard: egui emits CopyText → publish it as the
+                // seat's selection so other clients (and the shell's
+                // clipboard watcher) see a normal Wayland copy.
+                egui::OutputCommand::CopyText(text) => {
+                    self.cp_text = text.clone();
+                    if let Some(device) = self.data_devices.last() {
+                        let source = self
+                            .data_device_manager
+                            .create_copy_paste_source::<UiState, _>(qh, TEXT_MIMES.iter().copied());
+                        source.set_selection(device, self.last_serial);
+                        self.cp_source = Some(source);
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -424,6 +484,8 @@ impl SeatHandler for UiState {
             }
             Capability::Pointer => {
                 let _ = self.seat_state.get_pointer(qh, &seat);
+                let dd = self.data_device_manager.get_data_device(qh, &seat);
+                self.data_devices.push(dd);
             }
             _ => {}
         }
@@ -471,9 +533,10 @@ impl KeyboardHandler for UiState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
         _keyboard: &wl_keyboard::WlKeyboard,
-        _serial: u32,
+        serial: u32,
         event: KeyEvent,
     ) {
+        self.last_serial = serial;
         self.pending.extend(key_event(&event, true, self.modifiers));
     }
 
@@ -612,6 +675,131 @@ impl ProvidesRegistryState for UiState {
     }
     registry_handlers!(OutputState, SeatState);
 }
+
+/// Clipboard offers to us (paste): the compositor advertises the current
+/// selection through the seat's data device; reading it yields a
+/// `ReadPipe` that the selection owner fills. Reads happen off-loop.
+impl DataDeviceHandler for UiState {
+    fn enter(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _data_device: &WlDataDevice,
+        _x: f64,
+        _y: f64,
+        _surface: &wl_surface::WlSurface,
+    ) {
+    }
+    fn leave(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _device: &WlDataDevice) {}
+    fn motion(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _device: &WlDataDevice,
+        _x: f64,
+        _y: f64,
+    ) {
+    }
+    fn selection(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        data_device: &WlDataDevice,
+    ) {
+        let Some(offer) = data_device
+            .data::<smithay_client_toolkit::data_device_manager::data_device::DataDeviceData>()
+            .and_then(|d| d.selection_offer())
+        else {
+            return;
+        };
+        for mime in TEXT_MIMES {
+            if !offer.with_mime_types(|m| m.iter().any(|t| t == mime)) {
+                continue;
+            }
+            let Ok(mut pipe) = offer.receive(mime.to_string()) else {
+                continue;
+            };
+            let tx = self.paste_tx.clone();
+            std::thread::spawn(move || {
+                use std::io::Read;
+                let mut buf = Vec::new();
+                let _ = pipe.read_to_end(&mut buf);
+                if let Ok(text) = String::from_utf8(buf) {
+                    if !text.is_empty() {
+                        let _ = tx.send(text);
+                    }
+                }
+            });
+            return;
+        }
+    }
+    fn drop_performed(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _device: &WlDataDevice,
+    ) {
+    }
+}
+
+/// Serving our own selection when another client pastes from us.
+impl DataSourceHandler for UiState {
+    fn accept_mime(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _source: &WlDataSource,
+        _mime: Option<String>,
+    ) {
+    }
+    fn send_request(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _source: &WlDataSource,
+        _mime: String,
+        mut fd: WritePipe,
+    ) {
+        use std::io::Write;
+        let _ = fd.write_all(self.cp_text.as_bytes());
+    }
+    fn cancelled(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _source: &WlDataSource) {
+        self.cp_source = None;
+    }
+    fn dnd_dropped(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _s: &WlDataSource) {}
+    fn dnd_finished(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _s: &WlDataSource) {}
+    fn action(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _s: &WlDataSource,
+        _a: wayland_client::protocol::wl_data_device_manager::DndAction,
+    ) {
+    }
+}
+
+/// Data-offer events we don't need — uitk only does clipboard, no DnD.
+impl DataOfferHandler for UiState {
+    fn source_actions(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _offer: &mut DragOffer,
+        _actions: wayland_client::protocol::wl_data_device_manager::DndAction,
+    ) {
+    }
+    fn selected_action(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _offer: &mut DragOffer,
+        _actions: wayland_client::protocol::wl_data_device_manager::DndAction,
+    ) {
+    }
+}
+
+/// Keep SelectionOffer's import alive — used via `data().selection_offer()`.
+type _SelectionOfferAlias = SelectionOffer;
 
 smithay_client_toolkit::delegate_dispatch2!(UiState);
 smithay_client_toolkit::delegate_registry!(UiState);

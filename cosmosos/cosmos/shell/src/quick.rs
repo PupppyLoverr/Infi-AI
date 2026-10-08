@@ -16,6 +16,7 @@ const NET_H: f64 = 40.0;
 const VOL_H: f64 = 56.0;
 const BAT_H: f64 = 40.0;
 const THEME_H: f64 = 40.0;
+const FOCUS_H: f64 = 40.0;
 const BTN_H: f64 = 52.0;
 const TRACK_X: f64 = PAD + 8.0;
 const TRACK_W: f64 = QUICK_W as f64 - PAD * 2.0 - 16.0 - 30.0; // minus mute button
@@ -30,6 +31,8 @@ enum Hit {
     Swatch(usize),
     /// Dark/light mode pill on the Theme row.
     Mode,
+    /// Focus (Do Not Disturb) row — suppresses notification popups.
+    Focus,
     Settings,
     Logout,
     Card,
@@ -59,7 +62,7 @@ fn theme(dark: bool) -> (Color, Color, Color, Color, CtColor, CtColor) {
 
 /// Card height for the current sysinfo (battery row only when present).
 pub fn desired_height(info: &crate::sysinfo::SysInfo) -> u32 {
-    let mut h = PAD * 2.0 + HEADER_H + NET_H + VOL_H + THEME_H + BTN_H;
+    let mut h = PAD * 2.0 + HEADER_H + NET_H + VOL_H + THEME_H + FOCUS_H + BTN_H;
     if info.battery.as_ref().map(|b| b.present).unwrap_or(false) {
         h += BAT_H;
     }
@@ -103,6 +106,11 @@ fn mode_x() -> f64 {
     QUICK_W as f64 - PAD - MODE_W
 }
 
+/// Focus (DND) row — under the Theme row.
+fn focus_row_y(state: &ShellState) -> f64 {
+    theme_row_y(state) + THEME_H
+}
+
 fn hit_test(x: f64, y: f64, state: &ShellState) -> Hit {
     let vy = vol_row_y();
     if y >= vy + 8.0 && y <= vy + VOL_H {
@@ -129,6 +137,10 @@ fn hit_test(x: f64, y: f64, state: &ShellState) -> Hit {
             return Hit::Mode;
         }
         return Hit::Card;
+    }
+    let fy = focus_row_y(state);
+    if y >= fy && y < fy + FOCUS_H {
+        return Hit::Focus;
     }
     let by = state.quick_size.1 as f64 - BTN_H;
     if y >= by {
@@ -229,6 +241,11 @@ pub fn press(state: &mut ShellState, x: f64, y: f64) -> bool {
             }
             true
         }
+        Hit::Focus => {
+            let on = !state.dnd;
+            state.set_dnd(on);
+            true
+        }
         Hit::Settings => {
             let _ = std::process::Command::new("cosmos-settings").spawn();
             state.set_quick_open(false);
@@ -272,6 +289,13 @@ pub fn draw(state: &mut ShellState) {
     let vy = vol_row_y() as f32;
     let bat_y = bat_row_y() as f32;
     let theme_y = theme_row_y(state) as f32;
+    let focus_y = focus_row_y(state) as f32;
+    let has_bat = state
+        .sysinfo
+        .battery
+        .as_ref()
+        .map(|b| b.present)
+        .unwrap_or(false);
 
     let stride = w as i32 * 4;
     let Ok((buffer, canvas)) =
@@ -304,6 +328,29 @@ pub fn draw(state: &mut ShellState) {
     );
 
     let info = &state.sysinfo;
+
+    // macOS Control Center grouping: each module block sits on a quiet
+    // rounded card inside the panel.
+    draw::fill_round_rect(
+        &mut pixmap,
+        PAD as f32 - 6.0,
+        (PAD + HEADER_H) as f32 - 6.0,
+        w as f32 - (PAD as f32 - 6.0) * 2.0,
+        (NET_H + VOL_H) as f32 + 12.0,
+        10.0,
+        btn_bg,
+    );
+    let group2_y = if has_bat { bat_y - 6.0 } else { theme_y - 6.0 };
+    let group2_h = (if has_bat { BAT_H } else { 0.0 } + THEME_H + FOCUS_H) as f32 + 12.0;
+    draw::fill_round_rect(
+        &mut pixmap,
+        PAD as f32 - 6.0,
+        group2_y,
+        w as f32 - (PAD as f32 - 6.0) * 2.0,
+        group2_h,
+        10.0,
+        btn_bg,
+    );
 
     // Header: date + clock, Win11 quick-settings style.
     let date = if info.date.is_empty() {
@@ -673,6 +720,77 @@ pub fn draw(state: &mut ShellState) {
         if state.dark { "Dark" } else { "Light" },
         fg,
     );
+
+    // Focus row: moon glyph + "Do Not Disturb" + toggle pill — a real
+    // Focus mode that suppresses notification popups.
+    {
+        let moon = tiny_skia::Paint {
+            shader: tiny_skia::Shader::SolidColor(if state.dnd { fill } else { glyph }),
+            anti_alias: true,
+            ..Default::default()
+        };
+        let mut pb = tiny_skia::PathBuilder::new();
+        pb.push_circle(PAD as f32 + 7.0, focus_y + 18.0, 6.0);
+        pb.push_circle(PAD as f32 + 10.0, focus_y + 15.5, 5.0);
+        if let Some(path) = pb.finish() {
+            pixmap.fill_path(
+                &path,
+                &moon,
+                tiny_skia::FillRule::EvenOdd,
+                tiny_skia::Transform::default(),
+                None,
+            );
+        }
+        draw::text(
+            &mut pixmap,
+            PAD as f32 + 20.0,
+            focus_y + 11.0,
+            100.0,
+            15.0,
+            13.0,
+            "Focus",
+            fg,
+        );
+        draw::text(
+            &mut pixmap,
+            PAD as f32 + 68.0,
+            focus_y + 12.0,
+            90.0,
+            14.0,
+            11.0,
+            if state.dnd { "On" } else { "Off" },
+            fg_dim,
+        );
+        let sw_x = w as f32 - PAD as f32 - 34.0;
+        let sw_y = focus_y + 11.0;
+        draw::fill_round_rect(
+            &mut pixmap,
+            sw_x,
+            sw_y,
+            34.0,
+            18.0,
+            9.0,
+            if state.dnd { fill } else { sep },
+        );
+        let knob_x = if state.dnd { sw_x + 25.0 } else { sw_x + 9.0 };
+        let mut pb = tiny_skia::PathBuilder::new();
+        pb.push_circle(knob_x, sw_y + 9.0, 6.0);
+        if let Some(path) = pb.finish() {
+            pixmap.fill_path(
+                &path,
+                &tiny_skia::Paint {
+                    shader: tiny_skia::Shader::SolidColor(Color::from_rgba8(
+                        0xF2, 0xF2, 0xF4, 0xFF,
+                    )),
+                    anti_alias: true,
+                    ..Default::default()
+                },
+                tiny_skia::FillRule::Winding,
+                tiny_skia::Transform::default(),
+                None,
+            );
+        }
+    }
 
     // Footer buttons.
     let by = h as f32 - BTN_H as f32;
