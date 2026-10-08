@@ -125,6 +125,13 @@ ISO+Calamares.
   skills).
 - Image host: binary + systemd user unit + MCP smoke transcript in
   flight.
+- Slice A.1 (PR #109): `--stdio` transport — the same handler on
+  stdin/stdout so MCP-capable agents (opencode/Claude Code) attach with
+  one config line.
+- Slice G started (PR #110): `cosmos/skills/` (→
+  `/usr/share/cosmos/skills/`, §6.11) + custom widgets real —
+  `~/.local/share/cosmos/widgets/<name>/` (widget.toml + data.sh)
+  renders in the Start WIDGETS strip, cached per refresh, 2s kill cap.
 
 ## What's broken / open
 - Snap Assist tray-click is fixed in code (bbox pass-through #50, clipped
