@@ -395,9 +395,9 @@ where
 /// dock's magnification room).
 fn layer_shadow_top_inset(namespace: &str) -> Option<i32> {
     match namespace {
-        // 24 = shell's dock::MAG_ROOM — the transparent overhang above
-        // the dock card must not silhouette into the shadow rect.
-        "cosmos-dock" => Some(24),
+        // The dock is excluded: its layer surface spans the full screen
+        // edge (pill + transparent overhang), so a surface-sized shadow
+        // painted a dark strip there. The shell shadows the pill itself.
         "cosmos-quick" | "cosmos-notify" | "cosmos-switcher" => Some(0),
         _ => None,
     }
