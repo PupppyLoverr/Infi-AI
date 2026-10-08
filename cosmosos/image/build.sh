@@ -30,13 +30,21 @@ MIRROR="${MIRROR:-http://deb.debian.org/debian}"
 
 # --- 1. build the workspace ---------------------------------------------------
 
+# cosmos-portal's libspa-sys bindgen needs pipewire headers newer than
+# Ubuntu 22.04's (libspa-0.9 wants spa_video_info_raw.flags). provision/
+# host-deps.sh fetches trixie's dev+runtime debs into ~/pipewire-prefix and
+# writes a hybrid .pc: trixie headers for bindgen + host libdir for the link
+# (trixie's .so requires glibc 2.38; host glibc is 2.35; the guest's trixie
+# .so satisfies the binary at runtime).
+export PKG_CONFIG_PATH="${PIPEWIRE_PKG_CONFIG:-$HOME/pipewire-prefix/hybrid}:${PKG_CONFIG_PATH:-}"
+
 if [ "${SKIP_CARGO_BUILD:-0}" != "1" ]; then
   echo "== cargo build --release --workspace =="
   cargo build --release --workspace --manifest-path "$COSMOS/Cargo.toml"
 fi
 BINDIR="$COSMOS/target/release"
 for b in cosmos-compositor cosmos-shell cosmos-files cosmos-terminal \
-         cosmos-editor cosmos-settings cosmos-monitor; do
+         cosmos-editor cosmos-settings cosmos-monitor cosmos-portal; do
   [ -x "$BINDIR/$b" ] || { echo "missing binary: $BINDIR/$b" >&2; exit 1; }
 done
 
@@ -46,9 +54,33 @@ echo "== staging overlay =="
 sudo rm -rf "$OVERLAY"   # previous run's files are chowned root below
 mkdir -p "$OVERLAY"/{usr/local/bin,usr/share/applications,etc/profile.d,etc/skel,etc/systemd/network,etc/systemd/system/getty@tty1.service.d,etc/polkit-1/rules.d,etc/sudoers.d}
 
-install -m755 "$BINDIR"/cosmos-{compositor,shell,files,terminal,editor,settings,monitor} \
+install -m755 "$BINDIR"/cosmos-{compositor,shell,files,terminal,editor,settings,monitor,portal} \
   "$OVERLAY/usr/local/bin/"
 install -m644 "$COSMOS"/apps/*/cosmos-*.desktop "$OVERLAY/usr/share/applications/"
+
+# xdg-desktop-portal backend: cosmos.portal picks our impl when
+# XDG_CURRENT_DESKTOP=cosmos; the .service lets dbus activation start
+# cosmos-portal on demand (SystemdService names the user unit we ship).
+mkdir -p "$OVERLAY/usr/share/xdg-desktop-portal/portals" \
+         "$OVERLAY/usr/share/dbus-1/services" \
+         "$OVERLAY/usr/lib/systemd/user"
+install -m644 "$COSMOS/portal/data/cosmos.portal" \
+  "$OVERLAY/usr/share/xdg-desktop-portal/portals/"
+install -m644 "$COSMOS/portal/data/org.freedesktop.impl.portal.desktop.cosmos.service" \
+  "$OVERLAY/usr/share/dbus-1/services/"
+cat > "$OVERLAY/usr/lib/systemd/user/cosmos-portal.service" <<'EOF'
+[Unit]
+Description=cosmos xdg-desktop-portal backend
+After=dbus.service
+
+[Service]
+Type=dbus
+BusName=org.freedesktop.impl.portal.desktop.cosmos
+ExecStart=/usr/local/bin/cosmos-portal
+
+[Install]
+WantedBy=default.target
+EOF
 
 # kiosk privilege path: the cosmos account's password is locked, so sudo
 # password prompts could never be answered. NOPASSWD for the single user is
@@ -127,6 +159,13 @@ cat > "$OVERLAY/usr/local/bin/cosmos-session" <<'EOF'
 exec > >(logger -t cosmos-session) 2>&1
 
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+# cosmos.portal's UseIn=cosmos matches this: xdg-desktop-portal routes
+# Screenshot/PickColor to our backend only on our desktop. The frontend
+# runs under systemd --user, so push it into the manager + dbus
+# activation environment, not just our process env.
+export XDG_CURRENT_DESKTOP="cosmos"
+dbus-update-activation-environment --systemd XDG_CURRENT_DESKTOP 2>/dev/null || \
+  echo "cosmos-session: dbus-update-activation-environment failed (portal may not match UseIn)"
 export WAYLAND_DISPLAY=""
 
 echo "cosmos-session: starting cosmos-compositor on tty $(tty)"
@@ -441,6 +480,7 @@ iproute2 \
 ripgrep fd-find fzf eza bat btop fastfetch neovim tmux lazygit htop jq tree \
 firefox-esr adwaita-icon-theme fonts-liberation fonts-inter fonts-jetbrains-mono \
 sudo wget ca-certificates dbus-x11 xdg-user-dirs libfuse2t64 \
+xdg-desktop-portal dbus-user-session libpipewire-0.3-0t64 libglib2.0-bin \
 locales systemd-zram-generator \
 grub-efi-amd64 btrfs-progs snapper efibootmgr \
 xwayland x11-apps \

@@ -44,8 +44,46 @@ sudo apt-get install -y --no-install-recommends \
   `# xwayland-satellite build (cargo install --git, needs pkg-config xcb)` \
   libxcb-cursor-dev libxcb-icccm4-dev libxcb-ewmh-dev \
   libxcb-render-util0-dev libxcb-util-dev libxcb-image0-dev \
+  `# cosmos-portal ScreenCast: pipewire/libspa crates need pkg-config headers` \
+  libpipewire-0.3-dev libspa-0.2-dev \
   `# socat: QEMU monitor socket for screendump smoke tests` \
   socat
+
+# --- trixie pipewire headers for libspa-sys bindgen ---------------------------
+# libspa-0.9's bindgen wants spa_video_info_raw.flags — absent in Ubuntu
+# 22.04's 0.3.48 headers. Extract trixie's dev+runtime debs into
+# ~/pipewire-prefix and emit a hybrid .pc: trixie headers for bindgen plus
+# the host libdir for the link (trixie's .so needs glibc 2.38; host is 2.35;
+# the guest's trixie .so covers it at runtime). build.sh prepends
+# $HOME/pipewire-prefix/hybrid to PKG_CONFIG_PATH.
+PW_PREFIX="$HOME/pipewire-prefix"
+PW_VER="${PIPEWIRE_DEB_VERSION:-1.6.9-2}"
+if ! PKG_CONFIG_PATH="$PW_PREFIX/hybrid" \
+    pkg-config --atleast-version=1.0 libpipewire-0.3 2>/dev/null; then
+  mkdir -p "$PW_PREFIX/hybrid"
+  for deb in "libpipewire-0.3-dev_${PW_VER}_amd64" \
+             "libspa-0.2-dev_${PW_VER}_amd64" \
+             "libpipewire-0.3-0t64_${PW_VER}_amd64"; do
+    curl -fsSL -o "$PW_PREFIX/$deb.deb" \
+      "http://deb.debian.org/debian/pool/main/p/pipewire/$deb.deb"
+    dpkg-deb -x "$PW_PREFIX/$deb.deb" "$PW_PREFIX"
+    rm -f "$PW_PREFIX/$deb.deb"
+  done
+  cat > "$PW_PREFIX/hybrid/libpipewire-0.3.pc" <<EOF
+prefix=$PW_PREFIX/usr
+exec_prefix=\${prefix}
+libdir=/usr/lib/x86_64-linux-gnu
+includedir=\${prefix}/include
+
+Name: libpipewire-0.3
+Description: PipeWire interface
+Version: $PW_VER
+Libs: -L\${libdir} -lpipewire-0.3
+Cflags: -I\${includedir}/pipewire-0.3 -I\${includedir}/spa-0.2
+EOF
+  cp "$PW_PREFIX/usr/lib/x86_64-linux-gnu/pkgconfig/libspa-0.2.pc" \
+    "$PW_PREFIX/hybrid/"
+fi
 
 # --- rustup (stable toolchain) ----------------------------------------------
 
