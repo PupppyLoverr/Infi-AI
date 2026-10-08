@@ -28,6 +28,11 @@ launcher (search + pinned grid + recommended), Quick Settings flyout
 pill), notification daemon, Snap Assist card, zoom flyout (Win11 snap-layouts
 card on green-button dwell → snap into thirds/quarters/wides/max), super+?
 cheatsheet, window switcher. Inter + JetBrains Mono throughout.
+Dynamic island (PR #101): centred menubar pill (clipboard snippet +
+staged-file badge) expanding into a `cosmos-island` card — CLIPBOARD
+history ring of 10 fed by a wlr-data-control watcher + STAGED FILES
+via text/uri-list drops; uitk apps publish/consume a real clipboard
+(copy-paste source + egui Paste events).
 
 **cosmos-portal** (`cosmos/portal`) — xdg-desktop-portal backend
 `org.freedesktop.impl.portal.desktop.cosmos`: Screenshot (compositor IPC →
@@ -71,7 +76,8 @@ a read-only lift catalog (see `docs/LIFT.md`). Shell stays egui on uitk;
 GPU render path (egui-wgpu) added by tier with the software rasterizer as
 the Lite fallback. Disk layout is GPT + btrfs subvolumes + snapper (done,
 PR #97). Dock is left-edge vertical (done, PR #90). Feature ladder: zoom
-flyout (this PR) → dynamic island → Search-or-Ask launcher → Start
+flyout (done, PR #99) → dynamic island (done, PR #101 — guest
+verification in flight) → Search-or-Ask launcher → Start
 panel+widgets → Control Centre → greetd+lock → cosmos-agentd →
 ISO+Calamares.
 
