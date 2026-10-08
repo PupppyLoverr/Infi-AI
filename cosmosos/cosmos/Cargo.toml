@@ -5,6 +5,7 @@ members = [
     "ipc",
     "shell",
     "uitk",
+    "portal",
     "apps/terminal",
     "apps/files",
     "apps/editor",
