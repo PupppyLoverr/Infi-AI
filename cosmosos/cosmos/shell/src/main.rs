@@ -507,7 +507,7 @@ impl ShellState {
             }
         }
         layer.set_size(sw, sh);
-        layer.set_exclusive_zone(dock::STRIP as i32);
+        layer.set_exclusive_zone((dock::STRIP + dock::MARGIN) as i32);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         layer.wl_surface().commit();
         self.dock_surface = Some(layer);

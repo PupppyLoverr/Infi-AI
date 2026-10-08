@@ -18,13 +18,15 @@ use wayland_client::protocol::wl_shm;
 
 use crate::{desktop::AppEntry, draw, glass, icons, ShellState};
 
-/// Rail thickness — also the exclusive zone it reserves.
+/// Pill thickness — the exclusive zone reserves this + the edge margin.
 pub const STRIP: u32 = 60;
+/// Gap between the pill and the screen edge (exclusive zone = STRIP+MARGIN).
+pub const MARGIN: u32 = 10;
 /// Transparent margin beyond the rail where labels/magnified icons pop.
 /// Not clickable — the input region covers only the rail band.
 pub const OVERHANG: u32 = 128;
-const CELL: f64 = 46.0;
-const ICON_SZ: f32 = 28.0;
+const CELL: f64 = 56.0;
+const ICON_SZ: f32 = 48.0;
 /// Extra icon px at the hover centre and its falloff radius.
 const MAG_MAX: f32 = 16.0;
 const MAG_SPAN: f64 = 115.0;
@@ -213,13 +215,30 @@ fn mag(hover: Option<f64>, cell_center: f64) -> f32 {
     MAG_MAX * t * t * (3.0 - 2.0 * t)
 }
 
-/// Surface-local rect of the interactive rail band (also the input
-/// region — the overhang stays click-through).
-fn rail_rect(pos: DockPos, w: u32, h: u32) -> (i32, i32, i32, i32) {
+/// Surface-local rect of the floating pill (also the input region —
+/// the overhang stays click-through). `content` is the icon column's
+/// painted length so the pill hugs the icons plus PAD at both ends.
+fn rail_rect(pos: DockPos, w: u32, h: u32, content: f64) -> (i32, i32, i32, i32) {
+    let len = (content + 2.0 * PAD) as i32;
     match pos {
-        DockPos::Left => (0, 0, STRIP as i32, h as i32),
-        DockPos::Right => (OVERHANG as i32, 0, STRIP as i32, h as i32),
-        DockPos::Bottom => (0, OVERHANG as i32, w as i32, STRIP as i32),
+        DockPos::Left => (
+            MARGIN as i32,
+            ((h as f64 - len as f64) / 2.0) as i32,
+            STRIP as i32,
+            len,
+        ),
+        DockPos::Right => (
+            w as i32 - MARGIN as i32 - STRIP as i32,
+            ((h as f64 - len as f64) / 2.0) as i32,
+            STRIP as i32,
+            len,
+        ),
+        DockPos::Bottom => (
+            ((w as f64 - len as f64) / 2.0) as i32,
+            h as i32 - MARGIN as i32 - STRIP as i32,
+            len,
+            STRIP as i32,
+        ),
     }
 }
 
@@ -274,21 +293,22 @@ pub fn draw(state: &mut ShellState) {
     // explicitly cleared or stale pool memory shows through.
     pixmap.fill(Color::TRANSPARENT);
 
-    // The rail: flush against the screen edge, square on the three
-    // sides that touch it, rounded only on the two free inner corners.
-    let (rx, ry, rw, rh) = rail_rect(pos, w, h);
-    glass::fill_glass(&mut pixmap, &crate::ShellState::wallpaper_name(), rx as f32, ry as f32, rw as f32, rh as f32, 0.0, rx as f32, ry as f32, state.dark, bg);
-    // Hairline on the rail's inner edge — separates it from windows.
-    let (ix, iy, iw, ih) = match pos {
-        DockPos::Left => (rx + rw - 1, ry, 1, rh),
-        DockPos::Right => (rx, ry, 1, rh),
-        DockPos::Bottom => (rx, ry, rw, 1),
+    // The floating pill: MARGIN px off the screen edge, vertically
+    // centred, sized to its icons. Glass samples the wallpaper at the
+    // pill's true screen position (the surface itself is edge-anchored
+    // at x=0 for Left).
+    let content = content_len(&items);
+    let (rx, ry, rw, rh) = rail_rect(pos, w, h, content);
+    let (sx, sy) = match pos {
+        DockPos::Left => (rx as f32, ry as f32),
+        DockPos::Right => ((state.panel_size.0 as f32 - MARGIN as f32 - STRIP as f32).max(0.0), ry as f32),
+        DockPos::Bottom => (rx as f32, (state.panel_size.1 as f32 - MARGIN as f32 - STRIP as f32).max(0.0)),
     };
-    draw::fill_rect(&mut pixmap, ix as f32, iy as f32, iw as f32, ih as f32, sep);
+    glass::fill_glass(&mut pixmap, &crate::ShellState::wallpaper_name(), rx as f32, ry as f32, rw as f32, rh as f32, 22.0, sx, sy, state.dark, bg);
 
     // Icon column/row centred along the rail axis.
     let span = axis_span(pos, w, h);
-    let mut a = ((span - content_len(&items)) / 2.0).max(PAD);
+    let mut a = ((span - content) / 2.0).max(PAD);
     let extra_sep_idx = first_extra(&items);
     for (idx, item) in items.iter().enumerate() {
         if idx == 1 || Some(idx) == extra_sep_idx {
@@ -446,9 +466,9 @@ pub fn draw(state: &mut ShellState) {
     let wl_surface = layer.wl_surface().clone();
     buffer.attach_to(&wl_surface).ok();
     wl_surface.damage_buffer(0, 0, w as i32, h as i32);
-    // Only the rail band is clickable — the transparent overhang must
-    // let pointer events reach windows underneath.
-    let (rx, ry, rw, rh) = rail_rect(pos, w, h);
+    // Only the pill is clickable — the transparent overhang must let
+    // pointer events reach windows underneath.
+    let (rx, ry, rw, rh) = rail_rect(pos, w, h, content_len(&items));
     if let Ok(region) = Region::new(&state.compositor_state) {
         region.add(rx, ry, rw, rh);
         wl_surface.set_input_region(Some(region.wl_region()));
