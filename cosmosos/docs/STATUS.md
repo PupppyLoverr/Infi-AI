@@ -32,7 +32,10 @@ Dynamic island (PR #101): centred menubar pill (clipboard snippet +
 staged-file badge) expanding into a `cosmos-island` card — CLIPBOARD
 history ring of 10 fed by a wlr-data-control watcher + STAGED FILES
 via text/uri-list drops; uitk apps publish/consume a real clipboard
-(copy-paste source + egui Paste events).
+(copy-paste source + egui Paste events). Launcher is Search-or-Ask
+(PR #102): unified rows — apps, file index hits (bg thread over
+~/Documents etc, 20k cap), live calculator, `>` run commands, `?` Ask
+(opencode) — kind icons + subtitles + Enter/click activate.
 
 **cosmos-portal** (`cosmos/portal`) — xdg-desktop-portal backend
 `org.freedesktop.impl.portal.desktop.cosmos`: Screenshot (compositor IPC →
@@ -77,7 +80,7 @@ GPU render path (egui-wgpu) added by tier with the software rasterizer as
 the Lite fallback. Disk layout is GPT + btrfs subvolumes + snapper (done,
 PR #97). Dock is left-edge vertical (done, PR #90). Feature ladder: zoom
 flyout (done, PR #99) → dynamic island (done, PR #101 — guest
-verification in flight) → Search-or-Ask launcher → Start
+verification in flight) → Search-or-Ask (done, PR #102) → Start
 panel+widgets → Control Centre → greetd+lock → cosmos-agentd →
 ISO+Calamares.
 

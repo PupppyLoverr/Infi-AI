@@ -202,6 +202,46 @@ pub fn icon(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32, co
             circle!(pb, 12.0, 9.5, 1.6);
             fill(pixmap, pb, color);
         }
+        "widget-clock" => {
+            // Analog clock: face + hands.
+            circle!(pb, 12.0, 12.0, 8.5);
+            stroke(pixmap, pb, s, w, color);
+            let mut pb = PathBuilder::new();
+            mv!(pb, 12.0, 7.5);
+            ln!(pb, 12.0, 12.0);
+            ln!(pb, 15.5, 14.0);
+            stroke(pixmap, pb, s, w, color);
+        }
+        "widget-cpu" => {
+            // Chip: square + inner die + 4 pin stubs.
+            rr!(pb, 6.0, 6.0, 12.0, 12.0, 1.5);
+            stroke(pixmap, pb, s, w, color);
+            let mut pb = PathBuilder::new();
+            rr!(pb, 9.5, 9.5, 5.0, 5.0, 1.0);
+            stroke(pixmap, pb, s, w, color);
+            let mut pb = PathBuilder::new();
+            for x in [9.0f32, 15.0] {
+                mv!(pb, x, 3.5);
+                ln!(pb, x, 6.0);
+                mv!(pb, x, 18.0);
+                ln!(pb, x, 20.5);
+            }
+            for y in [9.0f32, 15.0] {
+                mv!(pb, 3.5, y);
+                ln!(pb, 6.0, y);
+                mv!(pb, 18.0, y);
+                ln!(pb, 20.5, y);
+            }
+            stroke(pixmap, pb, s, w, color);
+        }
+        "widget-disk" => {
+            // Drive: rounded slab + activity dot.
+            rr!(pb, 3.0, 7.0, 18.0, 10.0, 2.5);
+            stroke(pixmap, pb, s, w, color);
+            let mut pb = PathBuilder::new();
+            circle!(pb, 16.5, 12.0, 1.4);
+            fill(pixmap, pb, color);
+        }
         "cosmos-terminal" => {
             rr!(pb, 3.5, 5.0, 17.0, 14.0, 2.0);
             stroke(pixmap, pb, s, w, color);
