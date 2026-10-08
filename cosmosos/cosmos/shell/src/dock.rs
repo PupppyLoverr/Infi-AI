@@ -1,8 +1,15 @@
-//! The dock: a floating bottom-centre strip merging the macOS Dock
-//! (icon strip, running dots, overlays windows — no exclusive zone) with
-//! the Win11 taskbar's centred layout and click-to-focus/launch.
+//! The dock: an edge rail — icons racked along the screen edge like the
+//! macOS Dock rotated vertical. Default position is the LEFT edge,
+//! vertical and centred (the ref-1 sketch); `right` and `bottom` are
+//! Settings options via the `dock_position` config key.
 //!
-//! Layout: [Cosmos start glyph] | pinned apps | running extras.
+//! The rail reserves an exclusive zone (STRIP px on that edge) so
+//! maximised and snapped windows never overlap it. The layer surface is
+//! STRIP+OVERHANG wide — the overhang is transparent, input-free, and
+//! only used by magnified icons and hover labels popping over windows.
+//!
+//! Layout: [Cosmos start glyph] | pinned apps | running extras, the
+//! whole column/row centred along the rail.
 
 use cosmic_text::Color as CtColor;
 use smithay_client_toolkit::{compositor::Region, shell::WaylandSurface};
@@ -11,20 +18,20 @@ use wayland_client::protocol::wl_shm;
 
 use crate::{desktop::AppEntry, draw, icons, ShellState};
 
-pub const DOCK_H: u32 = 54;
-/// Extra surface height above the card so magnified icons can pop
-/// over its top edge (macOS Dock). Input stays clipped to the card.
-pub const MAG_ROOM: u32 = 24;
-pub const SURFACE_H: u32 = DOCK_H + MAG_ROOM;
-const CELL_W: f64 = 46.0;
+/// Rail thickness — also the exclusive zone it reserves.
+pub const STRIP: u32 = 60;
+/// Transparent margin beyond the rail where labels/magnified icons pop.
+/// Not clickable — the input region covers only the rail band.
+pub const OVERHANG: u32 = 128;
+const CELL: f64 = 46.0;
 const ICON_SZ: f32 = 28.0;
 /// Extra icon px at the hover centre and its falloff radius.
 const MAG_MAX: f32 = 16.0;
 const MAG_SPAN: f64 = 115.0;
 const PAD: f64 = 9.0;
 const SEP_W: f64 = 13.0;
-const DOCK_R: f32 = 15.0;
-/// Pinned apps, left→right (desktop ids without ".desktop").
+/// Pinned apps, top→bottom on a vertical rail (desktop ids without
+/// ".desktop").
 pub const PINNED: &[&str] = &[
     "cosmos-terminal",
     "cosmos-files",
@@ -32,6 +39,24 @@ pub const PINNED: &[&str] = &[
     "cosmos-monitor",
     "cosmos-settings",
 ];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockPos {
+    Left,
+    Right,
+    Bottom,
+}
+
+impl DockPos {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "left" => Some(Self::Left),
+            "right" => Some(Self::Right),
+            "bottom" => Some(Self::Bottom),
+            _ => None,
+        }
+    }
+}
 
 /// One icon cell on the dock.
 pub struct DockEntry {
@@ -140,22 +165,30 @@ fn entries(state: &ShellState) -> Vec<DockEntry> {
     out
 }
 
-/// Dock content width in px for the current item set.
-pub fn desired_width(state: &ShellState) -> u32 {
-    let items = entries(state);
+/// Content length along the rail axis for the current item set.
+fn content_len(items: &[DockEntry]) -> f64 {
     let n = items.len() as f64;
-    let extra_sep = if first_extra(&items).is_some() {
+    let extra_sep = if first_extra(items).is_some() {
         SEP_W
     } else {
         0.0
     };
-    (PAD * 2.0 + n * CELL_W + SEP_W + extra_sep) as u32
+    n * CELL + SEP_W + extra_sep
+}
+
+/// Requested surface size for `pos` — the rail axis size is 0 so the
+/// compositor spans the whole edge.
+pub fn surface_size(pos: DockPos) -> (u32, u32) {
+    match pos {
+        DockPos::Left | DockPos::Right => (STRIP + OVERHANG, 0),
+        DockPos::Bottom => (0, STRIP + OVERHANG),
+    }
 }
 
 fn theme(dark: bool) -> (Color, Color, Color, CtColor) {
     if dark {
         (
-            Color::from_rgba8(0x16, 0x17, 0x1A, 0xD8), // card
+            Color::from_rgba8(0x16, 0x17, 0x1A, 0xD8), // rail
             Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x2E), // hover cell
             Color::from_rgba8(0x45, 0x46, 0x4C, 0x80), // separator
             CtColor::rgba(0xEC, 0xEC, 0xEE, 0xFF),
@@ -171,7 +204,7 @@ fn theme(dark: bool) -> (Color, Color, Color, CtColor) {
 }
 
 /// Icon magnification: smoothstep bell over MAG_SPAN, peaking under
-/// the cursor (macOS dock zoom).
+/// the cursor (macOS dock zoom), evaluated along the rail axis.
 fn mag(hover: Option<f64>, cell_center: f64) -> f32 {
     let Some(hx) = hover else {
         return 0.0;
@@ -180,8 +213,38 @@ fn mag(hover: Option<f64>, cell_center: f64) -> f32 {
     MAG_MAX * t * t * (3.0 - 2.0 * t)
 }
 
+/// Surface-local rect of the interactive rail band (also the input
+/// region — the overhang stays click-through).
+fn rail_rect(pos: DockPos, w: u32, h: u32) -> (i32, i32, i32, i32) {
+    match pos {
+        DockPos::Left => (0, 0, STRIP as i32, h as i32),
+        DockPos::Right => (OVERHANG as i32, 0, STRIP as i32, h as i32),
+        DockPos::Bottom => (0, OVERHANG as i32, w as i32, STRIP as i32),
+    }
+}
+
+/// Along-axis span of the rail (surface height for vertical docks,
+/// width for bottom).
+fn axis_span(pos: DockPos, w: u32, h: u32) -> f64 {
+    match pos {
+        DockPos::Left | DockPos::Right => h as f64,
+        DockPos::Bottom => w as f64,
+    }
+}
+
+/// Map a rail-space point (t = along axis, n = across, 0 = rail's
+/// screen-ward edge) to surface-local (x, y).
+fn axis_xy(pos: DockPos, t: f64, n: f64) -> (f64, f64) {
+    match pos {
+        DockPos::Left => (n, t),
+        DockPos::Right => (OVERHANG as f64 + n, t),
+        DockPos::Bottom => (t, OVERHANG as f64 + n),
+    }
+}
+
 /// Repaint the dock surface.
 pub fn draw(state: &mut ShellState) {
+    let pos = state.dock_position;
     let (w, h) = state.dock_size;
     if w == 0 || h == 0 {
         return;
@@ -193,8 +256,7 @@ pub fn draw(state: &mut ShellState) {
     let items = entries(state);
     let dock_hover = state.dock_hover;
     let glyph = Color::from_rgba8(fg.r(), fg.g(), fg.b(), fg.a());
-    // The card sits at the bottom of the taller surface.
-    let card_y = MAG_ROOM as f32;
+    let vertical = pos != DockPos::Bottom;
 
     let stride = w as i32 * 4;
     let Ok((buffer, canvas)) =
@@ -208,58 +270,59 @@ pub fn draw(state: &mut ShellState) {
     let Some(mut pixmap) = PixmapMut::from_bytes(canvas, w, h) else {
         return;
     };
-    // The card only fills the bottom DOCK_H rows — the MAG_ROOM overhang
-    // above it must be explicitly cleared or stale pool memory shows
-    // through as garbage glyph bands.
+    // The rail band is the only painted part; the overhang must be
+    // explicitly cleared or stale pool memory shows through.
     pixmap.fill(Color::TRANSPARENT);
 
-    // Floating card.
-    draw::fill_round_rect(
-        &mut pixmap,
-        0.5,
-        card_y + 0.5,
-        w as f32 - 1.0,
-        DOCK_H as f32 - 1.0,
-        DOCK_R,
-        bg,
-    );
-    draw::stroke_round_rect(
-        &mut pixmap,
-        0.5,
-        card_y + 0.5,
-        w as f32 - 1.0,
-        DOCK_H as f32 - 1.0,
-        DOCK_R - 0.5,
-        1.0,
-        sep,
-    );
+    // The rail: flush against the screen edge, square on the three
+    // sides that touch it, rounded only on the two free inner corners.
+    let (rx, ry, rw, rh) = rail_rect(pos, w, h);
+    draw::fill_rect(&mut pixmap, rx as f32, ry as f32, rw as f32, rh as f32, bg);
+    // Hairline on the rail's inner edge — separates it from windows.
+    let (ix, iy, iw, ih) = match pos {
+        DockPos::Left => (rx + rw - 1, ry, 1, rh),
+        DockPos::Right => (rx, ry, 1, rh),
+        DockPos::Bottom => (rx, ry, rw, 1),
+    };
+    draw::fill_rect(&mut pixmap, ix as f32, iy as f32, iw as f32, ih as f32, sep);
 
+    // Icon column/row centred along the rail axis.
+    let span = axis_span(pos, w, h);
+    let mut a = ((span - content_len(&items)) / 2.0).max(PAD);
     let extra_sep_idx = first_extra(&items);
-    let mut x = PAD;
     for (idx, item) in items.iter().enumerate() {
         if idx == 1 || Some(idx) == extra_sep_idx {
             // Separator after the start glyph, and between pinned
             // apps and running extras (macOS dock divider).
+            let (sx, sy) = axis_xy(pos, a + SEP_W / 2.0, STRIP as f64 / 2.0);
+            let (sw, sh) = if vertical { (22.0, 1.0) } else { (1.0, 22.0) };
             draw::fill_rect(
                 &mut pixmap,
-                (x + SEP_W / 2.0) as f32,
-                h as f32 / 2.0 - 11.0,
-                1.0,
-                22.0,
+                (sx - sw / 2.0) as f32,
+                (sy - sh / 2.0) as f32,
+                sw as f32,
+                sh as f32,
                 sep,
             );
-            x += SEP_W;
+            a += SEP_W;
         }
+        let cell_center = a + CELL / 2.0;
         let hovered = dock_hover
-            .map(|hx| hx >= x && hx < x + CELL_W)
+            .map(|hx| hx >= a && hx < a + CELL)
             .unwrap_or(false);
         if hovered || item.focused {
+            let (hx, hy) = axis_xy(pos, a + 2.0, 2.0);
+            let (hw, hh) = if vertical {
+                (STRIP as f64 - 4.0, CELL - 4.0)
+            } else {
+                (CELL - 4.0, STRIP as f64 - 4.0)
+            };
             draw::fill_round_rect(
                 &mut pixmap,
-                x as f32 + 2.0,
-                card_y + 4.0,
-                CELL_W as f32 - 4.0,
-                DOCK_H as f32 - 8.0,
+                hx as f32,
+                hy as f32,
+                hw as f32,
+                hh as f32,
                 10.0,
                 hover_bg,
             );
@@ -282,25 +345,24 @@ pub fn draw(state: &mut ShellState) {
         } else {
             base_color
         };
-        let cell_center = x + CELL_W / 2.0;
-        // Bottom edge of the icon stays anchored as it magnifies.
+        // Icons grow symmetrically around the cell centre as they
+        // magnify.
         let icon_sz = ICON_SZ + mag(dock_hover, cell_center);
-        let icon_bottom = card_y + DOCK_H as f32 - 9.0;
+        let (icx, icy) = axis_xy(pos, cell_center, STRIP as f64 / 2.0);
         icons::icon(
             &mut pixmap,
             &item.icon,
-            cell_center as f32 - icon_sz / 2.0,
-            icon_bottom - icon_sz,
+            icx as f32 - icon_sz / 2.0,
+            icy as f32 - icon_sz / 2.0,
             icon_sz,
             icon_color,
         );
-        // Running indicator: a small dot centred under the icon.
+        // Running indicator: a small dot on the rail's inner edge.
         if !item.windows.is_empty() {
             let dot_r = 1.8f32;
-            let cx = cell_center as f32;
-            let cy = card_y + DOCK_H as f32 - 6.5;
+            let (dcx, dcy) = axis_xy(pos, cell_center, STRIP as f64 - 6.5);
             let mut pb = tiny_skia::PathBuilder::new();
-            pb.push_circle(cx, cy, dot_r);
+            pb.push_circle(dcx as f32, dcy as f32, dot_r);
             if let Some(path) = pb.finish() {
                 pixmap.fill_path(
                     &path,
@@ -321,13 +383,12 @@ pub fn draw(state: &mut ShellState) {
                 );
             }
         }
-        x += CELL_W;
+        a += CELL;
     }
 
-    // macOS dock label: the hovered app's name floats in a pill above
-    // its icon, inside the MAG_ROOM overhang (outside the input region,
-    // so it can never block a click).
-    if let Some(idx) = dock_hover.and_then(|hx| hit(hx, &items)) {
+    // Hover label: a name pill floating outward into the overhang —
+    // right of a left rail, left of a right rail, above a bottom rail.
+    if let Some(idx) = dock_hover.and_then(|hx| hit(hx, pos, span, &items)) {
         let item = &items[idx];
         let name: &str =
             item.app
@@ -338,30 +399,43 @@ pub fn draw(state: &mut ShellState) {
                 } else {
                     item.icon.as_str()
                 });
-        let cell_center = PAD
-            + idx as f64 * CELL_W
-            + if idx >= 1 { SEP_W } else { 0.0 }
-            + if extra_sep_idx.map(|fx| idx >= fx).unwrap_or(false) {
-                SEP_W
-            } else {
-                0.0
+        // Recompute the hovered cell's centre the same way the cells
+        // were laid out (centred column + separators).
+        let extra_sep_idx = first_extra(&items);
+        let mut a2 = ((span - content_len(&items)) / 2.0).max(PAD);
+        let mut t = a2 + CELL / 2.0;
+        for i in 0..items.len() {
+            if i == 1 || Some(i) == extra_sep_idx {
+                a2 += SEP_W;
             }
-            + CELL_W / 2.0;
-        // Semibold 11px runs ~7px/char — 6.0 clipped the tail glyph
-        // ("Termina", "Launche"); add slack so the text box never
-        // truncates inside the pill.
+            if i == idx {
+                t = a2 + CELL / 2.0;
+                break;
+            }
+            a2 += CELL;
+        }
         let text_est = name.chars().count() as f32 * 7.0;
         let pill_w = text_est + 16.0;
-        let pill_x = (cell_center as f32 - pill_w / 2.0)
-            .max(2.0)
-            .min(w as f32 - pill_w - 2.0);
-        draw::fill_round_rect(&mut pixmap, pill_x, 3.0, pill_w, 17.0, 8.0, bg);
-        draw::stroke_round_rect(&mut pixmap, pill_x, 3.0, pill_w, 17.0, 7.5, 1.0, sep);
+        let (px, py) = match pos {
+            DockPos::Left => (STRIP as f32 + 8.0, (t - 10.0) as f32),
+            DockPos::Right => ((OVERHANG as f32 - 8.0 - pill_w).max(2.0), (t - 10.0) as f32),
+            DockPos::Bottom => {
+                let w_span = w as f32;
+                (
+                    ((t as f32) - pill_w / 2.0)
+                        .max(2.0)
+                        .min(w_span - pill_w - 2.0),
+                    OVERHANG as f32 - 22.0,
+                )
+            }
+        };
+        draw::fill_round_rect(&mut pixmap, px, py, pill_w, 20.0, 10.0, bg);
+        draw::stroke_round_rect(&mut pixmap, px, py, pill_w, 20.0, 9.5, 1.0, sep);
         draw::text_bold(
             &mut pixmap,
-            pill_x + 4.0,
-            5.0,
-            pill_w - 8.0,
+            px + 8.0,
+            py + 4.0,
+            pill_w - 16.0,
             13.0,
             11.0,
             name,
@@ -372,36 +446,49 @@ pub fn draw(state: &mut ShellState) {
     let wl_surface = layer.wl_surface().clone();
     buffer.attach_to(&wl_surface).ok();
     wl_surface.damage_buffer(0, 0, w as i32, h as i32);
-    // Only the card band is clickable — the transparent overhang above
-    // it must let pointer events reach windows underneath.
+    // Only the rail band is clickable — the transparent overhang must
+    // let pointer events reach windows underneath.
+    let (rx, ry, rw, rh) = rail_rect(pos, w, h);
     if let Ok(region) = Region::new(&state.compositor_state) {
-        region.add(0, MAG_ROOM as i32, w as i32, DOCK_H as i32);
+        region.add(rx, ry, rw, rh);
         wl_surface.set_input_region(Some(region.wl_region()));
     }
     wl_surface.commit();
 }
 
-/// Click on the dock — returns the entry index under the cursor.
-fn hit(x: f64, items: &[DockEntry]) -> Option<usize> {
+/// Cell index under along-axis coordinate `a`, accounting for the
+/// centred column offset + separators.
+fn hit(a: f64, pos: DockPos, span: f64, items: &[DockEntry]) -> Option<usize> {
+    let _ = pos;
+    let mut a0 = ((span - content_len(items)) / 2.0).max(PAD);
     let extra_sep_idx = first_extra(items);
-    let mut cx = PAD;
     for idx in 0..items.len() {
         if idx == 1 || Some(idx) == extra_sep_idx {
-            cx += SEP_W;
+            a0 += SEP_W;
         }
-        if x >= cx && x < cx + CELL_W {
+        if a >= a0 && a < a0 + CELL {
             return Some(idx);
         }
-        cx += CELL_W;
+        a0 += CELL;
     }
     None
 }
 
+/// Extract the along-axis pointer coordinate for the current position.
+fn axis_coord(pos: DockPos, x: f64, y: f64) -> f64 {
+    match pos {
+        DockPos::Left | DockPos::Right => y,
+        DockPos::Bottom => x,
+    }
+}
+
 /// Start button launches the Cosmos launcher; an app cell focuses its
 /// most recent window (unminimizes via the compositor) or launches it.
-pub fn click(state: &mut ShellState, x: f64) -> bool {
+pub fn click(state: &mut ShellState, x: f64, y: f64) -> bool {
+    let pos = state.dock_position;
+    let span = axis_span(pos, state.dock_size.0, state.dock_size.1);
     let items = entries(state);
-    let Some(idx) = hit(x, &items) else {
+    let Some(idx) = hit(axis_coord(pos, x, y), pos, span, &items) else {
         return false;
     };
     let item = &items[idx];
@@ -426,10 +513,12 @@ pub fn click(state: &mut ShellState, x: f64) -> bool {
 }
 
 /// Hover bookkeeping for the icon highlight + magnification. Icon
-/// scale changes continuously with x, so any move repaints.
-pub fn hover(state: &mut ShellState, x: f64) -> bool {
-    let changed = state.dock_hover != Some(x);
-    state.dock_hover = Some(x);
+/// scale changes continuously with the along-axis position, so any
+/// move repaints.
+pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {
+    let coord = axis_coord(state.dock_position, x, y);
+    let changed = state.dock_hover != Some(coord);
+    state.dock_hover = Some(coord);
     changed
 }
 

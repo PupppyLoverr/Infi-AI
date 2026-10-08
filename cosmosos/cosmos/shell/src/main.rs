@@ -111,7 +111,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         assist_surface: None,
         notify_conn: None,
         panel_size: (0, PANEL_HEIGHT),
-        dock_size: (0, dock::SURFACE_H),
+        dock_size: (0, 0),
+        dock_position: dock::DockPos::Left,
         switcher_size: (0, 0),
         switcher_order: Vec::new(),
         switcher_sel: 0,
@@ -287,8 +288,11 @@ pub struct ShellState {
     pub quick_dirty: bool,
     /// (x, hovering) — last pointer x on the panel, for hit highlights.
     pub panel_hover: (f64, bool),
-    /// Last pointer x on the dock (cell highlight).
+    /// Last pointer position along the dock rail's axis (cell
+    /// highlight + magnification centre).
     pub dock_hover: Option<f64>,
+    /// Which screen edge the dock rail sits on (config `dock_position`).
+    pub dock_position: dock::DockPos,
     pub dock_dirty: bool,
     pub switcher_dirty: bool,
     /// Quick-settings flyout state.
@@ -336,8 +340,11 @@ impl ShellState {
         self.panel_dirty = true;
     }
 
-    /// The bottom dock — a floating, centred icon strip (no exclusive
-    /// zone: windows may slide underneath it, like the macOS Dock).
+    /// The dock — an edge rail (left by default, right/bottom via the
+    /// `dock_position` config key). It reserves STRIP px of exclusive
+    /// zone on its edge so maximised and snapped windows never slide
+    /// underneath; the surface is wider than the zone by the label
+    /// overhang, which stays transparent and input-free.
     pub fn create_dock(&mut self, qh: &QueueHandle<Self>) {
         let surface = self.compositor_state.create_surface(qh);
         let layer = self.layer_shell.create_layer_surface(
@@ -347,27 +354,28 @@ impl ShellState {
             Some("cosmos-dock"),
             None,
         );
-        layer.set_anchor(Anchor::BOTTOM);
-        layer.set_size(dock::desired_width(self), dock::SURFACE_H);
-        layer.set_exclusive_zone(0);
-        layer.set_margin(0, 0, 8, 0);
+        let (sw, sh) = dock::surface_size(self.dock_position);
+        match self.dock_position {
+            dock::DockPos::Left => layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT),
+            dock::DockPos::Right => layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::RIGHT),
+            dock::DockPos::Bottom => {
+                layer.set_anchor(Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT)
+            }
+        }
+        layer.set_size(sw, sh);
+        layer.set_exclusive_zone(dock::STRIP as i32);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         layer.wl_surface().commit();
         self.dock_surface = Some(layer);
         self.dock_dirty = true;
     }
 
-    /// Resize the dock to its current item set (called when the window
-    /// list or app set changes).
+    /// Repaint the dock after the window/app set or hover changed.
+    /// (Rail size is configure-driven — the surface spans the edge —
+    /// so this never resizes, just repaints.)
     pub fn sync_dock(&mut self) {
-        if let Some(layer) = &self.dock_surface {
-            let want = dock::desired_width(self);
-            if want != self.dock_size.0 && want > 0 {
-                layer.set_size(want, dock::SURFACE_H);
-                layer.wl_surface().commit();
-            } else {
-                self.dock_dirty = true;
-            }
+        if self.dock_surface.is_some() {
+            self.dock_dirty = true;
         }
     }
 
@@ -757,6 +765,20 @@ impl ShellState {
         if let Some(v) = map.get("accent").and_then(|v| v.as_str()) {
             self.accent_name = v.to_string();
         }
+        // Dock edge — a position change re-anchors the surface entirely
+        // (anchors + exclusive zone), so the layer is recreated.
+        if let Some(pos) = map
+            .get("dock_position")
+            .and_then(|v| v.as_str())
+            .and_then(dock::DockPos::parse)
+        {
+            if pos != self.dock_position {
+                self.dock_position = pos;
+                self.dock_surface = None;
+                let qh = self.qh.clone();
+                self.create_dock(&qh);
+            }
+        }
         // The compositor resolves the accent preset and ships both rgbs
         // in the config map — adopt them into the draw helpers.
         let rgb = |key: &str| {
@@ -985,10 +1007,7 @@ impl LayerShellHandler for ShellState {
             self.panel_dirty = true;
         }
         if self.dock_surface.as_ref() == Some(layer) {
-            self.dock_size = (
-                configure.new_size.0.max(dock::desired_width(self)),
-                dock::SURFACE_H,
-            );
+            self.dock_size = configure.new_size;
             self.dock_dirty = true;
         }
         if self.switcher_surface.as_ref() == Some(layer) {
@@ -1215,7 +1234,7 @@ impl PointerHandler for ShellState {
                     if self.panel.as_ref() == Some(&layer) {
                         self.panel_dirty = panel::click(self, ev.position.0, ev.position.1);
                     } else if self.dock_surface.as_ref() == Some(&layer) {
-                        self.dock_dirty = dock::click(self, ev.position.0);
+                        self.dock_dirty = dock::click(self, ev.position.0, ev.position.1);
                     } else if self.launcher_surface.as_ref() == Some(&layer) {
                         self.launcher_click(ev.position.0, ev.position.1);
                     } else if self.notify_surface.as_ref() == Some(&layer) {
@@ -1233,7 +1252,7 @@ impl PointerHandler for ShellState {
                     if self.panel.as_ref() == Some(&layer) {
                         self.panel_dirty |= panel::hover(self, ev.position.0, ev.position.1);
                     } else if self.dock_surface.as_ref() == Some(&layer) {
-                        self.dock_dirty |= dock::hover(self, ev.position.0);
+                        self.dock_dirty |= dock::hover(self, ev.position.0, ev.position.1);
                     } else if self.launcher_surface.as_ref() == Some(&layer) {
                         self.launcher_dirty |= launcher::hover(self, ev.position.0, ev.position.1);
                     } else if self.quick_surface.as_ref() == Some(&layer) && self.vol_drag {
