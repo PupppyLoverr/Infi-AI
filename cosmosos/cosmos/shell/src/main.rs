@@ -3,12 +3,14 @@
 //! to cosmos-compositor over cosmos-ipc.
 
 mod assist;
+mod clipwatch;
 mod desktop;
 mod dock;
 mod draw;
 mod help;
 mod icons;
 mod ipc_client;
+mod island;
 mod launcher;
 mod notify;
 mod panel;
@@ -29,6 +31,11 @@ use calloop::{
 use calloop_wayland_source::WaylandSource;
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
+    data_device_manager::{
+        data_device::{DataDevice, DataDeviceHandler},
+        data_offer::{DataOfferHandler, DragOffer},
+        DataDeviceManagerState,
+    },
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
@@ -49,7 +56,7 @@ use smithay_client_toolkit::{
 use wayland_client::{
     globals::registry_queue_init,
     protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_surface},
-    Connection, QueueHandle,
+    Connection, Proxy, QueueHandle,
 };
 
 use desktop::AppEntry;
@@ -92,6 +99,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut apps = desktop::scan_apps();
     apps.extend(desktop::system_entries());
+
+    // Clipboard channel — `clipwatch` readers push copied text here;
+    // drop channel delivers decoded uri-lists onto `staged_files`.
+    let (clip_tx, clip_rx) = channel::channel::<String>();
+    let (drop_tx, drop_rx) = channel::channel::<Vec<String>>();
 
     let mut state = ShellState {
         registry_state: RegistryState::new(&globals),
@@ -160,11 +172,33 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         help_size: (0, 0),
         help_open: false,
         help_dirty: false,
+        island_surface: None,
+        island_open: false,
+        island_hover: None,
+        island_dirty: false,
+        island_dismissed_at: None,
+        clip_history: std::collections::VecDeque::new(),
+        staged_files: Vec::new(),
+        clip_manager: None,
+        clip_device: None,
+        clip_offers: std::collections::HashMap::new(),
+        clip_tx,
+        clip_pending_text: String::new(),
+        clip_source: None,
+        data_device_manager: None,
+        data_devices: Vec::new(),
+        drop_tx,
+        dnd_on_island: false,
         exit: false,
     };
 
+    state.data_device_manager = Some(
+        DataDeviceManagerState::bind(&globals, &qh).map_err(|e| format!("data device mgr: {e}"))?,
+    );
+
     state.create_panel(&qh);
     state.create_dock(&qh);
+    clipwatch::init(&mut state, &globals);
     if let Some(reader) = state.ipc.connect() {
         register_ipc_source(&handle, reader);
     } else {
@@ -179,6 +213,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             state.sysinfo = info;
             state.panel_dirty = true;
             state.quick_dirty = state.quick_open;
+        }
+    })?;
+
+    handle.insert_source(clip_rx, |event, _, state| {
+        if let ChannelEvent::Msg(text) = event {
+            clipwatch::note_clip(state, text);
+        }
+    })?;
+    handle.insert_source(drop_rx, |event, _, state| {
+        if let ChannelEvent::Msg(paths) = event {
+            for path in paths {
+                if !state.staged_files.contains(&path) {
+                    state.staged_files.push(path);
+                }
+            }
+            state.island_dirty = true;
+            state.panel_dirty = true;
         }
     })?;
 
@@ -275,6 +326,45 @@ pub struct ShellState {
     pub zoom_window: u64,
     pub zoom_hover: Option<(usize, usize)>,
     pub zoom_dirty: bool,
+    /// Dynamic island card (clipboard history + staged files) — a Top
+    /// layer surface centred under the menubar pill.
+    pub island_surface: Option<LayerSurface>,
+    pub island_open: bool,
+    pub island_hover: Option<island::Hit>,
+    pub island_dirty: bool,
+    /// Set when the island card just closed from a focus-loss `leave` —
+    /// the pill click inside the window is the same physical click and
+    /// must not reopen it (same guard as `quick_dismissed_at`).
+    pub island_dismissed_at: Option<std::time::Instant>,
+    /// Clipboard history ring (newest first) — fed by `clipwatch`.
+    pub clip_history: std::collections::VecDeque<String>,
+    /// Files dropped onto the island card, staged for later use.
+    pub staged_files: Vec<String>,
+    /// wlr-data-control clipboard watcher objects.
+    pub clip_manager: Option<
+        wayland_protocols_wlr::data_control::v1::client::zwlr_data_control_manager_v1::ZwlrDataControlManagerV1,
+    >,
+    pub clip_device: Option<
+        wayland_protocols_wlr::data_control::v1::client::zwlr_data_control_device_v1::ZwlrDataControlDeviceV1,
+    >,
+    /// Mime types announced per offer object (keyed by object id).
+    pub clip_offers:
+        std::collections::HashMap<wayland_client::backend::ObjectId, Vec<String>>,
+    /// Channel `clipwatch` readers push decoded clipboard text into.
+    pub clip_tx: calloop::channel::Sender<String>,
+    /// Text staged for `clipwatch::set_clipboard` sources.
+    pub clip_pending_text: String,
+    pub clip_source: Option<
+        wayland_protocols_wlr::data_control::v1::client::zwlr_data_control_source_v1::ZwlrDataControlSourceV1,
+    >,
+    /// Regular data-device objects — accepting file drops onto the
+    /// island card (uri-list DnD → staged files).
+    pub data_device_manager: Option<DataDeviceManagerState>,
+    pub data_devices: Vec<DataDevice>,
+    /// Channel decoded uri-list drops arrive on.
+    pub drop_tx: calloop::channel::Sender<Vec<String>>,
+    /// True while a drag hovers the island card.
+    pub dnd_on_island: bool,
     /// Pointer hover inside the launcher card (cells, rows, footer).
     pub launcher_hover: Option<launcher::Hit>,
     pub notify_size: (u32, u32),
@@ -424,6 +514,63 @@ impl ShellState {
         if self.help_open {
             self.set_help_open(false);
             self.ipc.send(&cosmos_ipc::Request::ToggleHelp);
+        }
+    }
+
+    /// Toggle the dynamic island card — the menubar pill's expanded
+    /// surface. It sizes itself to its content (clipboard history +
+    /// staged files) each time it opens.
+    pub fn set_island_open(&mut self, open: bool) {
+        if open == self.island_open {
+            return;
+        }
+        self.island_open = open;
+        if open {
+            let surface = self.compositor_state.create_surface(&self.qh);
+            let layer = self.layer_shell.create_layer_surface(
+                &self.qh,
+                surface,
+                Layer::Top,
+                Some("cosmos-island"),
+                None,
+            );
+            layer.set_anchor(Anchor::TOP);
+            layer.set_size(380, island::card_height(self));
+            layer.set_exclusive_zone(0);
+            layer.set_margin((PANEL_HEIGHT + 4) as i32, 0, 0, 0);
+            layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+            layer.wl_surface().commit();
+            self.island_surface = Some(layer);
+            self.island_dirty = true;
+        } else {
+            self.island_surface = None;
+            self.island_hover = None;
+        }
+    }
+
+    /// Shell-side close — no IPC round trip needed: the compositor just
+    /// routes presses to whatever is under the pointer.
+    pub fn close_island(&mut self) {
+        self.set_island_open(false);
+    }
+
+    /// Click inside the island card.
+    pub fn island_click(&mut self, x: f64, y: f64) {
+        match island::hit_test(self, x, y) {
+            island::Hit::ClipRow(i) => {
+                if let Some(text) = self.clip_history.get(i).cloned() {
+                    clipwatch::set_clipboard(self, text);
+                }
+            }
+            island::Hit::FileRow(i) => {
+                // Clicking a staged file copies its path back to the
+                // clipboard — the droppy "drag out" gesture is the next
+                // iteration.
+                if let Some(path) = self.staged_files.get(i).cloned() {
+                    clipwatch::set_clipboard(self, path);
+                }
+            }
+            island::Hit::Backdrop => {}
         }
     }
 
@@ -993,6 +1140,10 @@ impl ShellState {
             self.help_dirty = false;
             help::draw(self);
         }
+        if self.island_dirty && self.island_surface.is_some() {
+            self.island_dirty = false;
+            island::draw(self);
+        }
     }
 }
 
@@ -1077,6 +1228,10 @@ impl LayerShellHandler for ShellState {
             self.help_surface = None;
             self.help_open = false;
         }
+        if self.island_surface.as_ref() == Some(layer) {
+            self.island_surface = None;
+            self.island_open = false;
+        }
     }
 
     fn configure(
@@ -1137,6 +1292,9 @@ impl LayerShellHandler for ShellState {
             self.help_size = configure.new_size;
             self.help_dirty = true;
         }
+        if self.island_surface.as_ref() == Some(layer) {
+            self.island_dirty = true;
+        }
         // Acking configure happens via committing the surface.
         let _ = serial;
         layer.wl_surface().commit();
@@ -1166,6 +1324,9 @@ impl SeatHandler for ShellState {
             Capability::Pointer => {
                 if let Err(e) = self.seat_state.get_pointer(qh, &seat) {
                     tracing::warn!("pointer cap failed: {e}");
+                }
+                if let Some(mgr) = self.data_device_manager.as_ref() {
+                    self.data_devices.push(mgr.get_data_device(qh, &seat));
                 }
             }
             _ => {}
@@ -1233,6 +1394,18 @@ impl KeyboardHandler for ShellState {
         {
             self.close_assist();
         }
+        // Island card: same popover contract — losing keyboard focus
+        // (a click landing on a window, dock, menubar) dismisses it.
+        if self.island_open
+            && self
+                .island_surface
+                .as_ref()
+                .map(|l| l.wl_surface() == surface)
+                .unwrap_or(false)
+        {
+            self.close_island();
+            self.island_dismissed_at = Some(std::time::Instant::now());
+        }
     }
 
     fn press_key(
@@ -1257,6 +1430,8 @@ impl KeyboardHandler for ShellState {
             assist::key_press(self, event);
         } else if self.zoom_surface.is_some() {
             zoomflyout::key_press(self, event);
+        } else if self.island_open {
+            island::key_press(self, event);
         } else if self.launcher_open {
             launcher::key_press(self, event);
         }
@@ -1313,6 +1488,7 @@ impl PointerHandler for ShellState {
                 .chain(self.assist_surface.iter())
                 .chain(self.zoom_surface.iter())
                 .chain(self.help_surface.iter())
+                .chain(self.island_surface.iter())
                 .chain(self.notify_surface.iter())
                 .chain(self.quick_surface.iter())
                 .find(|l| l.wl_surface() == &ev.surface)
@@ -1339,6 +1515,8 @@ impl PointerHandler for ShellState {
                     } else if self.help_surface.as_ref() == Some(&layer) {
                         // Any press on the sheet dismisses it.
                         self.close_help();
+                    } else if self.island_surface.as_ref() == Some(&layer) {
+                        self.island_click(ev.position.0, ev.position.1);
                     }
                 }
                 PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
@@ -1354,6 +1532,8 @@ impl PointerHandler for ShellState {
                         self.assist_dirty |= assist::hover(self, ev.position.0, ev.position.1);
                     } else if self.zoom_surface.as_ref() == Some(&layer) {
                         self.zoom_dirty |= zoomflyout::hover(self, ev.position.0, ev.position.1);
+                    } else if self.island_surface.as_ref() == Some(&layer) {
+                        self.island_dirty |= island::hover(self, ev.position.0, ev.position.1);
                     }
                 }
                 PointerEventKind::Release { .. } => {
@@ -1423,6 +1603,125 @@ impl OutputHandler for ShellState {
 impl ShmHandler for ShellState {
     fn shm_state(&mut self) -> &mut Shm {
         &mut self.shm
+    }
+}
+
+/// File drops onto the island card — accept `text/uri-list` drags while
+/// they hover the card and decode them into `staged_files`.
+impl DataDeviceHandler for ShellState {
+    fn enter(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
+        _x: f64,
+        _y: f64,
+        surface: &wl_surface::WlSurface,
+    ) {
+        let on_island = self
+            .island_surface
+            .as_ref()
+            .map(|l| l.wl_surface() == surface)
+            .unwrap_or(false);
+        self.dnd_on_island = on_island;
+        if on_island {
+            if let Some(offer) = data_device
+                .data::<smithay_client_toolkit::data_device_manager::data_device::DataDeviceData>()
+                .and_then(|d| d.drag_offer())
+            {
+                let has_uri = offer.with_mime_types(|m| m.contains(&"text/uri-list".to_string()));
+                if has_uri {
+                    offer.accept_mime_type(0, Some("text/uri-list".to_string()));
+                }
+            }
+        }
+    }
+
+    fn leave(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
+    ) {
+        self.dnd_on_island = false;
+    }
+
+    fn motion(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
+        _x: f64,
+        _y: f64,
+    ) {
+    }
+
+    fn selection(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
+    ) {
+    }
+
+    fn drop_performed(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
+    ) {
+        if !self.dnd_on_island {
+            return;
+        }
+        let Some(offer) = data_device
+            .data::<smithay_client_toolkit::data_device_manager::data_device::DataDeviceData>()
+            .and_then(|d| d.drag_offer())
+        else {
+            return;
+        };
+        let Ok(mut pipe) = offer.receive("text/uri-list".to_string()) else {
+            return;
+        };
+        offer.finish();
+        let tx = self.drop_tx.clone();
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut text = String::new();
+            let _ = pipe.read_to_string(&mut text);
+            let paths: Vec<String> = text
+                .lines()
+                .filter_map(|l| {
+                    let l = l.trim();
+                    if l.starts_with('#') || l.is_empty() {
+                        return None;
+                    }
+                    Some(l.strip_prefix("file://").unwrap_or(l).to_string())
+                })
+                .collect();
+            if !paths.is_empty() {
+                let _ = tx.send(paths);
+            }
+        });
+    }
+}
+
+/// Data-offer action events — DnD drops on the island don't need them.
+impl DataOfferHandler for ShellState {
+    fn source_actions(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _offer: &mut DragOffer,
+        _actions: wayland_client::protocol::wl_data_device_manager::DndAction,
+    ) {
+    }
+    fn selected_action(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _offer: &mut DragOffer,
+        _actions: wayland_client::protocol::wl_data_device_manager::DndAction,
+    ) {
     }
 }
 
