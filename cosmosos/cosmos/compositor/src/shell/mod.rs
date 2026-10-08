@@ -182,6 +182,20 @@ impl<BackendData: Backend> CompositorHandler for AnvilState<BackendData> {
         on_commit_buffer_handler::<Self>(surface);
         self.backend_data.early_import(surface);
 
+        // ext-session-lock: lock surfaces are neither windows nor layer
+        // surfaces — prove their commits arrive (and reach the frame
+        // path) via the serial log while we chase the invisible-lock
+        // defect.
+        if self.cosmos.session_locked
+            && self
+                .cosmos
+                .lock_surfaces
+                .iter()
+                .any(|(ls, _)| ls.wl_surface() == surface)
+        {
+            tracing::info!("cosmos: lock surface committed");
+        }
+
         if !is_sync_subsurface(surface) {
             let mut root = surface.clone();
             while let Some(parent) = get_parent(&root) {

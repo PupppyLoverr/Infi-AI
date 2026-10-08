@@ -386,8 +386,40 @@ impl Agentd {
         }
     }
 
+    /// Policy denials that don't need a user's click — run BEFORE the
+    /// approval card so we never ask the user to approve a call the
+    /// policy would deny anyway (gate ordering, drive defect #3).
+    fn precheck_scope(&self, name: &str, args: &Map<String, Value>) -> Result<()> {
+        let path = |key: &str| -> Result<PathBuf> {
+            args.get(key)
+                .and_then(|v| v.as_str())
+                .map(PathBuf::from)
+                .with_context(|| format!("missing argument `{key}`"))
+        };
+        match name {
+            "files.read" => {
+                if !self.policy.path_in(&path("path")?, &self.policy.read_roots) {
+                    bail!("path is outside the agent's read roots");
+                }
+            }
+            "files.write" => {
+                if !self.policy.path_in(&path("path")?, &self.policy.write_roots) {
+                    bail!("path is outside the agent's write roots");
+                }
+            }
+            "files.move" => {
+                if !self.policy.path_in(&path("to")?, &self.policy.write_roots) {
+                    bail!("destination is outside the agent's write roots");
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn call(&mut self, name: &str, args: &Map<String, Value>) -> Result<Value> {
         if self.policy.tool_perm(name)? == Perm::Sensitive {
+            self.precheck_scope(name, args)?;
             match self.approve(name, args) {
                 Ok(Decision::Always) => {
                     self.policy.approved.insert(name.to_string());

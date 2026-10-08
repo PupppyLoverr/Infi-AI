@@ -1212,6 +1212,7 @@ impl<BackendData: Backend> SessionLockHandler for AnvilState<BackendData> {
     }
 
     fn lock(&mut self, confirmation: SessionLocker) {
+        tracing::info!("cosmos: session locked");
         self.cosmos.session_locked = true;
         self.cosmos.lock_surfaces.clear();
         let keyboard = self.seat.get_keyboard().unwrap();
@@ -1242,6 +1243,7 @@ impl<BackendData: Backend> SessionLockHandler for AnvilState<BackendData> {
             .unwrap_or_default();
         surface.with_pending_state(|state| state.size = Some(size));
         surface.send_configure();
+        tracing::info!(?size, "cosmos: lock surface configured");
         self.cosmos
             .lock_surfaces
             .push((surface.clone(), target.unwrap_or_else(|| {

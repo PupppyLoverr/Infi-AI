@@ -443,6 +443,37 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 }
             }
             self.update_keyboard_focus(self.pointer.current_location(), serial);
+            // Re-sync POINTER focus before dispatching the press: button()
+            // delivers to whatever the last motion event focused, and a
+            // drive/harness that jumps the cursor without a motion frame
+            // would otherwise send the click to a stale target. A fresh
+            // `surface_under` here makes click-at-anywhere correct.
+            let loc = self.pointer.current_location();
+            let under = self.surface_under(loc);
+            if let Some((target, _)) = under.as_ref() {
+                tracing::info!(?loc, ?target, "cosmos: press target");
+            }
+            let pointer = self.pointer.clone();
+            pointer.motion(
+                self,
+                under,
+                &MotionEvent {
+                    location: loc,
+                    serial,
+                    time: evt.time_msec(),
+                },
+            );
+            pointer.button(
+                self,
+                &ButtonEvent {
+                    button,
+                    state: state.try_into().unwrap(),
+                    serial,
+                    time: evt.time_msec(),
+                },
+            );
+            pointer.frame(self);
+            return;
         };
         let pointer = self.pointer.clone();
         pointer.button(
