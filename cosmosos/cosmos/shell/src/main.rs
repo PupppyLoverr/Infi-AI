@@ -157,6 +157,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         zoom_dirty: false,
         menu_surface: None,
         menu_open: None,
+        pointer_on: None,
         menu_hover: None,
         menu_dirty: false,
         menu_pos: (0, 0),
@@ -360,6 +361,10 @@ pub struct ShellState {
     /// Menubar dropdown: surface, open menu index, hovered row, screen pos.
     pub menu_surface: Option<LayerSurface>,
     pub menu_open: Option<usize>,
+    /// Surface under the pointer (wl_pointer enter/leave). The compositor
+    /// moves keyboard focus before it delivers the press, so a click
+    /// inside a menu can arrive after that menu's keyboard `leave`.
+    pub pointer_on: Option<wl_surface::WlSurface>,
     pub menu_hover: Option<usize>,
     pub menu_dirty: bool,
     pub menu_pos: (i32, i32),
@@ -1617,8 +1622,11 @@ impl KeyboardHandler for ShellState {
         surface: &wl_surface::WlSurface,
         _serial: u32,
     ) {
-        // Focus pulled away from an open menubar menu → dismiss it.
+        // Focus pulled away from an open menubar menu → dismiss it, unless
+        // the pointer is on the menu: then this leave is the press itself,
+        // and dismissing here dropped the click (system menu → Lock).
         if self.menu_open.is_some()
+            && self.pointer_on.as_ref() != Some(surface)
             && self
                 .menu_surface
                 .as_ref()
@@ -1743,6 +1751,13 @@ impl PointerHandler for ShellState {
         events: &[PointerEvent],
     ) {
         for ev in events {
+            match ev.kind {
+                PointerEventKind::Enter { .. } => self.pointer_on = Some(ev.surface.clone()),
+                PointerEventKind::Leave { .. } if self.pointer_on.as_ref() == Some(&ev.surface) => {
+                    self.pointer_on = None
+                }
+                _ => {}
+            }
             let Some(layer) = self
                 .panel
                 .iter()
