@@ -89,8 +89,29 @@ PR #97). Dock is left-edge vertical (done, PR #90). Feature ladder: zoom
 flyout (done, PR #99) → dynamic island (done, PR #101 — guest
 verification in flight) → Search-or-Ask (done, PR #102) → Start
 panel+widgets (done, PR #103) → Control Centre (done, PR #104) →
-greetd+lock → cosmos-agentd →
+greetd+lock (done
+code-side: ext-session-lock in compositor + `cosmos-lock` PAM client +
+`cosmos-greeter` greetd greeter, PRs #106–#107; image wiring on the
+image host) → cosmos-agentd →
 ISO+Calamares.
+
+## Session lock + greeter — code complete (PRs #106–#107)
+- Compositor speaks `ext-session-lock-v1`: `super+L` spawns `cosmos-lock`;
+  while `cosmos.session_locked` the render path composites only wallpaper
+  + lock surfaces and all input routes to them; `unlock()` restores
+  pointer focus. Lock client death auto-unlocks (fail-safe).
+- `cosmos-lock`: sctk session-lock client, egui card (clock, avatar,
+  autofocused password) on every output, PAM auth via the `cosmos-lock`
+  service (pam 0.8 `Client::with_password` → `set_credentials` →
+  `authenticate`). Release-gated `attach_to` shm like uitk.
+- `cosmos-greeter`: greetd greeter under cage — `greetd_ipc` sync-codec
+  (`CreateSession` → `PostAuthMessageResponse` → `StartSession` with
+  `cosmos-session`), worker-thread auth so the card stays live.
+- Control Centre footer gained a Lock button (Settings|Lock|Log out).
+- Still needs (image host): binary installs, `/etc/pam.d/cosmos-lock`
+  (common-auth), `greetd` + `cage` packages, `/etc/greetd/config.toml`,
+  `/usr/share/wayland-sessions/cosmos.desktop`, greeter/lock drive-verified
+  screendumps.
 
 ## What's broken / open
 - Snap Assist tray-click is fixed in code (bbox pass-through #50, clipped
