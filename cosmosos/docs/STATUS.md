@@ -113,6 +113,19 @@ ISO+Calamares.
   `/usr/share/wayland-sessions/cosmos.desktop`, greeter/lock drive-verified
   screendumps.
 
+## cosmos-agentd — slice A merged (PR #108)
+- `cosmos-agentd` unix-socket MCP server (JSON-RPC `initialize`/
+  `tools/list`/`tools/call`): 15 real tools — `desktop.*` over the
+  compositor IPC, `files.*` scoped by `~/.config/cosmos/agents/
+  <name>.toml` policy (read_roots/write_roots/tools/sensitive),
+  `system.settings.*`, JSONL audit log (§6.8). `sensitive` tools fail
+  closed until the approval slice lands.
+- `docs/agentd.md` has the full §6 design + slice order (identities/
+  sandbox → approvals+island → headless seat → rollback → onboarding →
+  skills).
+- Image host: binary + systemd user unit + MCP smoke transcript in
+  flight.
+
 ## What's broken / open
 - Snap Assist tray-click is fixed in code (bbox pass-through #50, clipped
   input region + dismiss-on-outside-press #51, free-half respects the left
