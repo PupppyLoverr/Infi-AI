@@ -39,6 +39,10 @@ pub enum NotifyEvent {
 struct NotifyDaemon {
     tx: Sender<NotifyEvent>,
     next_id: AtomicU32,
+    /// (app_name, summary) → (id, count): identical cards merge into
+    /// one — the badge count rides in the summary text. Reusing the id
+    /// also lets every waiting caller resolve on the same ActionInvoked.
+    pending: std::sync::Mutex<HashMap<(String, String), (u32, u32)>>,
 }
 
 #[zbus::interface(name = "org.freedesktop.Notifications")]
@@ -73,11 +77,31 @@ impl NotifyDaemon {
         hints: HashMap<String, zvariant::Value<'_>>,
         expire_timeout: i32,
     ) -> u32 {
+        let mut count = 1u32;
         let id = if replaces_id != 0 {
             replaces_id
         } else {
-            self.next_id.fetch_add(1, Ordering::Relaxed)
+            let key = (app_name.to_string(), summary.to_string());
+            let mut pending = self.pending.lock().unwrap();
+            match pending.get_mut(&key) {
+                Some((id, n)) => {
+                    *n += 1;
+                    count = *n;
+                    *id
+                }
+                None => {
+                    let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+                    pending.insert(key, (id, 1));
+                    id
+                }
+            }
         };
+        let summary = if count > 1 {
+            format!("{} (×{})", summary, count)
+        } else {
+            summary.to_string()
+        };
+        let summary: &str = &summary;
         let pairs: Vec<(String, String)> = actions
             .chunks(2)
             .filter_map(|c| match c {
@@ -112,6 +136,7 @@ pub fn start(tx: Sender<NotifyEvent>) -> Result<zbus::blocking::Connection, Stri
     let daemon = NotifyDaemon {
         tx,
         next_id: AtomicU32::new(1),
+        pending: std::sync::Mutex::new(HashMap::new()),
     };
     zbus::blocking::connection::Builder::session()
         .map_err(|e| e.to_string())?
