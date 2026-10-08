@@ -62,6 +62,9 @@ pub struct CosmosConfig {
     pub accent: String,
     /// Dock rail position: "left" (default), "right", or "bottom".
     pub dock_position: String,
+    /// Active wallpaper name — `<name>-<w>x<h>.png` under
+    /// /usr/share/cosmos/wallpapers/.
+    pub wallpaper: String,
 }
 
 impl Default for CosmosConfig {
@@ -72,6 +75,7 @@ impl Default for CosmosConfig {
             reduce_motion: false,
             accent: cosmos_ipc::DEFAULT_ACCENT.to_string(),
             dock_position: "left".to_string(),
+            wallpaper: "violet".to_string(),
         }
     }
 }
@@ -173,6 +177,15 @@ impl CosmosConfig {
                     return Err(format!("unknown accent preset: {v}"));
                 }
                 self.accent = v.to_string();
+            }
+            "wallpaper" => {
+                let v = value
+                    .as_str()
+                    .ok_or_else(|| "wallpaper must be a name".to_string())?;
+                if v.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_') {
+                    return Err("wallpaper: letters, digits, - and _ only".to_string());
+                }
+                self.wallpaper = v.to_string();
             }
             "dock_position" => {
                 let v = value
@@ -1712,6 +1725,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         self.cosmos.config.apply_patch(key, value)?;
         self.cosmos.config.save();
         crate::shell::ssd::set_global_theme(self.cosmos.theme());
+        crate::shell::ssd::set_wallpaper_name(&self.cosmos.config.wallpaper);
         // All titlebars repaint next frame.
         for window in self.all_windows() {
             if let Some(state) = window
