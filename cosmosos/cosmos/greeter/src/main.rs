@@ -208,8 +208,11 @@ fn draw_greeter(ui: &mut egui::Ui, greeter: &mut Greeter) {
                                 .min_size(Vec2::new(300.0, 38.0)),
                         );
 
-                        let enter = pwd.lost_focus()
-                            && ui.input(|i| i.key_pressed(Key::Enter));
+                        // Submit on Enter whether egui's singleline
+                        // TextEdit releases focus on the key (lost_focus)
+                        // or keeps it (has_focus) — versions differ.
+                        let enter = ui.input(|i| i.key_pressed(Key::Enter))
+                            && (pwd.lost_focus() || ctx.memory(|m| m.has_focus(pwd_id)));
                         if (btn.clicked() || enter)
                             && !greeter.working
                             && !greeter.password.is_empty()
