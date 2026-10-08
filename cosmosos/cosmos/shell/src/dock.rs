@@ -304,6 +304,10 @@ pub fn draw(state: &mut ShellState) {
         DockPos::Right => ((state.panel_size.0 as f32 - MARGIN as f32 - STRIP as f32).max(0.0), ry as f32),
         DockPos::Bottom => (rx as f32, (state.panel_size.1 as f32 - MARGIN as f32 - STRIP as f32).max(0.0)),
     };
+    // The pill casts its own shadow inside the surface — the compositor
+    // no longer shadows the dock layer (its full-height surface made a
+    // dark band at the screen edge).
+    draw::shadow(&mut pixmap, rx as f32, ry as f32, rw as f32, rh as f32, 22.0);
     glass::fill_glass(&mut pixmap, &crate::ShellState::wallpaper_name(), rx as f32, ry as f32, rw as f32, rh as f32, 22.0, sx, sy, state.dark, bg);
 
     // Icon column/row centred along the rail axis.
