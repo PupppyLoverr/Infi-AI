@@ -115,7 +115,6 @@ pub fn draw(state: &mut ShellState) {
             border,
         );
         // macOS idiom: the app's tinted icon rides the left edge.
-        let glyph = Color::from_rgba8(fg.r(), fg.g(), fg.b(), fg.a());
         let key = icons::key_for(&n.app_name.to_lowercase().replace(' ', "-"));
         icons::app_tile(&mut pixmap, &key, 10.0, y + 30.0, 18.0);
         draw::text(

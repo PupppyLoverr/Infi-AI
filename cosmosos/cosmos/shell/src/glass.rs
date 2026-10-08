@@ -4,7 +4,7 @@
 //! wallpaper change.
 
 use std::cell::RefCell;
-use tiny_skia::{Color, Paint, Pixmap, PixmapMut, Rect, Transform};
+use tiny_skia::{Color, Paint, Pixmap, PixmapMut, Transform};
 
 use crate::draw::round_rect_path;
 
@@ -46,12 +46,17 @@ fn load(name: &str) -> Option<Glass> {
     );
     // ~40px blur at 1080p ≈ sigma ~10 at this downscale.
     let mut blurred = image::imageops::blur(&small, 10.0);
-    // Slight saturation boost: pull each channel toward the channel max.
-    for px in blurred.chunks_exact_mut(4) {
+    // Saturation ×1.2 (spec-v3 §2.2) plus ±2% hash-noise dither so the
+    // upscaled blur never bands.
+    for (i, px) in blurred.chunks_exact_mut(4).enumerate() {
         let (r, g, b) = (px[0] as f32, px[1] as f32, px[2] as f32);
         let mean = (r + g + b) / 3.0;
+        let mut h = (i as u32).wrapping_mul(0x9E37_79B1);
+        h ^= h >> 15;
+        let n = ((h & 0xFF) as f32 / 255.0 - 0.5) * 0.04 * 255.0;
         for c in &mut px[0..3] {
-            *c = (*c as f32 + (*c as f32 - mean) * 0.25).clamp(0.0, 255.0) as u8;
+            let v = *c as f32;
+            *c = (v + (v - mean) * 0.2 + n).clamp(0.0, 255.0) as u8;
         }
     }
     // Premultiplied == straight for opaque pixels; RgbaImage is already
@@ -154,12 +159,10 @@ pub fn fill_glass(
         Transform::default(),
         None,
     );
-    // Tint layer — the spec's glass recipe.
-    let tint = if dark {
-        Color::from_rgba(20.0 / 255.0, 18.0 / 255.0, 30.0 / 255.0, 0.55).unwrap()
-    } else {
-        Color::from_rgba(1.0, 1.0, 1.0, 0.55).unwrap()
-    };
+    // Tint + hairline from the cosmos-theme glass tokens.
+    let pal = cosmos_theme::palette(dark);
+    let [tr, tg, tb, ta] = pal.glass_tint;
+    let tint = Color::from_rgba8(tr, tg, tb, ta);
     pixmap.fill_path(
         &path,
         &Paint {
@@ -171,14 +174,15 @@ pub fn fill_glass(
         Transform::default(),
         None,
     );
-    // 1px inner highlight — white at 12% alpha, inset half a pixel.
+    // 1px inner hairline, inset half a pixel.
     if let Some(inner) = round_rect_path(x + 0.5, y + 0.5, w - 1.0, h - 1.0, (r - 0.5).max(0.0)) {
         pixmap.stroke_path(
             &inner,
             &Paint {
-                shader: tiny_skia::Shader::SolidColor(
-                    Color::from_rgba(1.0, 1.0, 1.0, 0.12).unwrap(),
-                ),
+                shader: tiny_skia::Shader::SolidColor({
+                    let [r, g, b, a] = pal.glass_hairline;
+                    Color::from_rgba8(r, g, b, a)
+                }),
                 anti_alias: true,
                 ..Default::default()
             },
