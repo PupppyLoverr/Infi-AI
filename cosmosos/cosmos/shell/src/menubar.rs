@@ -10,6 +10,8 @@ use wayland_client::protocol::wl_shm;
 use crate::{draw, glass, ShellState};
 
 pub const TITLES: &[&str] = &["File", "Window", "Help"];
+/// Menu index of the system menu behind the Cosmos mark.
+pub const SYSTEM: usize = 3;
 const TITLE_PAD: f64 = 10.0;
 const CHAR_W: f64 = 7.5;
 /// Shadow inset around the card inside the surface.
@@ -29,11 +31,25 @@ pub enum Action {
     NextWorkspace,
     Shortcuts,
     Search,
+    Settings,
+    Lock,
+    Logout,
+    Restart,
+    Shutdown,
 }
 
 impl Action {
     pub fn needs_window(self) -> bool {
-        !matches!(self, Action::Shortcuts | Action::Search)
+        !matches!(
+            self,
+            Action::Shortcuts
+                | Action::Search
+                | Action::Settings
+                | Action::Lock
+                | Action::Logout
+                | Action::Restart
+                | Action::Shutdown
+        )
     }
 }
 
@@ -50,9 +66,16 @@ pub fn items(menu: usize) -> &'static [(&'static str, Action)] {
             ("Tile Window to Right", Action::TileRight),
             ("Move to Next Workspace", Action::NextWorkspace),
         ],
-        _ => &[
+        2 => &[
             ("Keyboard Shortcuts", Action::Shortcuts),
             ("Search Apps and Files", Action::Search),
+        ],
+        _ => &[
+            ("Settings…", Action::Settings),
+            ("Lock Screen", Action::Lock),
+            ("Log Out…", Action::Logout),
+            ("Restart…", Action::Restart),
+            ("Shut Down…", Action::Shutdown),
         ],
     }
 }
