@@ -1200,4 +1200,16 @@ pub trait Backend {
     fn reset_buffers(&mut self, output: &Output);
     fn early_import(&mut self, surface: &WlSurface);
     fn update_led_state(&mut self, led_state: LedState);
+    /// Render `output` offscreen and write it to `path` as a PNG
+    /// (IPC `Screenshot` request — backs xdg-desktop-portal Screenshot
+    /// and the drive-harness pixel evidence).
+    fn capture_output(
+        &mut self,
+        _space: &Space<crate::shell::WindowElement>,
+        _cosmos: &crate::cosmos::CosmosState,
+        _output: &Output,
+        _path: &std::path::Path,
+    ) -> Result<(), String> {
+        Err("screenshot capture unsupported on this backend".to_string())
+    }
 }

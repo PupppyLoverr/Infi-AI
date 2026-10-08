@@ -48,8 +48,10 @@ use smithay::{
 };
 use tracing::{error, info, warn};
 
+use crate::shell::WindowElement;
 use crate::state::{take_presentation_feedback, AnvilState, Backend};
 use crate::{drawing::*, render::*};
+use smithay::desktop::space::Space;
 
 pub const OUTPUT_NAME: &str = "winit";
 
@@ -97,6 +99,17 @@ impl Backend for WinitData {
     }
     fn early_import(&mut self, _surface: &wl_surface::WlSurface) {}
     fn update_led_state(&mut self, _led_state: LedState) {}
+
+    #[cfg(feature = "egl")]
+    fn capture_output(
+        &mut self,
+        space: &Space<WindowElement>,
+        cosmos: &crate::cosmos::CosmosState,
+        output: &Output,
+        path: &std::path::Path,
+    ) -> Result<(), String> {
+        crate::render::capture_output_to_png(self.backend.renderer(), space, cosmos, output, path)
+    }
 }
 
 pub fn run_winit() {

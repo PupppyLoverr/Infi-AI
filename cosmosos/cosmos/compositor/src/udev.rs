@@ -221,6 +221,26 @@ impl Backend for UdevData {
             keyboard.led_update(led_state.into());
         }
     }
+
+    fn capture_output(
+        &mut self,
+        space: &Space<WindowElement>,
+        cosmos: &crate::cosmos::CosmosState,
+        output: &Output,
+        path: &std::path::Path,
+    ) -> Result<(), String> {
+        let render_node = output
+            .user_data()
+            .get::<UdevOutputId>()
+            .and_then(|id| self.backends.get(&id.device_id))
+            .and_then(|device| device.render_node)
+            .unwrap_or(self.primary_gpu);
+        let mut renderer = self
+            .gpus
+            .single_renderer(&render_node)
+            .map_err(|e| format!("no renderer for {render_node}: {e}"))?;
+        crate::render::capture_output_to_png(&mut renderer, space, cosmos, output, path)
+    }
 }
 
 pub fn run_udev() {

@@ -744,7 +744,7 @@ impl ShellState {
             }
             Config(map) => self.apply_config(map),
             SessionEnding => self.exit = true,
-            Pong { .. } | Error { .. } => {}
+            Pong { .. } | Screenshot { .. } | Error { .. } => {}
         }
     }
 

@@ -113,6 +113,13 @@ pub enum Request {
     },
     /// Read all settings.
     GetConfig,
+    /// Render the (first) output offscreen and write it to `path` as a
+    /// PNG. Replies `Event::Screenshot` on success, `Event::Error`
+    /// otherwise. Backs the xdg-desktop-portal Screenshot impl and the
+    /// drive harness's pixel evidence.
+    Screenshot {
+        path: String,
+    },
     /// Ask the session to end (logout).
     QuitSession,
 }
@@ -157,6 +164,10 @@ pub enum Event {
         open: bool,
         fill: String,
         candidates: Vec<u64>,
+    },
+    /// Reply to a `Screenshot` request — `path` was written as a PNG.
+    Screenshot {
+        path: String,
     },
     /// Session is ending; clients should exit.
     SessionEnding,
