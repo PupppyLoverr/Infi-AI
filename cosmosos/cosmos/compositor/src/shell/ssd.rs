@@ -104,8 +104,8 @@ where
 
 pub const HEADER_BAR_HEIGHT: i32 = 32;
 /// macOS-style traffic-light cluster on the left: 12px discs, 20px pitch.
-const BTN_CX0: f64 = 18.0;
-const BTN_PITCH: f64 = 20.0;
+pub(crate) const BTN_CX0: f64 = 18.0;
+pub(crate) const BTN_PITCH: f64 = 20.0;
 const BTN_HIT_R: f64 = 10.0;
 const CIRCLE_R: f32 = 6.0;
 const FONT_SIZE: f32 = 13.0;

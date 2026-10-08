@@ -294,6 +294,14 @@ fn dispatch_request<BackendData: Backend>(
             state.snap_assist_dismiss();
             None
         }
+        Request::SnapToZone { id, zone } => {
+            state.snap_to_zone(id, &zone);
+            None
+        }
+        Request::ZoomFlyoutDismiss => {
+            state.close_zoom_flyout();
+            None
+        }
         Request::SetConfig { key, value } => match state.cosmos_set_config(&key, value) {
             Ok(()) => None,
             Err(message) => Some(Event::Error { message }),

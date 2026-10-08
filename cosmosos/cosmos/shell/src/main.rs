@@ -16,6 +16,7 @@ mod popups;
 mod quick;
 mod switcher;
 mod sysinfo;
+mod zoomflyout;
 
 use std::{os::unix::net::UnixStream, time::Duration};
 
@@ -124,6 +125,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         assist_hover: None,
         assist_open: false,
         assist_dirty: false,
+        zoom_surface: None,
+        zoom_window: 0,
+        zoom_hover: None,
+        zoom_dirty: false,
         launcher_hover: None,
         notify_size: (0, 0),
         quick_size: (0, 0),
@@ -245,6 +250,9 @@ pub struct ShellState {
     pub quick_surface: Option<LayerSurface>,
     /// Snap Assist picker (Win11) — fullscreen overlay on the free half.
     pub assist_surface: Option<LayerSurface>,
+    /// Zoom flyout (Win11 snap layouts) — small card under the green
+    /// zoom button.
+    pub zoom_surface: Option<LayerSurface>,
     pub notify_conn: Option<zbus::blocking::Connection>,
     pub panel_size: (u32, u32),
     pub dock_size: (u32, u32),
@@ -263,6 +271,10 @@ pub struct ShellState {
     pub assist_hover: Option<usize>,
     pub assist_open: bool,
     pub assist_dirty: bool,
+    /// Zoom flyout state — the window id it's open for, hovered cell.
+    pub zoom_window: u64,
+    pub zoom_hover: Option<(usize, usize)>,
+    pub zoom_dirty: bool,
     /// Pointer hover inside the launcher card (cells, rows, footer).
     pub launcher_hover: Option<launcher::Hit>,
     pub notify_size: (u32, u32),
@@ -653,6 +665,69 @@ impl ShellState {
         }
     }
 
+    /// Zoom flyout — Win11's snap-layouts card under the green zoom
+    /// button. `x,y` is the button position the compositor broadcast;
+    /// the card centres under it, clamped on-screen.
+    pub fn set_zoom(&mut self, open: bool, window: u64, x: i32, y: i32) {
+        if !open {
+            self.zoom_surface = None;
+            self.zoom_hover = None;
+            return;
+        }
+        self.zoom_window = window;
+        self.zoom_hover = None;
+        let (cw, ch) = zoomflyout::card_size();
+        // Centre the card under the button, clamped to the screen.
+        let (screen_w, _screen_h) = self.panel_size;
+        let left = (x - cw as i32 / 2).clamp(4, (screen_w as i32 - cw as i32 - 4).max(4));
+        if self.zoom_surface.is_none() {
+            let surface = self.compositor_state.create_surface(&self.qh);
+            let layer = self.layer_shell.create_layer_surface(
+                &self.qh,
+                surface,
+                Layer::Overlay,
+                Some("cosmos-zoomflyout"),
+                None,
+            );
+            layer.set_anchor(Anchor::TOP | Anchor::LEFT);
+            layer.set_size(cw, ch);
+            layer.set_margin(y, 0, 0, left);
+            layer.set_exclusive_zone(-1);
+            layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+            layer.wl_surface().commit();
+            self.zoom_surface = Some(layer);
+        }
+        self.zoom_dirty = true;
+    }
+
+    /// Close the flyout on the shell's own initiative (Esc). Outside
+    /// presses already miss this surface — the compositor sees them,
+    /// closes its flag, and broadcasts `ZoomFlyout{open:false}` which
+    /// drops the surface through `set_zoom`. This path is only for
+    /// keys we still own focus for.
+    pub fn close_zoom(&mut self) {
+        if self.zoom_surface.is_some() {
+            self.zoom_surface = None;
+            self.zoom_hover = None;
+            self.ipc.send(&cosmos_ipc::Request::ZoomFlyoutDismiss);
+        }
+    }
+
+    /// Click on a zone cell → snap the anchor window there.
+    pub fn zoom_click(&mut self, x: f64, y: f64) {
+        if let zoomflyout::Hit::Zone(li, ci) = zoomflyout::hit_test(x, y) {
+            if let Some(zone) = zoomflyout::zone_name(li, ci) {
+                let id = self.zoom_window;
+                self.zoom_surface = None;
+                self.zoom_hover = None;
+                self.ipc.send(&cosmos_ipc::Request::SnapToZone {
+                    id,
+                    zone: zone.to_string(),
+                });
+            }
+        }
+    }
+
     /// Centered Alt/Super+Tab overlay — created on the first `Switcher`
     /// event and dropped when the compositor reports `open: false`.
     fn create_switcher(&mut self, qh: &QueueHandle<Self>) {
@@ -727,6 +802,9 @@ impl ShellState {
                 } else {
                     self.set_assist(false, false, Vec::new());
                 }
+            }
+            ZoomFlyout { open, window, x, y } => {
+                self.set_zoom(open, window, x, y);
             }
             Switcher {
                 open,
@@ -907,6 +985,10 @@ impl ShellState {
             self.assist_dirty = false;
             assist::draw(self);
         }
+        if self.zoom_dirty && self.zoom_surface.is_some() {
+            self.zoom_dirty = false;
+            zoomflyout::draw(self);
+        }
         if self.help_dirty && self.help_surface.is_some() {
             self.help_dirty = false;
             help::draw(self);
@@ -988,6 +1070,9 @@ impl LayerShellHandler for ShellState {
             self.assist_surface = None;
             self.assist_open = false;
         }
+        if self.zoom_surface.as_ref() == Some(layer) {
+            self.zoom_surface = None;
+        }
         if self.help_surface.as_ref() == Some(layer) {
             self.help_surface = None;
             self.help_open = false;
@@ -1044,6 +1129,9 @@ impl LayerShellHandler for ShellState {
         if self.assist_surface.as_ref() == Some(layer) {
             self.assist_size = configure.new_size;
             self.assist_dirty = true;
+        }
+        if self.zoom_surface.as_ref() == Some(layer) {
+            self.zoom_dirty = true;
         }
         if self.help_surface.as_ref() == Some(layer) {
             self.help_size = configure.new_size;
@@ -1167,6 +1255,8 @@ impl KeyboardHandler for ShellState {
             }
         } else if self.assist_open {
             assist::key_press(self, event);
+        } else if self.zoom_surface.is_some() {
+            zoomflyout::key_press(self, event);
         } else if self.launcher_open {
             launcher::key_press(self, event);
         }
@@ -1221,6 +1311,7 @@ impl PointerHandler for ShellState {
                 .chain(self.dock_surface.iter())
                 .chain(self.launcher_surface.iter())
                 .chain(self.assist_surface.iter())
+                .chain(self.zoom_surface.iter())
                 .chain(self.help_surface.iter())
                 .chain(self.notify_surface.iter())
                 .chain(self.quick_surface.iter())
@@ -1243,6 +1334,8 @@ impl PointerHandler for ShellState {
                         self.quick_click(ev.position.0, ev.position.1);
                     } else if self.assist_surface.as_ref() == Some(&layer) {
                         self.assist_click(ev.position.0, ev.position.1);
+                    } else if self.zoom_surface.as_ref() == Some(&layer) {
+                        self.zoom_click(ev.position.0, ev.position.1);
                     } else if self.help_surface.as_ref() == Some(&layer) {
                         // Any press on the sheet dismisses it.
                         self.close_help();
@@ -1259,6 +1352,8 @@ impl PointerHandler for ShellState {
                         self.quick_dirty |= quick::drag(self, ev.position.0, ev.position.1);
                     } else if self.assist_surface.as_ref() == Some(&layer) {
                         self.assist_dirty |= assist::hover(self, ev.position.0, ev.position.1);
+                    } else if self.zoom_surface.as_ref() == Some(&layer) {
+                        self.zoom_dirty |= zoomflyout::hover(self, ev.position.0, ev.position.1);
                     }
                 }
                 PointerEventKind::Release { .. } => {
@@ -1282,6 +1377,11 @@ impl PointerHandler for ShellState {
                     {
                         self.assist_hover = None;
                         self.assist_dirty = true;
+                    } else if self.zoom_surface.as_ref() == Some(&layer)
+                        && self.zoom_hover.is_some()
+                    {
+                        self.zoom_hover = None;
+                        self.zoom_dirty = true;
                     }
                 }
                 _ => {}

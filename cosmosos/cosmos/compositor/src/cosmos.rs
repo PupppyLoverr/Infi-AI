@@ -38,6 +38,16 @@ pub const WORKSPACE_COUNT: usize = 9;
 /// Horizontal/vertical padding around tiled windows.
 const SNAP_GAP: i32 = 4;
 
+/// Every tiling state a snap can set — all are cleared before each
+/// re-snap/unsnap so stale edge hints never linger on the client.
+const SNAP_STATES: [xdg_toplevel::State; 5] = [
+    xdg_toplevel::State::TiledLeft,
+    xdg_toplevel::State::TiledRight,
+    xdg_toplevel::State::TiledTop,
+    xdg_toplevel::State::TiledBottom,
+    xdg_toplevel::State::Maximized,
+];
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CosmosConfig {
@@ -341,6 +351,111 @@ pub enum SnapState {
     Left,
     Right,
     Maximized,
+    /// 70/30 wide pair.
+    LeftWide,
+    RightWide,
+    /// Thirds.
+    ThirdLeft,
+    ThirdMid,
+    ThirdRight,
+    /// Quarter tiles (2×2 grid).
+    QuarterTL,
+    QuarterTR,
+    QuarterBL,
+    QuarterBR,
+}
+
+impl SnapState {
+    /// Zone name accepted from the zoom-flyout IPC pick — the same
+    /// names `cosmos_ipc::SNAP_LAYOUTS` advertises to the shell.
+    pub fn from_zone(name: &str) -> Option<Self> {
+        Some(match name {
+            "left" => Self::Left,
+            "right" => Self::Right,
+            "max" => Self::Maximized,
+            "left-wide" => Self::LeftWide,
+            "right-wide" => Self::RightWide,
+            "third-left" => Self::ThirdLeft,
+            "third-mid" => Self::ThirdMid,
+            "third-right" => Self::ThirdRight,
+            "top-left" => Self::QuarterTL,
+            "top-right" => Self::QuarterTR,
+            "bottom-left" => Self::QuarterBL,
+            "bottom-right" => Self::QuarterBR,
+            _ => return None,
+        })
+    }
+
+    /// The frame rect (loc + size INCLUDING the titlebar band) this
+    /// snap occupies inside `area` — the single geometry table behind
+    /// `snap_window` and the drag-edge drop preview.
+    pub fn rect(
+        self,
+        area: Rectangle<i32, Logical>,
+    ) -> Option<(Point<i32, Logical>, Size<i32, Logical>)> {
+        let (w, h) = (area.size.w, area.size.h);
+        let g = SNAP_GAP;
+        let (loc, size) = match self {
+            Self::Floating => return None,
+            Self::Left => (area.loc + Point::from((g, g)), ((w / 2 - g * 2, h - g * 2))),
+            Self::Right => (
+                area.loc + Point::from((w / 2 + g, g)),
+                ((w / 2 - g * 2, h - g * 2)),
+            ),
+            Self::Maximized => (area.loc, (w, h)),
+            Self::LeftWide => (
+                area.loc + Point::from((g, g)),
+                ((w * 7 / 10 - g * 2, h - g * 2)),
+            ),
+            Self::RightWide => (
+                area.loc + Point::from((w * 7 / 10 + g, g)),
+                ((w * 3 / 10 - g * 2, h - g * 2)),
+            ),
+            Self::ThirdLeft => (area.loc + Point::from((g, g)), ((w / 3 - g * 2, h - g * 2))),
+            Self::ThirdMid => (
+                area.loc + Point::from((w / 3 + g, g)),
+                ((w / 3 - g * 2, h - g * 2)),
+            ),
+            Self::ThirdRight => (
+                area.loc + Point::from((w * 2 / 3 + g, g)),
+                ((w / 3 - g * 2, h - g * 2)),
+            ),
+            Self::QuarterTL => (
+                area.loc + Point::from((g, g)),
+                ((w / 2 - g * 2, h / 2 - g * 2)),
+            ),
+            Self::QuarterTR => (
+                area.loc + Point::from((w / 2 + g, g)),
+                ((w / 2 - g * 2, h / 2 - g * 2)),
+            ),
+            Self::QuarterBL => (
+                area.loc + Point::from((g, h / 2 + g)),
+                ((w / 2 - g * 2, h / 2 - g * 2)),
+            ),
+            Self::QuarterBR => (
+                area.loc + Point::from((w / 2 + g, h / 2 + g)),
+                ((w / 2 - g * 2, h / 2 - g * 2)),
+            ),
+        };
+        Some((loc, Size::from(size)))
+    }
+
+    /// xdg-toplevel states clients should see for this snap — quarter
+    /// tiles report both edge hints; thirds/wides report the dominant
+    /// edge; ThirdMid reports none (its edges touch nothing).
+    fn xdg_states(self) -> &'static [xdg_toplevel::State] {
+        use xdg_toplevel::State as S;
+        match self {
+            Self::Left | Self::LeftWide | Self::ThirdLeft => &[S::TiledLeft],
+            Self::Right | Self::RightWide | Self::ThirdRight => &[S::TiledRight],
+            Self::Maximized => &[S::Maximized],
+            Self::QuarterTL => &[S::TiledLeft, S::TiledTop],
+            Self::QuarterTR => &[S::TiledRight, S::TiledTop],
+            Self::QuarterBL => &[S::TiledLeft, S::TiledBottom],
+            Self::QuarterBR => &[S::TiledRight, S::TiledBottom],
+            Self::Floating | Self::ThirdMid => &[],
+        }
+    }
 }
 
 /// The modifier that opened the window switcher; committing happens when
@@ -415,6 +530,12 @@ pub struct CosmosState {
     pub snap_preview: Option<(SnapState, Rectangle<i32, Logical>)>,
     /// Snap Assist picker while it is offered (shell renders visuals).
     pub assist: Option<AssistState>,
+    /// Zoom flyout (Win11 snap layouts on green-button hover): the
+    /// window id it's open for. Shell renders the card.
+    pub zoom_flyout: Option<u64>,
+    /// Armed dwell timer: (window id, since). The calloop timer
+    /// re-checks the pointer zone at fire time — no cancel token.
+    pub zoom_dwell: Option<(u64, std::time::Instant)>,
     /// Live transition animations (map-in, minimize-out, ws slide, cards).
     pub anims: crate::anim::Animations,
     /// Per-workspace dynamic tiling (master+stack). `super+t` toggles it
@@ -589,6 +710,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         self.tick_animations();
         let from = self.cosmos.active_workspace;
         self.close_snap_assist();
+        self.close_zoom_flyout();
         if self.anim_on() {
             // Deferred park: outgoing windows stay mapped and slide out
             // while the incoming desktop slides in — the macOS/Win11
@@ -659,6 +781,10 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             .element_location(window)
             .unwrap_or_else(|| window.geometry().loc);
         self.space.unmap_elem(window);
+        // The anchor window is leaving the screen — close the card.
+        if self.cosmos.zoom_flyout == Some(id) {
+            self.close_zoom_flyout();
+        }
         tracing::info!(id, ws, "cosmos: window moved to workspace");
         if let Some(meta) = self.cosmos.windows.get_mut(&id) {
             meta.workspace = ws;
@@ -902,19 +1028,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         snap: SnapState,
     ) -> Option<Rectangle<i32, Logical>> {
         let area = self.work_area(Some(window));
-        let (loc, size) = match snap {
-            SnapState::Left => (
-                area.loc + Point::from((SNAP_GAP, SNAP_GAP)),
-                Size::from((area.size.w / 2 - SNAP_GAP * 2, area.size.h - SNAP_GAP * 2)),
-            ),
-            SnapState::Right => (
-                area.loc + Point::from((area.size.w / 2 + SNAP_GAP, SNAP_GAP)),
-                Size::from((area.size.w / 2 - SNAP_GAP * 2, area.size.h - SNAP_GAP * 2)),
-            ),
-            SnapState::Maximized => (area.loc, area.size),
-            SnapState::Floating => return None,
-        };
-        Some(Rectangle::new(loc, size))
+        snap.rect(area).map(|(loc, size)| Rectangle::new(loc, size))
     }
 
     /// Which edge-snap zone the pointer sits in while dragging a window:
@@ -1096,58 +1210,38 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         }
 
         let area = self.work_area(Some(window));
-        let (loc, size, state) = match snap {
-            SnapState::Left => (
-                area.loc + Point::from((SNAP_GAP, SNAP_GAP)),
-                Size::from((
-                    area.size.w / 2 - SNAP_GAP * 2,
-                    area.size.h - SNAP_GAP * 2 - titlebar,
-                )),
-                xdg_toplevel::State::TiledLeft,
-            ),
-            SnapState::Right => (
-                area.loc + Point::from((area.size.w / 2 + SNAP_GAP, SNAP_GAP)),
-                Size::from((
-                    area.size.w / 2 - SNAP_GAP * 2,
-                    area.size.h - SNAP_GAP * 2 - titlebar,
-                )),
-                xdg_toplevel::State::TiledRight,
-            ),
-            SnapState::Maximized => (
-                area.loc,
-                Size::from((area.size.w, area.size.h - titlebar)),
-                xdg_toplevel::State::Maximized,
-            ),
-            SnapState::Floating => {
-                let restore = self
-                    .cosmos
-                    .windows
-                    .get(&id)
-                    .and_then(|m| m.restore)
-                    .unwrap_or(Rectangle::new(current_loc, current_size));
-                surface.with_pending_state(|s| {
-                    s.states.unset(xdg_toplevel::State::TiledLeft);
-                    s.states.unset(xdg_toplevel::State::TiledRight);
-                    s.states.unset(xdg_toplevel::State::Maximized);
-                    s.size = Some(restore.size);
-                });
-                surface.send_pending_configure();
-                self.space.map_element(window.clone(), restore.loc, false);
-                if let Some(fit) = window.user_data().get::<crate::shell::InitialFit>() {
-                    fit.user_moved();
+        let Some((loc, frame)) = snap.rect(area) else {
+            let restore = self
+                .cosmos
+                .windows
+                .get(&id)
+                .and_then(|m| m.restore)
+                .unwrap_or(Rectangle::new(current_loc, current_size));
+            surface.with_pending_state(|s| {
+                for st in SNAP_STATES {
+                    s.states.unset(st);
                 }
-                self.flush_pending_configures();
-                self.close_snap_assist();
-                self.cosmos.dirty = true;
-                return;
+                s.size = Some(restore.size);
+            });
+            surface.send_pending_configure();
+            self.space.map_element(window.clone(), restore.loc, false);
+            if let Some(fit) = window.user_data().get::<crate::shell::InitialFit>() {
+                fit.user_moved();
             }
+            self.flush_pending_configures();
+            self.close_snap_assist();
+            self.cosmos.dirty = true;
+            return;
         };
+        let size = Size::from((frame.w, frame.h - titlebar));
 
         surface.with_pending_state(|s| {
-            s.states.unset(xdg_toplevel::State::TiledLeft);
-            s.states.unset(xdg_toplevel::State::TiledRight);
-            s.states.unset(xdg_toplevel::State::Maximized);
-            s.states.set(state);
+            for st in SNAP_STATES {
+                s.states.unset(st);
+            }
+            for st in snap.xdg_states() {
+                s.states.set(*st);
+            }
             s.size = Some(size);
         });
         surface.send_pending_configure();
@@ -1237,6 +1331,109 @@ impl<BackendData: Backend> AnvilState<BackendData> {
     /// Snap Assist dismissed without a pick.
     pub fn snap_assist_dismiss(&mut self) {
         self.close_snap_assist();
+    }
+
+    /// Hover bookkeeping for the zoom flyout (Win11 snap layouts):
+    /// called from the SSD motion/leave handlers with whether the
+    /// pointer is over the green (zone 2) button. Entering the button
+    /// arms a dwell timer; leaving disarms it.
+    pub fn note_zoom_hover(&mut self, window: &WindowElement, on_green: bool) {
+        let id = self.cosmos.window_id(window);
+        if !on_green {
+            if matches!(self.cosmos.zoom_dwell, Some((d, _)) if d == id) {
+                self.cosmos.zoom_dwell = None;
+            }
+            return;
+        }
+        if self.cosmos.zoom_flyout == Some(id)
+            || matches!(self.cosmos.zoom_dwell, Some((d, _)) if d == id)
+        {
+            return;
+        }
+        self.cosmos.zoom_dwell = Some((id, std::time::Instant::now()));
+        let _ = self.handle.insert_source(
+            smithay::reexports::calloop::timer::Timer::from_duration(
+                std::time::Duration::from_millis(cosmos_ipc::ZOOM_FLYOUT_DELAY_MS),
+            ),
+            move |_, _, data| {
+                data.zoom_dwell_fire(id);
+                smithay::reexports::calloop::timer::TimeoutAction::Drop
+            },
+        );
+    }
+
+    /// Dwell-timer callback: the flyout opens only if the pointer is
+    /// still resting on the green button of the same window.
+    fn zoom_dwell_fire(&mut self, id: u64) {
+        if !matches!(self.cosmos.zoom_dwell, Some((d, _)) if d == id) {
+            return;
+        }
+        self.cosmos.zoom_dwell = None;
+        if self.cosmos.zoom_flyout.is_some() {
+            return;
+        }
+        let still_on = self
+            .window_by_id(id)
+            .map(|w| {
+                let st = w.decoration_state();
+                st.is_ssd && st.header_bar.zone_at_pointer() == Some(2)
+            })
+            .unwrap_or(false);
+        if still_on {
+            self.open_zoom_flyout(id);
+        }
+    }
+
+    /// Open the snap-layouts flyout under the window's green button.
+    fn open_zoom_flyout(&mut self, id: u64) {
+        let Some(window) = self.window_by_id(id) else {
+            return;
+        };
+        let Some(loc) = self.space.element_location(&window) else {
+            return;
+        };
+        // Green-button screen position: macOS cluster starts at
+        // BTN_CX0 and the maximize disc is index 2. Center the card
+        // under it, just below the titlebar.
+        let bx =
+            loc.x + crate::shell::ssd::BTN_CX0 as i32 + (crate::shell::ssd::BTN_PITCH as i32) * 2;
+        let by = loc.y + crate::shell::ssd::HEADER_BAR_HEIGHT;
+        self.cosmos.zoom_flyout = Some(id);
+        self.ipc_broadcast(&cosmos_ipc::Event::ZoomFlyout {
+            open: true,
+            window: id,
+            x: bx,
+            y: by,
+        });
+        tracing::info!(id, "cosmos: zoom flyout open");
+    }
+
+    /// Close the zoom flyout if open (idempotent).
+    pub fn close_zoom_flyout(&mut self) {
+        if self.cosmos.zoom_flyout.take().is_some() {
+            self.ipc_broadcast(&cosmos_ipc::Event::ZoomFlyout {
+                open: false,
+                window: 0,
+                x: 0,
+                y: 0,
+            });
+        }
+    }
+
+    /// Flyout pick: snap `id` into the named zone and close the card.
+    /// Left/Right picks chain into Snap Assist exactly like a
+    /// keybind snap — the remaining half still begs to be filled.
+    pub fn snap_to_zone(&mut self, id: u64, zone: &str) {
+        self.close_zoom_flyout();
+        let Some(snap) = SnapState::from_zone(zone) else {
+            warn!(zone, "cosmos: unknown snap zone from flyout");
+            return;
+        };
+        let Some(window) = self.window_by_id(id) else {
+            return;
+        };
+        self.snap_window_with_assist(&window, snap, true);
+        self.focus_window(&window);
     }
 
     /// Push every pending toplevel configure (activation changes, bounds)

@@ -106,6 +106,15 @@ pub enum Request {
     },
     /// Dismiss Snap Assist without picking (backdrop click, Esc).
     SnapAssistDismiss,
+    /// Snap a window into a named snap-layout zone picked in the zoom
+    /// flyout (Win11's snap-layouts card on the green button). `zone`
+    /// is one of [`SNAP_ZONES`].
+    SnapToZone {
+        id: u64,
+        zone: String,
+    },
+    /// Dismiss the zoom flyout without picking (backdrop click, Esc).
+    ZoomFlyoutDismiss,
     /// Update a setting; persisted by the compositor.
     SetConfig {
         key: String,
@@ -165,6 +174,15 @@ pub enum Event {
         fill: String,
         candidates: Vec<u64>,
     },
+    /// Zoom flyout (Win11 snap layouts on green-button hover). `x`,`y`
+    /// is the screen-space anchor just under the button; the shell
+    /// positions the card relative to it. `open: false` closes it.
+    ZoomFlyout {
+        open: bool,
+        window: u64,
+        x: i32,
+        y: i32,
+    },
     /// Reply to a `Screenshot` request — `path` was written as a PNG.
     Screenshot {
         path: String,
@@ -205,6 +223,52 @@ pub fn write_message<T: serde::Serialize, W: std::io::Write>(
     writer.write_all(b"\n")?;
     writer.flush()
 }
+
+/// Snap-layout zones the zoom flyout offers — the names accepted by
+/// `Request::SnapToZone`. Each entry is (zone name, fractional rect of
+/// the work area) so both the compositor's geometry table and the
+/// shell's thumbnail renderer share one source of truth.
+pub const SNAP_LAYOUTS: &[(&str, &[(&str, f32, f32, f32, f32)])] = &[
+    (
+        "Halves",
+        &[("left", 0.0, 0.0, 0.5, 1.0), ("right", 0.5, 0.0, 0.5, 1.0)],
+    ),
+    (
+        "Thirds",
+        &[
+            ("third-left", 0.0, 0.0, 1.0 / 3.0, 1.0),
+            ("third-mid", 1.0 / 3.0, 0.0, 1.0 / 3.0, 1.0),
+            ("third-right", 2.0 / 3.0, 0.0, 1.0 / 3.0, 1.0),
+        ],
+    ),
+    (
+        "Quarters",
+        &[
+            ("top-left", 0.0, 0.0, 0.5, 0.5),
+            ("top-right", 0.5, 0.0, 0.5, 0.5),
+            ("bottom-left", 0.0, 0.5, 0.5, 0.5),
+            ("bottom-right", 0.5, 0.5, 0.5, 0.5),
+        ],
+    ),
+    (
+        "Wide pair",
+        &[
+            ("left-wide", 0.0, 0.0, 0.7, 1.0),
+            ("right-wide", 0.7, 0.0, 0.3, 1.0),
+        ],
+    ),
+    ("Maximize", &[("max", 0.0, 0.0, 1.0, 1.0)]),
+];
+
+/// All zone names across `SNAP_LAYOUTS` (for validation).
+pub fn zone_known(name: &str) -> bool {
+    SNAP_LAYOUTS
+        .iter()
+        .any(|(_, cells)| cells.iter().any(|(n, ..)| *n == name))
+}
+
+/// Hover dwell on the green zoom button before the flyout opens.
+pub const ZOOM_FLYOUT_DELAY_MS: u64 = 450;
 
 /// Curated accent presets — the Omarchy-style "theme" dial. Each is one
 /// accent color reserved for active state; every surface that honors

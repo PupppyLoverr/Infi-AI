@@ -112,6 +112,13 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
                 {
                     self.close_snap_assist();
                 }
+                // The flyout's anchor window just died — drop the card.
+                if self.cosmos.zoom_flyout == Some(id) {
+                    self.close_zoom_flyout();
+                }
+                if matches!(self.cosmos.zoom_dwell, Some((d, _)) if d == id) {
+                    self.cosmos.zoom_dwell = None;
+                }
             }
             self.space.unmap_elem(&window);
             for list in self.cosmos.parked.values_mut() {
@@ -592,6 +599,9 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         seat: &Seat<Self>,
         serial: Serial,
     ) {
+        // A drag (or unmaximize that precedes it) moves the anchor
+        // window — the flyout can't track it, so close.
+        self.close_zoom_flyout();
         if let Some(touch) = seat.get_touch() {
             if touch.has_grab(serial) {
                 let start_data = touch.grab_start_data().unwrap();
