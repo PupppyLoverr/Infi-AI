@@ -158,6 +158,19 @@ impl Dispatch<ZwlrDataControlDeviceV1, ()> for ShellState {
             _ => {}
         }
     }
+
+    /// Opcode 0 (`data_offer`) creates a `zwlr_data_control_offer_v1`
+    /// child — without this the first external `wl-copy` panics the
+    /// whole shell on `event_created_child`.
+    fn event_created_child(
+        opcode: u16,
+        qhandle: &QueueHandle<ShellState>,
+    ) -> std::sync::Arc<dyn wayland_client::backend::ObjectData> {
+        match opcode {
+            0 => qhandle.make_data::<ZwlrDataControlOfferV1, ()>(()),
+            _ => unreachable!("zwlr_data_control_device_v1 child opcode {opcode}"),
+        }
+    }
 }
 
 impl Dispatch<ZwlrDataControlOfferV1, ()> for ShellState {
