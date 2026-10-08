@@ -361,6 +361,42 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         let state = wl_pointer::ButtonState::from(evt.state());
 
         if wl_pointer::ButtonState::Pressed == state {
+            // Any press disarms a pending zoom-flyout dwell — a click on
+            // the green button maximizes, it mustn't pop the card after.
+            self.cosmos.zoom_dwell = None;
+            // Zoom flyout: a press outside the card closes it — the same
+            // click-anywhere-else contract as Snap Assist. The flyout's
+            // input region covers only its card, so `surface_under`
+            // misses exactly on outside clicks.
+            if self.cosmos.zoom_flyout.is_some() {
+                let loc = self.pointer.current_location();
+                let inside_flyout = self
+                    .space
+                    .output_under(loc)
+                    .next()
+                    .map(|output| {
+                        let output_geo = self.space.output_geometry(&output).unwrap();
+                        let map = layer_map_for_output(&output);
+                        let hit = map
+                            .layers()
+                            .find(|l| l.namespace() == "cosmos-zoomflyout")
+                            .map(|layer| {
+                                let geo = map.layer_geometry(layer).unwrap();
+                                layer
+                                    .surface_under(
+                                        loc - output_geo.loc.to_f64() - geo.loc.to_f64(),
+                                        WindowSurfaceType::ALL,
+                                    )
+                                    .is_some()
+                            })
+                            .unwrap_or(false);
+                        hit
+                    })
+                    .unwrap_or(false);
+                if !inside_flyout {
+                    self.close_zoom_flyout();
+                }
+            }
             // Snap Assist: a press outside the picker's input region closes
             // it — Win11's click-anywhere-else contract. The assist surface
             // clips its input region to the dimmed free half, so

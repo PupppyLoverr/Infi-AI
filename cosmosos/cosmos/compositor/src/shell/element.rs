@@ -180,13 +180,15 @@ impl<BackendData: Backend> PointerTarget<AnvilState<BackendData>> for SSD {
     fn motion(
         &self,
         _seat: &Seat<AnvilState<BackendData>>,
-        _data: &mut AnvilState<BackendData>,
+        data: &mut AnvilState<BackendData>,
         event: &MotionEvent,
     ) {
-        let mut state = self.0.decoration_state();
-        if state.is_ssd {
+        let on_green = {
+            let mut state = self.0.decoration_state();
             state.header_bar.pointer_enter(event.location);
-        }
+            state.is_ssd && state.header_bar.zone_at_pointer() == Some(2)
+        };
+        data.note_zoom_hover(&self.0, on_green);
     }
     fn relative_motion(
         &self,
@@ -234,14 +236,17 @@ impl<BackendData: Backend> PointerTarget<AnvilState<BackendData>> for SSD {
     fn leave(
         &self,
         _seat: &Seat<AnvilState<BackendData>>,
-        _data: &mut AnvilState<BackendData>,
+        data: &mut AnvilState<BackendData>,
         _serial: Serial,
         _time: u32,
     ) {
-        let mut state = self.0.decoration_state();
-        if state.is_ssd {
-            state.header_bar.pointer_leave();
+        {
+            let mut state = self.0.decoration_state();
+            if state.is_ssd {
+                state.header_bar.pointer_leave();
+            }
         }
+        data.note_zoom_hover(&self.0, false);
     }
     fn gesture_swipe_begin(
         &self,

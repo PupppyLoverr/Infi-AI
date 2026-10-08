@@ -275,7 +275,7 @@ impl<BackendData: Backend> WlrLayerShellHandler for AnvilState<BackendData> {
                 "cosmos-launcher" | "cosmos-assist" | "cosmos-help" => {
                     Some(crate::anim::LayerAnim::Fade)
                 }
-                "cosmos-switcher" => Some(crate::anim::LayerAnim::Pop),
+                "cosmos-switcher" | "cosmos-zoomflyout" => Some(crate::anim::LayerAnim::Pop),
                 "cosmos-quick" | "cosmos-dock" => Some(crate::anim::LayerAnim::SlideUp),
                 "cosmos-notify" => Some(crate::anim::LayerAnim::SlideRight),
                 _ => None,
