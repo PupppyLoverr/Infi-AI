@@ -55,9 +55,10 @@ fn focused_app_name(state: &ShellState) -> String {
 }
 
 /// Width of the status column — shared by draw, click and `tray_clicked`.
-/// Layout: [net][vol][battery?] icons at 20px stride, then the clock text.
-pub fn status_text_len(info: &crate::sysinfo::SysInfo) -> f64 {
+/// Layout: [dnd?][net][vol][battery?] icons at 20px stride, then the clock text.
+pub fn status_text_len(info: &crate::sysinfo::SysInfo, dnd: bool) -> f64 {
     let icons = 2.0
+        + if dnd { 1.0 } else { 0.0 }
         + info
             .battery
             .as_ref()
@@ -78,7 +79,7 @@ pub fn draw(state: &mut ShellState) {
     let (bg, hover_bg, sep, fg, fg_dim) = theme(state.dark);
     let (hx, hov) = state.panel_hover;
     let name = focused_app_name(state);
-    let status_w = status_text_len(&state.sysinfo);
+    let status_w = status_text_len(&state.sysinfo, state.dnd);
     let net_on = state.sysinfo.network.online;
     let vol_muted = state
         .sysinfo
@@ -264,6 +265,27 @@ pub fn draw(state: &mut ShellState) {
     // Tray icons then the clock — the Win11/macOS status-icons idiom.
     let mut ix = tray_x + 8.0;
     let icon_y = h as f32 / 2.0 - 7.0;
+    // Focus (DND) moon — macOS shows it in the status area while on.
+    if state.dnd {
+        let moon = tiny_skia::Paint {
+            shader: tiny_skia::Shader::SolidColor(glyph),
+            anti_alias: true,
+            ..Default::default()
+        };
+        let mut pb = tiny_skia::PathBuilder::new();
+        pb.push_circle(ix as f32 + 7.0, icon_y + 7.5, 6.0);
+        pb.push_circle(ix as f32 + 10.0, icon_y + 5.0, 5.0);
+        if let Some(path) = pb.finish() {
+            pixmap.fill_path(
+                &path,
+                &moon,
+                tiny_skia::FillRule::EvenOdd,
+                tiny_skia::Transform::default(),
+                None,
+            );
+        }
+        ix += 20.0;
+    }
     icons::icon(
         &mut pixmap,
         if net_on { "net-on" } else { "net-off" },
@@ -403,7 +425,7 @@ pub fn click(state: &mut ShellState, x: f64, _y: f64) -> bool {
     }
     // Workspace pager.
     let count = crate::workspace_count(state);
-    let status_w = status_text_len(&state.sysinfo);
+    let status_w = status_text_len(&state.sysinfo, state.dnd);
     let ws_start = (w as f64 - status_w - 12.0) - count as f64 * WS_CELL_W - 10.0;
     if x >= ws_start && x < ws_start + count as f64 * WS_CELL_W {
         let idx = ((x - ws_start) / WS_CELL_W) as usize;
@@ -422,7 +444,8 @@ pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {
     let _ = y;
     let prev = state.panel_hover;
     state.panel_hover = (x, true);
-    let edge =
-        |px: f64, w: f64| px < LAUNCH_BTN_W || px >= w - status_text_len(&state.sysinfo) - 12.0;
+    let edge = |px: f64, w: f64| {
+        px < LAUNCH_BTN_W || px >= w - status_text_len(&state.sysinfo, state.dnd) - 12.0
+    };
     edge(prev.0, state.panel_size.0 as f64) != edge(x, state.panel_size.0 as f64)
 }
