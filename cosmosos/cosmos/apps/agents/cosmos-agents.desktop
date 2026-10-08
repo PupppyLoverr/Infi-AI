@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Agents
+Comment=CosmosOS agent manager — policies, audit feed, snapper rollback
+Exec=cosmos-agents
+Icon=cosmos-agents
+Terminal=false
+Categories=Utility;

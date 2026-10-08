@@ -14,6 +14,7 @@ members = [
     "apps/editor",
     "apps/settings",
     "apps/monitor",
+    "apps/agents",
 ]
 
 [workspace.dependencies]
