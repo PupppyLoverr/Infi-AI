@@ -143,6 +143,9 @@ ISO+Calamares.
   Deny / Allow once / Always allow card and blocks up to 120s for the
   user's decision (Allow-once per call; Always for the agentd's
   lifetime; dismiss/timeout → a clear error to the agent).
+- PR #115: agents with NO policy TOML default `sensitive` to
+  `desktop.screenshot` + `files.write` + `files.move` — consequential
+  tools always ask. `sensitive = []` in a TOML opts out.
 
 ## cosmos-agentd — slice A merged (PR #108)
 - `cosmos-agentd` unix-socket MCP server (JSON-RPC `initialize`/
