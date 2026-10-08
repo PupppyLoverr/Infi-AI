@@ -10,27 +10,19 @@ use crate::{draw, glass, icons, ShellState};
 
 const LAUNCH_BTN_W: f64 = 46.0;
 const APP_NAME_X: f64 = 54.0;
-const WS_CELL_W: f64 = 26.0;
-const WS_CELL_H: f32 = 18.0;
+const WS_CELL_W: f64 = 16.0;
 
+/// (glass fallback bg, hover, separator, fg, fg dim) from the v3 palette.
 fn theme(dark: bool) -> (Color, Color, Color, CtColor, CtColor) {
-    if dark {
-        (
-            Color::from_rgba8(0x18, 0x19, 0x1C, 0xE8), // bg
-            Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x2E), // hover
-            Color::from_rgba8(0x45, 0x46, 0x4C, 0x80), // separator
-            CtColor::rgba(0xEC, 0xEC, 0xEE, 0xFF),     // fg
-            CtColor::rgba(0x8F, 0x90, 0x97, 0xFF),     // fg dim
-        )
+    let p = cosmos_theme::palette(dark);
+    let c = |v: cosmos_theme::Rgba| Color::from_rgba8(v[0], v[1], v[2], v[3]);
+    let t = |v: cosmos_theme::Rgba| CtColor::rgba(v[0], v[1], v[2], v[3]);
+    let hover = if dark {
+        Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x1F)
     } else {
-        (
-            Color::from_rgba8(0xF7, 0xF7, 0xF9, 0xEC),
-            Color::from_rgba8(0x00, 0x00, 0x00, 0x18),
-            Color::from_rgba8(0xD4, 0xD4, 0xD9, 0xAA),
-            CtColor::rgba(0x18, 0x18, 0x1B, 0xFF),
-            CtColor::rgba(0x6E, 0x6E, 0x78, 0xFF),
-        )
-    }
+        Color::from_rgba8(0x00, 0x00, 0x00, 0x14)
+    };
+    (c(p.window), hover, c(p.hairline), t(p.text), t(p.text_secondary))
 }
 
 /// Focused window's display name — the macOS menubar app-name slot.
@@ -321,56 +313,21 @@ pub fn draw(state: &mut ShellState) {
     );
     let mut rx = tray_x - ws_count as f64 * WS_CELL_W - 10.0;
 
-    // Workspace pager — numbered cells, active one a filled pill (inverted).
+    // Workspace dots — the active one an accent capsule; occupied
+    // workspaces read solid, empty ones faint.
+    let cy = h as f32 / 2.0;
     for ws in &workspaces {
-        let cy = h as f32 / 2.0 - WS_CELL_H / 2.0;
-        let label = (ws.id + 1).to_string();
-        // Centre the single-digit label inside the 20px cell.
-        let digit_x = rx as f32 + 3.0 + ((WS_CELL_W as f32 - 6.0) - 7.0).max(0.0) / 2.0;
+        let cx = rx as f32 + WS_CELL_W as f32 / 2.0;
+        if hov && hx >= rx && hx < rx + WS_CELL_W {
+            draw::fill_round_rect(&mut pixmap, cx - 7.0, cy - 7.0, 14.0, 14.0, 7.0, hover_bg);
+        }
         if ws.focused {
-            // Active workspace = accent pill with white digits.
-            draw::fill_round_rect(
-                &mut pixmap,
-                rx as f32 + 3.0,
-                cy,
-                WS_CELL_W as f32 - 6.0,
-                WS_CELL_H,
-                9.0,
-                draw::accent(dark),
-            );
-            draw::text(
-                &mut pixmap,
-                digit_x,
-                cy + 1.0,
-                WS_CELL_W as f32 - 6.0,
-                WS_CELL_H,
-                11.0,
-                &label,
-                CtColor::rgba(0xFF, 0xFF, 0xFF, 0xF0),
-            );
+            draw::fill_round_rect(&mut pixmap, cx - 6.0, cy - 3.0, 12.0, 6.0, 3.0, draw::accent(dark));
         } else {
-            let has_windows = ws.window_count > 0;
-            if hov && hx >= rx && hx < rx + WS_CELL_W {
-                draw::fill_round_rect(
-                    &mut pixmap,
-                    rx as f32 + 3.0,
-                    cy,
-                    WS_CELL_W as f32 - 6.0,
-                    WS_CELL_H,
-                    9.0,
-                    hover_bg,
-                );
-            }
-            draw::text(
-                &mut pixmap,
-                digit_x,
-                cy + 1.0,
-                WS_CELL_W as f32 - 6.0,
-                WS_CELL_H,
-                11.0,
-                &label,
-                if has_windows { fg } else { fg_dim },
-            );
+            let c = if ws.window_count > 0 { fg } else { fg_dim };
+            let alpha = if ws.window_count > 0 { 0xD0 } else { 0x70 };
+            let dot = Color::from_rgba8(c.r(), c.g(), c.b(), alpha);
+            draw::fill_round_rect(&mut pixmap, cx - 3.0, cy - 3.0, 6.0, 6.0, 3.0, dot);
         }
         rx += WS_CELL_W;
     }
