@@ -20,3 +20,8 @@ v3 perf round @2498db6 (2026-10-08): idle RAM 484 MiB @1920x1080;
 30-min soak (files+editor+terminal) free -m used 573->622 MiB (+8.5%),
 compositor RSS +1.6%, zero panics; terminal RSS +39.9% (FAILS <10%: one step t0->t1, flat after) — docs/evidence/v3-soak.txt;
 image 2.0G real / 3.0G sparse.
+
+uitk shm buffer reuse (#147): terminal RSS bounded — +56.7% t0->t5 pool
+warmup, then flat t5->t30; strict <10% rule still FAILS for terminal
+(warmup counted from t0); compositor +4.2%, shell +0.3%, files +7.0%,
+editor flat, zero panics — docs/evidence/v3-soak-after.txt

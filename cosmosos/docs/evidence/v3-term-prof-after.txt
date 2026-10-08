@@ -1,0 +1,35 @@
+CosmosOS cosmos-terminal smaps_rollup profile — AFTER uitk shm-buffer reuse (d4b070a)
+Branch devin/1791474017-uitk-shm-reuse. Real OVMF/KVM boot @1920x1080.
+Terminal spawned ~15:51:47; window left UNTOUCHED (never focused/resized/snapped/
+typed into) for the whole profile window. Single pid 685, ppid=1 — same as before.
+Files+Editor were also resident (they back the v3-soak-after table on the same boot).
+
+smaps_rollup (kB), labels = ~minutes post-spawn:
+sample    Rss    Anonymous  PrivD   ShmDirty  SharedC  Pss_Shmem   free -m used
+T0       18576    4272      4272     7016      2644      3508        538
+T1       18576    4272      4272     7016      2644      3508        566
+T2       19744    4272      4272     8184      2644      4092        562
+T5       29092    4272     11248    10556      2644     12254        572
+T10      29092    4272      8880    12924      2644     11070        558
+T15      29092    4272      8880    12924      2644     11070        561
+T20      29092    4272      8880    12924      2644     11070        579
+T25      29092    4272      8880    12924      2644     11070        576
+T30      29092    4272      8880    12924      2644     11070        (see soak file)
+
+Growth (pid 685):
+  from t0 (18576):            +56.7% to 29092  — FAIL on the strict <10% rule
+  from 2-min settle (19744):  +47.4% to 29092  — FAIL on the strict <10% rule
+  from T5 (29092):            +0.0% — FLAT for the last 25 minutes
+  Anonymous:                  CONSTANT 4272 kB (never moved)
+
+WHAT CHANGED vs the pre-fix run (v3-term-prof.txt):
+  BEFORE: stepping growth all the way to +32 min (steps at ~+2/7/17/27 min,
+          still growing at the last sample; Shared_Dirty + Pss_Shmem climbing).
+  AFTER:  two warmup steps (T2 +1.2 MB, T5 +9.3 MB — pool reaching its steady
+          <=3-buffer size for the live window) then ABSOLUTELY FLAT T5..T30.
+          Private_Dirty even reclaimed 11248 -> 8880 kB at T10 — buffers being
+          recycled instead of carved fresh. Pattern matches the fix's intent:
+          bounded footprint instead of per-paint growth.
+  The strict-rule FAIL remains real (t0 and settle both <10% exceeded), but the
+  character is now one-time warmup, not unbounded growth. Editor shows the same
+  flat profile (15420 kB at every sample); Files +7% then flat.
