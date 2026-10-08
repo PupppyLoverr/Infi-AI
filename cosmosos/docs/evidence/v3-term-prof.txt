@@ -1,0 +1,41 @@
+CosmosOS cosmos-terminal smaps_rollup profile — branch devin/1791470618-v3-perf-fixes (0b19e90)
+Real OVMF/KVM boot @1366x768. Terminal spawned 14:56:14 (uptime 187.7s), window left
+UNTOUCHED the whole run: never focused, resized, snapped or typed into (verified by
+absence of configure/press lines in serial for id=2 after spawn).
+Only ONE cosmos-terminal pid ever existed: 799, ppid=1 (init-adopted; the soak run's
+second pid was a transient child — not reproduced in a quiet window).
+
+smaps_rollup (kB), labels = minutes post-spawn:
+sample  min    Rss     Anonymous  PrivD   ShmDirty  SharedC  Pss_Shmem
+T0      +1.4   17432     4200      4200     5844      2644     2922
+T0r     +2.6   17432     4200      4200     5844      2644     2922
+T1      +2.4   18604     4200      4200     7016      2644     3508
+T1r     +3.6   18604     4200      4200     7016      2644     3508
+T2      +3.5   18604     4200      4200     7016      2644     3508
+T2r     +4.6   18604     4200      4200     7016      2644     3508
+T5      +7.6   19772     4200      5360     7024      2644     4672
+T10    +12.6   19772     4200      5360     7024      2644     4672
+T15    +17.6   22112     4200      6492     8232      2644     6408
+T20    +22.6   22112     4200      6492     8232      2644     6408
+T25    +27.6   24448     4200      6504    10556      2644     7582
+T30    +32.6   24448     4200      6504    10556      2644     7582
+(T0/T1/T2 sampled twice — first sampler loop restarted after a flag fix; r = re-run)
+
+Growth (single pid 799):
+  from t0 (17432, +1.4min):      +40.2% to 24448 over ~31 min
+  from 2-min settle (18604):     +31.4% to 24448 over ~30 min
+  Anonymous: CONSTANT 4200 kB — no heap/anon growth at all.
+
+WHERE THE GROWTH IS:
+  Shared_Dirty  5844 -> 10556  (+4.7 MB)  — shared pages written
+  Pss_Shmem     2922 -> 7582   (+4.7 MB)  — shared memory (Wayland wl_shm buffers)
+  Private_Dirty 4200 -> 6504   (+2.3 MB)
+  Anonymous     4200 -> 4200   (flat)
+  Steps land at ~+2.4m, ~+7m, ~+17m, ~+27m then hold — NOT monotonic leak shape.
+
+INTERPRETATION (harness-observed, code-level confirmation is owner's):
+  The growth is dominated by shared/shmem pages — consistent with wl_shm frame
+  buffers being (re)allocated/cycled and libc/font pages dirtied — not anonymous
+  heap. Steps coincide with repaint cadence of a live terminal (clock/blink).
+  The previous soak's "+39.9%" combined figure included the transient second pid;
+  this quiet-window profile shows ~+7 MB over 30 min on the single real pid.

@@ -257,28 +257,31 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
                 }
             }
             ui.separator();
-            let path_str = f
-                .path_edit
-                .get_or_insert_with(|| f.dir.display().to_string());
-            let resp = ui.add(
-                egui::TextEdit::singleline(path_str).desired_width(ui.available_width() - 140.0),
-            );
-            if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                let p = PathBuf::from(path_str.trim());
-                if p.is_dir() {
-                    f.dir = p;
-                } else {
-                    f.status = format!("not a directory: {}", p.display());
+            // Buttons laid out right-to-left first so the path field takes
+            // only what's left; a fixed reserve clipped "New folder" at 640px.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("New folder").clicked() {
+                    f.new_folder = Some("untitled".into());
                 }
-                f.path_edit = None;
-                f.refresh();
-            }
-            if ui.button("Refresh").clicked() {
-                f.refresh();
-            }
-            if ui.button("New folder").clicked() {
-                f.new_folder = Some("untitled".into());
-            }
+                if ui.button("Refresh").clicked() {
+                    f.refresh();
+                }
+                let path_str = f
+                    .path_edit
+                    .get_or_insert_with(|| f.dir.display().to_string());
+                let resp = ui
+                    .add(egui::TextEdit::singleline(path_str).desired_width(ui.available_width()));
+                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    let p = PathBuf::from(path_str.trim());
+                    if p.is_dir() {
+                        f.dir = p;
+                    } else {
+                        f.status = format!("not a directory: {}", p.display());
+                    }
+                    f.path_edit = None;
+                    f.refresh();
+                }
+            });
         });
     });
 
