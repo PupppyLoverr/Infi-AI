@@ -1046,9 +1046,15 @@ impl ShellState {
             Action::Settings => {
                 let _ = std::process::Command::new("cosmos-settings").spawn();
             }
-            Action::Lock | Action::Logout | Action::Restart | Action::Shutdown => {
+            // Same path as super+L: logind's Lock never reaches this session
+            // (greetd+cage doesn't register it with logind).
+            Action::Lock => {
+                if let Err(err) = std::process::Command::new("cosmos-lock").spawn() {
+                    tracing::warn!("menu: cosmos-lock failed: {err}");
+                }
+            }
+            Action::Logout | Action::Restart | Action::Shutdown => {
                 let key = match action {
-                    Action::Lock => "sys.lock",
                     Action::Logout => "sys.logout",
                     Action::Restart => "sys.reboot",
                     _ => "sys.shutdown",
