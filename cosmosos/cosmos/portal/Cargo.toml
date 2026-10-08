@@ -12,3 +12,6 @@ serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+image = { version = "0.25.1", default-features = false, features = ["png"] }
+pipewire = "0.9"
+libspa = "0.9"

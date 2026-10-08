@@ -22,6 +22,8 @@ use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{ObjectPath, Value};
 use zbus::{connection, interface};
 
+mod cast;
+
 /// A request handle the frontend handed us. `Close` lets the caller
 /// cancel an in-flight operation; we flip the flag the worker checks.
 struct PortalRequest {
@@ -238,6 +240,147 @@ impl ScreenshotPortal {
     }
 }
 
+/// `org.freedesktop.impl.portal.Session` — one live screencast.
+/// `Close` stops the producer and emits `Closed`.
+struct PortalSession {
+    done: Arc<Mutex<cast::CastFrame>>,
+}
+
+#[interface(name = "org.freedesktop.impl.portal.Session")]
+impl PortalSession {
+    async fn close(&self) {
+        cast::stop_cast(&self.done);
+    }
+
+    /// spec: session interface version
+    #[zbus(property)]
+    fn version(&self) -> u32 {
+        5
+    }
+
+    #[zbus(signal)]
+    async fn closed(signal_emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+}
+
+/// ScreenCast sessions keyed by session_handle path → producer state.
+#[derive(Default)]
+struct ScreenCastPortal {
+    casts: Arc<Mutex<HashMap<String, Arc<Mutex<cast::CastFrame>>>>>,
+}
+
+#[interface(name = "org.freedesktop.impl.portal.ScreenCast")]
+impl ScreenCastPortal {
+    /// Available source types: monitor(1) — our output 0.
+    #[zbus(property)]
+    fn available_source_types(&self) -> u32 {
+        1
+    }
+
+    /// Available cursor modes: hidden(1) + embedded(2).
+    #[zbus(property)]
+    fn available_cursor_modes(&self) -> u32 {
+        1 | 2
+    }
+
+    /// spec: version 4 (streams/restore persisted since)
+    #[zbus(property)]
+    fn version(&self) -> u32 {
+        4
+    }
+
+    async fn create_session(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+        handle: ObjectPath<'_>,
+        session_handle: ObjectPath<'_>,
+        app_id: String,
+        options: HashMap<String, Value<'_>>,
+    ) -> zbus::fdo::Result<()> {
+        info!("screencast create_session from {app_id} {options:?}");
+        let casts = self.casts.clone();
+        let session_path = session_handle.as_str().to_owned();
+        let conn2 = conn.clone();
+        let session_handle = session_handle.into_owned();
+        run_request(conn, handle, move || async move {
+            let conn = &conn2;
+            let done = cast::CastFrame::empty();
+            conn.object_server()
+                .at(session_handle, PortalSession { done: done.clone() })
+                .await
+                .map_err(|e| format!("session object: {e}"))?;
+            casts
+                .lock()
+                .map_err(|e| e.to_string())?
+                .insert(session_path.clone(), done);
+            let mut results = HashMap::new();
+            results.insert("session_handle".to_string(), Value::new(session_path));
+            Ok((0, results))
+        })
+        .await
+        .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+    }
+
+    async fn select_sources(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+        handle: ObjectPath<'_>,
+        _session_handle: ObjectPath<'_>,
+        app_id: String,
+        options: HashMap<String, Value<'_>>,
+    ) -> zbus::fdo::Result<()> {
+        info!("screencast select_sources from {app_id} {options:?}");
+        // Single source today: the primary output. The options are
+        // accepted as-is (types/cursor_mode/multiple ignored while
+        // there is exactly one source to offer).
+        run_request(conn, handle, move || async move { Ok((0, HashMap::new())) })
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+    }
+
+    async fn start(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+        handle: ObjectPath<'_>,
+        session_handle: ObjectPath<'_>,
+        app_id: String,
+        parent_window: String,
+        options: HashMap<String, Value<'_>>,
+    ) -> zbus::fdo::Result<()> {
+        info!("screencast start from {app_id} ({parent_window}) {options:?}");
+        let session_path = session_handle.as_str().to_owned();
+        let casts = self.casts.clone();
+        let conn2 = conn.clone();
+        run_request(conn, handle, move || async move {
+            let _conn = &conn2;
+            // Learn the real output size from a capture before
+            // negotiating the pw format.
+            let uri = tokio::task::spawn_blocking(ipc_screenshot)
+                .await
+                .map_err(|e| format!("probe capture: {e}"))??;
+            let probe = uri.trim_start_matches("file://").to_string();
+            let (w, h) = image::image_dimensions(&probe).map_err(|e| format!("probe dims: {e}"))?;
+
+            let (node_id, frame) = cast::start_cast(w as i32, h as i32)?;
+            if let Ok(mut map) = casts.lock() {
+                if let Some(existing) = map.get_mut(&session_path) {
+                    *existing = frame;
+                }
+            }
+
+            let mut props: HashMap<String, Value<'static>> = HashMap::new();
+            props.insert("id".into(), Value::new("screen0".to_string()));
+            props.insert("size".into(), Value::Structure((w as i32, h as i32).into()));
+            props.insert("source_type".into(), Value::new(1u32));
+            let streams = vec![(node_id, props)];
+            let mut results = HashMap::new();
+            results.insert("streams".to_string(), Value::new(streams));
+            Ok((0, results))
+        })
+        .await
+        .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+    }
+}
+
 #[tokio::main]
 async fn main() -> zbus::Result<()> {
     tracing_subscriber::fmt()
@@ -254,6 +397,12 @@ async fn main() -> zbus::Result<()> {
         .await?;
     conn.object_server()
         .at("/org/freedesktop/portal/desktop", FileChooserPortal)
+        .await?;
+    conn.object_server()
+        .at(
+            "/org/freedesktop/portal/desktop",
+            ScreenCastPortal::default(),
+        )
         .await?;
 
     info!("cosmos-portal: org.freedesktop.impl.portal.desktop.cosmos up");
