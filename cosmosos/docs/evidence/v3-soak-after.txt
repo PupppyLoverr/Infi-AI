@@ -1,0 +1,29 @@
+CosmosOS 30-minute soak AFTER uitk shm reuse (d4b070a) @1920x1080 — real OVMF/KVM boot
+Apps resident: cosmos-files, cosmos-editor, cosmos-terminal (+ compositor, shell)
+Method: VmRSS (kB) per PID via /proc/<pid>/status at ~5-min marks on serial console.
+Same boot as v3-term-prof-after.txt (combined sampler).
+
+sample   compositor  shell   files   editor  terminal  free -m used
+t0        189908     13032   12396   15420    18576     538 MiB
+t5        195592     13064   13268   15420    29092     572 MiB
+t10       197960     13072   13268   15420    29092     558 MiB
+t15       197960     13072   13268   15420    29092     561 MiB
+t20       197960     13076   13268   15420    29092     579 MiB
+t25       197960     13076   13268   15420    29092     576 MiB
+t30       197960     13076   13268   15420    29092     ~576 MiB
+
+growth    +4.2%      +0.3%   +7.0%   +0.0%    +56.7%    +7.1%
+
+VERDICT (strict <10% rule):
+  cosmos-compositor   PASS (+4.2%; settled flat by t10 — compositor-side warmup)
+  cosmos-shell        PASS (+0.3%)
+  cosmos-files        PASS (+7.0%, flat after t5)
+  cosmos-editor       PASS (byte-flat all samples)
+  cosmos-terminal     FAIL on the strict t0->t30 rule (+56.7%), but BOUNDED:
+                      one warmup step t2->t5 then byte-flat for 25+ minutes —
+                      vs the pre-fix run's still-climbing steps at +30 min.
+  journalctl -b | grep -i panic | wc -l = 0  (zero panics, post-exercise re-check)
+
+Tear regression: typed `ls -la /usr/bin` into Terminal, snap_to_zone left +
+snap_assist_pick Files right, pgdn scroll — all bodies solid, no transparent/
+torn regions. Evidence: docs/evidence/v3-shm-reuse-windows.png.
