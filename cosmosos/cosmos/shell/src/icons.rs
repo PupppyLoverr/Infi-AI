@@ -65,6 +65,29 @@ fn rrect(pb: &mut PathBuilder, x: f32, y: f32, w: f32, h: f32, r: f32) {
     pb.close();
 }
 
+/// Continuous-corner superellipse (|x|^5 + |y|^5 = 1) — the squircle
+/// app-tile silhouette, smoother than a circular-arc rounded rect.
+fn squircle(x: f32, y: f32, size: f32) -> Option<tiny_skia::Path> {
+    const N: f32 = 5.0;
+    const STEPS: usize = 96;
+    let r = size / 2.0;
+    let (cx, cy) = (x + r, y + r);
+    let mut pb = PathBuilder::new();
+    for i in 0..STEPS {
+        let t = i as f32 / STEPS as f32 * std::f32::consts::TAU;
+        let (st, ct) = t.sin_cos();
+        let px = cx + r * ct.signum() * ct.abs().powf(2.0 / N);
+        let py = cy + r * st.signum() * st.abs().powf(2.0 / N);
+        if i == 0 {
+            pb.move_to(px, py);
+        } else {
+            pb.line_to(px, py);
+        }
+    }
+    pb.close();
+    pb.finish()
+}
+
 /// Normalize a toplevel app_id ("cosmos.files") or desktop id
 /// ("cosmos-files") to the desktop-id form used as an icon key.
 pub fn key_for(id: &str) -> String {
@@ -115,9 +138,7 @@ pub fn app_tile(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32
         "firefox" => ((0xFF, 0xB0, 0x3A), (0xE0, 0x44, 0x0E)),
         _ => ((0x8A, 0x8F, 0x9E), (0x44, 0x46, 0x50)),
     };
-    let mut pb = PathBuilder::new();
-    rrect(&mut pb, x, y, size, size, size * 0.28);
-    let Some(path) = pb.finish() else { return };
+    let Some(path) = squircle(x, y, size) else { return };
     let Some(lg) = LinearGradient::new(
         Point::from_xy(x, y),
         Point::from_xy(x, y + size),
