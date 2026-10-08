@@ -546,10 +546,10 @@ pub fn run_udev() {
         .unwrap();
 
     /*
-     * Start XWayland if supported
+     * XWayland is lazy: we advertise the xwayland_shell global and let
+     * xwayland-satellite spawn the server on first X11 connection
+     * (see docs/ARCHITECTURE.md). No embedded XWM runs at boot.
      */
-    #[cfg(feature = "xwayland")]
-    state.start_xwayland();
 
     /*
      * And run our loop

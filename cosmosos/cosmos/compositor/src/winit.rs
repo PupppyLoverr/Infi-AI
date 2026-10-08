@@ -223,8 +223,8 @@ pub fn run_winit() {
         .update_formats(state.backend_data.backend.renderer().shm_formats());
     state.space.map_output(&output, (0, 0));
 
-    #[cfg(feature = "xwayland")]
-    state.start_xwayland();
+    // XWayland is lazy — xwayland-satellite owns the XWM role and spawns
+    // the server on first X11 connection; nothing starts here.
 
     info!("Initialization completed, starting the main loop.");
 

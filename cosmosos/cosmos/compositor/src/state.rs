@@ -778,7 +778,11 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         state
     }
 
+    /// Eager embedded-XWM path — unused: XWayland starts lazily via
+    /// xwayland-satellite (xwayland_shell global). Kept as a reference
+    /// implementation of the fallback startup.
     #[cfg(feature = "xwayland")]
+    #[allow(dead_code)]
     pub fn start_xwayland(&mut self) {
         use std::process::Stdio;
 
