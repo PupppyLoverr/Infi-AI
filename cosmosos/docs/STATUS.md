@@ -179,3 +179,11 @@ ISO+Calamares.
 `provision/host-deps.sh`) → `dist/cosmos.raw`; `run.sh` for KVM/TCG boot
 (`GUEST_RES` for resolution, OVMF for the GPT/UEFI image).
 Rust workspace compiles via `cargo check --workspace` in `cosmos/`.
+
+## Visual blitz evidence (5489618)
+8-shot 1920x1080 pass in docs/evidence/blitz-0*.png — violet wallpaper
++ wallpaper-accent rgb=[124,59,216], glass shell, dock floating pill,
+Start+widgets, Settings CC, agentd approval card (human summary), ocean
+accent rgb=[30,142,216]. Findings: Top-layer surfaces (menubar tray,
+card buttons, island pill) still take no pointer input; appearance=light
+flips shell chrome only — app bodies + wallpaper stay dark.

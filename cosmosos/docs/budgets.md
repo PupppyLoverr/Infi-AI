@@ -11,3 +11,7 @@ QEMU -m 2G -smp 2, GUEST_RES=1024x768, OVMF).
 | swap | zram0 1006076 kB free of 1006076 kB |
 
 Raw evidence: work/measure/serial.log (==PAPERCUT-CHECK== block).
+
+Visual-blitz boot @5489618 (1920x1080, files+editor+settings+monitor open):
+MemTotal 2014560 kB, MemAvailable 1454524 kB (~546 MiB unavailable
+incl. apps; ~340 MiB headless-idle delta vs the 1024x768 measure).
