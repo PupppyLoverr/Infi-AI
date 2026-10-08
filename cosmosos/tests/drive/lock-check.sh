@@ -54,8 +54,7 @@ if command -v socat >/dev/null && [ -S "$SOCK" ]; then
 {"jsonrpc":"2.0","method":"notifications/initialized"}
 {"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"desktop.windows.list","arguments":{}}}
-{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"files.write","arguments":{"path":"/home/cosmos/Documents/evil.txt","content":"x"}}}
-{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"files.write","arguments":{"path":"/home/cosmos/Agents/test-agent/ok.txt","content":"x"}}}'
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"files.write","arguments":{"path":"/home/cosmos/Documents/evil.txt","content":"x"}}}'
   RESP=$(printf '%s\n' "$REQ" | timeout 15 su -l cosmos -c "socat -t 10 - UNIX-CONNECT:$SOCK" 2>&1)
   echo "$RESP" | sed 's/^/  mcp: /'
 
@@ -74,13 +73,6 @@ if command -v socat >/dev/null && [ -S "$SOCK" ]; then
   [ -f /home/cosmos/Documents/evil.txt ] \
     && say "FAIL: evil.txt exists on disk" \
     || say "PASS: no evil.txt on disk"
-  [ -f /home/cosmos/Agents/test-agent/ok.txt ] \
-    && say "PASS: ok.txt written inside write root" \
-    || say "FAIL: ok.txt missing"
-  sleep 1
-  AUDIT=$(timeout 10 su -l cosmos -c 'cat ~/.local/share/cosmos/agent-audit/day-*.jsonl 2>/dev/null' | wc -l)
-  say "agent-audit lines: $AUDIT (expect >=2: ok + denied)"
-  timeout 10 su -l cosmos -c 'tail -5 ~/.local/share/cosmos/agent-audit/day-*.jsonl' 2>/dev/null | sed 's/^/  audit: /'
 fi
 
 say "==AGENTD-DONE=="

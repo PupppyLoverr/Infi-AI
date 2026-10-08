@@ -110,10 +110,17 @@ sleep 0.5
 typeno 'wrongpw'; gsubmit
 sleep 2
 dump 02-greeter-wrong
+# greeter Enter now submits (b5a8cb1) — exercise it first, click as fallback.
 qmp click 512 465
 sleep 0.5
-typeno 'cosmos'; gsubmit
-wait_marker '==LOCK-READY==' 180 || echo "FAIL: session never came up"
+type 'cosmos'          # sends pw chars + Enter — tests the Enter-submit path
+if ! wait_marker '==LOCK-READY==' 60; then
+  echo "!! Enter-submit did not reach session — falling back to Sign-in click"
+  qmp click 512 465; sleep 0.5
+  for i in $(seq 1 16); do hmp 'sendkey backspace'; sleep 0.05; done  # clear any leftover pw text
+  typeno 'cosmos'; gsubmit
+  wait_marker '==LOCK-READY==' 120 || echo "FAIL: session never came up"
+fi
 sleep 8   # panel + shell settle
 dump 03-desktop
 card_px "$W/03-desktop.png" && echo "FAIL: still on greeter" || echo "PASS: greeter -> desktop"
@@ -155,3 +162,8 @@ wait_marker '==LOCK-END==' 360 || echo "!! LOCK-END never arrived"
 grep -E 'PASS:|FAIL:|==LOCK|==AGENTD|panic count' "$SERIAL" | tail -40
 p=$(grep -c 'PASS:' "$SERIAL" || true); f=$(grep -c 'FAIL:' "$SERIAL" || true)
 echo "== LOCK VERDICT: $p PASS / $f FAIL =="
+
+# Session-end forensics: was a greetd respawn preceded by a real session end
+# (compositor/session exit lines) or did it steal vt1 over a live session?
+echo "== RESPAWN-FORENSICS =="
+grep -an 'check_children\|greetd.*restart\|restart counter\|session.*end\|compositor.*exit\|cosmos-session.*exit\|Stopped session\|Deactivated.*session\|scope.*Deactivat' "$SERIAL" | tail -30

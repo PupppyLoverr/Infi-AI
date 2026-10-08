@@ -8,7 +8,7 @@ cd "$ROOT"
 W="$ROOT/work/drive-island"
 RAW="$W/test.raw"
 mkdir -p "$W"
-QMP_SOCK="$W/qmp.sock"; MON_SOCK="$W/monitor.sock"; SERIAL="$W/serial.log"
+QMP_SOCK="$W/qmp-$$.sock"; MON_SOCK="$W/monitor-$$.sock"; SERIAL="$W/serial.log"
 export QMP_SOCK MON_SOCK
 
 SRC="${COSMOS_IMG:-dist/cosmosos-x86_64.raw}"
@@ -33,6 +33,11 @@ exec qemu-system-x86_64 -enable-kvm -cpu host -m 2G -smp 2 \\
 EOF
 chmod +x "$W/launch.sh"
 setsid "$W/launch.sh" &
+
+# Fail fast if QEMU never starts (stale QEMU holding the image write-lock
+# would otherwise ghost the whole run).
+for i in $(seq 1 15); do [ -S "$QMP_SOCK" ] && break; sleep 1; done
+[ -S "$QMP_SOCK" ] || { echo "FATAL: qemu qmp socket never appeared"; exit 1; }
 
 wait_marker() { local i=0; while [ $i -lt "$2" ]; do grep -q "$1" "$SERIAL" 2>/dev/null && return 0; sleep 1; i=$((i+1)); done; return 1; }
 dump() {
@@ -76,6 +81,17 @@ cleanup() {
 trap cleanup EXIT
 
 echo "== island drive =="
+
+# greetd login first — the checker only wl-copies once the session is up.
+i=0; until grep -q 'greetd' "$SERIAL" 2>/dev/null || [ $i -ge 90 ]; do sleep 1; i=$((i+1)); done
+sleep 12
+qmp click 512 465        # greeter password field
+sleep 0.5
+for c in c o s m o s; do hmp "sendkey $c"; sleep 0.06; done
+hmp 'sendkey ret'        # greeter Enter submits (b5a8cb1)
+sleep 2
+
+echo "== island drive: waiting for session + first clip =="
 wait_marker '==IS-CLIP1==' 300 || { echo "FATAL: never ready"; exit 1; }
 dump 01-pill-snippet     # pill should show 'alpha-clip' snippet
 
@@ -153,6 +169,17 @@ qmp click 512 16         # guard is not sticky — pill reopens normally
 sleep 1.5
 dump 13-guard-lifted
 island_open_px "$W/13-guard-lifted.png" && echo "PASS: pill reopens after guard window" || echo "FAIL: pill reopen broken"
+
+# Stage 11 — widget check: the checker seeded ~/.local/share/cosmos/widgets/
+# uptime and asserts /usr/share/cosmos/skills; open the Start launcher and
+# dump the WIDGETS strip (refresh_secs=5 — card should appear within ~10s).
+wait_marker '==IS-WIDGET==' 60 || echo "!! widget marker late"
+hmp 'sendkey esc'        # close whatever is open (island was reopened above)
+sleep 1
+hmp 'sendkey meta_l'     # Start launcher
+sleep 10
+dump 14-widgets
+echo "14-widgets dumped — WIDGETS strip verified by eye in the PNG"
 
 wait_marker '==IS-END==' 90 || echo "!! IS-END never arrived"
 grep -E 'PASS:|FAIL:|==IS-' "$SERIAL" | tail -30
