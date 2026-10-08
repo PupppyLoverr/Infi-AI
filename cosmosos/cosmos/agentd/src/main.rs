@@ -287,14 +287,41 @@ impl Agentd {
         let mut invoked = proxy.receive_signal("ActionInvoked")?;
         let mut closed = proxy.receive_signal("NotificationClosed")?;
 
-        let mut summary = format!("{} wants {}", self.agent, tool);
+        // Human-readable sentence, never raw JSON — the args go behind
+        // the card's Details affordance (daemon renders the body text).
+        let mut summary = match tool {
+            "files.write" | "files.move" | "files.read" => {
+                let verb = match tool {
+                    "files.write" => "write a file",
+                    "files.move" => "move a file",
+                    _ => "read a file",
+                };
+                let p = args
+                    .get("path")
+                    .or_else(|| args.get("src"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                let disp = p.replace(home().to_string_lossy().as_ref(), "~");
+                format!("{} wants to {} — {}", self.agent, verb, disp)
+            }
+            "desktop.screenshot" => format!("{} wants a screenshot of the desktop", self.agent),
+            "desktop.launch" => {
+                let cmd = args.get("cmd").and_then(|v| v.as_str()).unwrap_or("?");
+                format!("{} wants to launch — {}", self.agent, cmd)
+            }
+            t if t.starts_with("system.settings.") => {
+                let key = args.get("key").and_then(|v| v.as_str()).unwrap_or("?");
+                format!("{} wants to change setting {}", self.agent, key)
+            }
+            _ => format!("{} wants {}", self.agent, tool),
+        };
         if summary.len() > 80 {
             summary.truncate(77);
             summary.push('…');
         }
-        let mut body = serde_json::to_string(args).unwrap_or_default();
-        if body.len() > 160 {
-            body.truncate(157);
+        let mut body = serde_json::to_string_pretty(args).unwrap_or_default();
+        if body.len() > 400 {
+            body.truncate(397);
             body.push('…');
         }
         let actions = vec![
