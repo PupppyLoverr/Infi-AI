@@ -187,3 +187,10 @@ Start+widgets, Settings CC, agentd approval card (human summary), ocean
 accent rgb=[30,142,216]. Findings: Top-layer surfaces (menubar tray,
 card buttons, island pill) still take no pointer input; appearance=light
 flips shell chrome only — app bodies + wallpaper stay dark.
+
+## Post-blitz polish (8377c65)
+Squircle app icons everywhere (#124), live light/dark+accent to running
+uitk apps via config mtime (#125), agents 16px padding, Start footer
+clip fixed; greeter: blurred wallpaper + clock + initials (#126);
+press-time pointer resync + agentd scope precheck (#123); notification
+×N coalescing (665508e).
