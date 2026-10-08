@@ -193,10 +193,12 @@ fn thumb(ctx: &egui::Context, stem: &str) -> Option<egui::TextureHandle> {
             .or_insert_with(|| {
                 let dir = std::env::var("COSMOS_WALLPAPER_DIR")
                     .unwrap_or_else(|_| "/usr/share/cosmos/wallpapers".to_string());
-                let img = image::open(std::path::Path::new(&dir).join(format!("{stem}-1920x1080.png")))
-                    .ok()?
-                    .to_rgba8();
-                let small = image::imageops::resize(&img, 256, 144, image::imageops::FilterType::Triangle);
+                let img =
+                    image::open(std::path::Path::new(&dir).join(format!("{stem}-1920x1080.png")))
+                        .ok()?
+                        .to_rgba8();
+                let small =
+                    image::imageops::resize(&img, 256, 144, image::imageops::FilterType::Triangle);
                 let ci = egui::ColorImage::from_rgba_unmultiplied([256, 144], small.as_raw());
                 Some(ctx.load_texture(format!("wp-{stem}"), ci, Default::default()))
             })
@@ -292,9 +294,11 @@ fn draw(ui: &mut egui::Ui, app: &mut App) {
                         egui::StrokeKind::Outside,
                     );
                 }
+                // A picker click applies at once (like macOS) — the ring
+                // alone moving while the desktop stays put read as broken.
                 if resp.on_hover_text(*name).clicked() {
                     app.cfg.wallpaper = (*name).into();
-                    app.dirty = true;
+                    apply(app);
                 }
             }
         });
