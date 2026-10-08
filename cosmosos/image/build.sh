@@ -5,14 +5,16 @@
 #   1. cargo build --release --workspace (skip with SKIP_CARGO_BUILD=1)
 #   2. mmdebstrap a Debian trixie minimal rootfs + kernel + runtime deps
 #   3. lay down the Cosmos overlay (binaries, .desktop files, session plumbing)
-#   4. assemble a partitioned raw image (msdos + ext4, GRUB i386-pc BIOS boot)
+#   4. assemble a partitioned raw image (GPT: FAT32 ESP + btrfs with
+#      @/@home/@snapshots/@var_log subvolumes, GRUB2-EFI under OVMF)
 #
 # Output: cosmosos/dist/cosmosos-x86_64.raw   (sparse, ~3G)
-# Boot it with cosmosos/image/run.sh.
+# Boot it with cosmosos/image/run.sh (OVMF pflash — UEFI only now).
 #
 # Requires the host deps from provision/host-deps.sh plus libpixman-1-dev,
-# socat (test tooling) and grub-install (grub-pc-bin on host is optional —
-# the host's grub-install writes the image boot sector).
+# socat (test tooling), btrfs-progs/dosfstools, grub-efi-amd64-bin (the
+# host's grub-install --target=x86_64-efi writes the ESP bootloader) and
+# OVMF (run.sh's firmware).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -242,6 +244,77 @@ EOF
 : > "$OVERLAY/etc/motd"
 touch "$OVERLAY/etc/skel/.hushlogin"
 
+# snapper root config — SUSE-style layout: the @snapshots subvolume is
+# mounted at /.snapshots by fstab; snapper adopts it for the "root"
+# config (create-config can't run at build time: the rootfs isn't a
+# btrfs mount inside the chroot). Timeline snapshots via
+# snapper-timeline.timer (enabled in setup.sh); Debian's snapper also
+# ships an apt pre/post hook at /etc/apt/apt.conf.d/80snapper.
+mkdir -p "$OVERLAY/etc/snapper/configs"
+cat > "$OVERLAY/etc/snapper/configs/root" <<'EOF'
+FSTYPE="btrfs"
+SUBVOLUME="/"
+QGROUP=""
+SPACE_LIMIT="0.5"
+FREE_LIMIT="0.2"
+ALLOW_USERS=""
+ALLOW_GROUPS=""
+SYNC_ACL="no"
+BACKGROUND_COMPARISON="yes"
+NUMBER_CLEANUP="yes"
+NUMBER_MIN_AGE="1800"
+NUMBER_LIMIT="10"
+NUMBER_LIMIT_IMPORTANT="5"
+TIMELINE_CREATE="yes"
+TIMELINE_CLEANUP="yes"
+TIMELINE_MIN_AGE="1800"
+TIMELINE_LIMIT_HOURLY="5"
+TIMELINE_LIMIT_DAILY="7"
+TIMELINE_LIMIT_WEEKLY="0"
+TIMELINE_LIMIT_MONTHLY="0"
+TIMELINE_LIMIT_YEARLY="0"
+EMPTY_PRE_POST_CLEANUP="yes"
+EMPTY_PRE_POST_MIN_AGE="1800"
+EOF
+
+# First-boot NVRAM registration: the image boots via the removable
+# fallback (EFI/BOOT/BOOTX64.EFI) before any boot entry exists. This
+# oneshot registers 'CosmosOS' in efivars once — OVMF vars.fd keeps
+# NVRAM across boots of the same run.sh session, so efibootmgr -v
+# shows the entry from then on. Stamped, no-op after first run.
+mkdir -p "$OVERLAY/usr/local/sbin" "$OVERLAY/etc/systemd/system/multi-user.target.wants"
+cat > "$OVERLAY/usr/local/sbin/cosmos-efi-bootentry.sh" <<'EOF'
+#!/bin/sh
+# Register the CosmosOS EFI boot entry in NVRAM (once per vars.fd).
+exec >/dev/console 2>&1 || true
+STAMP=/var/lib/cosmos/efi-bootentry.done
+[ -f "$STAMP" ] && exit 0
+[ -d /sys/firmware/efi/efivars ] || exit 0   # not an EFI boot
+mkdir -p /var/lib/cosmos
+if efibootmgr | grep -q CosmosOS; then
+  touch "$STAMP"; exit 0
+fi
+efibootmgr --create --disk /dev/vda --part 1 \
+  --label CosmosOS --loader '\\EFI\\cosmosos\\grubx64.efi' && touch "$STAMP"
+EOF
+chmod 755 "$OVERLAY/usr/local/sbin/cosmos-efi-bootentry.sh"
+mkdir -p "$OVERLAY/usr/local/sbin" "$OVERLAY/etc/systemd/system/multi-user.target.wants"
+cat > "$OVERLAY/etc/systemd/system/cosmos-efi-bootentry.service" <<'EOF'
+[Unit]
+Description=Register CosmosOS EFI boot entry in NVRAM (first boot)
+ConditionPathExists=/sys/firmware/efi/efivars
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cosmos-efi-bootentry.sh
+
+[Install]
+WantedBy=multi-user.target
+EOF
+ln -sf ../cosmos-efi-bootentry.service \
+  "$OVERLAY/etc/systemd/system/multi-user.target.wants/cosmos-efi-bootentry.service"
+
 # --- curated shell env (Omarchy-style): lands in /home/cosmos/.bashrc via
 # useradd -m's skel copy (hook runs after overlay sync-in).
 cat > "$OVERLAY/etc/skel/.bashrc" <<'EOF'
@@ -347,7 +420,8 @@ iproute2 \
 ripgrep fd-find fzf eza bat btop fastfetch neovim tmux lazygit htop jq tree \
 firefox-esr adwaita-icon-theme fonts-liberation fonts-inter fonts-jetbrains-mono \
 sudo wget ca-certificates dbus-x11 xdg-user-dirs libfuse2t64 \
-locales systemd-zram-generator"
+locales systemd-zram-generator \
+grub-efi-amd64 btrfs-progs snapper efibootmgr"
 
 # in-chroot setup. NOTE: mmdebstrap hooks run on the HOST with $1=rootfs —
 # guest commands must go through `chroot "$1"` (a bare useradd here creates
@@ -372,6 +446,17 @@ sed -i "s/^# *${LOCALE} UTF-8/${LOCALE} UTF-8/" /etc/locale.gen
 locale-gen "$LOCALE"
 update-locale LANG="$LOCALE"
 
+# snapper: register the root config — Debian discovers configs via
+# SNAPPER_CONFIGS in /etc/default/snapper, not the configs/ dir alone.
+sed -i 's/^SNAPPER_CONFIGS=.*/SNAPPER_CONFIGS="root"/' /etc/default/snapper
+systemctl enable snapper-timeline.timer snapper-cleanup.timer || true
+
+# btrfs in the initramfs: the initrd is generated while the rootfs still
+# lives on the host's ext4 — fstype autodetection would emit ext4-only
+# tools. MODULES=most covers btrfs anyway; pin it for determinism.
+echo btrfs >> /etc/initramfs-tools/modules
+update-initramfs -u -k all
+
 rm -f /tmp/setup.sh
 EOF
 
@@ -392,51 +477,107 @@ MNT="$WORK/mnt"
 mkdir -p "$MNT"
 
 truncate -s "$IMG_SIZE" "$IMG"
-parted -s "$IMG" mklabel msdos
-parted -s "$IMG" mkpart primary ext4 1MiB 100%
-parted -s "$IMG" set 1 boot on
+# GPT: p1 = EFI system partition (FAT32), p2 = btrfs root (subvolumes below).
+parted -s "$IMG" mklabel gpt
+parted -s "$IMG" mkpart ESP fat32 1MiB 257MiB
+parted -s "$IMG" set 1 esp on
+parted -s "$IMG" mkpart root btrfs 257MiB 100%
 
 LOOP=""
+TOP="$WORK/mnt-top"
 cleanup() {
   [ -n "$LOOP" ] && sudo umount -R "$MNT" 2>/dev/null || true
+  [ -n "$LOOP" ] && sudo umount "$TOP" 2>/dev/null || true
   [ -n "$LOOP" ] && sudo losetup -d "$LOOP" 2>/dev/null || true
 }
 trap cleanup EXIT
 
 LOOP="$(sudo losetup -fP --show "$IMG")"
 echo "loop: $LOOP"
-sudo mkfs.ext4 -q -L cosmosos "${LOOP}p1"
-sudo mount "${LOOP}p1" "$MNT"
+sudo mkfs.vfat -F32 -n COSMOSEFI "${LOOP}p1"
+sudo mkfs.btrfs -f -L cosmosos "${LOOP}p2"
+ROOT_UUID="$(sudo blkid -s UUID -o value "${LOOP}p2")"
+ESP_UUID="$(sudo blkid -s UUID -o value "${LOOP}p1")"
+echo "btrfs UUID: $ROOT_UUID  esp UUID: $ESP_UUID"
+
+# subvolumes at the btrfs top level: @ = rootfs, @home, @snapshots (mounted
+# at /.snapshots — the snapper location), @var_log at /var/log.
+mkdir -p "$TOP"
+sudo mount "${LOOP}p2" "$TOP"
+sudo btrfs subvolume create "$TOP/@"
+sudo btrfs subvolume create "$TOP/@home"
+sudo btrfs subvolume create "$TOP/@snapshots"
+sudo btrfs subvolume create "$TOP/@var_log"
+sudo umount "$TOP"
+
+# mount the layout, then rsync the rootfs in — the mountpoints route each
+# tree into its own subvolume (/home -> @home, /var/log -> @var_log, ...).
+sudo mount -o subvol=@ "${LOOP}p2" "$MNT"
+sudo mkdir -p "$MNT/home" "$MNT/.snapshots" "$MNT/var/log" "$MNT/boot/efi"
+sudo mount -o subvol=@home "${LOOP}p2" "$MNT/home"
+sudo mount -o subvol=@snapshots "${LOOP}p2" "$MNT/.snapshots"
+sudo mount -o subvol=@var_log "${LOOP}p2" "$MNT/var/log"
+sudo mount "${LOOP}p1" "$MNT/boot/efi"
 
 sudo rsync -aHAX "$ROOTFS/" "$MNT/"
 
-# fstab + kernel cmdline
+# fstab: btrfs subvol mounts + the ESP. Pass 0 on btrfs (no fsck at boot).
 sudo tee "$MNT/etc/fstab" <<EOF
-/dev/vda1 / ext4 defaults,noatime,errors=remount-ro 0 1
+UUID=$ROOT_UUID  /            btrfs  rw,noatime,subvol=@           0 1
+UUID=$ROOT_UUID  /home        btrfs  rw,noatime,subvol=@home       0 2
+UUID=$ROOT_UUID  /.snapshots  btrfs  rw,noatime,subvol=@snapshots  0 2
+UUID=$ROOT_UUID  /var/log     btrfs  rw,noatime,subvol=@var_log    0 2
+UUID=$ESP_UUID   /boot/efi    vfat   rw,umask=0077                 0 1
 EOF
 
 KERNEL="$(basename "$(ls "$MNT"/boot/vmlinuz-* | sort -V | tail -1)")"
 INITRD="$(basename "$(ls "$MNT"/boot/initrd.img-* | sort -V | tail -1)")"
 echo "kernel: $KERNEL  initrd: $INITRD"
 
-sudo grub-install --target=i386-pc \
-  --boot-directory="$MNT/boot" \
-  --modules="part_msdos ext2" \
-  "$LOOP"
+# GRUB2-EFI via grub-mkimage, NOT grub-install: the host distro's
+# grub-install hardcodes distributor 'ubuntu' into the embedded prefix
+# (core.img looks for /EFI/ubuntu/grub.cfg) — verified by booting to a
+# grub> prompt. Building core.img directly puts a real bootstrap config
+# inside the binary: find the btrfs root by UUID and chain the real
+# grub.cfg at /@/boot/grub/grub.cfg.
+GRUB_EMBED_CFG="$WORK/grub-embed.cfg"
+cat > "$GRUB_EMBED_CFG" <<EOF
+search --no-floppy --fs-uuid --set=root $ROOT_UUID
+set prefix=(\$root)/@/boot/grub
+export prefix
+configfile \$prefix/grub.cfg
+EOF
+sudo mkdir -p "$MNT/boot/efi/EFI/BOOT" "$MNT/boot/efi/EFI/cosmosos" "$MNT/boot/grub"
+# -d: build against the GUEST's own module set (Debian grub-efi-amd64-bin),
+# not the host's — Ubuntu's modules map linux->linuxefi (shim loader) which
+# breaks under plain OVMF.
+sudo grub-mkimage -O x86_64-efi \
+  -d "$MNT/usr/lib/grub/x86_64-efi" \
+  -o "$MNT/boot/efi/EFI/BOOT/BOOTX64.EFI" \
+  -p /EFI/BOOT -c "$GRUB_EMBED_CFG" \
+  part_gpt btrfs fat normal configfile search search_fs_uuid linux \
+  gzio efi_gop all_video boot chain echo eval test ls halt cat
+# same binary answers the NVRAM entry \EFI\cosmosos\grubx64.efi
+sudo cp "$MNT/boot/efi/EFI/BOOT/BOOTX64.EFI" \
+        "$MNT/boot/efi/EFI/cosmosos/grubx64.efi"
 
 # NOTE: no video= kernel arg on purpose — virtio-gpu takes its mode list
 # from QEMU's advertised EDID, and run.sh picks the preferred mode via
 # -device virtio-vga,xres=,yres= (GUEST_RES). A video= pin here would be
 # baked at build time and could not follow per-boot resolution requests.
+# Paths are /@/-prefixed: the btrfs default subvolume stays top-level, so
+# GRUB traverses the @ subvol dir for the kernel; rootflags=subvol=@ is
+# what mounts @ as / in the initramfs.
 sudo tee "$MNT/boot/grub/grub.cfg" <<EOF
 set default="0"
 set timeout=2
-insmod part_msdos
-insmod ext2
+insmod part_gpt
+insmod btrfs
 
 menuentry "CosmosOS" {
-    linux /boot/$KERNEL root=/dev/vda1 rw console=tty0 console=ttyS0,115200 systemd.journald.forward_to_console=1
-    initrd /boot/$INITRD
+    search --no-floppy --fs-uuid --set=root $ROOT_UUID
+    linux /@/boot/$KERNEL root=UUID=$ROOT_UUID rootfstype=btrfs rootflags=subvol=@ rw console=tty0 console=ttyS0,115200 systemd.journald.forward_to_console=1
+    initrd /@/boot/$INITRD
 }
 EOF
 

@@ -36,6 +36,12 @@
 # -smbios type=1,product=CosmosOS   DMI product name — makes tools that
 #   report the machine (fastfetch 'Host:', hostnamectl) say CosmosOS
 #   instead of the QEMU board name (pc-i440fx-jammy).
+#
+# Firmware: the image is UEFI-only (GPT + FAT32 ESP + GRUB2-EFI). OVMF
+# runs as a pflash pair — readonly code.fd plus a writable vars.fd kept
+# per-image in work/image/OVMF_VARS.fd so NVRAM (efibootmgr entries)
+# persists across boots of the same image. Secure boot is OFF with the
+# plain OVMF_CODE build. FIRMWARE=ovmf is the only supported value.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -74,7 +80,22 @@ esac
 GUEST_RES="${GUEST_RES:-1024x768}"
 RES_W="${GUEST_RES%%x*}" RES_H="${GUEST_RES##*x}"
 
+# OVMF pflash: code.fd readonly + per-image writable vars.fd (NVRAM).
+# Prefer the 4M builds when present (Ubuntu ships both under OVMF/).
+OVMF_CODE="" OVMF_VARS=""
+for suf in _4M ""; do
+  [ -f "/usr/share/OVMF/OVMF_CODE${suf}.fd" ] && [ -f "/usr/share/OVMF/OVMF_VARS${suf}.fd" ] || continue
+  OVMF_CODE="/usr/share/OVMF/OVMF_CODE${suf}.fd"
+  OVMF_VARS="/usr/share/OVMF/OVMF_VARS${suf}.fd"
+  break
+done
+[ -n "$OVMF_CODE" ] || { echo "no OVMF firmware found — apt install ovmf" >&2; exit 1; }
+VARS="$WORK/OVMF_VARS.fd"
+[ -f "$VARS" ] || cp "$OVMF_VARS" "$VARS"
+
 exec qemu-system-x86_64 \
+  -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+  -drive if=pflash,format=raw,file="$VARS" \
   "${KVM[@]}" \
   "${CPU[@]}" \
   -m "$MEM" -smp 2 \

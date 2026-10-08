@@ -6,7 +6,12 @@
 #
 # Covers: hostname, locale, zram swap, DRM modes (resolution), DMI product,
 # motd state, sudo apt availability.
-OUT=/dev/ttyS0
+# Evidence file inside @ (survives: read it host-side via loop-mount even
+# when the ttyS0 fd dies — serial-getty's vhangup steals the line ~12s in).
+# Still stream to ttyS0 live; the final cat re-opens the line and dumps the
+# whole file atomically.
+OUT=/var/lib/cosmos/papercut-evidence.txt
+mkdir -p "$(dirname "$OUT")"
 exec >"$OUT" 2>&1
 
 echo "==PAPERCUT-CHECK=="
@@ -50,8 +55,41 @@ echo "motd bytes: $(wc -c < /etc/motd 2>/dev/null)"
 echo "hushlogin: $(ls -la /home/cosmos/.hushlogin 2>/dev/null)"
 echo "issue: $(cat /etc/issue 2>/dev/null | head -1)"
 
+echo "==DISK=="
+lsblk -f 2>&1
+echo "-- findmnt:"
+findmnt -t btrfs,vfat 2>&1
+findmnt -no SOURCE,FSTYPE,OPTIONS / 2>&1
+echo "-- subvolumes:"
+btrfs subvolume list / 2>&1
+echo "-- fstab:"
+cat /etc/fstab 2>/dev/null
+df -h / /home /.snapshots /var/log /boot/efi 2>&1
+
+echo "==SNAPPER=="
+export TERM=vt100 COLUMNS=120
+snapper list 2>&1 || true
+echo "-- create probe:"
+snapper -c root create --description "papercut-evidence" 2>&1 || true
+snapper list 2>&1 || true
+systemctl is-enabled snapper-timeline.timer snapper-cleanup.timer 2>&1
+ls /etc/apt/apt.conf.d/ 2>/dev/null | grep -i snapper || echo "no apt snapper hook"
+
+echo "==EFI=="
+efibootmgr -v 2>&1 | head -15
+echo "-- ESP tree:"
+find /boot/efi/EFI -type f 2>/dev/null
+ls -la /boot/efi/EFI/BOOT 2>/dev/null
+
+echo "==MEM=="
+grep -E 'MemTotal|MemAvailable|MemFree|SwapTotal|SwapFree' /proc/meminfo || true
+free -m || true
+
 echo "==SUDO/APT=="
-sudo -n true 2>&1 && echo "sudo: NOPASSWD ok"
-command -v apt-get firefox-esr 2>/dev/null
+sudo -n true 2>&1 && echo "sudo: NOPASSWD ok" || echo "sudo failed"
+command -v apt-get 2>/dev/null || true
+command -v firefox-esr 2>/dev/null || true
 
 echo "==PAPERCUT-CHECK-END=="
+exec 1>&2 2>/dev/null
+cat "$OUT" > /dev/ttyS0 2>/dev/null || true
