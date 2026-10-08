@@ -307,15 +307,21 @@ impl CosmosTheme {
             1.0,
         ];
         let (base, blooms) = blooms_for(&cfg.accent);
+        // SSD chrome uses the same v3 window/sidebar fills as uitk app
+        // bodies, so titlebar and body read as one surface.
+        let pal = cosmos_theme::palette(cfg.appearance != "light");
+        let f = |c: cosmos_theme::Rgba| {
+            [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, 1.0]
+        };
         if cfg.appearance == "light" {
             Self {
                 dark: false,
                 background: [0.89, 0.90, 0.92, 1.0],
-                titlebar_bg_focused: [0.97, 0.97, 0.98, 1.0],
-                titlebar_bg: [0.90, 0.91, 0.92, 1.0],
-                titlebar_fg: [0.10, 0.10, 0.12, 1.0],
-                button_hover: [0.82, 0.83, 0.85, 1.0],
-                focus_ring: [0.60, 0.62, 0.66, 1.0],
+                titlebar_bg_focused: f(pal.window),
+                titlebar_bg: f(pal.sidebar),
+                titlebar_fg: f(pal.text),
+                button_hover: [0.86, 0.84, 0.92, 1.0],
+                focus_ring: [0.76, 0.73, 0.85, 1.0],
                 accent,
                 bg_base: [0.918, 0.929, 0.957],
                 blooms: pastel(blooms),
@@ -324,11 +330,11 @@ impl CosmosTheme {
             Self {
                 dark: true,
                 background: [0.07, 0.075, 0.08, 1.0],
-                titlebar_bg_focused: [0.13, 0.135, 0.15, 1.0],
-                titlebar_bg: [0.10, 0.105, 0.115, 1.0],
-                titlebar_fg: [0.91, 0.91, 0.92, 1.0],
-                button_hover: [0.26, 0.27, 0.30, 1.0],
-                focus_ring: [0.38, 0.40, 0.45, 1.0],
+                titlebar_bg_focused: f(pal.window),
+                titlebar_bg: f(pal.sidebar),
+                titlebar_fg: f(pal.text),
+                button_hover: f(pal.raised),
+                focus_ring: [0.30, 0.27, 0.42, 1.0],
                 accent,
                 bg_base: base,
                 blooms,

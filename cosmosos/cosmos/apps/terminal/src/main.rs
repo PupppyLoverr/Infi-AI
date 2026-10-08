@@ -387,41 +387,68 @@ fn draw(ui: &mut egui::Ui, term: &mut Term) {
     });
 }
 
-/// The xterm-standard 16 base colours.
-const ANSI_BASE: [[u8; 3]; 8] = [
-    [0, 0, 0],
-    [205, 0, 0],
-    [0, 205, 0],
-    [205, 205, 0],
-    [0, 0, 238],
-    [205, 0, 205],
-    [0, 205, 205],
-    [229, 229, 229],
+/// Cosmos dark palette — the v3 semantic hues, tuned for the violet base.
+const DARK_BASE: [[u8; 3]; 8] = [
+    [0x2A, 0x25, 0x3A],
+    [0xF2, 0x55, 0x5A],
+    [0x34, 0xC7, 0x7B],
+    [0xF5, 0xA5, 0x24],
+    [0x5B, 0x9C, 0xFF],
+    [0xB3, 0x7C, 0xFF],
+    [0x3E, 0xC8, 0xD8],
+    [0xD8, 0xD4, 0xE4],
 ];
-const ANSI_BRIGHT: [[u8; 3]; 8] = [
-    [127, 127, 127],
-    [255, 0, 0],
-    [0, 255, 0],
-    [255, 255, 0],
-    [92, 92, 255],
-    [255, 0, 255],
-    [0, 255, 255],
-    [255, 255, 255],
+const DARK_BRIGHT: [[u8; 3]; 8] = [
+    [0x6E, 0x68, 0x82],
+    [0xFF, 0x7A, 0x7E],
+    [0x5E, 0xE0, 0x9A],
+    [0xFF, 0xC4, 0x5C],
+    [0x84, 0xB6, 0xFF],
+    [0xCB, 0xA2, 0xFF],
+    [0x6F, 0xE2, 0xEE],
+    [0xF4, 0xF1, 0xFA],
+];
+/// Cosmos light palette — darker hues that hold contrast on #FBFAFE;
+/// "white" maps to ink greys so `ls`-style white text stays readable.
+const LIGHT_BASE: [[u8; 3]; 8] = [
+    [0x1A, 0x16, 0x25],
+    [0xC0, 0x1C, 0x28],
+    [0x1A, 0x7F, 0x4B],
+    [0x9A, 0x62, 0x00],
+    [0x1C, 0x5F, 0xD0],
+    [0x8E, 0x2B, 0xB0],
+    [0x08, 0x7E, 0x8B],
+    [0x5E, 0x5C, 0x64],
+];
+const LIGHT_BRIGHT: [[u8; 3]; 8] = [
+    [0x6E, 0x6A, 0x78],
+    [0xE0, 0x1B, 0x24],
+    [0x2E, 0x9A, 0x43],
+    [0xB0, 0x7A, 0x00],
+    [0x35, 0x84, 0xE4],
+    [0xB0, 0x52, 0xC8],
+    [0x0F, 0x96, 0xA0],
+    [0x2A, 0x26, 0x33],
 ];
 
 /// Resolve a vt100 colour (Default / 0-255 palette / truecolor) to RGB.
 /// `bold` applies the xterm convention: bold text in a base colour uses the
 /// bright slot instead.
-fn ansi_rgb(idx: u8, bold: bool) -> [u8; 3] {
+fn ansi_rgb(idx: u8, bold: bool, light: bool) -> [u8; 3] {
+    let (base, bright) = if light {
+        (&LIGHT_BASE, &LIGHT_BRIGHT)
+    } else {
+        (&DARK_BASE, &DARK_BRIGHT)
+    };
     match idx {
         0..=7 => {
             if bold {
-                ANSI_BRIGHT[idx as usize]
+                bright[idx as usize]
             } else {
-                ANSI_BASE[idx as usize]
+                base[idx as usize]
             }
         }
-        8..=15 => ANSI_BRIGHT[idx as usize - 8],
+        8..=15 => bright[idx as usize - 8],
         16..=231 => {
             let n = idx - 16;
             let c = |v: u8| if v == 0 { 0 } else { 55 + 40 * v };
@@ -453,14 +480,15 @@ fn cell_style(
     default_bg: egui::Color32,
 ) -> CellStyle {
     let bold = cell.bold();
+    let light = default_bg.r() as u32 + default_bg.g() as u32 + default_bg.b() as u32 > 384;
     let mut fg = match cell.fgcolor() {
         vt100::Color::Default => default_fg,
-        vt100::Color::Idx(i) => to_color32(ansi_rgb(i, bold)),
+        vt100::Color::Idx(i) => to_color32(ansi_rgb(i, bold, light)),
         vt100::Color::Rgb(r, g, b) => egui::Color32::from_rgb(r, g, b),
     };
     let mut bg = match cell.bgcolor() {
         vt100::Color::Default => None,
-        vt100::Color::Idx(i) => Some(to_color32(ansi_rgb(i, false))),
+        vt100::Color::Idx(i) => Some(to_color32(ansi_rgb(i, false, light))),
         vt100::Color::Rgb(r, g, b) => Some(egui::Color32::from_rgb(r, g, b)),
     };
     if cell.inverse() {
