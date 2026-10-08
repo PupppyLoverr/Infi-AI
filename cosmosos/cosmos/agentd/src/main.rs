@@ -108,6 +108,16 @@ impl Policy {
         if policy.write_roots.is_empty() {
             policy.write_roots = vec![home().join("Agents").join(agent)];
         }
+        if policy.sensitive.is_empty() && !path.exists() {
+            // No policy file: default-gate the consequential tools —
+            // screenshots and writes always ask (spec §6.6). An explicit
+            // `sensitive = []` in a TOML opts out.
+            policy.sensitive = vec![
+                "desktop.screenshot".into(),
+                "files.write".into(),
+                "files.move".into(),
+            ];
+        }
         policy
     }
 
