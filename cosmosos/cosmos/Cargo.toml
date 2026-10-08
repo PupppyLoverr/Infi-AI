@@ -6,6 +6,7 @@ members = [
     "shell",
     "uitk",
     "portal",
+    "lock",
     "apps/terminal",
     "apps/files",
     "apps/editor",

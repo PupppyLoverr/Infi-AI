@@ -21,7 +21,7 @@ use smithay::{
     delegate_presentation, delegate_primary_selection, delegate_relative_pointer, delegate_seat,
     delegate_security_context, delegate_shm, delegate_tablet_manager, delegate_text_input_manager,
     delegate_viewporter, delegate_virtual_keyboard_manager, delegate_xdg_activation,
-    delegate_xdg_decoration, delegate_xdg_shell,
+    delegate_xdg_decoration, delegate_xdg_shell, delegate_session_lock,
     desktop::{
         space::SpaceElement,
         utils::{
@@ -45,7 +45,7 @@ use smithay::{
         },
         wayland_server::{
             backend::{ClientData, ClientId, DisconnectReason},
-            protocol::{wl_data_source::WlDataSource, wl_surface::WlSurface},
+            protocol::{wl_data_source::WlDataSource, wl_output::WlOutput, wl_surface::WlSurface},
             Client, Display, DisplayHandle, Resource,
         },
     },
@@ -76,6 +76,9 @@ use smithay::{
         security_context::{
             SecurityContext, SecurityContextHandler, SecurityContextListenerSource,
             SecurityContextState,
+        },
+        session_lock::{
+            LockSurface, SessionLockHandler, SessionLockManagerState, SessionLocker,
         },
         selection::{
             data_device::{
@@ -171,6 +174,7 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     pub single_pixel_buffer_state: SinglePixelBufferState,
     pub fifo_manager_state: FifoManagerState,
     pub commit_timing_manager_state: CommitTimingManagerState,
+    pub session_lock_state: SessionLockManagerState,
 
     pub dnd_icon: Option<DndIcon>,
 
@@ -690,6 +694,9 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         let single_pixel_buffer_state = SinglePixelBufferState::new::<Self>(&dh);
         let fifo_manager_state = FifoManagerState::new::<Self>(&dh);
         let commit_timing_manager_state = CommitTimingManagerState::new::<Self>(&dh);
+        // ext-session-lock: cosmos-lock uses this to draw the unlock card
+        // while every normal client stays hidden.
+        let session_lock_state = SessionLockManagerState::new::<Self, _>(&dh, |_| true);
         TextInputManagerState::new::<Self>(&dh);
         InputMethodManagerState::new::<Self, _>(&dh, |_client| true);
         VirtualKeyboardManagerState::new::<Self, _>(&dh, |_client| true);
@@ -751,6 +758,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             single_pixel_buffer_state,
             fifo_manager_state,
             commit_timing_manager_state,
+            session_lock_state,
             dnd_icon: None,
             suppressed_keys: Vec::new(),
             cursor_status: CursorImageStatus::default_named(),
@@ -1192,6 +1200,65 @@ pub fn take_presentation_feedback(
 
     output_presentation_feedback
 }
+
+// ---------------------------------------------------------------------
+// ext-session-lock — cosmos-lock draws the unlock card; while locked the
+// render path only composites lock surfaces over the wallpaper, and
+// input is routed exclusively to them.
+impl<BackendData: Backend> SessionLockHandler for AnvilState<BackendData> {
+    fn lock_state(&mut self) -> &mut SessionLockManagerState {
+        &mut self.session_lock_state
+    }
+
+    fn lock(&mut self, confirmation: SessionLocker) {
+        self.cosmos.session_locked = true;
+        self.cosmos.lock_surfaces.clear();
+        let keyboard = self.seat.get_keyboard().unwrap();
+        keyboard.set_focus(self, None, smithay::utils::SERIAL_COUNTER.next_serial());
+        // Every queued frame from here on composites no client content,
+        // so confirming immediately cannot leak a stale client frame.
+        confirmation.lock();
+    }
+
+    fn unlock(&mut self) {
+        self.cosmos.session_locked = false;
+        self.cosmos.lock_surfaces.clear();
+        self.update_keyboard_focus(
+            self.pointer.current_location(),
+            smithay::utils::SERIAL_COUNTER.next_serial(),
+        );
+    }
+
+    fn new_surface(&mut self, surface: LockSurface, output: WlOutput) {
+        let target = Output::from_resource(&output);
+        let size = target
+            .as_ref()
+            .map(|o| {
+                let mode = o.current_mode().map(|m| m.size).unwrap_or_default();
+                let scale = o.current_scale().fractional_scale();
+                mode.to_f64().to_logical(scale).to_i32_ceil()
+            })
+            .unwrap_or_default();
+        surface.with_pending_state(|state| state.size = Some(size));
+        surface.send_configure();
+        self.cosmos
+            .lock_surfaces
+            .push((surface.clone(), target.unwrap_or_else(|| {
+                // Should not happen — fall back to the first output so the
+                // surface still lands somewhere visible.
+                self.space.outputs().next().cloned().unwrap()
+            })));
+        let keyboard = self.seat.get_keyboard().unwrap();
+        keyboard.set_focus(
+            self,
+            Some(KeyboardFocusTarget::WlSurface(
+                surface.wl_surface().clone(),
+            )),
+            smithay::utils::SERIAL_COUNTER.next_serial(),
+        );
+    }
+}
+delegate_session_lock!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
 
 pub trait Backend {
     const HAS_RELATIVE_MOTION: bool = false;

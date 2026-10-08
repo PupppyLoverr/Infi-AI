@@ -4,8 +4,8 @@
 //! and egui for widgets — rasterized by `raster::Painter` into the buffer.
 //! Apps supply `FnMut(&egui::Context)`; uitk owns the event loop.
 
-mod fonts;
-mod raster;
+pub mod fonts;
+pub mod raster;
 pub mod theme;
 
 use std::time::{Duration, Instant};

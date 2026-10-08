@@ -17,6 +17,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use smithay::{
     desktop::{layer_map_for_output, space::SpaceElement},
+    output::Output,
     reexports::{
         wayland_protocols::xdg::shell::server::xdg_toplevel,
         wayland_server::{protocol::wl_surface::WlSurface, Resource},
@@ -541,6 +542,12 @@ pub struct CosmosState {
     /// Per-workspace dynamic tiling (master+stack). `super+t` toggles it
     /// for the active workspace.
     pub tiling: [bool; WORKSPACE_COUNT],
+    /// ext-session-lock: while locked every normal client stays hidden
+    /// and only `lock_surfaces` composite (plus the wallpaper behind).
+    pub session_locked: bool,
+    /// ext-session-lock surfaces handed to the lock client, one per
+    /// output — `(surface, output it was created for)`.
+    pub lock_surfaces: Vec<(smithay::wayland::session_lock::LockSurface, Output)>,
     /// If set, broadcast a `Windows`+`Workspaces` update at the next idle point.
     pub dirty: bool,
 }
