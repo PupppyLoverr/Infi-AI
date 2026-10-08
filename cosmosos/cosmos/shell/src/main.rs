@@ -193,6 +193,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         data_devices: Vec::new(),
         drop_tx,
         dnd_on_island: false,
+        dnd: false,
         file_index: Vec::new(),
         index_tx,
         index_refreshed: std::time::Instant::now()
@@ -379,6 +380,9 @@ pub struct ShellState {
     pub drop_tx: calloop::channel::Sender<Vec<String>>,
     /// True while a drag hovers the island card.
     pub dnd_on_island: bool,
+    /// Focus mode (Do Not Disturb) — notification popups are suppressed
+    /// while on; history still records. Toggled in Control Centre.
+    pub dnd: bool,
     /// Pointer hover inside the launcher card (cells, rows, footer).
     pub launcher_hover: Option<launcher::Hit>,
     /// Background file index feeding Search-mode file rows.
@@ -631,6 +635,18 @@ impl ShellState {
     /// Click inside the quick-settings card.
     pub fn quick_click(&mut self, x: f64, y: f64) {
         self.quick_dirty = quick::press(self, x, y) || self.quick_dirty;
+    }
+
+    /// Focus mode (DND): hide/show the notification surface and repaint
+    /// the tray moon + the Control Centre card itself.
+    pub fn set_dnd(&mut self, on: bool) {
+        if self.dnd == on {
+            return;
+        }
+        self.dnd = on;
+        self.sync_notify_surface();
+        self.panel_dirty = true;
+        self.quick_dirty = true;
     }
 
     pub fn set_launcher_open(&mut self, open: bool) {
@@ -1038,7 +1054,7 @@ impl ShellState {
     /// The tray's quick-settings click region — rightmost status text block.
     pub fn tray_clicked(&mut self, x: f64) -> bool {
         let (w, _) = self.panel_size;
-        let status_w = crate::panel::status_text_len(&self.sysinfo);
+        let status_w = crate::panel::status_text_len(&self.sysinfo, self.dnd);
         x >= w as f64 - status_w - 12.0
     }
 
@@ -1142,11 +1158,11 @@ impl ShellState {
     }
 
     fn sync_notify_surface(&mut self) {
-        if self.notifications.is_empty() && self.notify_surface.is_some() {
+        if (self.notifications.is_empty() || self.dnd) && self.notify_surface.is_some() {
             self.notify_surface = None;
             return;
         }
-        if !self.notifications.is_empty() && self.notify_surface.is_none() {
+        if !self.notifications.is_empty() && !self.dnd && self.notify_surface.is_none() {
             let surface = self.compositor_state.create_surface(&self.qh);
             let layer = self.layer_shell.create_layer_surface(
                 &self.qh,
