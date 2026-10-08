@@ -112,6 +112,18 @@ ISO+Calamares.
   (common-auth), `greetd` + `cage` packages, `/etc/greetd/config.toml`,
   `/usr/share/wayland-sessions/cosmos.desktop`, greeter/lock drive-verified
   screendumps.
+- **Guest-verified (PR #111 + lock drive):** greetd→cage→greeter card →
+  login → cosmos session, zero panics; `03-greeter-card.png` evidence.
+  agentd MCP smoke 10/10: initialize → serverInfo, `tools/list` → 15
+  tools, `desktop.windows.list` real table, `files.write` deny+allow,
+  audit JSONL — transcript `docs/evidence/agentd-mcp.txt`.
+- Defects found by the drive and fixed (PR #112): shell abort on any
+  external clipboard offer (missing `event_created_child` in the zwlr
+  data-control dispatch — killed the whole panel on `wl-copy`); greeter
+  Enter not submitting when egui keeps focus. Re-verify in flight.
+- Open: whether the ~42s `greeter exited without creating a session`
+  respawn was a legit session-end (greetd restarts the greeter by
+  design) or a real defect — child is checking serial.log markers.
 
 ## cosmos-agentd — slice A merged (PR #108)
 - `cosmos-agentd` unix-socket MCP server (JSON-RPC `initialize`/
