@@ -136,6 +136,15 @@ sleep 3
 say "==IS-GUARD=="
 sleep 3
 
+# Stage 11 — widget seed: /usr/share/cosmos/skills + a user widget the
+# Start WIDGETS strip should render (host opens the launcher, dump-verified).
+timeout 10 su -l cosmos -c 'mkdir -p /home/cosmos/.local/share/cosmos/widgets/uptime'
+timeout 10 su -l cosmos -c 'printf "title = \"Up\"\nrefresh_secs = 5\n" > /home/cosmos/.local/share/cosmos/widgets/uptime/widget.toml'
+timeout 10 su -l cosmos -c 'printf "#!/bin/sh\necho big=\$(uptime -p | cut -d\" \" -f2-)\necho bar=0.5\n" > /home/cosmos/.local/share/cosmos/widgets/uptime/data.sh; chmod +x /home/cosmos/.local/share/cosmos/widgets/uptime/data.sh'
+ls /usr/share/cosmos/skills/*.md >/dev/null 2>&1 && say "PASS: /usr/share/cosmos/skills has md files" || say "FAIL: skills dir empty"
+say "==IS-WIDGET=="
+sleep 3
+
 say "==IS-END=="
 # QMP quit kills the guest without an orderly umount — sync first or the
 # evidence file + any copied PNGs stay in btrfs dirty pages.

@@ -49,7 +49,7 @@ fi
 BINDIR="$COSMOS/target/release"
 for b in cosmos-compositor cosmos-shell cosmos-files cosmos-terminal \
          cosmos-editor cosmos-settings cosmos-monitor cosmos-portal \
-         cosmos-lock cosmos-greeter cosmos-agentd; do
+         cosmos-lock cosmos-greeter cosmos-agentd cosmos-agents; do
   [ -x "$BINDIR/$b" ] || { echo "missing binary: $BINDIR/$b" >&2; exit 1; }
 done
 
@@ -59,7 +59,7 @@ echo "== staging overlay =="
 sudo rm -rf "$OVERLAY"   # previous run's files are chowned root below
 mkdir -p "$OVERLAY"/{usr/local/bin,usr/share/applications,etc/profile.d,etc/skel,etc/systemd/network,etc/systemd/system/getty@tty1.service.d,etc/polkit-1/rules.d,etc/sudoers.d}
 
-install -m755 "$BINDIR"/cosmos-{compositor,shell,files,terminal,editor,settings,monitor,portal,lock,greeter,agentd} \
+install -m755 "$BINDIR"/cosmos-{compositor,shell,files,terminal,editor,settings,monitor,portal,lock,greeter,agentd,agents} \
   "$OVERLAY/usr/local/bin/"
 install -m644 "$COSMOS"/apps/*/cosmos-*.desktop "$OVERLAY/usr/share/applications/"
 
@@ -298,6 +298,11 @@ chmod 755 "$OVERLAY/usr/local/bin/cosmos-smoke-apps"
 # cage runs cosmos-greeter fullscreen; greetd StartSession launches
 # cosmos-session for the signed-in user.
 mkdir -p "$OVERLAY/etc/greetd" "$OVERLAY/usr/share/wayland-sessions" "$OVERLAY/etc/pam.d"
+# greetd owns tty1 exclusively — Debian still enables getty@tty1 which
+# restarts on the same VT and was seen racing the greeter (serial: getty@tty1
+# restart counter at the same second the greeter respawned over a live
+# session). Mask it.
+sudo ln -sf /dev/null "$OVERLAY/etc/systemd/system/getty@tty1.service"
 cat > "$OVERLAY/etc/greetd/config.toml" <<'EOF'
 [terminal]
 vt = 1
@@ -488,6 +493,18 @@ cat > "$OVERLAY/etc/polkit-1/rules.d/60-cosmos-nm.rules" <<'EOF'
 polkit.addRule(function(action, subject) {
     if (action.id.indexOf("org.freedesktop.NetworkManager.") === 0 &&
         subject.isInGroup("netdev")) {
+        return polkit.Result.YES;
+    }
+});
+EOF
+
+# cosmos-agents Rollback button runs `pkexec snapper -c root rollback <n>`:
+# grant the cosmos user pkexec-exec on snapper only.
+cat > "$OVERLAY/etc/polkit-1/rules.d/61-cosmos-snapper.rules" <<'EOF'
+polkit.addRule(function(action, subject) {
+    if (action.id === "org.freedesktop.policykit.exec" &&
+        subject.user === "cosmos" &&
+        action.lookup("program") === "/usr/bin/snapper") {
         return polkit.Result.YES;
     }
 });
