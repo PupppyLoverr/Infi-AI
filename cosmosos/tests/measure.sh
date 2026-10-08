@@ -42,6 +42,12 @@ sg kvm -c "qemu-system-x86_64 -enable-kvm -cpu host -m 2G -smp 2 \
   -display none" > "$WORK/qemu.log" 2>&1 &
 QPID=""
 QPID=""
+# greetd needs a login before the panel can appear: wait for the greeter
+# card (~greetd.service start + greeter map), type the cosmos password,
+# click Sign in. The panel marker then arrives as usual.
+sleep 18
+MON_SOCK="$WORK/monitor.sock" "$ROOT/tests/drive/guest-type.sh" 'cosmos' 2>/dev/null || true
+QMP_SOCK="$WORK/qmp.sock" "$ROOT/tests/drive/qmp.sh" click 512 518 || true
 for _ in $(seq 1 90); do
   grep -q 'PAPERCUT-CHECK-END' "$SERIAL" 2>/dev/null && \
   grep -q 'layer surface created' "$SERIAL" 2>/dev/null && break

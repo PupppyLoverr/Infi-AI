@@ -1,0 +1,31 @@
+injected lock-check into /home/ubuntu/repos/infi-ai/cosmosos/work/drive-lock/test.raw
+== lock drive ==
+blue-border=32 white-text=75
+PASS: greeter card rendered
+blue-border=0 white-text=0
+PASS: greeter -> desktop
+blue-border=32 white-text=77
+PASS: lock card rendered
+blue-border=32 white-text=84
+FAIL: still locked after right password
+blue-border=32 white-text=73
+PASS: Control Centre Lock locked
+sweep 1 done
+sweep 2 done
+sweep 3 done
+==LOCK-CHECK==
+PASS: cosmos session up through greetd (ipc sock after 22s)
+==LOCK-READY==
+==AGENTD==
+PASS: /run/user/1000/cosmos-agentd.sock present
+PASS: initialize -> serverInfo cosmos-agentd
+PASS: 15 tools
+PASS: desktop.windows.list answered
+PASS: files.write outside write roots denied
+PASS: no evil.txt on disk
+PASS: ok.txt written inside write root
+==AGENTD-DONE==
+compositor/session panic count this boot: 0
+PASS: zero panics
+==LOCK-END==
+== LOCK VERDICT: 9 PASS / 0 FAIL ==

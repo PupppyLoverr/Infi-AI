@@ -24,3 +24,5 @@ for (( i=0; i<${#text}; i++ )); do
   sleep 0.06
 done
 [ -n "${RUN:-}" ] && printf "sendkey ret\n" | socat -t 2 - UNIX-CONNECT:"$MON" >/dev/null 2>&1
+
+exit 0

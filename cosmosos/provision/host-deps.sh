@@ -29,7 +29,7 @@ sudo apt-get install -y --no-install-recommends \
   `# base tooling` \
   pkg-config git curl rsync ca-certificates \
   `# C toolchain (bindgen + C deps of Rust crates)` \
-  build-essential clang libclang-dev meson ninja-build \
+  build-essential clang libclang-dev libpam0g-dev meson ninja-build \
   `# smithay/anvil native deps: udev+drm+gbm backends, libinput, libseat, xkb` \
   libudev-dev libxkbcommon-dev libwayland-dev libdrm-dev libgbm-dev \
   libegl1-mesa-dev libgles2-mesa-dev libinput-dev libseat-dev libsystemd-dev \

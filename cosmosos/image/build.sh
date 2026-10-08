@@ -38,13 +38,18 @@ MIRROR="${MIRROR:-http://deb.debian.org/debian}"
 # .so satisfies the binary at runtime).
 export PKG_CONFIG_PATH="${PIPEWIRE_PKG_CONFIG:-$HOME/pipewire-prefix/hybrid}:${PKG_CONFIG_PATH:-}"
 
+# pam-sys (cosmos-lock) drives bindgen via clang-sys, which dlopens
+# libclang at runtime — Ubuntu splits it under /usr/lib/llvm-*/lib and
+# clang-sys's search misses it without a hint.
+export LIBCLANG_PATH="${LIBCLANG_PATH:-$(dirname "$(find /usr/lib -name 'libclang.so*' -xtype f 2>/dev/null | sort -V | head -1)")}"
 if [ "${SKIP_CARGO_BUILD:-0}" != "1" ]; then
   echo "== cargo build --release --workspace =="
   cargo build --release --workspace --manifest-path "$COSMOS/Cargo.toml"
 fi
 BINDIR="$COSMOS/target/release"
 for b in cosmos-compositor cosmos-shell cosmos-files cosmos-terminal \
-         cosmos-editor cosmos-settings cosmos-monitor cosmos-portal; do
+         cosmos-editor cosmos-settings cosmos-monitor cosmos-portal \
+         cosmos-lock cosmos-greeter cosmos-agentd; do
   [ -x "$BINDIR/$b" ] || { echo "missing binary: $BINDIR/$b" >&2; exit 1; }
 done
 
@@ -54,7 +59,7 @@ echo "== staging overlay =="
 sudo rm -rf "$OVERLAY"   # previous run's files are chowned root below
 mkdir -p "$OVERLAY"/{usr/local/bin,usr/share/applications,etc/profile.d,etc/skel,etc/systemd/network,etc/systemd/system/getty@tty1.service.d,etc/polkit-1/rules.d,etc/sudoers.d}
 
-install -m755 "$BINDIR"/cosmos-{compositor,shell,files,terminal,editor,settings,monitor,portal} \
+install -m755 "$BINDIR"/cosmos-{compositor,shell,files,terminal,editor,settings,monitor,portal,lock,greeter,agentd} \
   "$OVERLAY/usr/local/bin/"
 install -m644 "$COSMOS"/apps/*/cosmos-*.desktop "$OVERLAY/usr/share/applications/"
 
@@ -132,6 +137,29 @@ if [ ! -x "$XWS_BIN" ]; then
     --root "$WORK/xwayland-sat"
 fi
 install -m755 "$XWS_BIN" "$OVERLAY/usr/local/bin/xwayland-satellite"
+
+# spec §6.11 skills — agent-facing OS-layout docs, shared system-wide.
+install -d "$OVERLAY/usr/share/cosmos/skills"
+if [ -d "$COSMOS/skills" ]; then
+  install -m644 "$COSMOS/skills/"*.md "$OVERLAY/usr/share/cosmos/skills/" 2>/dev/null || true
+fi
+
+# opencode -> cosmos-agentd MCP wiring (Phase-6 demo out of the box):
+# skel so every new user gets it. opencode's `mcp` object lists local
+# servers as {type:local, command:[...]}.
+install -d "$OVERLAY/etc/skel/.config/opencode"
+cat > "$OVERLAY/etc/skel/.config/opencode/opencode.json" <<'EOF'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "cosmos": {
+      "type": "local",
+      "command": ["cosmos-agentd", "--stdio"],
+      "enabled": true
+    }
+  }
+}
+EOF
 
 # launcher/dock entry. Exec wraps opencode in cosmos-terminal -e (>= 910d3ab:
 # args join into a command line run via $SHELL -c) so the TUI gets a real TTY.
@@ -261,18 +289,56 @@ echo "cosmos-smoke: done"
 EOF
 chmod 755 "$OVERLAY/usr/local/bin/cosmos-smoke-apps"
 
-cat > "$OVERLAY/etc/profile.d/99-cosmos-session.sh" <<'EOF'
-# Start the Cosmos session when logging in on tty1.
-if [ "$(tty 2>/dev/null)" = "/dev/tty1" ]; then
-    exec /usr/local/bin/cosmos-session
-fi
+# greetd takes tty1 (its unit conflicts getty@tty1); no agetty autologin
+# drop-in and no profile.d session hook are shipped anymore — the greeter
+# launches cosmos-session via greetd's StartSession. cosmos-session itself
+# stays: it is the session Exec.
+
+# greeter/session-lock plumbing — greetd on tty1 replaced agetty autologin:
+# cage runs cosmos-greeter fullscreen; greetd StartSession launches
+# cosmos-session for the signed-in user.
+mkdir -p "$OVERLAY/etc/greetd" "$OVERLAY/usr/share/wayland-sessions" "$OVERLAY/etc/pam.d"
+cat > "$OVERLAY/etc/greetd/config.toml" <<'EOF'
+[terminal]
+vt = 1
+
+[default_session]
+command = "cage -s -- cosmos-greeter"
+user = "cosmos"
+EOF
+cat > "$OVERLAY/usr/share/wayland-sessions/cosmos.desktop" <<'EOF'
+[Desktop Entry]
+Name=Cosmos
+Comment=CosmosOS Wayland session
+Exec=cosmos-session
+Type=Application
+DesktopNames=cosmos
+EOF
+# cosmos-lock authenticates via pam::Client("cosmos-lock") — without this
+# service file every unlock attempt fails before pam_unix runs.
+cat > "$OVERLAY/etc/pam.d/cosmos-lock" <<'EOF'
+auth include common-auth
+account include common-account
 EOF
 
-cat > "$OVERLAY/etc/systemd/system/getty@tty1.service.d/autologin.conf" <<'EOF'
+# cosmos-agentd — MCP agent runtime, a per-user service for the signed-in
+# session. /etc/systemd/user covers every user; the unit is enabled for
+# cosmos via a default.target.wants link.
+mkdir -p "$OVERLAY/etc/systemd/user" "$OVERLAY/etc/systemd/user/default.target.wants"
+cat > "$OVERLAY/etc/systemd/user/cosmos-agentd.service" <<'EOF'
+[Unit]
+Description=CosmosOS agent runtime
+After=graphical-session.target
+
 [Service]
-ExecStart=
-ExecStart=-/sbin/agetty --autologin cosmos --noclear %I $TERM
+ExecStart=/usr/local/bin/cosmos-agentd
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
 EOF
+ln -sf /etc/systemd/user/cosmos-agentd.service \
+  "$OVERLAY/etc/systemd/user/default.target.wants/cosmos-agentd.service"
 
 # NetworkManager owns every en*/eth* link (auto-DHCP "Wired connection") —
 # the shell tray reads NM over D-Bus, so NM must hold the real interface.
@@ -484,6 +550,8 @@ xdg-desktop-portal dbus-user-session libpipewire-0.3-0t64 libglib2.0-bin \
 locales systemd-zram-generator \
 grub-efi-amd64 btrfs-progs snapper efibootmgr \
 xwayland x11-apps \
+wl-clipboard pcmanfm \
+greetd cage \
 libxcb-cursor0 libxcb-image0 libxcb-render-util0 libxcb-util1 libxcb1 libxcb-render0 libxcb-shm0"
 
 # in-chroot setup. NOTE: mmdebstrap hooks run on the HOST with $1=rootfs —
@@ -496,6 +564,10 @@ for g in video input render tty netdev; do
   getent group "$g" >/dev/null 2>&1 || groupadd -r "$g"
 done
 useradd -m -s /bin/bash -G video,input,render,tty,netdev cosmos
+# greeter + lock authenticate against the cosmos account — a live-distro
+# default password is required or PAM can never succeed (was locked).
+echo 'cosmos:cosmos' | chpasswd
+systemctl enable greetd.service || true
 systemctl enable systemd-networkd.service systemd-resolved.service || true
 ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 
