@@ -263,6 +263,15 @@ fn dispatch_request<BackendData: Backend>(
             }
             None
         }
+        Request::MinimizeWindow { id } => {
+            let Some(window) = state.window_by_id(id) else {
+                return Some(Event::Error {
+                    message: format!("no such window: {id}"),
+                });
+            };
+            state.minimize_window(&window);
+            None
+        }
         Request::SwitchWorkspace { workspace } => {
             if workspace as usize >= WORKSPACE_COUNT {
                 return Some(Event::Error {

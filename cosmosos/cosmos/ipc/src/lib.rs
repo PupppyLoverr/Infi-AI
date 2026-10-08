@@ -89,6 +89,10 @@ pub enum Request {
     CloseWindow {
         id: u64,
     },
+    /// Minimize a window (the menubar's Window ▸ Minimize).
+    MinimizeWindow {
+        id: u64,
+    },
     /// Switch the active workspace.
     SwitchWorkspace {
         workspace: u8,
@@ -330,11 +334,7 @@ pub fn accent_rgb(name: &str, dark: bool) -> [u8; 3] {
     ACCENT_PRESETS
         .iter()
         .find(|(n, _, _, _)| *n == name)
-        .or_else(|| {
-            ACCENT_PRESETS
-                .iter()
-                .find(|(n, _, _, _)| *n == "azure")
-        })
+        .or_else(|| ACCENT_PRESETS.iter().find(|(n, _, _, _)| *n == "azure"))
         .map(|(_, _, d, l)| if dark { *d } else { *l })
         .unwrap_or([0x3D, 0x8B, 0xFF])
 }

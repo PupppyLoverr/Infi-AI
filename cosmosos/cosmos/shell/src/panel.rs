@@ -22,7 +22,18 @@ fn theme(dark: bool) -> (Color, Color, Color, CtColor, CtColor) {
     } else {
         Color::from_rgba8(0x00, 0x00, 0x00, 0x14)
     };
-    (c(p.window), hover, c(p.hairline), t(p.text), t(p.text_secondary))
+    (
+        c(p.window),
+        hover,
+        c(p.hairline),
+        t(p.text),
+        t(p.text_secondary),
+    )
+}
+
+/// Left edge of the first menu title, just past the bold app name.
+fn menus_x(name: &str) -> f64 {
+    APP_NAME_X + 20.0 + name.len() as f64 * 8.0 + 6.0
 }
 
 /// Focused window's display name — the macOS menubar app-name slot.
@@ -106,7 +117,19 @@ pub fn draw(state: &mut ShellState) {
         return;
     };
     pixmap.fill(Color::TRANSPARENT);
-    glass::fill_glass(&mut pixmap, &crate::ShellState::wallpaper_name(), 0.0, 0.0, w as f32, h as f32, 0.0, 0.0, 0.0, state.dark, bg);
+    glass::fill_glass(
+        &mut pixmap,
+        &crate::ShellState::wallpaper_name(),
+        0.0,
+        0.0,
+        w as f32,
+        h as f32,
+        0.0,
+        0.0,
+        0.0,
+        state.dark,
+        bg,
+    );
 
     // Cosmos mark — the launcher button.
     if hov && hx < LAUNCH_BTN_W {
@@ -157,6 +180,34 @@ pub fn draw(state: &mut ShellState) {
             &name,
             fg,
         );
+        // App menus — titles after the bold name; the open one highlighted.
+        for (i, (tx, tw)) in crate::menubar::title_rects(menus_x(&name))
+            .into_iter()
+            .enumerate()
+        {
+            let hot = state.menu_open == Some(i) || (hov && hx >= tx && hx < tx + tw);
+            if hot {
+                draw::fill_round_rect(
+                    &mut pixmap,
+                    tx as f32,
+                    4.0,
+                    tw as f32,
+                    h as f32 - 8.0,
+                    6.0,
+                    hover_bg,
+                );
+            }
+            draw::text(
+                &mut pixmap,
+                tx as f32 + 10.0,
+                h as f32 / 2.0 - 8.0,
+                tw as f32,
+                16.0,
+                13.0,
+                crate::menubar::TITLES[i],
+                fg,
+            );
+        }
     }
 
     // Dynamic island pill — a centred capsule holding the latest
@@ -169,7 +220,7 @@ pub fn draw(state: &mut ShellState) {
         let name_right = if name.is_empty() {
             LAUNCH_BTN_W + 4.0
         } else {
-            APP_NAME_X + 20.0 + name.len() as f64 * 8.0 + 12.0
+            crate::menubar::titles_end(menus_x(&name)) + 12.0
         };
         let pager_left = w as f64 - status_w - 12.0 - ws_count as f64 * WS_CELL_W - 10.0;
         if px > name_right && px + pw < pager_left {
@@ -322,7 +373,15 @@ pub fn draw(state: &mut ShellState) {
             draw::fill_round_rect(&mut pixmap, cx - 7.0, cy - 7.0, 14.0, 14.0, 7.0, hover_bg);
         }
         if ws.focused {
-            draw::fill_round_rect(&mut pixmap, cx - 6.0, cy - 3.0, 12.0, 6.0, 3.0, draw::accent(dark));
+            draw::fill_round_rect(
+                &mut pixmap,
+                cx - 6.0,
+                cy - 3.0,
+                12.0,
+                6.0,
+                3.0,
+                draw::accent(dark),
+            );
         } else {
             let c = if ws.window_count > 0 { fg } else { fg_dim };
             let alpha = if ws.window_count > 0 { 0xD0 } else { 0x70 };
@@ -360,6 +419,24 @@ pub fn click(state: &mut ShellState, x: f64, _y: f64) -> bool {
     }
     if state.quick_open {
         state.set_quick_open(false);
+    }
+    // App menu titles toggle their dropdown; any other panel press
+    // closes an open one.
+    let name = focused_app_name(state);
+    if !name.is_empty() {
+        for (i, (tx, tw)) in crate::menubar::title_rects(menus_x(&name))
+            .into_iter()
+            .enumerate()
+        {
+            if x >= tx && x < tx + tw {
+                let next = (state.menu_open != Some(i)).then_some(i);
+                state.set_menu(next, tx as i32);
+                return true;
+            }
+        }
+    }
+    if state.menu_open.is_some() {
+        state.set_menu(None, 0);
     }
     if x < LAUNCH_BTN_W {
         state.ipc.send(&cosmos_ipc::Request::ToggleLauncher);

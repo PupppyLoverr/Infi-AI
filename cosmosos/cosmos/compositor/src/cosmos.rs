@@ -184,7 +184,9 @@ impl CosmosConfig {
                 let v = value
                     .as_str()
                     .ok_or_else(|| "wallpaper must be a name".to_string())?;
-                if v.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_') {
+                if v.chars()
+                    .any(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+                {
                     return Err("wallpaper: letters, digits, - and _ only".to_string());
                 }
                 self.wallpaper = v.to_string();
@@ -311,7 +313,12 @@ impl CosmosTheme {
         // bodies, so titlebar and body read as one surface.
         let pal = cosmos_theme::palette(cfg.appearance != "light");
         let f = |c: cosmos_theme::Rgba| {
-            [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, 1.0]
+            [
+                c[0] as f32 / 255.0,
+                c[1] as f32 / 255.0,
+                c[2] as f32 / 255.0,
+                1.0,
+            ]
         };
         if cfg.appearance == "light" {
             Self {
