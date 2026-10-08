@@ -1727,7 +1727,10 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         self.cosmos.config.apply_patch(key, value)?;
         self.cosmos.config.save();
         crate::shell::ssd::set_global_theme(self.cosmos.theme());
-        crate::shell::ssd::set_wallpaper_name(&self.cosmos.config.wallpaper);
+        crate::shell::ssd::set_wallpaper_name(&cosmos_ipc::wallpaper_for(
+            &self.cosmos.config.wallpaper,
+            self.cosmos.config.appearance != "light",
+        ));
         // All titlebars repaint next frame.
         for window in self.all_windows() {
             if let Some(state) = window
