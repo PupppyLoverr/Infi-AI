@@ -146,6 +146,23 @@ fn main() {
     }
 }
 
+/// Picker click: save, then push only `wallpaper`, off the UI thread.
+/// `push` waits out its 500ms read timeout (SetConfig has no success
+/// ack), so `apply()`'s eight pushes froze the window for ~4s per click.
+fn apply_wallpaper(app: &mut App) {
+    if let Err(e) = save(&app.cfg) {
+        app.status = format!("save failed: {e}");
+        return;
+    }
+    let value: serde_json::Value = app.cfg.wallpaper.clone().into();
+    std::thread::spawn(move || {
+        if let Err(e) = push("wallpaper", value) {
+            tracing::warn!("wallpaper push: {e}");
+        }
+    });
+    app.status = "wallpaper applied".into();
+}
+
 fn apply(app: &mut App) {
     match save(&app.cfg) {
         Ok(()) => app.status = "saved".into(),
@@ -298,7 +315,7 @@ fn draw(ui: &mut egui::Ui, app: &mut App) {
                 // alone moving while the desktop stays put read as broken.
                 if resp.on_hover_text(*name).clicked() {
                     app.cfg.wallpaper = (*name).into();
-                    apply(app);
+                    apply_wallpaper(app);
                 }
             }
         });
