@@ -136,6 +136,23 @@ pub fn dark_from_config() -> bool {
     !config_text().contains("\"light\"")
 }
 
+/// The config file's mtime — frame loops poll this and re-apply the
+/// theme when it changes so light/dark + accent reach running apps.
+pub fn config_mtime() -> Option<std::time::SystemTime> {
+    let path = std::env::var("COSMOS_CONFIG")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            let base = std::env::var("XDG_CONFIG_HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into()))
+                        .join(".config")
+                });
+            base.join("cosmos/config.json")
+        });
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
 /// The accent preset's rgb for this mode (Azure when unset/unknown).
 pub fn accent_from_config(dark: bool) -> [u8; 3] {
     let text = config_text();

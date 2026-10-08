@@ -138,7 +138,8 @@ fn box_height(n_items: usize, n_pinned: usize, n_rec: usize, searching: bool) ->
         // Win11 Start: PINNED grid + RECOMMENDED + WIDGETS + footer.
         h += SEC_H + grid_rows(n_pinned) as f64 * CELL_H;
         h += rec_height(n_rec, searching);
-        h += SEC_H + WIDGET_H;
+        // 16px gap so widget cards aren't clipped by the footer.
+        h += SEC_H + WIDGET_H + 16.0;
     }
     h + FOOTER_H
 }

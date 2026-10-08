@@ -219,6 +219,9 @@ fn rollback_to(num: u32) -> Result<String, String> {
 }
 
 fn draw(ui: &mut egui::Ui, st: &mut State) {
+    egui::Frame::NONE
+        .inner_margin(egui::Margin::same(6)) // 10px window margin + 6 → 16px padding
+        .show(ui, |ui| {
     ui.columns(2, |cols| {
         // ——— Agent list ———
         let left = &mut cols[0];
@@ -243,8 +246,12 @@ fn draw(ui: &mut egui::Ui, st: &mut State) {
         if let Some(sel) = &st.selected {
             if let Some(a) = st.agents.iter().find(|a| &a.name == sel) {
                 left.label(egui::RichText::new("POLICY").weak().size(11.0));
-                left.monospace(format!("read:  {}", a.read_roots.join(", ")));
-                left.monospace(format!("write: {}", a.write_roots.join(", ")));
+                if !a.read_roots.is_empty() {
+                    left.monospace(format!("read:  {}", a.read_roots.join(", ")));
+                }
+                if !a.write_roots.is_empty() {
+                    left.monospace(format!("write: {}", a.write_roots.join(", ")));
+                }
                 if !a.tools.is_empty() {
                     left.monospace(format!("tools: {}", a.tools.join(", ")));
                 }
@@ -306,6 +313,7 @@ fn draw(ui: &mut egui::Ui, st: &mut State) {
             right.label(&st.status);
         }
     });
+        });
 }
 
 fn main() {

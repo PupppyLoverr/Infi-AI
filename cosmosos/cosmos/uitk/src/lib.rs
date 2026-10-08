@@ -110,6 +110,7 @@ pub fn run(
         data_device_manager,
         data_devices: Vec::new(),
         cp_source: None,
+        cfg_mtime: None,
         cp_text: String::new(),
         paste_tx,
         last_serial: 0,
@@ -172,6 +173,8 @@ pub struct UiState {
     /// Live copy-paste source — must stay alive or the compositor cancels
     /// our selection as soon as it's set.
     cp_source: Option<CopyPasteSource>,
+    /// config.json mtime at last theme apply — live light/dark + accent.
+    cfg_mtime: Option<std::time::SystemTime>,
     cp_text: String,
     /// Pipe receiving paste payloads read on a helper thread — the
     /// selection owner may take a moment to write them.
@@ -200,6 +203,14 @@ impl UiState {
     /// Run one egui frame, blit into the shm buffer, and return when egui
     /// wants the next repaint.
     fn frame(&mut self, qh: &QueueHandle<UiState>) -> Duration {
+        // Live theme propagation: the compositor rewrites config.json on
+        // every `cosmos_set_config` — pick up light/dark + accent without
+        // an app restart.
+        let mt = theme::config_mtime();
+        if mt != self.cfg_mtime {
+            self.cfg_mtime = mt;
+            theme::apply(&self.ctx, theme::dark_from_config());
+        }
         let ppp = 1.0f32;
         let size = egui::vec2(self.width as f32 / ppp, self.height as f32 / ppp);
         let input = RawInput {
