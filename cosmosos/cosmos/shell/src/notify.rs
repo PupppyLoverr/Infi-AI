@@ -1,5 +1,6 @@
 //! org.freedesktop.Notifications D-Bus server — real notifications from real
-//! clients land here and get drawn as layer-shell popups.
+//! clients land here and get drawn as layer-shell popups, with action buttons
+//! (Approve/Deny, "Diagnose", …) round-tripping back to the sender.
 
 use std::{
     collections::HashMap,
@@ -17,6 +18,10 @@ pub struct Notification {
     pub body: String,
     /// Milliseconds; 0 = server default, <0 = persistent.
     pub timeout_ms: i32,
+    /// action key → label pairs from the caller (flat strings in twos).
+    pub actions: Vec<(String, String)>,
+    /// urgency=2 hint: bypasses Focus (approval cards must never be silenced).
+    pub critical: bool,
     pub arrived: std::time::Instant,
 }
 
@@ -40,6 +45,7 @@ struct NotifyDaemon {
 impl NotifyDaemon {
     async fn get_capabilities(&self) -> Vec<String> {
         vec![
+            "actions".to_string(),
             "body".to_string(),
             "body-markup".to_string(),
             "persistence".to_string(),
@@ -63,8 +69,8 @@ impl NotifyDaemon {
         _app_icon: &str,
         summary: &str,
         body: &str,
-        _actions: Vec<String>,
-        _hints: HashMap<String, zvariant::Value<'_>>,
+        actions: Vec<String>,
+        hints: HashMap<String, zvariant::Value<'_>>,
         expire_timeout: i32,
     ) -> u32 {
         let id = if replaces_id != 0 {
@@ -72,12 +78,25 @@ impl NotifyDaemon {
         } else {
             self.next_id.fetch_add(1, Ordering::Relaxed)
         };
+        let pairs: Vec<(String, String)> = actions
+            .chunks(2)
+            .filter_map(|c| match c {
+                [k, l] if !k.is_empty() && !l.is_empty() => Some((k.clone(), l.clone())),
+                _ => None,
+            })
+            .collect();
+        let critical = hints
+            .get("urgency")
+            .and_then(|v| u8::try_from(v.clone()).ok())
+            == Some(2);
         let _ = self.tx.send(NotifyEvent::Raised(Notification {
             id,
             app_name: app_name.to_string(),
             summary: summary.to_string(),
             body: body.to_string(),
             timeout_ms: expire_timeout,
+            actions: pairs,
+            critical,
             arrived: std::time::Instant::now(),
         }));
         id
@@ -102,4 +121,27 @@ pub fn start(tx: Sender<NotifyEvent>) -> Result<zbus::blocking::Connection, Stri
         .map_err(|e| e.to_string())?
         .build()
         .map_err(|e| e.to_string())
+}
+
+/// Emit ActionInvoked + NotificationClosed(2) back to the notifying client.
+pub fn emit_action(conn: &zbus::blocking::Connection, id: u32, key: &str) {
+    let _ = conn.emit_signal(
+        None::<&str>,
+        "/org/freedesktop/Notifications",
+        "org.freedesktop.Notifications",
+        "ActionInvoked",
+        &(id, key),
+    );
+    emit_closed(conn, id, 2);
+}
+
+/// Emit NotificationClosed (reason: 1 expired, 2 dismissed, 3 closed by request).
+pub fn emit_closed(conn: &zbus::blocking::Connection, id: u32, reason: u32) {
+    let _ = conn.emit_signal(
+        None::<&str>,
+        "/org/freedesktop/Notifications",
+        "org.freedesktop.Notifications",
+        "NotificationClosed",
+        &(id, reason),
+    );
 }

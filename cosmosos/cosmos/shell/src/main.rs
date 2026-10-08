@@ -1132,7 +1132,10 @@ impl ShellState {
         let before = self.notifications.len();
         let now = std::time::Instant::now();
         self.notifications.retain(|n| {
-            let timeout = if n.timeout_ms <= 0 {
+            if n.timeout_ms < 0 {
+                return true; // persistent — approval cards wait for a decision
+            }
+            let timeout = if n.timeout_ms == 0 {
                 NOTIFY_TIMEOUT_MS
             } else {
                 n.timeout_ms as i64
@@ -1158,11 +1161,13 @@ impl ShellState {
     }
 
     fn sync_notify_surface(&mut self) {
-        if (self.notifications.is_empty() || self.dnd) && self.notify_surface.is_some() {
+        // Focus hides banners — but urgency=critical (approval cards) always shows.
+        let visible = !self.dnd || self.notifications.iter().any(|n| n.critical);
+        if (self.notifications.is_empty() || !visible) && self.notify_surface.is_some() {
             self.notify_surface = None;
             return;
         }
-        if !self.notifications.is_empty() && !self.dnd && self.notify_surface.is_none() {
+        if !self.notifications.is_empty() && visible && self.notify_surface.is_none() {
             let surface = self.compositor_state.create_surface(&self.qh);
             let layer = self.layer_shell.create_layer_surface(
                 &self.qh,
@@ -1583,7 +1588,19 @@ impl PointerHandler for ShellState {
                     } else if self.launcher_surface.as_ref() == Some(&layer) {
                         self.launcher_click(ev.position.0, ev.position.1);
                     } else if self.notify_surface.as_ref() == Some(&layer) {
-                        popups::click(self, ev.position.1);
+                        match popups::click(self, ev.position.0, ev.position.1) {
+                            popups::Click::Dismissed(id) => {
+                                if let Some(conn) = &self.notify_conn {
+                                    notify::emit_closed(conn, id, 2);
+                                }
+                            }
+                            popups::Click::Actioned(id, key) => {
+                                if let Some(conn) = &self.notify_conn {
+                                    notify::emit_action(conn, id, &key);
+                                }
+                            }
+                            popups::Click::Nothing => {}
+                        }
                     } else if self.quick_surface.as_ref() == Some(&layer) {
                         self.quick_click(ev.position.0, ev.position.1);
                     } else if self.assist_surface.as_ref() == Some(&layer) {
