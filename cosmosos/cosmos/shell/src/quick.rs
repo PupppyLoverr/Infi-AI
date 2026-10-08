@@ -34,6 +34,7 @@ enum Hit {
     /// Focus (Do Not Disturb) row — suppresses notification popups.
     Focus,
     Settings,
+    Lock,
     Logout,
     Card,
 }
@@ -144,8 +145,12 @@ fn hit_test(x: f64, y: f64, state: &ShellState) -> Hit {
     }
     let by = state.quick_size.1 as f64 - BTN_H;
     if y >= by {
-        if x < QUICK_W as f64 / 2.0 {
+        let third = QUICK_W as f64 / 3.0;
+        if x < third {
             return Hit::Settings;
+        }
+        if x < third * 2.0 {
+            return Hit::Lock;
         }
         return Hit::Logout;
     }
@@ -248,6 +253,11 @@ pub fn press(state: &mut ShellState, x: f64, y: f64) -> bool {
         }
         Hit::Settings => {
             let _ = std::process::Command::new("cosmos-settings").spawn();
+            state.set_quick_open(false);
+            false
+        }
+        Hit::Lock => {
+            let _ = std::process::Command::new("cosmos-lock").spawn();
             state.set_quick_open(false);
             false
         }
@@ -792,64 +802,38 @@ pub fn draw(state: &mut ShellState) {
         }
     }
 
-    // Footer buttons.
+    // Footer buttons — Settings | Lock | Log out, thirds.
     let by = h as f32 - BTN_H as f32;
     draw::fill_rect(&mut pixmap, 1.0, by, w as f32 - 2.0, 1.0, sep);
-    let half = w as f32 / 2.0;
-    draw::fill_round_rect(
-        &mut pixmap,
-        PAD as f32,
-        by + 10.0,
-        half - PAD as f32 - 4.0,
-        32.0,
-        6.0,
-        btn_bg,
-    );
-    icons::icon(
-        &mut pixmap,
-        "cosmos-settings",
-        PAD as f32 + 10.0,
-        by + 19.0,
-        14.0,
-        glyph,
-    );
-    draw::text(
-        &mut pixmap,
-        PAD as f32 + 28.0,
-        by + 18.0,
-        100.0,
-        16.0,
-        12.0,
-        "Settings",
-        fg,
-    );
-    draw::fill_round_rect(
-        &mut pixmap,
-        half + 4.0,
-        by + 10.0,
-        half - PAD as f32 - 4.0,
-        32.0,
-        6.0,
-        btn_bg,
-    );
-    icons::icon(
-        &mut pixmap,
-        "sys-logout",
-        half + 12.0,
-        by + 19.0,
-        14.0,
-        glyph,
-    );
-    draw::text(
-        &mut pixmap,
-        half + 30.0,
-        by + 18.0,
-        100.0,
-        16.0,
-        12.0,
-        "Log out",
-        fg,
-    );
+    let third = w as f32 / 3.0;
+    let footer = [
+        ("cosmos-settings", "Settings"),
+        ("sys-lock", "Lock"),
+        ("sys-logout", "Log out"),
+    ];
+    for (i, (glyph_name, label)) in footer.iter().enumerate() {
+        let bx = PAD as f32 + i as f32 * (third - PAD as f32);
+        draw::fill_round_rect(
+            &mut pixmap,
+            bx,
+            by + 10.0,
+            third - PAD as f32 - 4.0,
+            32.0,
+            6.0,
+            btn_bg,
+        );
+        icons::icon(&mut pixmap, glyph_name, bx + 8.0, by + 19.0, 14.0, glyph);
+        draw::text(
+            &mut pixmap,
+            bx + 26.0,
+            by + 18.0,
+            80.0,
+            16.0,
+            12.0,
+            label,
+            fg,
+        );
+    }
 
     let wl_surface = layer.wl_surface().clone();
     buffer.attach_to(&wl_surface).ok();

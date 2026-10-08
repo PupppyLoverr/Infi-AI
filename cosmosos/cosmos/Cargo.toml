@@ -7,6 +7,7 @@ members = [
     "uitk",
     "portal",
     "lock",
+    "greeter",
     "apps/terminal",
     "apps/files",
     "apps/editor",
