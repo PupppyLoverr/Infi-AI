@@ -134,6 +134,17 @@ pub fn icon(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32, co
             }
             fill(pixmap, pb, color);
         }
+        "clipboard" => {
+            // Copy glyph: two overlapping rounded rects.
+            rr!(pb, 9.0, 3.5, 11.5, 14.0, 2.0);
+            stroke(pixmap, pb, s, w, color);
+            let mut pb = PathBuilder::new();
+            rr!(pb, 3.5, 9.5, 11.5, 11.0, 2.0);
+            fill(pixmap, pb, color);
+            let mut pb = PathBuilder::new();
+            rr!(pb, 5.5, 7.5, 11.5, 11.0, 2.0);
+            stroke(pixmap, pb, s, w, color);
+        }
         "cosmos-terminal" => {
             rr!(pb, 3.5, 5.0, 17.0, 14.0, 2.0);
             stroke(pixmap, pb, s, w, color);
