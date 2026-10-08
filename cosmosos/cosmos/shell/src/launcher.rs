@@ -649,13 +649,12 @@ pub fn draw(state: &mut ShellState) {
                     sel_bg,
                 );
             }
-            icons::icon(
+            icons::app_tile(
                 &mut pixmap,
                 &icons::key_for(&app.id),
                 cx + (cell_w - CELL_ICON) / 2.0,
                 cy + 12.0,
                 CELL_ICON,
-                icons::tint_for(&icons::key_for(&app.id), state.dark).unwrap_or(glyph),
             );
             draw::text(
                 &mut pixmap,
@@ -687,13 +686,12 @@ pub fn draw(state: &mut ShellState) {
                     sel_bg,
                 );
             }
-            icons::icon(
+            icons::app_tile(
                 &mut pixmap,
                 &icons::key_for(&app.id),
                 left + 16.0,
                 ry + (ROW_H as f32 - 18.0) / 2.0,
                 18.0,
-                icons::tint_for(&icons::key_for(&app.id), state.dark).unwrap_or(glyph),
             );
             draw::text(
                 &mut pixmap,
@@ -803,13 +801,12 @@ pub fn draw(state: &mut ShellState) {
                 sel_bg,
             );
         }
-        icons::icon(
+        icons::app_tile(
             &mut pixmap,
             &row.icon,
             left + 16.0,
             ry + (ROW_H as f32 - 18.0) / 2.0,
             18.0,
-            icons::tint_for(&row.icon, state.dark).unwrap_or(glyph),
         );
         let title: String = row.title.chars().take(34).collect();
         draw::text(

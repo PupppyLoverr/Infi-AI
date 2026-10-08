@@ -5,7 +5,10 @@
 //! — normalized by [`key_for`]), or synthetic keys ("start", "generic",
 //! "sys.logout", ...). Unknown keys fall back to a rounded-window glyph.
 
-use tiny_skia::{Color, FillRule, Paint, PathBuilder, PixmapMut, Stroke, Transform};
+use tiny_skia::{
+    Color, FillRule, GradientStop, LinearGradient, Paint, PathBuilder, PixmapMut, Point,
+    SpreadMode, Stroke, Transform,
+};
 
 fn stroke(pixmap: &mut PixmapMut<'_>, pb: PathBuilder, s: f32, w: f32, color: Color) {
     let Some(path) = pb.finish() else {
@@ -92,6 +95,62 @@ pub fn tint_for(id: &str, dark: bool) -> Option<Color> {
         }
     };
     Some(t)
+}
+
+/// Full-colour app tile: a vivid per-app gradient on a squircle
+/// (continuous-corner rounded square), with the app's white glyph
+/// centred at ~58% scale. The dock, launcher, Start grid and
+/// notifications all call this for app icons — `tint_for` stays for
+/// the monochrome tray/panel glyphs.
+pub fn app_tile(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32) {
+    let key = key_for(key);
+    // Per-app gradient stops, top → bottom.
+    let (c0, c1): ((u8, u8, u8), (u8, u8, u8)) = match key.as_str() {
+        "cosmos-terminal" => ((0x3A, 0x3B, 0x4E), (0x14, 0x14, 0x1E)),
+        "cosmos-files" => ((0x4E, 0xA1, 0xFF), (0x0B, 0x5F, 0xD7)),
+        "cosmos-editor" => ((0xFF, 0xB8, 0x4D), (0xE0, 0x73, 0x1D)),
+        "cosmos-settings" => ((0xB7, 0xBB, 0xC7), (0x6E, 0x73, 0x7E)),
+        "cosmos-monitor" => ((0x43, 0xDE, 0x6E), (0x12, 0x8A, 0x38)),
+        "cosmos-agents" => ((0x9D, 0x7B, 0xFF), (0x5B, 0x2F, 0xD9)),
+        "firefox" => ((0xFF, 0xB0, 0x3A), (0xE0, 0x44, 0x0E)),
+        _ => ((0x8A, 0x8F, 0x9E), (0x44, 0x46, 0x50)),
+    };
+    let mut pb = PathBuilder::new();
+    rrect(&mut pb, x, y, size, size, size * 0.28);
+    let Some(path) = pb.finish() else { return };
+    let Some(lg) = LinearGradient::new(
+        Point::from_xy(x, y),
+        Point::from_xy(x, y + size),
+        vec![
+            GradientStop::new(0.0, Color::from_rgba8(c0.0, c0.1, c0.2, 0xFF)),
+            GradientStop::new(1.0, Color::from_rgba8(c1.0, c1.1, c1.2, 0xFF)),
+        ],
+        SpreadMode::Pad,
+        Transform::default(),
+    ) else {
+        return;
+    };
+    pixmap.fill_path(
+        &path,
+        &Paint {
+            shader: lg,
+            anti_alias: true,
+            ..Default::default()
+        },
+        FillRule::Winding,
+        Transform::default(),
+        None,
+    );
+    // White glyph centred at ~58% — reads at 48px and 128px alike.
+    let inner = size * 0.58;
+    icon(
+        pixmap,
+        &key,
+        x + (size - inner) / 2.0,
+        y + (size - inner) / 2.0,
+        inner,
+        Color::WHITE,
+    );
 }
 
 /// Draw the glyph for `key` centred inside a `size`×`size` box at (x, y).
@@ -439,6 +498,31 @@ pub fn icon(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32, co
                 oy + 10.0 * s,
                 ox + 16.0 * s,
                 oy + 7.5 * s,
+            );
+            stroke(pixmap, pb, s, w, color);
+        }
+        "cosmos-agents" => {
+            // Bot head: rounded face, two eyes, antenna stub.
+            rr!(pb, 5.0, 6.0, 14.0, 12.0, 3.0);
+            circle!(pb, 9.6, 11.0, 1.15);
+            circle!(pb, 14.4, 11.0, 1.15);
+            mv!(pb, 12.0, 6.0);
+            ln!(pb, 12.0, 4.0);
+            circle!(pb, 12.0, 3.3, 0.9);
+            stroke(pixmap, pb, s, w, color);
+        }
+        "firefox" => {
+            // Stylized fox-wrap: outer ring + inner swoosh arc. Original
+            // glyph — not the Mozilla asset.
+            circle!(pb, 12.0, 12.0, 7.5);
+            mv!(pb, 6.5, 13.0);
+            pb.cubic_to(
+                ox + 8.0 * s,
+                oy + 9.0 * s,
+                ox + 12.5 * s,
+                oy + 6.8 * s,
+                ox + 17.5 * s,
+                oy + 8.5 * s,
             );
             stroke(pixmap, pb, s, w, color);
         }
