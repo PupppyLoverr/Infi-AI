@@ -19,7 +19,7 @@ export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update -qq
 sudo apt-get install -y --no-install-recommends \
   build-essential pkg-config git curl rsync ca-certificates \
-  libpixman-1-dev \
+  libpixman-1-dev libpam0g-dev \
   weston xauth x11-utils
 
 if ! command -v rustup >/dev/null 2>&1; then

@@ -248,6 +248,16 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         let mut suppressed_keys = self.suppressed_keys.clone();
         let keyboard = self.seat.get_keyboard().unwrap();
 
+        // ext-session-lock: while locked every key goes to the lock
+        // surface and no compositor keybind may fire (super+L can't
+        // re-spawn, workspace/snap binds can't leak window info).
+        if self.cosmos.session_locked {
+            keyboard.input::<(), _>(self, keycode, state, serial, time, |_, _, _| {
+                FilterResult::Forward
+            });
+            return KeyAction::None;
+        }
+
         for layer in self.layer_shell_state.layer_surfaces().rev() {
             let data = with_states(layer.wl_surface(), |states| {
                 *states
@@ -447,7 +457,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         pointer.frame(self);
     }
 
-    fn update_keyboard_focus(&mut self, location: Point<f64, Logical>, serial: Serial) {
+    pub(crate) fn update_keyboard_focus(&mut self, location: Point<f64, Logical>, serial: Serial) {
         let keyboard = self.seat.get_keyboard().unwrap();
         let touch = self.seat.get_touch();
         let input_method = self.seat.input_method();
@@ -464,7 +474,20 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             && (!keyboard.is_grabbed() || input_method.keyboard_grabbed())
             && !touch.map(|touch| touch.is_grabbed()).unwrap_or(false)
         {
-            let output = self.space.output_under(location).next().cloned();
+            // ext-session-lock: clicks land on the lock surface only.
+        if self.cosmos.session_locked {
+            if let Some((ls, _)) = self.cosmos.lock_surfaces.first() {
+                keyboard.set_focus(
+                    self,
+                    Some(KeyboardFocusTarget::WlSurface(
+                        ls.wl_surface().clone(),
+                    )),
+                    serial,
+                );
+            }
+            return;
+        }
+        let output = self.space.output_under(location).next().cloned();
             if let Some(output) = output.as_ref() {
                 let output_geo = self.space.output_geometry(output).unwrap();
                 if let Some(window) = output
@@ -585,6 +608,22 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         })?;
         let output_geo = self.space.output_geometry(output).unwrap();
         let layers = layer_map_for_output(output);
+
+        // ext-session-lock: only the lock surface on this output gets
+        // pointer focus; everything else is unreachable while locked.
+        if self.cosmos.session_locked {
+            return self
+                .cosmos
+                .lock_surfaces
+                .iter()
+                .find(|(_, o)| o == output)
+                .map(|(ls, _)| {
+                    (
+                        PointerFocusTarget::WlSurface(ls.wl_surface().clone()),
+                        output_geo.loc.to_f64(),
+                    )
+                });
+        }
 
         let mut under = None;
         if let Some((surface, loc)) = output
@@ -1725,6 +1764,7 @@ fn process_keyboard_shortcut(
         Keysym::slash | Keysym::question => Some(KeyAction::Help),
         Keysym::d => Some(KeyAction::ShowDesktop),
         Keysym::e => Some(KeyAction::Run("cosmos-files".to_string())),
+        Keysym::l => Some(KeyAction::Run("cosmos-lock".to_string())),
         k if (xkb::KEY_1..=xkb::KEY_9).contains(&k.raw()) => {
             Some(KeyAction::Workspace((k.raw() - xkb::KEY_1) as usize))
         }

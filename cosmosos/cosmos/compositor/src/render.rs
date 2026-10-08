@@ -197,6 +197,32 @@ where
     R: Renderer + ImportAll + ImportMem,
     R::TextureId: Clone + 'static,
 {
+    // ext-session-lock: while locked only the wallpaper and the lock
+    // surfaces composite — no window or layer content may leak through.
+    if cosmos.session_locked {
+        let scale: smithay::utils::Scale<f64> =
+            output.current_scale().fractional_scale().into();
+        let mut elements: Vec<_> = background_element(renderer, output).into_iter().collect();
+        for (surface, target) in &cosmos.lock_surfaces {
+            if target != output {
+                continue;
+            }
+            for el in smithay::backend::renderer::element::surface::render_elements_from_surface_tree::<
+                R,
+                WaylandSurfaceRenderElement<R>,
+            >(
+                renderer,
+                surface.wl_surface(),
+                smithay::utils::Point::<i32, smithay::utils::Physical>::from((0, 0)),
+                scale,
+                1.0,
+                smithay::backend::renderer::element::Kind::Unspecified,
+            ) {
+                elements.push(OutputRenderElements::Layer(el));
+            }
+        }
+        return (elements, clear_color());
+    }
     if let Some(window) = output
         .user_data()
         .get::<FullscreenSurface>()
