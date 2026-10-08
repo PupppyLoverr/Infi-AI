@@ -9,7 +9,7 @@
 #   qmp.sh drag PX1 PY1 PX2 PY2        pixel-space press, move, release
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-QMP="$ROOT/work/image/qmp.sock"
+QMP="${QMP_SOCK:-$ROOT/work/image/qmp.sock}"
 CAPS='{"execute":"qmp_capabilities"}'
 
 to_abs() { awk "BEGIN{printf \"%d\", ($1/$2)*32767}"; }

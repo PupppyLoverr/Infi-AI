@@ -18,6 +18,11 @@ in QEMU with KVM. Verified on the Ubuntu 22.04 x86_64 build host
    - `/etc/profile.d/99-cosmos-session.sh` — `exec`s the wrapper on tty1
    - `getty@tty1.service.d/autologin.conf` — `agetty --autologin cosmos`
    - `/etc/hostname` = `cosmosos`
+   - `/etc/profile.d/40-locale.sh` — `LANG=en_US.UTF-8` for non-PAM entry
+     points (the PAM default is `update-locale` in setup.sh; LC_ALL stays
+     unset so a future per-user locale can win)
+   - `/etc/systemd/zram-generator.conf` — zram0 swap, lz4, `ram / 2` cap
+   - empty `/etc/motd` + `/etc/skel/.hushlogin` — banner-free logins
 3. **`mmdebstrap --variant=required` Debian trixie** rootfs with the
    package list below, then a `setup.sh` customize hook (user creation,
    service enables, resolv.conf symlink). NB: mmdebstrap hooks run on the
@@ -41,6 +46,7 @@ in QEMU with KVM. Verified on the Ubuntu 22.04 x86_64 build host
 | TUI toolset | `ripgrep fd-find fzf eza bat btop fastfetch neovim tmux lazygit htop jq tree` | Omarchy-style curated terminal tools; `etc/skel/.bashrc` wires aliases + fastfetch banner |
 | Browser | `firefox-esr adwaita-icon-theme fonts-liberation` | Real web browser for downloading apps; runs Wayland-native via `MOZ_ENABLE_WAYLAND=1` (`/etc/profile.d/50-firefox-wayland.sh`) |
 | App installs | `sudo wget ca-certificates dbus-x11 xdg-user-dirs libfuse2t64` | `sudo` NOPASSWD for cosmos (kiosk model — locked password means prompts are unanswerable, see security.md); `wget`+TLS for fetching `.deb`/installers; `libfuse2t64` for AppImages |
+| Locale/swap | `locales systemd-zram-generator` | en_US.UTF-8 generated + `update-locale LANG=` default; zram0 compressed swap (lz4, half of RAM) activated at boot |
 
 No X11, no other DE, no display manager.
 
@@ -79,7 +85,8 @@ restarts the whole session: built-in crash-retry, rate-limited 2s.
 ```
 -enable-kvm  -m 1G  -smp 2
 -drive file=...,format=raw,if=virtio
--device virtio-vga           # guest /dev/dri/card0+renderD128, DRM/KMS+GBM+EGL
+-device virtio-vga,xres=W,yres=H  # EDID preferred mode = GUEST_RES (default 1024x768)
+-smbios type=1,product=CosmosOS  # DMI product name (fastfetch Host: CosmosOS)
 -device virtio-tablet-pci    # absolute pointer
 -audiodev none,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0
 -netdev user + virtio-net-pci
@@ -91,6 +98,12 @@ restarts the whole session: built-in crash-retry, rate-limited 2s.
   Headless `none` still works — GPU exists, compositor renders, and you
   can pull frames via the monitor socket:
   `echo "screendump /tmp/x.ppm" | socat - UNIX-CONNECT:work/image/monitor.sock`
+- Resolution: `GUEST_RES=WxH` (default `1024x768`) is passed to virtio-vga
+  `xres`/`yres`, which becomes the EDID preferred mode — the guest's DRM
+  mode list puts it first and the compositor modesets it. No `video=`
+  kernel arg is baked in, so each boot can request a different size
+  (verified: `GUEST_RES=1280x720` → `/sys/class/drm/card0-Virtual-1/modes`
+  head `1280x720`, framebuffer 1280x720).
 - Audio: `virtio-snd-pci` requested upstream but needs QEMU ≥ 7 —
   Ubuntu 22.04's QEMU 6.2 doesn't know the model, so `intel-hda` +
   `hda-duplex` gives the guest a real `snd_hda_intel` card instead.
@@ -178,5 +191,5 @@ Pitfall found in smoke: the shell needs `fontconfig`, not just
 `fonts-dejavu-core` — without it `cosmic-text` panics
 `no default font found` (shape.rs:275) even though the ttf files
 exist. Non-fatal noise remaining: RTKit absent, BlueZ/libcamera SPA
-plugins missing (no BT/camera), `/etc/default/locale` missing,
+plugins missing (no BT/camera),
 `AB30/AR30/AB24` plane formats unavailable on virtio-gpu.

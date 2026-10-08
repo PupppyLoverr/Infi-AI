@@ -8,7 +8,7 @@ cd "$(dirname "$0")/../.."
 D="${DRIVE_DIR:-work/drive-ab}"
 LABEL="${1:-run}"
 mkdir -p "$D"
-MON=work/image/monitor.sock
+MON="${MON_SOCK:-work/image/monitor.sock}"
 
 click() { tests/drive/qmp.sh click "$1" "$2"; }
 

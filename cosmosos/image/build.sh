@@ -220,6 +220,28 @@ EOF
 
 echo "cosmosos" > "$OVERLAY/etc/hostname"
 
+# papercuts: locale default, zram swap, motd-free login
+# /etc/default/locale is written by update-locale inside setup.sh (writing
+# it here is too early — the locales postinst regenerates it). The
+# profile.d drop covers non-PAM entry points (the compositor session reads
+# profile.d too). LC_ALL is intentionally absent — it overrides everything
+# and would block a future per-user locale setting.
+printf 'export LANG=en_US.UTF-8\n' > "$OVERLAY/etc/profile.d/40-locale.sh"
+
+# zram swap: lz4, capped at half of RAM. systemd-zram-generator reads this
+# at boot and creates /dev/zram0 as a swap device.
+mkdir -p "$OVERLAY/etc/systemd"
+cat > "$OVERLAY/etc/systemd/zram-generator.conf" <<'EOF'
+[zram0]
+zram-size = ram / 2
+compression-algorithm = lz4
+EOF
+
+# motd-free clean login: empty motd (pam_motd prints it verbatim) and a
+# skel .hushlogin so the cosmos user skips all login banners.
+: > "$OVERLAY/etc/motd"
+touch "$OVERLAY/etc/skel/.hushlogin"
+
 # --- curated shell env (Omarchy-style): lands in /home/cosmos/.bashrc via
 # useradd -m's skel copy (hook runs after overlay sync-in).
 cat > "$OVERLAY/etc/skel/.bashrc" <<'EOF'
@@ -237,8 +259,8 @@ export VISUAL=nvim
 export HISTCONTROL=ignoreboth
 shopt -s checkwinsize
 
-# colored prompt: blue user@cosmos, cyan cwd
-PS1='\[\e[1;34m\]\u@cosmos\[\e[0m\]:\[\e[1;36m\]\w\[\e[0m\]\$ '
+# colored prompt: blue user@hostname, cyan cwd
+PS1='\[\e[1;34m\]\u@\h\[\e[0m\]:\[\e[1;36m\]\w\[\e[0m\]\$ '
 
 # Debian ships fd as fdfind and bat as batcat — restore upstream names
 command -v fdfind >/dev/null && alias fd='fdfind'
@@ -324,7 +346,8 @@ fonts-dejavu-core fontconfig xdg-utils kbd procps mesa-utils socat login \
 iproute2 \
 ripgrep fd-find fzf eza bat btop fastfetch neovim tmux lazygit htop jq tree \
 firefox-esr adwaita-icon-theme fonts-liberation fonts-inter fonts-jetbrains-mono \
-sudo wget ca-certificates dbus-x11 xdg-user-dirs libfuse2t64"
+sudo wget ca-certificates dbus-x11 xdg-user-dirs libfuse2t64 \
+locales systemd-zram-generator"
 
 # in-chroot setup. NOTE: mmdebstrap hooks run on the HOST with $1=rootfs —
 # guest commands must go through `chroot "$1"` (a bare useradd here creates
@@ -338,6 +361,17 @@ done
 useradd -m -s /bin/bash -G video,input,render,tty,netdev cosmos
 systemctl enable systemd-networkd.service systemd-resolved.service || true
 ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+
+# locale: generate + default en_US.UTF-8 (LC_ALL deliberately unset so a
+# per-user override can win). LOCALE is the knob a future locale picker
+# rewrites. update-locale writes /etc/default/locale AFTER package
+# configuration — writing the file from the overlay is too early (the
+# locales postinst regenerates it empty).
+LOCALE=en_US.UTF-8
+sed -i "s/^# *${LOCALE} UTF-8/${LOCALE} UTF-8/" /etc/locale.gen
+locale-gen "$LOCALE"
+update-locale LANG="$LOCALE"
+
 rm -f /tmp/setup.sh
 EOF
 
@@ -390,6 +424,10 @@ sudo grub-install --target=i386-pc \
   --modules="part_msdos ext2" \
   "$LOOP"
 
+# NOTE: no video= kernel arg on purpose — virtio-gpu takes its mode list
+# from QEMU's advertised EDID, and run.sh picks the preferred mode via
+# -device virtio-vga,xres=,yres= (GUEST_RES). A video= pin here would be
+# baked at build time and could not follow per-boot resolution requests.
 sudo tee "$MNT/boot/grub/grub.cfg" <<EOF
 set default="0"
 set timeout=2
