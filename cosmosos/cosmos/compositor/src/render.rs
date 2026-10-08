@@ -648,3 +648,78 @@ where
     );
     damage_tracker.render_output(renderer, framebuffer, age, &elements, clear_color)
 }
+
+/// Render one output's full desktop (windows + layer surfaces, no cursor)
+/// offscreen and write it to `path` as a PNG. Used by the IPC
+/// `Screenshot` request — the xdg-desktop-portal backend turns it into
+/// the freedesktop Screenshot interface, and the drive harness uses it
+/// for pixel-true guest evidence on any backend (udev or winit).
+///
+/// Real GL readback: an offscreen `GlesTexture` is bound, the same
+/// `output_elements` stack composites into it, and `copy_framebuffer`
+/// pulls the pixels back to CPU memory.
+#[profiling::function]
+pub fn capture_output_to_png<R>(
+    renderer: &mut R,
+    space: &Space<WindowElement>,
+    cosmos: &crate::cosmos::CosmosState,
+    output: &Output,
+    path: &std::path::Path,
+) -> Result<(), String>
+where
+    R: Renderer
+        + ImportAll
+        + ImportMem
+        + smithay::backend::renderer::Offscreen<smithay::backend::renderer::gles::GlesTexture>
+        + smithay::backend::renderer::Bind<smithay::backend::renderer::gles::GlesTexture>
+        + smithay::backend::renderer::ExportMem,
+    R::TextureId: Clone + 'static,
+{
+    use smithay::backend::allocator::Fourcc;
+    use smithay::backend::renderer::{gles::GlesTexture, Offscreen};
+    use smithay::utils::Buffer as BufferCoord;
+
+    let size: Size<i32, Physical> = output
+        .current_mode()
+        .map(|m| output.current_transform().transform_size(m.size))
+        .ok_or_else(|| "output has no current mode".to_string())?;
+    let buf_size: Size<i32, BufferCoord> = Size::from((size.w, size.h));
+
+    let mut texture: GlesTexture =
+        Offscreen::<GlesTexture>::create_buffer(renderer, Fourcc::Argb8888, buf_size)
+            .map_err(|e| format!("offscreen texture alloc failed: {e}"))?;
+
+    let mut fb = renderer
+        .bind(&mut texture)
+        .map_err(|e| format!("bind offscreen target failed: {e}"))?;
+
+    let (elements, clear_color) = output_elements(
+        output,
+        space,
+        std::iter::empty(),
+        renderer,
+        false,
+        None,
+        cosmos,
+        Instant::now(),
+    );
+
+    let mut tracker = OutputDamageTracker::from_output(output);
+    tracker
+        .render_output(renderer, &mut fb, 0, &elements, clear_color)
+        .map_err(|e| format!("offscreen render failed: {e:?}"))?;
+
+    let region = Rectangle::from_size(buf_size);
+    let mapping = renderer
+        .copy_framebuffer(&fb, region, Fourcc::Abgr8888)
+        .map_err(|e| format!("framebuffer readback failed: {e}"))?;
+    let pixels = renderer
+        .map_texture(&mapping)
+        .map_err(|e| format!("map readback failed: {e}"))?;
+
+    // Abgr8888 little-endian memory order = R,G,B,A bytes.
+    image::RgbaImage::from_raw(size.w as u32, size.h as u32, pixels.to_vec())
+        .ok_or_else(|| "pixel buffer size mismatch".to_string())?
+        .save(path)
+        .map_err(|e| format!("write {} failed: {e}", path.display()))
+}

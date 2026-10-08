@@ -39,13 +39,28 @@ launcher/flyout/dock, snap+assist, focus chrome, notifications, network toggle,
 opencode/htop/nvim rendering, zero-panic soaks. Budgets @17244cf: image 1.6G
 real / 3.0G sparse, idle RAM ~330–410MiB, boot→panel 5.4s.
 
-## What's broken / papercuts
-- Hostname shows the QEMU machine name; locale is C; no swap (needs zram);
-  resolution fixed at 1024x768 (needs virtio-gpu resize/modes).
-- Snap Assist card can eat a tray click while open (assist dismiss works).
-- llvmpipe-only known limits: no live blur (tier system planned).
+## Papercuts — fixed and boot-verified (PR #88)
+Hostname `cosmosos` (DMI product name `CosmosOS` + PS1 fix), en_US.UTF-8
+generated + defaulted via update-locale, zram lz4 @ 50% RAM, QEMU-follow
+resolution via `run.sh GUEST_RES=WxH` (virtio-vga xres/yres, verified
+1024x768 + 1280x720). Evidence: `docs/evidence/01-papercuts.png`.
+
+## Direction (post Phase-1 audit)
+Fork of pop-os/cosmic-comp CANCELLED — our compositor stays; cosmic-comp is
+a read-only lift catalog (see `docs/LIFT.md`). Shell stays egui on uitk;
+GPU render path (egui-wgpu) added by tier with the software rasterizer as
+the Lite fallback. Disk layout moving to GPT + btrfs subvolumes + snapper.
+Dock moving to left edge vertical. Then the feature ladder: zoom flyout →
+dynamic island → Search-or-Ask launcher → Start panel+widgets → Control
+Centre → greetd+lock → cosmos-agentd → ISO+Calamares.
+
+## What's broken / open
+- Snap Assist card can eat a tray click while open (assist dismiss works;
+  input-region fix in flight + drive regression test).
+- llvmpipe-only known limits: no live blur until the GPU shell path lands.
 
 ## Build
 `cosmosos/image/build.sh` on an x86_64 Linux host (provision via
-`provision/host-deps.sh`) → `dist/cosmos.raw`; `run.sh` for KVM/TCG boot.
+`provision/host-deps.sh`) → `dist/cosmos.raw`; `run.sh` for KVM/TCG boot
+(`GUEST_RES` for resolution, OVMF for the GPT/UEFI image).
 Rust workspace compiles via `cargo check --workspace` in `cosmos/`.

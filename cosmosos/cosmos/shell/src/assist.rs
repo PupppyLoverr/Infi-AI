@@ -50,19 +50,45 @@ fn theme(dark: bool) -> (Color, Color, Color, Color, CtColor, CtColor) {
     }
 }
 
+/// The free-half rect inside the fullscreen surface, minus shell
+/// chrome: the menubar band on top, and the dock rail when it sits on
+/// the free half's side. Both drawing and the input region use this —
+/// chrome (tray, dock) must stay clickable while the picker is open.
+pub fn free_half(state: &ShellState) -> (f64, f64, f64, f64) {
+    let (w, h) = state.assist_size;
+    let (w, h) = (w as f64, h as f64);
+    let (mut x0, mut x1) = if state.assist_fill_left {
+        (0.0, w / 2.0)
+    } else {
+        (w / 2.0, w)
+    };
+    match state.dock_position {
+        crate::dock::DockPos::Left => x0 = x0.max(crate::dock::STRIP as f64),
+        crate::dock::DockPos::Right => x1 = x1.min(w - crate::dock::STRIP as f64),
+        crate::dock::DockPos::Bottom => {}
+    }
+    let y0 = PANEL_HEIGHT as f64;
+    let y1 = if state.dock_position == crate::dock::DockPos::Bottom {
+        h - crate::dock::STRIP as f64
+    } else {
+        h
+    };
+    (x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0))
+}
+
 /// The picker card's rect inside the fullscreen surface — centred in
 /// whichever half is free (`assist_fill_left` = the picker sits left).
 pub fn card_rect(state: &ShellState) -> (f64, f64, f64, f64) {
-    let (w, h) = state.assist_size;
-    let (w, h) = (w as f64, h as f64);
+    let (x0, y0, fw, fh) = free_half(state);
     let rows = state.assist_ids.len().min(MAX_ROWS).max(1) as f64;
     let ch = PAD * 2.0 + HEAD_H + rows * ROW_H + FOOT_H;
-    let cx = if state.assist_fill_left {
-        w / 4.0
-    } else {
-        w * 0.75
-    };
-    ((cx - CARD_W / 2.0).max(8.0), (h - ch) / 2.0, CARD_W, ch)
+    let cx = x0 + fw / 2.0;
+    (
+        (cx - CARD_W / 2.0).max(x0 + 8.0),
+        y0 + (fh - ch).max(0.0) / 2.0,
+        CARD_W,
+        ch,
+    )
 }
 
 /// Row index under (x, y), or Backdrop outside the card.
@@ -111,9 +137,9 @@ pub fn draw(state: &mut ShellState) {
     let dark = state.dark;
     let sel = state.assist_sel;
     let hover = state.assist_hover;
-    let fill_left = state.assist_fill_left;
     let items = rows(state);
     let (cx, cy, cw, ch) = card_rect(state);
+    let (dx, dy, dw, dh) = free_half(state);
     let (dim, card, sel_bg, sep, fg, fg_dim) = theme(dark);
     let glyph = Color::from_rgba8(fg.r(), fg.g(), fg.b(), fg.a());
 
@@ -131,13 +157,9 @@ pub fn draw(state: &mut ShellState) {
     };
     pixmap.fill(Color::TRANSPARENT);
 
-    // Dim only the free half — the snapped window stays bright.
-    let (dx, dw) = if fill_left {
-        (0.0, w as f32 / 2.0)
-    } else {
-        (w as f32 / 2.0, w as f32 / 2.0)
-    };
-    draw::fill_rect(&mut pixmap, dx, 0.0, dw, h as f32, dim);
+    // Dim only the free half (below the menubar, clear of the dock
+    // rail) — the snapped window and every chrome strip stay bright.
+    draw::fill_rect(&mut pixmap, dx as f32, dy as f32, dw as f32, dh as f32, dim);
 
     // Picker card — soft shadow under it like the launcher's.
     draw::shadow(
@@ -225,17 +247,13 @@ pub fn draw(state: &mut ShellState) {
 
     buffer.attach_to(layer.wl_surface()).ok();
     layer.wl_surface().damage_buffer(0, 0, w as i32, h as i32);
-    // Only the dimmed free half (below the menubar) takes pointer input.
-    // Clicks on the snapped window, the menubar, or the tray hit the
-    // surfaces underneath instead of being swallowed as a backdrop
-    // press — a tray click must open the flyout, not just cancel this.
+    // The input region is exactly the dimmed rect — free half minus
+    // menubar and dock. Clicks on the snapped window, the menubar, the
+    // tray, or the dock rail hit the surfaces underneath instead of
+    // being swallowed as a backdrop press — a tray click must open the
+    // flyout, not just cancel this.
     if let Ok(region) = Region::new(&state.compositor_state) {
-        region.add(
-            dx as i32,
-            PANEL_HEIGHT as i32,
-            dw as i32,
-            (h as i32 - PANEL_HEIGHT as i32).max(0),
-        );
+        region.add(dx as i32, dy as i32, dw as i32, dh as i32);
         layer
             .wl_surface()
             .set_input_region(Some(region.wl_region()));

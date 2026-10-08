@@ -221,6 +221,26 @@ impl Backend for UdevData {
             keyboard.led_update(led_state.into());
         }
     }
+
+    fn capture_output(
+        &mut self,
+        space: &Space<WindowElement>,
+        cosmos: &crate::cosmos::CosmosState,
+        output: &Output,
+        path: &std::path::Path,
+    ) -> Result<(), String> {
+        let render_node = output
+            .user_data()
+            .get::<UdevOutputId>()
+            .and_then(|id| self.backends.get(&id.device_id))
+            .and_then(|device| device.render_node)
+            .unwrap_or(self.primary_gpu);
+        let mut renderer = self
+            .gpus
+            .single_renderer(&render_node)
+            .map_err(|e| format!("no renderer for {render_node}: {e}"))?;
+        crate::render::capture_output_to_png(&mut renderer, space, cosmos, output, path)
+    }
 }
 
 pub fn run_udev() {
@@ -546,10 +566,10 @@ pub fn run_udev() {
         .unwrap();
 
     /*
-     * Start XWayland if supported
+     * XWayland is lazy: we advertise the xwayland_shell global and let
+     * xwayland-satellite spawn the server on first X11 connection
+     * (see docs/ARCHITECTURE.md). No embedded XWM runs at boot.
      */
-    #[cfg(feature = "xwayland")]
-    state.start_xwayland();
 
     /*
      * And run our loop
@@ -1050,7 +1070,15 @@ impl AnvilState<UdevData> {
             let position = (x, 0).into();
 
             output.set_preferred(wl_mode);
-            output.change_current_state(Some(wl_mode), None, None, Some(position));
+            // Honor the configured logical scale at connect time; the
+            // fractional-scale manager then pushes it to every surface.
+            let scale = self.cosmos.config.scale;
+            output.change_current_state(
+                Some(wl_mode),
+                None,
+                Some(smithay::output::Scale::Fractional(scale)),
+                Some(position),
+            );
             self.space.map_output(&output, position);
 
             output.user_data().insert_if_missing(|| UdevOutputId {

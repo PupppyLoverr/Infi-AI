@@ -48,8 +48,10 @@ use smithay::{
 };
 use tracing::{error, info, warn};
 
+use crate::shell::WindowElement;
 use crate::state::{take_presentation_feedback, AnvilState, Backend};
 use crate::{drawing::*, render::*};
+use smithay::desktop::space::Space;
 
 pub const OUTPUT_NAME: &str = "winit";
 
@@ -97,6 +99,17 @@ impl Backend for WinitData {
     }
     fn early_import(&mut self, _surface: &wl_surface::WlSurface) {}
     fn update_led_state(&mut self, _led_state: LedState) {}
+
+    #[cfg(feature = "egl")]
+    fn capture_output(
+        &mut self,
+        space: &Space<WindowElement>,
+        cosmos: &crate::cosmos::CosmosState,
+        output: &Output,
+        path: &std::path::Path,
+    ) -> Result<(), String> {
+        crate::render::capture_output_to_png(self.backend.renderer(), space, cosmos, output, path)
+    }
 }
 
 pub fn run_winit() {
@@ -131,7 +144,9 @@ pub fn run_winit() {
     output.change_current_state(
         Some(mode),
         Some(Transform::Flipped180),
-        None,
+        Some(smithay::output::Scale::Fractional(
+            crate::cosmos::CosmosConfig::load().scale,
+        )),
         Some((0, 0).into()),
     );
     output.set_preferred(mode);
@@ -223,8 +238,8 @@ pub fn run_winit() {
         .update_formats(state.backend_data.backend.renderer().shm_formats());
     state.space.map_output(&output, (0, 0));
 
-    #[cfg(feature = "xwayland")]
-    state.start_xwayland();
+    // XWayland is lazy — xwayland-satellite owns the XWM role and spawns
+    // the server on first X11 connection; nothing starts here.
 
     info!("Initialization completed, starting the main loop.");
 

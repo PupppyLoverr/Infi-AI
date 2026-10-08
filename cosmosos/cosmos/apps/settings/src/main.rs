@@ -18,7 +18,8 @@ struct Cfg {
     scale: f64,
     terminal: String,
     launcher_rows: u32,
-    accent: String, // accent preset name (cosmos_ipc::ACCENT_PRESETS)
+    accent: String,        // accent preset name (cosmos_ipc::ACCENT_PRESETS)
+    dock_position: String, // "left" | "right" | "bottom"
 }
 
 impl Default for Cfg {
@@ -30,6 +31,7 @@ impl Default for Cfg {
             terminal: "cosmos-terminal".into(),
             launcher_rows: 10,
             accent: cosmos_ipc::DEFAULT_ACCENT.into(),
+            dock_position: "left".into(),
         }
     }
 }
@@ -64,6 +66,7 @@ fn load() -> Cfg {
             "terminal" => c.terminal = v.to_string(),
             "launcher_rows" => c.launcher_rows = v.parse().unwrap_or(10),
             "accent" => c.accent = v.to_string(),
+            "dock_position" => c.dock_position = v.to_string(),
             _ => {}
         }
     }
@@ -76,8 +79,8 @@ fn save(c: &Cfg) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let text = format!(
-        "# CosmosOS configuration\nappearance = \"{}\"\nreduce_motion = {}\nscale = {}\nterminal = \"{}\"\nlauncher_rows = {}\naccent = \"{}\"\n",
-        c.appearance, c.reduce_motion, c.scale, c.terminal, c.launcher_rows, c.accent
+        "# CosmosOS configuration\nappearance = \"{}\"\nreduce_motion = {}\nscale = {}\nterminal = \"{}\"\nlauncher_rows = {}\naccent = \"{}\"\ndock_position = \"{}\"\n",
+        c.appearance, c.reduce_motion, c.scale, c.terminal, c.launcher_rows, c.accent, c.dock_position
     );
     std::fs::write(path, text)
 }
@@ -155,6 +158,7 @@ fn apply(app: &mut App) {
         ("terminal", app.cfg.terminal.clone().into()),
         ("launcher_rows", app.cfg.launcher_rows.into()),
         ("accent", app.cfg.accent.clone().into()),
+        ("dock_position", app.cfg.dock_position.clone().into()),
     ];
     let mut errs = Vec::new();
     for (k, v) in pairs {
@@ -230,6 +234,21 @@ fn draw(ui: &mut egui::Ui, app: &mut App) {
                     .on_hover_text(*label);
                 if resp.clicked() {
                     app.cfg.accent = (*name).into();
+                    app.dirty = true;
+                }
+            }
+        });
+
+        ui.add_space(6.0);
+        // Dock edge — the rail re-anchors live via the compositor's
+        // exclusive-zone layout.
+        ui.horizontal(|ui| {
+            ui.label("Dock position");
+            for (v, label) in [("left", "Left"), ("right", "Right"), ("bottom", "Bottom")] {
+                if ui
+                    .radio_value(&mut app.cfg.dock_position, v.into(), label)
+                    .changed()
+                {
                     app.dirty = true;
                 }
             }

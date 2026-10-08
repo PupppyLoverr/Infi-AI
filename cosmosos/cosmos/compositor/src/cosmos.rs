@@ -49,6 +49,8 @@ pub struct CosmosConfig {
     pub reduce_motion: bool,
     /// Accent preset name (see cosmos_ipc::ACCENT_PRESETS).
     pub accent: String,
+    /// Dock rail position: "left" (default), "right", or "bottom".
+    pub dock_position: String,
 }
 
 impl Default for CosmosConfig {
@@ -58,6 +60,7 @@ impl Default for CosmosConfig {
             scale: 1.0,
             reduce_motion: false,
             accent: cosmos_ipc::DEFAULT_ACCENT.to_string(),
+            dock_position: "left".to_string(),
         }
     }
 }
@@ -159,6 +162,17 @@ impl CosmosConfig {
                     return Err(format!("unknown accent preset: {v}"));
                 }
                 self.accent = v.to_string();
+            }
+            "dock_position" => {
+                let v = value
+                    .as_str()
+                    .ok_or_else(|| "dock_position must be a string".to_string())?;
+                if !matches!(v, "left" | "right" | "bottom") {
+                    return Err(
+                        "dock_position must be \"left\", \"right\" or \"bottom\"".to_string()
+                    );
+                }
+                self.dock_position = v.to_string();
             }
             other => return Err(format!("unknown config key: {other}")),
         }
@@ -919,13 +933,17 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         let area = self.work_area(Some(window));
         const EDGE: f64 = 12.0;
         let (ax, ay, aw) = (area.loc.x as f64, area.loc.y as f64, area.size.w as f64);
-        if loc.x <= ax + EDGE {
+        // A band centred on each zone edge — EDGE px of overshoot into the
+        // shell chrome keeps the menubar fix working (drags crossing the
+        // bar still snap), but a drag sitting deep inside an exclusive
+        // strip like the left dock must not fire.
+        if (ax - EDGE..=ax + EDGE).contains(&loc.x) {
             return Some(SnapState::Left);
         }
-        if loc.x >= ax + aw - EDGE {
+        if (ax + aw - EDGE..=ax + aw + EDGE).contains(&loc.x) {
             return Some(SnapState::Right);
         }
-        if loc.y <= ay + EDGE {
+        if (ay - EDGE..=ay + EDGE).contains(&loc.y) {
             return Some(SnapState::Maximized);
         }
         None
@@ -1499,9 +1517,27 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 state.borrow_mut().header_bar.invalidate();
             }
         }
+        if key == "scale" {
+            self.apply_configured_scale();
+        }
         let ev = cosmos_ipc::Event::Config(self.cosmos.config.as_map());
         self.ipc_broadcast(&ev);
         Ok(())
+    }
+
+    /// Push `config.scale` to every connected output and reflow window
+    /// positions. The fractional-scale manager propagates the new
+    /// preferred scale to all surfaces on the next frame.
+    fn apply_configured_scale(&mut self) {
+        use smithay::output::Scale;
+        let scale = self.cosmos.config.scale;
+        let outputs: Vec<smithay::output::Output> = self.space.outputs().cloned().collect();
+        for output in &outputs {
+            output.change_current_state(None, None, Some(Scale::Fractional(scale)), None);
+            self.backend_data.reset_buffers(output);
+        }
+        crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
+        self.cosmos.dirty = true;
     }
 
     /// Flush queued state broadcasts and any pending client outboxes.

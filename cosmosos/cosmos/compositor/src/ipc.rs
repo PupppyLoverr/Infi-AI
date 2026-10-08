@@ -298,6 +298,26 @@ fn dispatch_request<BackendData: Backend>(
             Ok(()) => None,
             Err(message) => Some(Event::Error { message }),
         },
+        Request::Screenshot { path } => {
+            let output = state.space.outputs().next().cloned();
+            match output {
+                Some(output) => {
+                    let result = state.backend_data.capture_output(
+                        &state.space,
+                        &state.cosmos,
+                        &output,
+                        std::path::Path::new(&path),
+                    );
+                    match result {
+                        Ok(()) => Some(Event::Screenshot { path }),
+                        Err(message) => Some(Event::Error { message }),
+                    }
+                }
+                None => Some(Event::Error {
+                    message: "no connected output".to_string(),
+                }),
+            }
+        }
         Request::QuitSession => {
             info!("ipc: quit session requested");
             state.ipc_broadcast(&Event::SessionEnding);

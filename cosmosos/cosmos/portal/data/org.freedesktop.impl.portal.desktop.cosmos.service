@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=org.freedesktop.impl.portal.desktop.cosmos
+Exec=/usr/local/bin/cosmos-portal
+SystemdService=cosmos-portal.service
