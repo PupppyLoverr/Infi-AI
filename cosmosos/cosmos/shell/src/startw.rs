@@ -582,7 +582,7 @@ pub fn press(state: &mut crate::ShellState, w: f32, px: f32, py: f32) -> bool {
             save(list);
         }
     } else if inside(c.volume, px, py) {
-        let (vx, _, vw, _) = c.volume;
+        let (vx, _, _, _) = c.volume;
         if px < vx + VOL_X {
             let _ = std::process::Command::new("wpctl")
                 .args(["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"])
@@ -590,12 +590,8 @@ pub fn press(state: &mut crate::ShellState, w: f32, px: f32, py: f32) -> bool {
             if let Some(v) = state.sysinfo.volume.as_mut() {
                 v.muted = !v.muted;
             }
-        } else if let Some(v) = state.sysinfo.volume.as_mut() {
-            let level = ((px - vx - VOL_X) / (vw - VOL_X - 16.0)).clamp(0.0, 1.0);
-            let _ = std::process::Command::new("wpctl")
-                .args(["set-volume", "@DEFAULT_AUDIO_SINK@", &format!("{level:.2}")])
-                .status();
-            v.level = level;
+        } else {
+            set_volume(state, volume_level(w, px));
         }
     } else if inside(c.photos, px, py) && photos(&pictures_dir()).is_empty() {
         let dir = pictures_dir();
@@ -642,6 +638,42 @@ pub enum EditKey {
     Cancel,
 }
 
+/// True when (px, py) is on the Volume slider track (not the mute icon),
+/// i.e. a press there starts a drag.
+pub fn on_slider(w: f32, px: f32, py: f32) -> bool {
+    let c = layout(0.0, 0.0, w);
+    inside(c.volume, px, py) && px >= c.volume.0 + VOL_X
+}
+
+/// Pointer motion while the Volume slider is held; `px` is relative to
+/// the board's left edge and may run past either end of the track.
+pub fn drag(state: &mut crate::ShellState, w: f32, px: f32) -> bool {
+    let level = volume_level(w, px);
+    match state.sysinfo.volume.as_ref() {
+        Some(v) if (v.level - level).abs() >= 0.01 => {
+            set_volume(state, level);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Slider level for board-relative x, matching the track `draw_board` paints.
+fn volume_level(w: f32, px: f32) -> f32 {
+    let (vx, _, vw, _) = layout(0.0, 0.0, w).volume;
+    ((px - vx - VOL_X) / (vw - VOL_X - 16.0)).clamp(0.0, 1.0)
+}
+
+fn set_volume(state: &mut crate::ShellState, level: f32) {
+    let Some(v) = state.sysinfo.volume.as_mut() else {
+        return;
+    };
+    let _ = std::process::Command::new("wpctl")
+        .args(["set-volume", "@DEFAULT_AUDIO_SINK@", &format!("{level:.2}")])
+        .status();
+    v.level = level;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -671,6 +703,22 @@ mod tests {
         assert_eq!(todo_row(TODO_TOP + TODO_ROW + 1.0, true, 3), Some(0));
         assert_eq!(todo_row(TODO_TOP + 3.0 * TODO_ROW + 1.0, false, 3), None);
         assert_eq!(todo_row(5.0, false, 3), None);
+    }
+
+    #[test]
+    fn volume_slider_track() {
+        let w = 728.0;
+        let (vx, vy, vw, vh) = layout(0.0, 0.0, w).volume;
+        let my = vy + vh / 2.0;
+        assert!(!on_slider(w, vx + 10.0, my), "mute icon is not the track");
+        assert!(on_slider(w, vx + VOL_X + 1.0, my));
+        assert_eq!(volume_level(w, vx + VOL_X), 0.0);
+        assert_eq!(volume_level(w, vx + vw - 16.0), 1.0);
+        let mid = volume_level(w, vx + VOL_X + (vw - VOL_X - 16.0) / 2.0);
+        assert!((mid - 0.5).abs() < 1e-4);
+        // A drag that leaves the card clamps instead of wrapping.
+        assert_eq!(volume_level(w, -500.0), 0.0);
+        assert_eq!(volume_level(w, w + 500.0), 1.0);
     }
 
     #[test]
