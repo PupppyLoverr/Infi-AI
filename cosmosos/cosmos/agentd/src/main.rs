@@ -605,11 +605,13 @@ struct Rpc {
 /// Live-activity record the shell's Dynamic Island reads: one JSON file per
 /// connected agent under `~/.local/state/cosmos/agent-live/`. A sibling
 /// `<agent>.paused` file (written by the island's Pause button) holds the
-/// agent's next tool call until it is removed. Both files go away when the
-/// connection ends.
+/// agent's next tool call until it is removed; `<agent>.stopped` (the
+/// island's Stop button) refuses every further call. All three files go
+/// away when the connection ends.
 struct Live {
     path: PathBuf,
     paused: PathBuf,
+    stopped: PathBuf,
     agent: String,
     started: u64,
     calls: u64,
@@ -637,6 +639,7 @@ impl Live {
         let live = Live {
             path: dir.join(format!("{safe}.json")),
             paused: dir.join(format!("{safe}.paused")),
+            stopped: dir.join(format!("{safe}.stopped")),
             agent: agent.into(),
             started: now_secs(),
             calls: 0,
@@ -661,15 +664,21 @@ impl Live {
     }
 
     /// Blocks while the user has the agent paused, then marks it busy.
-    fn begin(&mut self, tool: &str) {
+    /// `false` when the user stopped the agent: the call must be refused.
+    fn begin(&mut self, tool: &str) -> bool {
         if self.paused.exists() {
             tracing::info!(agent = %self.agent, "paused — holding tool call `{tool}`");
-            while self.paused.exists() {
+            while self.paused.exists() && !self.stopped.exists() {
                 std::thread::sleep(std::time::Duration::from_millis(250));
             }
         }
+        if self.stopped.exists() {
+            tracing::info!(agent = %self.agent, "stopped — refusing tool call `{tool}`");
+            return false;
+        }
         self.calls += 1;
         self.write(tool, true);
+        true
     }
 
     fn end(&self, tool: &str) {
@@ -681,6 +690,7 @@ impl Drop for Live {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
         let _ = fs::remove_file(&self.paused);
+        let _ = fs::remove_file(&self.stopped);
     }
 }
 
@@ -814,10 +824,12 @@ where
                     )?;
                     continue;
                 };
-                if let Some(l) = live.as_mut() {
-                    l.begin(&tool);
-                }
-                let outcome = state.call(&tool, &args);
+                let allowed = live.as_mut().map(|l| l.begin(&tool)).unwrap_or(true);
+                let outcome = if allowed {
+                    state.call(&tool, &args)
+                } else {
+                    Err(anyhow::anyhow!("stopped by the user from the Dynamic Island"))
+                };
                 if let Some(l) = live.as_ref() {
                     l.end(&tool);
                 }
