@@ -114,33 +114,28 @@ if [ "$OC_VER" = latest ]; then
 fi
 echo "opencode: $OC_VER"
 mkdir -p "$WORK/cache"
-# Upstream's default build needs AVX2 and crashes on older CPUs (and QEMU's
-# qemu64 model), so ship the -baseline build too and let a wrapper pick one
-# from /proc/cpuinfo at run time.
-OC_LIB="$OVERLAY/usr/local/lib/opencode"
-install -d "$OC_LIB"
-for OC_FLAVOR in x64 x64-baseline; do
-  OC_TGZ="$WORK/cache/opencode-linux-$OC_FLAVOR-$OC_VER.tar.gz"
-  [ -f "$OC_TGZ" ] || curl -fsSL -o "$OC_TGZ" \
-    "https://github.com/sst/opencode/releases/download/$OC_VER/opencode-linux-$OC_FLAVOR.tar.gz"
-  OC_TMP="$(mktemp -d)"
-  tar -xzf "$OC_TGZ" -C "$OC_TMP" opencode
-  install -m755 "$OC_TMP/opencode" "$OC_LIB/opencode-$OC_FLAVOR"
-  rm -rf "$OC_TMP"
-done
+OC_TGZ="$WORK/cache/opencode-linux-x64-$OC_VER.tar.gz"
+[ -f "$OC_TGZ" ] || curl -fsSL -o "$OC_TGZ" \
+  "https://github.com/sst/opencode/releases/download/$OC_VER/opencode-linux-x64.tar.gz"
+OC_TMP="$(mktemp -d)"
+tar -xzf "$OC_TGZ" -C "$OC_TMP" opencode
+install -Dm755 "$OC_TMP/opencode" "$OVERLAY/usr/local/lib/opencode/opencode"
+rm -rf "$OC_TMP"
+# Upstream's build needs AVX2 and dies with SIGILL and a bun.report URL
+# without it. Its -baseline build still SIGILLs on qemu64 and adds ~150MB,
+# so instead say plainly why opencode can't run on this CPU.
 cat > "$OVERLAY/usr/local/bin/opencode" <<'EOF_OC'
 #!/bin/sh
-if grep -qw avx2 /proc/cpuinfo 2>/dev/null; then
-  exec /usr/local/lib/opencode/opencode-x64 "$@"
+if ! grep -qw avx2 /proc/cpuinfo 2>/dev/null; then
+  echo "opencode needs a CPU with AVX2, and this one doesn't have it." >&2
+  exit 1
 fi
-exec /usr/local/lib/opencode/opencode-x64-baseline "$@"
+exec /usr/local/lib/opencode/opencode "$@"
 EOF_OC
 chmod 755 "$OVERLAY/usr/local/bin/opencode"
-# host-side sanity: both staged binaries must at least report their version
-for OC_BIN in "$OC_LIB"/opencode-*; do
-  "$OC_BIN" --version >/dev/null || \
-    { echo "opencode --version failed on $OC_BIN" >&2; exit 1; }
-done
+# host-side sanity: the staged binary must at least report its version
+"$OVERLAY/usr/local/lib/opencode/opencode" --version >/dev/null || \
+  { echo "opencode --version failed on staged binary" >&2; exit 1; }
 
 # xwayland-satellite — no Debian package (trixie) and not on crates.io;
 # build from upstream git on the host and ship the binary. It owns :0 and
