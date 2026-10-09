@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::fs;
+use std::time::Instant;
 
 use cosmos_kit::controls::{search_field, segmented_with};
 use cosmos_kit::layout::{
@@ -37,9 +38,18 @@ struct Stats {
     cpu_hist: VecDeque<f64>,
     mem_hist: VecDeque<f64>,
     uptime_hz: u64,
+    net_prev: Option<(u64, u64, Instant)>,
+    /// Bytes per second, [received, sent].
+    net_rate: [f64; 2],
+    net_hist: VecDeque<f64>,
+    disk_prev: Option<(u64, u64, Instant)>,
+    /// Bytes per second, [read, written].
+    disk_rate: [f64; 2],
+    disk_hist: VecDeque<f64>,
 }
 
-const HIST: usize = 120;
+/// One sample per second: 60 s of history.
+const HIST: usize = 60;
 
 impl Stats {
     fn new() -> Self {
@@ -59,6 +69,12 @@ impl Stats {
             cpu_hist: VecDeque::new(),
             mem_hist: VecDeque::new(),
             uptime_hz: 100,
+            net_prev: None,
+            net_rate: [0.0; 2],
+            net_hist: VecDeque::new(),
+            disk_prev: None,
+            disk_rate: [0.0; 2],
+            disk_hist: VecDeque::new(),
         }
     }
 
@@ -69,15 +85,19 @@ impl Stats {
         self.read_mem();
         self.read_load();
         self.read_procs();
-        self.cpu_hist.push_back(self.cpu_pct);
-        self.mem_hist
-            .push_back(100.0 * (1.0 - self.mem_avail as f64 / self.mem_total.max(1) as f64));
-        while self.cpu_hist.len() > HIST {
-            self.cpu_hist.pop_front();
+        if let Ok(t) = std::fs::read_to_string("/proc/net/dev") {
+            self.net_rate = rate(&mut self.net_prev, net_totals(&t));
         }
-        while self.mem_hist.len() > HIST {
-            self.mem_hist.pop_front();
+        if let Ok(t) = std::fs::read_to_string("/proc/diskstats") {
+            self.disk_rate = rate(&mut self.disk_prev, disk_totals(&t, is_disk));
         }
+        push(&mut self.cpu_hist, self.cpu_pct);
+        push(
+            &mut self.mem_hist,
+            100.0 * (1.0 - self.mem_avail as f64 / self.mem_total.max(1) as f64),
+        );
+        push(&mut self.net_hist, self.net_rate[0] + self.net_rate[1]);
+        push(&mut self.disk_hist, self.disk_rate[0] + self.disk_rate[1]);
     }
 
     fn read_uptime(&mut self) {
@@ -229,6 +249,85 @@ impl Stats {
 }
 
 // sysconf(_SC_CLK_TCK) without pulling in the libc crate's API surface.
+fn push(h: &mut VecDeque<f64>, v: f64) {
+    h.push_back(v);
+    while h.len() > HIST {
+        h.pop_front();
+    }
+}
+
+/// Per-second rates of two monotonic byte counters since the last call.
+fn rate(prev: &mut Option<(u64, u64, Instant)>, now: (u64, u64)) -> [f64; 2] {
+    let t = Instant::now();
+    let r = match *prev {
+        Some((a, b, t0)) => {
+            let dt = t.duration_since(t0).as_secs_f64().max(1e-3);
+            [
+                now.0.saturating_sub(a) as f64 / dt,
+                now.1.saturating_sub(b) as f64 / dt,
+            ]
+        }
+        None => [0.0; 2],
+    };
+    *prev = Some((now.0, now.1, t));
+    r
+}
+
+/// (received, sent) bytes over every interface but loopback.
+fn net_totals(dev: &str) -> (u64, u64) {
+    dev.lines()
+        .filter_map(|l| l.split_once(':'))
+        .filter(|(name, _)| name.trim() != "lo")
+        .filter_map(|(_, rest)| {
+            let f: Vec<u64> = rest
+                .split_whitespace()
+                .filter_map(|v| v.parse().ok())
+                .collect();
+            Some((*f.first()?, *f.get(8)?))
+        })
+        .fold((0, 0), |(r, t), (a, b)| (r + a, t + b))
+}
+
+/// Whole physical disks only, so partitions and device-mapper volumes
+/// aren't counted twice.
+fn is_disk(name: &str) -> bool {
+    !["loop", "ram", "zram", "dm-", "sr"]
+        .iter()
+        .any(|p| name.starts_with(p))
+        && std::path::Path::new("/sys/block").join(name).exists()
+}
+
+/// (read, written) bytes from /proc/diskstats sector counts.
+fn disk_totals(stats: &str, is_disk: impl Fn(&str) -> bool) -> (u64, u64) {
+    stats
+        .lines()
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split_whitespace().collect();
+            if !is_disk(f.get(2)?) {
+                return None;
+            }
+            let sectors = |i: usize| f.get(i).and_then(|v| v.parse::<u64>().ok());
+            Some((sectors(5)? * 512, sectors(9)? * 512))
+        })
+        .fold((0, 0), |(r, w), (a, b)| (r + a, w + b))
+}
+
+/// Chart ceiling for a byte-rate history: the next power of two at or
+/// above its peak, at least 64 KiB/s so an idle link stays flat.
+fn rate_ceiling(hist: &VecDeque<f64>) -> f64 {
+    let peak = hist.iter().copied().fold(64.0 * 1024.0, f64::max);
+    2f64.powi(peak.log2().ceil() as i32)
+}
+
+fn fmt_rate(b: f64) -> String {
+    match b {
+        b if b >= 1e9 => format!("{:.1} GB/s", b / 1e9),
+        b if b >= 1e6 => format!("{:.1} MB/s", b / 1e6),
+        b if b >= 1e3 => format!("{:.0} KB/s", b / 1e3),
+        b => format!("{b:.0} B/s"),
+    }
+}
+
 unsafe fn libc_clk() -> u64 {
     extern "C" {
         fn sysconf(name: i32) -> i64;
@@ -269,8 +368,9 @@ fn main() {
     }
 }
 
-/// Filled-area history graph, 0–100.
-fn sparkline(ui: &mut egui::Ui, kit: &Kit, hist: &VecDeque<f64>, h: f32) {
+/// Filled-area history graph over 0..max: accent line, accent fill
+/// fading from 35% at the top of the chart to 0% at its base.
+fn sparkline(ui: &mut egui::Ui, kit: &Kit, hist: &VecDeque<f64>, max: f64, h: f32) {
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), h), egui::Sense::hover());
     let painter = ui.painter();
@@ -279,20 +379,26 @@ fn sparkline(ui: &mut egui::Ui, kit: &Kit, hist: &VecDeque<f64>, h: f32) {
         return;
     }
     let n = (HIST - 1) as f32;
-    let off = (HIST - hist.len()) as f32;
+    let off = HIST.saturating_sub(hist.len()) as f32;
     let pts: Vec<egui::Pos2> = hist
         .iter()
         .enumerate()
         .map(|(i, v)| {
             egui::pos2(
                 rect.min.x + rect.width() * (off + i as f32) / n,
-                rect.max.y - 2.0 - (rect.height() - 4.0) * (*v as f32 / 100.0).clamp(0.0, 1.0),
+                rect.max.y
+                    - 2.0
+                    - (rect.height() - 4.0) * (*v / max.max(1e-9)).clamp(0.0, 1.0) as f32,
             )
         })
         .collect();
     let base = rect.max.y - 1.0;
     let a = kit.accent();
-    let tint = egui::Color32::from_rgba_unmultiplied(a.r(), a.g(), a.b(), 46);
+    let span = (base - rect.min.y).max(1.0);
+    let tint = |y: f32| {
+        let k = ((base - y) / span).clamp(0.0, 1.0);
+        egui::Color32::from_rgba_unmultiplied(a.r(), a.g(), a.b(), (0.35 * 255.0 * k) as u8)
+    };
     let mut mesh = egui::Mesh::default();
     for w in pts.windows(2) {
         let i = mesh.vertices.len() as u32;
@@ -302,7 +408,7 @@ fn sparkline(ui: &mut egui::Ui, kit: &Kit, hist: &VecDeque<f64>, h: f32) {
             egui::pos2(w[1].x, base),
             egui::pos2(w[0].x, base),
         ] {
-            mesh.colored_vertex(p, tint);
+            mesh.colored_vertex(p, tint(p.y));
         }
         mesh.add_triangle(i, i + 1, i + 2);
         mesh.add_triangle(i, i + 2, i + 3);
@@ -315,19 +421,16 @@ fn stat_card(
     ui: &mut egui::Ui,
     kit: &Kit,
     w: f32,
-    title: &str,
-    value: &str,
-    detail: &str,
-    hist: Option<&VecDeque<f64>>,
+    (title, value, detail, hist, max): (&str, &str, &str, &VecDeque<f64>, f64),
 ) {
     // Called inside a horizontal row: force a top-down layout so the
     // title, value, detail and graph stack instead of running side by side.
     let layout = egui::Layout::top_down(egui::Align::Min);
-    ui.allocate_ui_with_layout(egui::vec2(w, 132.0), layout, |ui| {
+    ui.allocate_ui_with_layout(egui::vec2(w, 152.0), layout, |ui| {
         ui.set_width(w);
         card(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.set_height(108.0);
+            ui.set_height(128.0);
             ui.label(egui::RichText::new(title).size(12.0).color(kit.text2()));
             ui.label(
                 egui::RichText::new(value)
@@ -337,9 +440,7 @@ fn stat_card(
             );
             ui.label(egui::RichText::new(detail).size(12.0).color(kit.text3()));
             ui.add_space(4.0);
-            if let Some(h) = hist {
-                sparkline(ui, kit, h, 36.0);
-            }
+            sparkline(ui, kit, hist, max, 56.0);
         });
     });
 }
@@ -417,45 +518,62 @@ fn draw(ui: &mut egui::Ui, st: &Stats, v: &mut View) {
             egui::Frame::new().inner_margin(space::S16).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 let mem_used = st.mem_total.saturating_sub(st.mem_avail);
-                let cards = if st.swap_total > 0 { 3.0 } else { 2.0 };
-                let w = (ui.available_width() - (cards - 1.0) * space::S12) / cards;
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = space::S12;
-                    stat_card(
-                        ui,
-                        &kit,
-                        w,
+                let swap = if st.swap_total > 0 {
+                    format!(" · swap {} MiB", (st.swap_total - st.swap_free) / 1024)
+                } else {
+                    String::new()
+                };
+                let cards = [
+                    (
                         "CPU",
-                        &format!("{:.0}%", st.cpu_pct),
-                        &format!("{} cores", st.cpus.len().max(1)),
-                        Some(&st.cpu_hist),
-                    );
-                    stat_card(
-                        ui,
-                        &kit,
-                        w,
+                        format!("{:.0}%", st.cpu_pct),
+                        format!("{} cores", st.cpus.len().max(1)),
+                        &st.cpu_hist,
+                        100.0,
+                    ),
+                    (
                         "Memory",
-                        &format!("{} MiB", mem_used / 1024),
-                        &format!(
-                            "of {} MiB · {:.0}%",
+                        format!("{} MiB", mem_used / 1024),
+                        format!(
+                            "of {} MiB · {:.0}%{swap}",
                             st.mem_total / 1024,
                             100.0 * mem_used as f64 / st.mem_total.max(1) as f64
                         ),
-                        Some(&st.mem_hist),
-                    );
-                    if st.swap_total > 0 {
-                        let su = st.swap_total - st.swap_free;
-                        stat_card(
-                            ui,
-                            &kit,
-                            w,
-                            "Swap",
-                            &format!("{} MiB", su / 1024),
-                            &format!("of {} MiB", st.swap_total / 1024),
-                            None,
-                        );
+                        &st.mem_hist,
+                        100.0,
+                    ),
+                    (
+                        "Network",
+                        format!("{} in", fmt_rate(st.net_rate[0])),
+                        format!("{} out", fmt_rate(st.net_rate[1])),
+                        &st.net_hist,
+                        rate_ceiling(&st.net_hist),
+                    ),
+                    (
+                        "Disk",
+                        format!("{} read", fmt_rate(st.disk_rate[0])),
+                        format!("{} written", fmt_rate(st.disk_rate[1])),
+                        &st.disk_hist,
+                        rate_ceiling(&st.disk_hist),
+                    ),
+                ];
+                let cols = if ui.available_width() >= 4.0 * 180.0 + 3.0 * space::S12 {
+                    4
+                } else {
+                    2
+                };
+                let w = (ui.available_width() - (cols - 1) as f32 * space::S12) / cols as f32;
+                for (r, row) in cards.chunks(cols).enumerate() {
+                    if r > 0 {
+                        ui.add_space(space::S12);
                     }
-                });
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = space::S12;
+                        for (title, value, detail, hist, max) in row {
+                            stat_card(ui, &kit, w, (title, value, detail, hist, *max));
+                        }
+                    });
+                }
                 ui.add_space(space::S12);
                 card(ui, |ui| {
                     let cols = [
@@ -546,4 +664,40 @@ fn draw(ui: &mut egui::Ui, st: &Stats, v: &mut View) {
                 });
             });
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn net_totals_skip_loopback() {
+        let dev = "Inter-|   Receive |  Transmit
+ face |bytes packets errs drop fifo frame compressed multicast|bytes packets
+    lo: 900 9 0 0 0 0 0 0 900 9 0 0 0 0 0 0
+  eth0: 1000 10 0 0 0 0 0 0 250 5 0 0 0 0 0 0
+  wlan0: 24 1 0 0 0 0 0 0 6 1 0 0 0 0 0 0
+";
+        assert_eq!(net_totals(dev), (1024, 256));
+    }
+
+    #[test]
+    fn disk_totals_whole_disks_in_bytes() {
+        let stats = "   8       0 vda 10 0 4 0 2 0 8 0 0 0 0
+   8       1 vda1 10 0 4 0 2 0 8 0 0 0 0
+   7       0 loop0 1 0 100 0 0 0 0 0 0 0 0
+";
+        assert_eq!(disk_totals(stats, |n| n == "vda"), (4 * 512, 8 * 512));
+    }
+
+    #[test]
+    fn rates_and_ceiling() {
+        let mut prev = Some((0, 0, Instant::now() - std::time::Duration::from_secs(2)));
+        let [a, b] = rate(&mut prev, (2000, 0));
+        assert!((900.0..=1000.0).contains(&a) && b == 0.0);
+        let h: VecDeque<f64> = [10.0, 70_000.0].into_iter().collect();
+        assert_eq!(rate_ceiling(&h), 131_072.0);
+        assert_eq!(rate_ceiling(&VecDeque::new()), 65_536.0);
+        assert_eq!(fmt_rate(1_500_000.0), "1.5 MB/s");
+    }
 }
