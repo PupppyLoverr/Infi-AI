@@ -741,7 +741,7 @@ pub fn draw(state: &mut ShellState) {
                 cy + 12.0,
                 CELL_ICON,
             );
-            draw::text(
+            draw::text_centered(
                 &mut pixmap,
                 cx + 4.0,
                 cy + 12.0 + CELL_ICON + 8.0,
