@@ -235,6 +235,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         quick_dismissed_at: None,
         vol_drag: false,
         bright_drag: false,
+        start_vol_drag: None,
         cc_detail: None,
         accent_name: cosmos_ipc::DEFAULT_ACCENT.to_string(),
         wallpaper: DEFAULT_WALLPAPER.to_string(),
@@ -632,6 +633,9 @@ pub struct ShellState {
     pub vol_drag: bool,
     /// Control Centre brightness slider held.
     pub bright_drag: bool,
+    /// Start's Volume slider held: launcher-surface x of the widget
+    /// board's left edge, so motion maps back to board coordinates.
+    pub start_vol_drag: Option<f64>,
     /// Control Centre detail view (Wi-Fi list / sound outputs).
     pub cc_detail: Option<ccdetail::View>,
     /// Current accent preset name (from Config events) — the Quick
@@ -1131,6 +1135,7 @@ impl ShellState {
     }
 
     fn close_launcher(&mut self) {
+        self.start_vol_drag = None;
         self.start_todo_edit = None;
         if self.launcher_open {
             self.set_launcher_open(false);
@@ -1216,6 +1221,9 @@ impl ShellState {
             }
             launcher::Hit::Widget(dx, dy) => {
                 let w = LAUNCHER_WIDTH as f32 - 32.0;
+                if startw::on_slider(w, dx as f32, dy as f32) {
+                    self.start_vol_drag = Some(x - dx as f64);
+                }
                 if startw::press(self, w, dx as f32, dy as f32) {
                     self.close_launcher();
                 }
@@ -2370,7 +2378,14 @@ impl PointerHandler for ShellState {
                     } else if self.dock_surface.as_ref() == Some(&layer) {
                         self.dock_dirty |= dock::hover(self, ev.position.0, ev.position.1);
                     } else if self.launcher_surface.as_ref() == Some(&layer) {
-                        self.launcher_dirty |= launcher::hover(self, ev.position.0, ev.position.1);
+                        if let Some(board_x) = self.start_vol_drag {
+                            let w = LAUNCHER_WIDTH as f32 - 32.0;
+                            let px = (ev.position.0 - board_x) as f32;
+                            self.launcher_dirty |= startw::drag(self, w, px);
+                        } else {
+                            self.launcher_dirty |=
+                                launcher::hover(self, ev.position.0, ev.position.1);
+                        }
                     } else if self.quick_surface.as_ref() == Some(&layer)
                         && (self.vol_drag || self.bright_drag)
                     {
@@ -2386,6 +2401,7 @@ impl PointerHandler for ShellState {
                     }
                 }
                 PointerEventKind::Release { .. } => {
+                    self.start_vol_drag = None;
                     if self.quick_surface.as_ref() == Some(&layer) {
                         quick::release(self);
                     }
