@@ -339,7 +339,8 @@ chmod 755 "$OVERLAY/usr/local/bin/cosmos-smoke-apps"
 
 # greeter/session-lock plumbing — greetd on tty1 replaced agetty autologin:
 # cage runs cosmos-greeter fullscreen; greetd StartSession launches
-# cosmos-session for the signed-in user.
+# cosmos-session for the signed-in user. systemd-cat sends cage's and the
+# greeter's stdout/stderr to the journal (greetd points them at tty1).
 mkdir -p "$OVERLAY/etc/greetd" "$OVERLAY/usr/share/wayland-sessions" "$OVERLAY/etc/pam.d"
 # greetd owns tty1 exclusively — Debian still enables getty@tty1 which
 # restarts on the same VT and was seen racing the greeter (serial: getty@tty1
@@ -351,7 +352,7 @@ cat > "$OVERLAY/etc/greetd/config.toml" <<'EOF'
 vt = 1
 
 [default_session]
-command = "cage -s -- cosmos-greeter"
+command = "systemd-cat -t cosmos-greeter cage -s -- cosmos-greeter"
 user = "cosmos"
 EOF
 cat > "$OVERLAY/usr/share/wayland-sessions/cosmos.desktop" <<'EOF'
