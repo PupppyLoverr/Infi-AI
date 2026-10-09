@@ -39,7 +39,7 @@ impl Default for Cfg {
             terminal: "cosmos-terminal".into(),
             launcher_rows: 10,
             accent: cosmos_ipc::DEFAULT_ACCENT.into(),
-            dock_position: "left".into(),
+            dock_position: "bottom".into(),
             wallpaper: "violet".into(),
         }
     }

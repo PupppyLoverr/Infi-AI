@@ -127,6 +127,11 @@ fn glass_for(name: &str, dark: bool) -> Option<Glass> {
 
 /// Screen size reported by the last surface configure — the shell only
 /// drives one output today.
+/// Logical output size last configured (fullscreen layers report it).
+pub fn screen_size() -> (f32, f32) {
+    SCREEN.with(|s| *s.borrow())
+}
+
 pub fn set_screen_size(w: f32, h: f32) {
     SCREEN.with(|s| *s.borrow_mut() = (w, h));
 }
@@ -170,17 +175,16 @@ pub fn fill_glass(
         return;
     };
     let (ow, oh) = SCREEN.with(|s| *s.borrow());
-    // Fill pixel (lx,ly) should sample the blur at screen position
-    // (screen_x + lx, screen_y + ly): pattern transform maps pattern
-    // space → device space, i.e. scale(GW/ow, GH/oh) then
-    // translate(-screen_x, -screen_y).
+    // A pattern's transform maps pattern space into the fill's user
+    // space. Pattern pixel p covers screen point p * (ow/GW, oh/GH);
+    // screen point s is user point s - screen + (x, y).
     let t = Transform::from_row(
-        GW as f32 / ow,
+        ow / GW as f32,
         0.0,
         0.0,
-        GH as f32 / oh,
-        -screen_x * GW as f32 / ow,
-        -screen_y * GH as f32 / oh,
+        oh / GH as f32,
+        x - screen_x,
+        y - screen_y,
     );
     let pattern = tiny_skia::Pattern::new(
         g.blur.as_ref(),
@@ -240,6 +244,57 @@ pub fn fill_glass(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each glass pixel shows the blurred wallpaper at its own screen
+    /// position (plus tint), not a stretched corner of it.
+    #[test]
+    fn glass_samples_the_wallpaper_behind_it() {
+        let d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../wallpapers");
+        std::env::set_var("COSMOS_WALLPAPER_DIR", &d);
+        set_screen_size(1536.0, 864.0);
+        let g = load_from(&d, "violet", true).unwrap();
+        let [tr, tg, tb, ta] = cosmos_theme::palette(true).glass_tint;
+        let a = ta as f32 / 255.0;
+        let mut px = Pixmap::new(400, 120).unwrap();
+        // A 380×100 rect at local (10,10) that sits at screen (568,780)
+        // — a bottom dock.
+        fill_glass(
+            &mut px.as_mut(),
+            "violet",
+            10.0,
+            10.0,
+            380.0,
+            100.0,
+            22.0,
+            568.0,
+            780.0,
+            true,
+            Color::BLACK,
+        );
+        for (lx, ly) in [(40u32, 40u32), (200, 60), (360, 80)] {
+            let (sx, sy) = (568.0 + (lx - 10) as f32, 780.0 + (ly - 10) as f32);
+            let b = g
+                .blur
+                .pixel(
+                    (sx * GW as f32 / 1536.0) as u32,
+                    (sy * GH as f32 / 864.0) as u32,
+                )
+                .unwrap();
+            let want = [b.red(), b.green(), b.blue()]
+                .iter()
+                .zip([tr, tg, tb])
+                .map(|(&c, t)| c as f32 * (1.0 - a) + t as f32 * a)
+                .collect::<Vec<_>>();
+            let got = px.pixel(lx, ly).unwrap().demultiply();
+            let got = [got.red(), got.green(), got.blue()];
+            for (w, g) in want.iter().zip(got) {
+                assert!(
+                    (w - g as f32).abs() <= 6.0,
+                    "({lx},{ly}) want {want:?} got {got:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn shipped_wallpapers_load_as_tinted_glass_in_both_modes() {
