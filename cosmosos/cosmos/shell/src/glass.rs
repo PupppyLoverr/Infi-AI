@@ -127,6 +127,11 @@ fn glass_for(name: &str, dark: bool) -> Option<Glass> {
 
 /// Screen size reported by the last surface configure — the shell only
 /// drives one output today.
+/// Logical output size last configured (fullscreen layers report it).
+pub fn screen_size() -> (f32, f32) {
+    SCREEN.with(|s| *s.borrow())
+}
+
 pub fn set_screen_size(w: f32, h: f32) {
     SCREEN.with(|s| *s.borrow_mut() = (w, h));
 }

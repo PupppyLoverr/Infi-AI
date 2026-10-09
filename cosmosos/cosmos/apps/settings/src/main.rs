@@ -182,6 +182,23 @@ impl Pane {
     }
 }
 
+/// `--pane wallpaper|dock|…` — the desktop menu deep-links into a pane.
+fn pane_arg(mut args: impl Iterator<Item = String>) -> Option<Pane> {
+    while let Some(a) = args.next() {
+        if a == "--pane" {
+            return match args.next()?.as_str() {
+                "appearance" => Some(Pane::Appearance),
+                "wallpaper" => Some(Pane::Wallpaper),
+                "dock" => Some(Pane::Dock),
+                "apps" => Some(Pane::Apps),
+                "session" => Some(Pane::Session),
+                _ => None,
+            };
+        }
+    }
+    None
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -191,7 +208,7 @@ fn main() {
     let mut app = App {
         cfg: load(),
         status: String::new(),
-        pane: Pane::Appearance,
+        pane: pane_arg(std::env::args()).unwrap_or(Pane::Appearance),
         scale_refresh: None,
     };
     if let Err(e) = cosmos_uitk::run("Settings", "cosmos.settings", (760, 520), move |ui| {

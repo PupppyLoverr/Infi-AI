@@ -183,6 +183,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         workspaces: Vec::new(),
         launcher_open: false,
         launcher_query: String::new(),
+        launcher_preset: None,
         launcher_sel: 0,
         recent: launcher::load_recent(),
         apps,
@@ -461,6 +462,8 @@ pub struct ShellState {
     pub workspaces: Vec<cosmos_ipc::WorkspaceInfo>,
     pub launcher_open: bool,
     pub launcher_query: String,
+    /// Query the next launcher open starts with ("?" = Ask mode).
+    pub launcher_preset: Option<String>,
     pub launcher_sel: usize,
     /// App launch MRU (desktop ids, newest first) — the launcher's
     /// RECOMMENDED section; persisted to ~/.local/share/cosmos-shell.
@@ -754,7 +757,7 @@ impl ShellState {
         self.launcher_open = open;
         if open {
             self.set_quick_open(false);
-            self.launcher_query.clear();
+            self.launcher_query = self.launcher_preset.take().unwrap_or_default();
             self.launcher_sel = 0;
             self.launcher_hover = None;
             fileindex::maybe_refresh(self);
@@ -1026,6 +1029,19 @@ impl ShellState {
     /// Open menubar menu `menu` with its card's left edge at screen `x`
     /// (None closes). Recreated per open so the position is exact.
     pub fn set_menu(&mut self, menu: Option<usize>, x: i32) {
+        self.set_menu_at(menu, x, None);
+    }
+
+    /// Desktop context menu at the press point, kept on screen.
+    pub fn open_desktop_menu(&mut self, x: i32, y: i32) {
+        self.close_launcher();
+        self.set_quick_open(false);
+        self.set_menu_at(Some(menubar::DESKTOP), x, Some(y));
+    }
+
+    /// `y: None` drops the card just under the menubar; `Some(y)` puts
+    /// its top edge at screen `y`.
+    fn set_menu_at(&mut self, menu: Option<usize>, x: i32, y: Option<i32>) {
         self.menu_surface = None;
         self.menu_hover = None;
         self.menu_open = menu;
@@ -1036,7 +1052,13 @@ impl ShellState {
         let (w, h) = menubar::surface_size(m);
         let inset = menubar::INSET as i32;
         let left = (x - inset).clamp(0, (self.panel_size.0 as i32 - w as i32).max(0));
-        let top = self.panel_size.1 as i32 + 2 - inset;
+        let top = match y {
+            Some(y) => {
+                let sh = glass::screen_size().1 as i32;
+                (y - inset).clamp(0, (sh - h as i32).max(0))
+            }
+            None => self.panel_size.1 as i32 + 2 - inset,
+        };
         self.menu_pos = (left, top);
         let surface = self.compositor_state.create_surface(&self.qh);
         let layer = self.layer_shell.create_layer_surface(
@@ -1114,6 +1136,26 @@ impl ShellState {
             Action::Lock => {
                 if let Err(err) = logind::request_lock() {
                     tracing::warn!("menu: lock failed: {err}");
+                }
+            }
+            Action::ChangeWallpaper => spawn_logged("cosmos-settings", &["--pane", "wallpaper"]),
+            Action::ViewOptions => spawn_logged("cosmos-settings", &["--pane", "dock"]),
+            Action::NewFolder => match new_desktop_folder() {
+                Ok(dir) => spawn_logged("cosmos-files", &[&dir.to_string_lossy()]),
+                Err(err) => tracing::warn!("menu: new folder failed: {err}"),
+            },
+            Action::AskCosmos => {
+                self.launcher_preset = Some("?".to_string());
+                self.ipc.send(&cosmos_ipc::Request::ToggleLauncher);
+            }
+            Action::TerminalHere => {
+                let dir = desktop_dir();
+                let _ = std::fs::create_dir_all(&dir);
+                if let Err(err) = std::process::Command::new("cosmos-terminal")
+                    .current_dir(&dir)
+                    .spawn()
+                {
+                    tracing::warn!("menu: terminal failed: {err}");
                 }
             }
             Action::Logout | Action::Restart | Action::Shutdown => {
@@ -1236,6 +1278,14 @@ impl ShellState {
             }
             ZoomFlyout { open, window, x, y } => {
                 self.set_zoom(open, window, x, y);
+            }
+            DesktopPress { button, x, y } => {
+                const BTN_RIGHT: u32 = 0x111;
+                self.set_menu(None, 0);
+                self.set_quick_open(false);
+                if button == BTN_RIGHT {
+                    self.open_desktop_menu(x, y);
+                }
             }
             Switcher {
                 open,
@@ -2178,6 +2228,76 @@ impl Dispatch2<WpViewport, ShellState> for ScaleData {
     }
 }
 smithay_client_toolkit::delegate_registry!(ShellState);
+
+fn spawn_logged(cmd: &str, args: &[&str]) {
+    if let Err(err) = std::process::Command::new(cmd).args(args).spawn() {
+        tracing::warn!("spawn {cmd} failed: {err}");
+    }
+}
+
+/// `$XDG_DESKTOP_DIR` from user-dirs.dirs, else `~/Desktop`.
+fn desktop_dir() -> std::path::PathBuf {
+    let home = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into()));
+    let cfg = std::env::var("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| home.join(".config"));
+    std::fs::read_to_string(cfg.join("user-dirs.dirs"))
+        .ok()
+        .and_then(|t| {
+            t.lines()
+                .find_map(|l| l.strip_prefix("XDG_DESKTOP_DIR="))
+                .map(|v| {
+                    v.trim_matches('"')
+                        .replace("$HOME", &home.to_string_lossy())
+                })
+        })
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| home.join("Desktop"))
+}
+
+/// Create "untitled folder" (then "untitled folder 2", …) on the Desktop.
+fn new_desktop_folder() -> std::io::Result<std::path::PathBuf> {
+    new_folder_in(&desktop_dir())
+}
+
+fn new_folder_in(parent: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    std::fs::create_dir_all(parent)?;
+    for n in 1.. {
+        let name = if n == 1 {
+            "untitled folder".to_string()
+        } else {
+            format!("untitled folder {n}")
+        };
+        let dir = parent.join(name);
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    unreachable!("1.. is unbounded")
+}
+
+#[cfg(test)]
+mod desktop_menu_tests {
+    #[test]
+    fn new_folder_numbers_past_existing_ones() {
+        let d = std::env::temp_dir().join(format!("cosmos-nf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let a = super::new_folder_in(&d).unwrap();
+        let b = super::new_folder_in(&d).unwrap();
+        assert_eq!(a.file_name().unwrap(), "untitled folder");
+        assert_eq!(b.file_name().unwrap(), "untitled folder 2");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn desktop_menu_items_need_no_window() {
+        let items = crate::menubar::items(crate::menubar::DESKTOP);
+        assert_eq!(items.len(), 5);
+        assert!(items.iter().all(|(_, a)| !a.needs_window()));
+    }
+}
 
 #[cfg(test)]
 mod wallpaper_mirror_tests {
