@@ -62,7 +62,7 @@ boot. Raw logs: `v4-blockers.txt` (first A round) and `v4-retest.txt` (final rou
 
 | Shot | Verdict | Proof |
 |---|---|---|
-| v4-01-desktop-dark | PASS | Files open in /home/cosmos; disabled Back/Forward chevrons and Search outline now visible on dark (#166) |
+| v4-01-desktop-dark | PASS | Files open in /home/cosmos; chevrons + Search outline clearly distinguishable at 2× after the premultiplied-alpha raster fix (#168) |
 | v4-02-desktop-light | PASS | Single light Files window, light shell; toolbar chrome legible for comparison with the dark row (#166) |
 | v4-10-start-glass | PASS | PINNED labels centred under tiles — Terminal/Files/Editor/System/Settings all verified at 200% (#165) |
 | v4-11-control-centre | PASS | Header is one clock line "Fri 9 Oct 06:08", no overlap with the Network card (#164) |
