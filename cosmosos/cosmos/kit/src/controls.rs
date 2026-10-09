@@ -108,7 +108,9 @@ pub fn toggle(ui: &mut Ui, on: &mut bool) -> Response {
         resp.mark_changed();
     }
     let t = ui.ctx().animate_bool_responsive(resp.id, *on);
-    let off = kit.fill(State::Press);
+    // Off track: a solid neutral, stronger than control fills, so the
+    // switch reads as a switch (not a lone knob) on dark glass.
+    let off = crate::with_alpha(kit.p.text, if kit.dark { 72 } else { 40 });
     let track = lerp_color(off, kit.accent(), t);
     let p = ui.painter();
     p.rect_filled(rect, rect.height() / 2.0, dim(ui, track));
