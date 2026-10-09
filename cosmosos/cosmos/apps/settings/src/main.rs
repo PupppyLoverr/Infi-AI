@@ -301,6 +301,9 @@ fn appearance(ui: &mut egui::Ui, kit: &Kit, app: &mut App) {
             let r = slider(ui, &mut v, 0.75..=2.0, 200.0);
             if r.changed() {
                 app.cfg.scale = ((v as f64) * 20.0).round() / 20.0;
+                // The % label was drawn before the slider moved; one more
+                // frame shows the new value instead of the previous one.
+                ui.ctx().request_repaint();
             }
             if r.drag_stopped() || (r.clicked() && r.changed()) {
                 set(app, "scale", app.cfg.scale.into());
