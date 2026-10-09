@@ -5,6 +5,7 @@
 mod activity;
 mod ask;
 mod assist;
+mod ccdetail;
 mod clipwatch;
 mod desktop;
 mod dock;
@@ -232,6 +233,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         quick_dismissed_at: None,
         vol_drag: false,
         bright_drag: false,
+        cc_detail: None,
         accent_name: cosmos_ipc::DEFAULT_ACCENT.to_string(),
         wallpaper: DEFAULT_WALLPAPER.to_string(),
         help_surface: None,
@@ -599,6 +601,8 @@ pub struct ShellState {
     pub vol_drag: bool,
     /// Control Centre brightness slider held.
     pub bright_drag: bool,
+    /// Control Centre detail view (Wi-Fi list / sound outputs).
+    pub cc_detail: Option<ccdetail::View>,
     /// Current accent preset name (from Config events) — the Quick
     /// Settings swatch strip draws its selection ring from this.
     pub accent_name: String,
@@ -845,6 +849,7 @@ impl ShellState {
     }
 
     pub fn set_quick_open(&mut self, open: bool) {
+        self.cc_detail = None;
         if open == self.quick_open {
             return;
         }
