@@ -215,9 +215,10 @@ fn ago(ts: u64) -> String {
     }
 }
 
-/// First line of an audit detail (results are JSON, errors are prose).
+/// Audit detail on one row: results are often pretty-printed JSON, so
+/// fold every line and run of whitespace into single spaces.
 fn one_line(d: &str) -> String {
-    let line = d.lines().next().unwrap_or("").trim();
+    let line = d.split_whitespace().collect::<Vec<_>>().join(" ");
     let mut out: String = line.chars().take(80).collect();
     if line.chars().count() > 80 {
         out.push('…');

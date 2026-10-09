@@ -1,0 +1,46 @@
+v4 re-verification round — image built from 9bf0ac2
+(devin/1791516732-v4-detail-oneline = #150..#157 + #161)
+
+Boot @1920x1080, v4-blockers-check.sh re-run:
+
+==V4-CHECK==
+PASS A1: logind session Type=wayland Class=user (greetd)
+PASS A1: loginctl lock-session locked the session
+==LOCKED==
+PASS A2: wrong password rejected (checked implicitly: unlock required correct pw)
+PASS A2: correct password unlocked
+PASS A2: locker died, session stayed locked, respawned locker pid=803 took over
+==RESPAWNED==
+PASS A2: unlocked through the respawned locker
+PASS A5: Files rows=0 footer=0 ls=0
+PASS A3: zero panics in journal
+==V4-DONE==
+
+Section A: ALL PASS.
+
+C retests (real boot):
+- #150 Files Ctrl+L: PASS — Go to Folder dialog opened (path field prefilled
+  /home/cosmos), typed /etc, Enter -> listing navigated to /etc, footer
+  "126 items, 3 hidden" (v4-03-files-etc.png).
+- #152 Monitor: PASS — search "sleep" shows `sleep` pid 1338 Sleeping 0.0%
+  2.1 MB (v4-08-monitor-sleep.png). 64-row cap fix confirmed.
+- #153/#161 Agents: PASS — Activity row "Just now | files.list | Denied |
+  unknown tool 'files.list'" — Time/Tool/Result/Detail all populated, Detail
+  one readable row at full width (v4-09-agents.png).
+- #154 Editor Ctrl+S: PASS — typed "/" -> title "controls.rs — Edited" ->
+  Ctrl+S -> title cleared, status "saved /home/cosmos/controls.rs"
+  (v4-05-editor-saved.png).
+- #155 Terminal: PASS — wheel-up through scrollback shows bottom bar
+  "Viewing scrollback — 15 lines up" + "Jump to Bottom"; clicking it returns
+  to live prompt and clears the bar (v4-10-terminal-scroll.png).
+- #161 Settings dark: PASS — Dark selected as lifted chip, Reduce motion
+  toggle off-track with hairline visible, Scale slider track visible, cards
+  separate from window (v4-06-settings-appearance.png).
+
+Host clippy on this tree:
+  cargo clippy -p cosmos-kit -p cosmos-files -p cosmos-kit-gallery -- -D warnings
+  -> Finished dev profile, zero warnings, exit 0 (x86_64).
+
+A6 strict terminal RSS soak (VmRSS kB, quiet terminal, t5..t30):
+  t5 25824 t10 25824 t15 25824 t20 25824 t25 25824 t30 25824
+  growth t5->t30 = +0.0% — STRICT PASS (byte-flat all six samples)
