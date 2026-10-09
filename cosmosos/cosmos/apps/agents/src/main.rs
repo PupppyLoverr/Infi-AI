@@ -10,7 +10,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use egui::Color32;
+use cosmos_kit::controls::{button, ButtonKind};
+use cosmos_kit::layout::{
+    card, group, sheet, sidebar_item, sidebar_section, status_text, toolbar_title, AppWindow,
+    ColAlign, Column, Table,
+};
+use cosmos_kit::{Icon, Kit};
+use cosmos_theme::space;
 
 #[derive(Default)]
 struct AgentPolicy {
@@ -38,6 +44,9 @@ struct State {
     audit_agent: String,
     snapshots: Vec<(u32, String)>,
     status: String,
+    /// Sidebar's System → Rollback pane instead of an agent.
+    rollback_pane: bool,
+    confirm_rollback: Option<u32>,
 }
 
 fn home() -> PathBuf {
@@ -167,8 +176,16 @@ fn refresh_audit(st: &mut State, agent: &str) {
                 continue;
             }
             st.audit.push(AuditRow {
-                ts: v.get("ts").and_then(|t| t.as_str()).unwrap_or("").to_string(),
-                tool: v.get("tool").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+                ts: v
+                    .get("ts")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                tool: v
+                    .get("tool")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string(),
                 ok: v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false),
                 detail: v
                     .get("error")
@@ -219,101 +236,249 @@ fn rollback_to(num: u32) -> Result<String, String> {
 }
 
 fn draw(ui: &mut egui::Ui, st: &mut State) {
-    egui::Frame::NONE
-        .inner_margin(egui::Margin::same(6)) // 10px window margin + 6 → 16px padding
-        .show(ui, |ui| {
-    ui.columns(2, |cols| {
-        // ——— Agent list ———
-        let left = &mut cols[0];
-        left.heading("Agents");
-        left.add_space(4.0);
-        for a in &st.agents {
-            let selected = st.selected.as_deref() == Some(a.name.as_str());
-            let label = if a.has_policy_file {
-                a.name.clone()
-            } else {
-                format!("{}  (default policy)", a.name)
-            };
-            if left.selectable_label(selected, label).clicked() {
-                st.selected = Some(a.name.clone());
+    let kit = Kit::get(ui.ctx());
+    if let Some(sel) = st.selected.clone() {
+        if !st.rollback_pane {
+            refresh_audit(st, &sel);
+        }
+    }
+    let title = if st.rollback_pane {
+        "Rollback".to_string()
+    } else {
+        st.selected.clone().unwrap_or_else(|| "Agents".into())
+    };
+    let cell = std::cell::RefCell::new(&mut *st);
+    AppWindow::new()
+        .toolbar(|ui| toolbar_title(ui, &title))
+        .sidebar(|ui| {
+            let mut st = cell.borrow_mut();
+            let st = &mut **st;
+            sidebar_section(ui, "Agents");
+            let mut pick = None;
+            for a in &st.agents {
+                let on = !st.rollback_pane && st.selected.as_deref() == Some(a.name.as_str());
+                let r = sidebar_item(ui, Icon::Sparkle, &a.name, on);
+                let r = if a.has_policy_file {
+                    r
+                } else {
+                    r.on_hover_text("No policy file — default policy applies")
+                };
+                if r.clicked() {
+                    pick = Some(a.name.clone());
+                }
+            }
+            if st.agents.is_empty() {
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new("No agents yet")
+                        .size(12.0)
+                        .color(kit.text3()),
+                );
+            }
+            if let Some(n) = pick {
+                st.selected = Some(n);
+                st.rollback_pane = false;
                 st.audit_agent.clear();
             }
-        }
-        if st.agents.is_empty() {
-            left.weak("No agents yet — policies live in\n~/.config/cosmos/agents/<name>.toml");
-        }
-        left.separator();
-        if let Some(sel) = &st.selected {
-            if let Some(a) = st.agents.iter().find(|a| &a.name == sel) {
-                left.label(egui::RichText::new("POLICY").weak().size(11.0));
-                if !a.read_roots.is_empty() {
-                    left.monospace(format!("read:  {}", a.read_roots.join(", ")));
-                }
-                if !a.write_roots.is_empty() {
-                    left.monospace(format!("write: {}", a.write_roots.join(", ")));
-                }
-                if !a.tools.is_empty() {
-                    left.monospace(format!("tools: {}", a.tools.join(", ")));
-                }
-                if !a.sensitive.is_empty() {
-                    left.colored_label(
-                        Color32::from_rgb(0xE0, 0x8A, 0x2F),
-                        format!("sensitive: {}", a.sensitive.join(", ")),
-                    );
-                }
+            sidebar_section(ui, "System");
+            if sidebar_item(ui, Icon::Rollback, "Rollback", st.rollback_pane).clicked() {
+                st.rollback_pane = true;
+                refresh_snapshots(st);
             }
-        }
-
-        // ——— Detail: audit feed + rollback ———
-        let right = &mut cols[1];
-        right.heading("Activity");
-        right.add_space(4.0);
-        if let Some(sel) = st.selected.clone() {
-            refresh_audit(st, &sel);
+        })
+        .status(|ui| {
+            let st = cell.borrow();
+            let n = st.agents.len();
+            status_text(ui, &format!("{n} agent{}", if n == 1 { "" } else { "s" }));
+            if !st.status.is_empty() {
+                status_text(ui, &format!("· {}", st.status));
+            }
+        })
+        .show(ui, |ui| {
+            let mut st = cell.borrow_mut();
+            let st = &mut **st;
             egui::ScrollArea::vertical()
-                .id_salt("audit")
-                .max_height(180.0)
-                .show(right, |ui| {
-                    for r in &st.audit {
-                        let color = if r.ok {
-                            ui.visuals().text_color()
-                        } else {
-                            Color32::from_rgb(0xE0, 0x56, 0x56)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin::symmetric(24, 20))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            if st.rollback_pane {
+                                rollback_pane(ui, &kit, st);
+                            } else {
+                                agent_pane(ui, &kit, st);
+                            }
+                        });
+                });
+        });
+
+    if let Some(num) = st.confirm_rollback {
+        let mut done = false;
+        let ctx = ui.ctx().clone();
+        let open = sheet(
+            &ctx,
+            egui::Id::new("agents-rollback"),
+            "Roll Back System?",
+            |ui| {
+                ui.label(
+                egui::RichText::new(format!(
+                    "The system will return to snapshot #{num} on the next boot. Changes made since then are kept in a new snapshot."
+                ))
+                .color(kit.text2()),
+            );
+                ui.add_space(space::S16);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if button(ui, ButtonKind::Destructive, "Roll Back").clicked() {
+                        st.status = match rollback_to(num) {
+                            Ok(m) => m,
+                            Err(e) => format!("rollback failed: {e}"),
                         };
-                        ui.colored_label(
-                            color,
-                            format!("{}  {}  {}", &r.ts[..r.ts.len().min(19)], r.tool, r.detail),
-                        );
+                        done = true;
                     }
-                    if st.audit.is_empty() {
-                        ui.weak("No audited calls yet for this agent.");
+                    if button(ui, ButtonKind::Secondary, "Cancel").clicked() {
+                        done = true;
                     }
                 });
+            },
+        );
+        if !open || done {
+            st.confirm_rollback = None;
         }
+    }
+}
 
-        right.separator();
-        right.heading("Rollback");
-        right.weak("snapper snapshots (btrfs @)");
-        for (num, desc) in st.snapshots.clone() {
-            right.horizontal(|ui| {
-                ui.monospace(format!("#{num}  {desc}"));
-                if ui.button("Rollback").clicked() {
-                    st.status = match rollback_to(num) {
-                        Ok(m) => m,
-                        Err(e) => format!("rollback failed: {e}"),
-                    };
+fn agent_pane(ui: &mut egui::Ui, kit: &Kit, st: &mut State) {
+    let Some(a) = st
+        .selected
+        .as_ref()
+        .and_then(|sel| st.agents.iter().find(|a| &a.name == sel))
+    else {
+        let c = ui.max_rect().center_top() + egui::vec2(0.0, 120.0);
+        cosmos_kit::icons::paint(
+            ui,
+            Icon::Sparkle,
+            egui::Rect::from_center_size(c, egui::vec2(40.0, 40.0)),
+            kit.text3(),
+        );
+        let msg = if st.agents.is_empty() {
+            "Agents appear here once they connect to cosmos-agentd. Policies live in ~/.config/cosmos/agents/<name>.toml."
+        } else {
+            "Select an agent to see its permissions and activity."
+        };
+        ui.painter().text(
+            c + egui::vec2(0.0, 40.0),
+            egui::Align2::CENTER_CENTER,
+            msg,
+            egui::FontId::proportional(13.0),
+            kit.text2(),
+        );
+        return;
+    };
+    let policy = if a.has_policy_file {
+        "Custom policy"
+    } else {
+        "Default policy — screenshots and file writes ask first"
+    };
+    ui.label(egui::RichText::new(policy).size(12.0).color(kit.text2()));
+    ui.add_space(space::S12);
+    let fields: [(&str, &Vec<String>); 4] = [
+        ("Can read", &a.read_roots),
+        ("Can write", &a.write_roots),
+        ("Allowed tools", &a.tools),
+        ("Asks first", &a.sensitive),
+    ];
+    if fields.iter().any(|(_, v)| !v.is_empty()) {
+        group(ui, Some("Permissions"), |g| {
+            for (label, v) in fields {
+                if !v.is_empty() {
+                    g.row(label, |ui| {
+                        ui.label(egui::RichText::new(v.join(", ")).color(kit.text2()));
+                    });
+                }
+            }
+        });
+        ui.add_space(space::S20);
+    }
+    ui.label(egui::RichText::new("Activity").strong().color(kit.text()));
+    ui.add_space(space::S8);
+    card(ui, |ui| {
+        if st.audit.is_empty() {
+            ui.label(
+                egui::RichText::new("No audited calls yet for this agent.").color(kit.text3()),
+            );
+            return;
+        }
+        let cols = [
+            Column {
+                title: "Time",
+                width: 148.0,
+                align: ColAlign::Left,
+            },
+            Column {
+                title: "Tool",
+                width: 160.0,
+                align: ColAlign::Left,
+            },
+            Column {
+                title: "Result",
+                width: 72.0,
+                align: ColAlign::Left,
+            },
+            Column {
+                title: "Detail",
+                width: 0.0,
+                align: ColAlign::Left,
+            },
+        ];
+        let t = Table { cols: &cols };
+        t.header(ui);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for r in st.audit.iter().rev() {
+            let ts = r.ts.get(..19).unwrap_or(&r.ts).replace('T', " ");
+            let res = if r.ok { "Allowed" } else { "Denied" };
+            t.row(ui, false, None, &[&ts, &r.tool, res, &r.detail]);
+        }
+    });
+}
+
+fn rollback_pane(ui: &mut egui::Ui, kit: &Kit, st: &mut State) {
+    ui.label(
+        egui::RichText::new("Btrfs snapshots of the system volume, taken by snapper before agent and package changes.")
+            .size(12.0)
+            .color(kit.text2()),
+    );
+    ui.add_space(space::S12);
+    if st.snapshots.is_empty() {
+        group(ui, None, |g| {
+            g.row("No snapshots", |ui| {
+                ui.label(
+                    egui::RichText::new("snapper isn't configured on this system")
+                        .color(kit.text3()),
+                );
+            });
+        });
+        return;
+    }
+    let mut pick = None;
+    group(ui, Some("Snapshots"), |g| {
+        for (num, desc) in st.snapshots.iter().rev() {
+            let label = format!("#{num}");
+            let desc = if desc.is_empty() {
+                "—"
+            } else {
+                desc.as_str()
+            };
+            g.row_detail(&label, Some(desc), |ui| {
+                if button(ui, ButtonKind::Secondary, "Roll Back…").clicked() {
+                    pick = Some(*num);
                 }
             });
         }
-        if st.snapshots.is_empty() {
-            right.weak("No snapshots — snapper not configured on this image.");
-        }
-        if !st.status.is_empty() {
-            right.separator();
-            right.label(&st.status);
-        }
     });
-        });
+    if pick.is_some() {
+        st.confirm_rollback = pick;
+    }
 }
 
 fn main() {
@@ -326,7 +491,7 @@ fn main() {
     refresh_agents(&mut st);
     refresh_snapshots(&mut st);
     let mut last_tick = std::time::Instant::now() - std::time::Duration::from_secs(4);
-    if let Err(e) = cosmos_uitk::run("Agents", "cosmos.agents", (640, 480), move |ui| {
+    if let Err(e) = cosmos_uitk::run("Agents", "cosmos.agents", (760, 520), move |ui| {
         if last_tick.elapsed() >= std::time::Duration::from_secs(3) {
             refresh_agents(&mut st);
             if let Some(sel) = st.selected.clone() {

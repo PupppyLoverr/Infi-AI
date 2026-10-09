@@ -660,6 +660,8 @@ dependencies = [
 name = "cosmos-agents"
 version = "0.1.0"
 dependencies = [
+ "cosmos-kit",
+ "cosmos-theme",
  "cosmos-uitk",
  "egui",
  "serde_json",
