@@ -376,27 +376,12 @@ pub fn draw(state: &mut ShellState) {
         btn_bg,
     );
 
-    // Header: date + clock, Win11 quick-settings style.
-    let date = if info.date.is_empty() {
-        "CosmosOS".to_string()
-    } else {
-        info.date.clone()
-    };
+    // Header: one line — the clock string already carries the weekday and date.
     draw::text(
         &mut pixmap,
         PAD as f32,
-        PAD as f32 + 6.0,
-        200.0,
-        16.0,
-        12.0,
-        &date,
-        fg_dim,
-    );
-    draw::text(
-        &mut pixmap,
-        PAD as f32,
-        PAD as f32 + 18.0,
-        200.0,
+        PAD as f32 + 2.0,
+        w as f32 - PAD as f32 * 2.0,
         20.0,
         15.0,
         &info.clock,
