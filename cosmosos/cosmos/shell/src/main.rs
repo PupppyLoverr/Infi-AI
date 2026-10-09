@@ -184,6 +184,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         assist_dirty: false,
         zoom_surface: None,
         zoom_window: 0,
+        zoom_origin: (0, 0),
         zoom_hover: None,
         zoom_dirty: false,
         menu_surface: None,
@@ -490,6 +491,8 @@ pub struct ShellState {
     pub assist_dirty: bool,
     /// Zoom flyout state — the window id it's open for, hovered cell.
     pub zoom_window: u64,
+    /// The flyout card's top-left on the output, for its glass sample.
+    pub zoom_origin: (i32, i32),
     pub zoom_hover: Option<(usize, usize)>,
     pub zoom_dirty: bool,
     /// Menubar dropdown: surface, open menu index, hovered row, screen pos.
@@ -1355,6 +1358,7 @@ impl ShellState {
         // Centre the card under the button, clamped to the screen.
         let (screen_w, _screen_h) = self.panel_size;
         let left = (x - cw as i32 / 2).clamp(4, (screen_w as i32 - cw as i32 - 4).max(4));
+        self.zoom_origin = (left, y);
         if self.zoom_surface.is_none() {
             let surface = self.compositor_state.create_surface(&self.qh);
             let layer = self.layer_shell.create_layer_surface(
