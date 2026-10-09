@@ -751,6 +751,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cosmos-kit-gallery"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cosmos-kit",
+ "cosmos-uitk",
+ "egui",
+]
+
+[[package]]
 name = "cosmos-lock"
 version = "0.1.0"
 dependencies = [
