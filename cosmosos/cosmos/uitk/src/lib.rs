@@ -320,7 +320,12 @@ impl UiState {
         self.painter
             .paint(canvas, w as u32, h as u32, prims, 1.0, clear);
         if self.debug {
-            let covered = canvas.chunks_exact(4).filter(|px| px[3] != 0).count();
+            let covered = canvas
+                .iter()
+                .skip(3)
+                .step_by(4)
+                .filter(|a| **a != 0)
+                .count();
             if covered == 0 || prims.is_empty() {
                 tracing::warn!(
                     "uitk: transparent frame — prims={} covered_px={} size={}x{}",
@@ -612,6 +617,9 @@ impl KeyboardHandler for UiState {
         _layout: u32,
     ) {
         self.modifiers = map_modifiers(modifiers);
+        // egui 0.36 tracks `InputState::modifiers` only from this event.
+        self.pending
+            .push(egui::Event::ModifiersChanged(self.modifiers));
     }
 }
 
@@ -663,7 +671,7 @@ impl PointerHandler for UiState {
                     if dx != 0.0 || dy != 0.0 {
                         self.pending.push(egui::Event::MouseWheel {
                             unit,
-                            delta: Vec2::new(dx as f32, dy as f32),
+                            delta: Vec2::new(dx, dy),
                             modifiers: self.modifiers,
                             phase: egui::TouchPhase::Move,
                         });

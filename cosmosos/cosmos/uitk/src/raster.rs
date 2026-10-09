@@ -75,8 +75,8 @@ impl Painter {
         ppp: f32,
         clear: [u8; 4],
     ) {
-        for px in buf.chunks_exact_mut(4) {
-            px.copy_from_slice(&clear);
+        for (b, c) in buf.iter_mut().zip(clear.iter().cycle()) {
+            *b = *c;
         }
         for prim in prims {
             let Primitive::Mesh(mesh) = &prim.primitive else {
@@ -95,7 +95,8 @@ impl Painter {
                 continue;
             }
 
-            for tri in mesh.indices.chunks_exact(3) {
+            for t in 0..mesh.indices.len() / 3 {
+                let tri = &mesh.indices[t * 3..t * 3 + 3];
                 let v0 = &mesh.vertices[tri[0] as usize];
                 let v1 = &mesh.vertices[tri[1] as usize];
                 let v2 = &mesh.vertices[tri[2] as usize];
@@ -144,6 +145,7 @@ fn sample(tex: &Texture, u: f32, v: f32) -> [f32; 4] {
     ]
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fill_tri(
     buf: &mut [u8],
     buf_w: u32,
