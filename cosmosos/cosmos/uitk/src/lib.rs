@@ -617,6 +617,9 @@ impl KeyboardHandler for UiState {
         _layout: u32,
     ) {
         self.modifiers = map_modifiers(modifiers);
+        // egui 0.36 tracks `InputState::modifiers` only from this event.
+        self.pending
+            .push(egui::Event::ModifiersChanged(self.modifiers));
     }
 }
 
