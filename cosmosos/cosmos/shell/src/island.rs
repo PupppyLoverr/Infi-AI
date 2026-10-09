@@ -26,6 +26,30 @@ const CARD_R: f32 = 22.0;
 
 type Rect = (f64, f64, f64, f64);
 
+/// Capsule ↔ card morph length (v5 §2.5).
+pub const MORPH: std::time::Duration = std::time::Duration::from_millis(280);
+
+/// Eased morph progress: 0 = capsule, 1 = full card (also when idle).
+pub fn morph(state: &ShellState) -> f32 {
+    let Some((t0, opening)) = state.island_anim else {
+        return 1.0;
+    };
+    let p = (t0.elapsed().as_secs_f32() / MORPH.as_secs_f32()).min(1.0);
+    let p = if opening { p } else { 1.0 - p };
+    1.0 - (1.0 - p).powi(3)
+}
+
+/// Visible card outline at morph progress `m`: grows from a capsule the
+/// pill's size at the top centre to the whole 460×220 card.
+pub fn morph_rect(m: f32) -> (f32, f32, f32, f32, f32) {
+    let lerp = |a: f32, b: f32| a + (b - a) * m;
+    let pw = PILL_W as f32;
+    let ph = crate::PANEL_HEIGHT as f32;
+    let w = lerp(pw, CARD_W as f32);
+    let h = lerp(ph, CARD_H as f32);
+    ((CARD_W as f32 - w) / 2.0, 0.0, w, h, lerp(ph / 2.0, CARD_R))
+}
+
 fn inside(r: Rect, x: f64, y: f64) -> bool {
     x >= r.0 && x < r.0 + r.2 && y >= r.1 && y < r.1 + r.3
 }
@@ -117,7 +141,12 @@ pub fn pulsing(state: &ShellState) -> bool {
     !crate::LITE.with(|l| l.get())
         && matches!(
             pill(state),
-            Pill::Approval(_) | Pill::Agent { busy: true, paused: false, .. }
+            Pill::Approval(_)
+                | Pill::Agent {
+                    busy: true,
+                    paused: false,
+                    ..
+                }
         )
 }
 
@@ -221,7 +250,11 @@ pub fn paint_pill(
             draw::text_centered(pm, x + 8.0, cy - 7.5, 18.0, 15.0, 10.5, &initial, WHITE);
             let label: String = name.chars().take(14).collect();
             draw::text(pm, x + 32.0, cy - 8.0, w - 96.0, 16.0, 12.0, &label, WHITE);
-            let right = if *paused { "Paused".to_string() } else { elapsed.clone() };
+            let right = if *paused {
+                "Paused".to_string()
+            } else {
+                elapsed.clone()
+            };
             let tw = draw::text_width(11.5, &right);
             let mut rx = x + w - 14.0 - tw;
             if *busy && !*paused && !lite {
@@ -274,9 +307,21 @@ pub enum Hit {
 }
 
 enum Row {
-    Approval { text: String, actions: Vec<String> },
-    Agent { name: String, doing: String, right: String, paused: bool, stopped: bool },
-    Media { text: String, playing: bool },
+    Approval {
+        text: String,
+        actions: Vec<String>,
+    },
+    Agent {
+        name: String,
+        doing: String,
+        right: String,
+        paused: bool,
+        stopped: bool,
+    },
+    Media {
+        text: String,
+        playing: bool,
+    },
 }
 
 fn rows(state: &ShellState) -> Vec<Row> {
@@ -514,13 +559,15 @@ pub fn draw(state: &mut ShellState) {
     let chips = chip_rects(&files);
     let dnd = state.dnd_on_island;
     let screen_x = ((state.panel_size.0 as f32 - w as f32) / 2.0).max(0.0);
+    let m = morph(state);
 
     let (pw, ph) = draw::phys(w, h);
-    let Ok((buffer, canvas)) =
-        state
-            .pool
-            .create_buffer(pw as i32, ph as i32, pw as i32 * 4, wl_shm::Format::Abgr8888)
-    else {
+    let Ok((buffer, canvas)) = state.pool.create_buffer(
+        pw as i32,
+        ph as i32,
+        pw as i32 * 4,
+        wl_shm::Format::Abgr8888,
+    ) else {
         tracing::warn!("island: pool create_buffer failed");
         return;
     };
@@ -545,7 +592,15 @@ pub fn draw(state: &mut ShellState) {
         Color::from_rgba8(0x08, 0x08, 0x0B, 0xE6),
     );
     // Black glass: deepen the dark tint so it reads as the island, not a panel.
-    draw::fill_round_rect(&mut pm, 0.0, 0.0, wf, hf, CARD_R, Color::from_rgba8(0, 0, 0, 0x8C));
+    draw::fill_round_rect(
+        &mut pm,
+        0.0,
+        0.0,
+        wf,
+        hf,
+        CARD_R,
+        Color::from_rgba8(0, 0, 0, 0x8C),
+    );
     draw::stroke_round_rect(
         &mut pm,
         0.5,
@@ -614,9 +669,16 @@ pub fn draw(state: &mut ShellState) {
                 match r {
                     Row::Approval { text, actions } => {
                         let (cr, cg, cb) = WARN;
-                        dot(&mut pm, PAD as f32 + 9.0, cy, 4.0, Color::from_rgba8(cr, cg, cb, 0xFF));
+                        dot(
+                            &mut pm,
+                            PAD as f32 + 9.0,
+                            cy,
+                            4.0,
+                            Color::from_rgba8(cr, cg, cb, 0xFF),
+                        );
                         let rects = action_rects(actions, ry);
-                        let text_w = rects.first().map(|b| b.0).unwrap_or(CARD_W as f64) - PAD - 30.0;
+                        let text_w =
+                            rects.first().map(|b| b.0).unwrap_or(CARD_W as f64) - PAD - 30.0;
                         draw::text(
                             &mut pm,
                             (PAD + 24.0) as f32,
@@ -676,7 +738,16 @@ pub fn draw(state: &mut ShellState) {
                             agent_colour(name),
                         );
                         let initial = name.chars().take(1).collect::<String>().to_uppercase();
-                        draw::text_centered(&mut pm, PAD as f32, cy - 8.0, 22.0, 16.0, 11.5, &initial, WHITE);
+                        draw::text_centered(
+                            &mut pm,
+                            PAD as f32,
+                            cy - 8.0,
+                            22.0,
+                            16.0,
+                            11.5,
+                            &initial,
+                            WHITE,
+                        );
                         let btns = if *stopped { 0.0 } else { 2.0 * (TAB + 6.0) };
                         let right_w = draw::text_width(11.5, right) as f64 + 12.0;
                         let text_w = body_w - 32.0 - btns - right_w;
@@ -701,11 +772,24 @@ pub fn draw(state: &mut ShellState) {
                             WHITE_DIM,
                         );
                         let rx = CARD_W as f64 - PAD - btns - right_w;
-                        draw::text(&mut pm, rx as f32, cy - 7.5, right_w as f32, 15.0, 11.5, right, WHITE_DIM);
+                        draw::text(
+                            &mut pm,
+                            rx as f32,
+                            cy - 7.5,
+                            right_w as f32,
+                            15.0,
+                            11.5,
+                            right,
+                            WHITE_DIM,
+                        );
                         if !stopped {
                             for (slot, kind, hit) in [
                                 (0, "stop", Hit::AgentStop(agent)),
-                                (1, if *paused { "play" } else { "pause" }, Hit::AgentPause(agent)),
+                                (
+                                    1,
+                                    if *paused { "play" } else { "pause" },
+                                    Hit::AgentPause(agent),
+                                ),
                             ] {
                                 let b = icon_btn(slot, ry);
                                 let bg = if hover == Some(hit) {
@@ -755,7 +839,12 @@ pub fn draw(state: &mut ShellState) {
                             (TAB / 2.0) as f32,
                             bg,
                         );
-                        btn_glyph(&mut pm, if *playing { "pause" } else { "play" }, b, glyph_on);
+                        btn_glyph(
+                            &mut pm,
+                            if *playing { "pause" } else { "play" },
+                            b,
+                            glyph_on,
+                        );
                     }
                 }
             }
@@ -771,7 +860,9 @@ pub fn draw(state: &mut ShellState) {
                 } else {
                     Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x14)
                 };
-                draw::fill_round_rect(&mut pm, r.0 as f32, r.1 as f32, r.2 as f32, r.3 as f32, 10.0, bg);
+                draw::fill_round_rect(
+                    &mut pm, r.0 as f32, r.1 as f32, r.2 as f32, r.3 as f32, 10.0, bg,
+                );
                 // Up to three lines of the snippet, word-agnostic wrap.
                 let flat: String = t.replace('\n', " ").trim().chars().take(120).collect();
                 let max_w = r.2 - 16.0;
@@ -865,6 +956,18 @@ pub fn draw(state: &mut ShellState) {
         }
     }
 
+    if m < 1.0 {
+        // Mid-morph: clip the painted card to the growing capsule outline.
+        let (mx, my, mw, mh, mr) = morph_rect(m);
+        if let (Some(mut mask), Some(path)) = (
+            tiny_skia::Mask::new(pw, ph),
+            draw::round_rect_path(mx, my, mw, mh, mr),
+        ) {
+            mask.fill_path(&path, FillRule::Winding, true, draw::xf());
+            pm.apply_mask(&mask);
+        }
+    }
+
     state.set_viewport(&layer.wl_surface().clone(), w, h);
     buffer.attach_to(layer.wl_surface()).ok();
     layer.wl_surface().damage_buffer(0, 0, pw as i32, ph as i32);
@@ -887,7 +990,10 @@ pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {
 
 /// Esc closes the card; Left/Right switch tabs.
 pub fn key_press(state: &mut ShellState, event: KeyEvent) {
-    let i = TABS.iter().position(|t| *t == state.island_tab).unwrap_or(0);
+    let i = TABS
+        .iter()
+        .position(|t| *t == state.island_tab)
+        .unwrap_or(0);
     match event.keysym {
         Keysym::Escape => state.close_island(),
         Keysym::Left => {
@@ -908,13 +1014,19 @@ mod tests {
 
     #[test]
     fn verbs_are_short_plain_english() {
-        assert_eq!(short_verb("claude wants to write — ~/notes.txt"), "Write file");
+        assert_eq!(
+            short_verb("claude wants to write — ~/notes.txt"),
+            "Write file"
+        );
         assert_eq!(short_verb("claude wants to launch — firefox"), "Launch");
         assert_eq!(
             short_verb("claude wants a screenshot of the desktop"),
             "A screenshot of t…"
         );
-        assert_eq!(short_verb("claude wants to change setting dark"), "Change setting da…");
+        assert_eq!(
+            short_verb("claude wants to change setting dark"),
+            "Change setting da…"
+        );
     }
 
     #[test]
@@ -927,13 +1039,28 @@ mod tests {
             .map(|s| s.to_string())
             .collect();
         let r = action_rects(&labels, row_y(0));
-        assert!(r[0].0 > CARD_W as f64 / 3.0, "approval text keeps a third of the row");
+        assert!(
+            r[0].0 > CARD_W as f64 / 3.0,
+            "approval text keeps a third of the row"
+        );
         assert!(r[2].0 + r[2].2 <= CARD_W as f64 - PAD + 0.01);
         assert!(r[0].0 + r[0].2 < r[1].0 && r[1].0 + r[1].2 < r[2].0);
         let last = clip_rect(MAX_CLIPS - 1);
         assert!(last.1 + last.3 <= CARD_H as f64 - PAD + 0.01);
         assert!(last.0 + last.2 <= CARD_W as f64 - PAD + 0.01);
         assert!(tab_rect(2).0 + TAB < CARD_W as f64 / 2.0);
+    }
+
+    #[test]
+    fn morph_runs_from_pill_to_card() {
+        let (x, _, w, h, r) = morph_rect(0.0);
+        assert_eq!((w, h), (PILL_W as f32, crate::PANEL_HEIGHT as f32));
+        assert_eq!(x, (CARD_W as f32 - PILL_W as f32) / 2.0);
+        assert_eq!(r, h / 2.0);
+        assert_eq!(
+            morph_rect(1.0),
+            (0.0, 0.0, CARD_W as f32, CARD_H as f32, CARD_R)
+        );
     }
 
     #[test]
