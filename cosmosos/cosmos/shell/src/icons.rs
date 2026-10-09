@@ -27,7 +27,7 @@ fn stroke(pixmap: &mut PixmapMut<'_>, pb: PathBuilder, s: f32, w: f32, color: Co
             line_join: tiny_skia::LineJoin::Round,
             ..Default::default()
         },
-        Transform::default(),
+        crate::draw::xf(),
         None,
     );
 }
@@ -44,7 +44,7 @@ fn fill(pixmap: &mut PixmapMut<'_>, pb: PathBuilder, color: Color) {
             ..Default::default()
         },
         FillRule::Winding,
-        Transform::default(),
+        crate::draw::xf(),
         None,
     );
 }
@@ -138,7 +138,9 @@ pub fn app_tile(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32
         "firefox" => ((0xFF, 0xB0, 0x3A), (0xE0, 0x44, 0x0E)),
         _ => ((0x8A, 0x8F, 0x9E), (0x44, 0x46, 0x50)),
     };
-    let Some(path) = squircle(x, y, size) else { return };
+    let Some(path) = squircle(x, y, size) else {
+        return;
+    };
     let Some(lg) = LinearGradient::new(
         Point::from_xy(x, y),
         Point::from_xy(x, y + size),
@@ -159,7 +161,7 @@ pub fn app_tile(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32
             ..Default::default()
         },
         FillRule::Winding,
-        Transform::default(),
+        crate::draw::xf(),
         None,
     );
     // White glyph centred at ~58% — reads at 48px and 128px alike.

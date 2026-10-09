@@ -309,16 +309,17 @@ pub fn draw(state: &mut ShellState) {
         .map(|b| b.present)
         .unwrap_or(false);
 
-    let stride = w as i32 * 4;
+    let (pw, ph) = draw::phys(w, h);
+    let stride = pw as i32 * 4;
     let Ok((buffer, canvas)) =
         state
             .pool
-            .create_buffer(w as i32, h as i32, stride, wl_shm::Format::Abgr8888)
+            .create_buffer(pw as i32, ph as i32, stride, wl_shm::Format::Abgr8888)
     else {
         tracing::warn!("quick: pool create_buffer failed");
         return;
     };
-    let Some(mut pixmap) = PixmapMut::from_bytes(canvas, w, h) else {
+    let Some(mut pixmap) = PixmapMut::from_bytes(canvas, pw, ph) else {
         return;
     };
     // Clear before painting — the rounded corners and any unpainted rows
@@ -457,7 +458,7 @@ pub fn draw(state: &mut ShellState) {
                 ..Default::default()
             },
             tiny_skia::FillRule::Winding,
-            tiny_skia::Transform::default(),
+            crate::draw::xf(),
             None,
         );
     }
@@ -624,7 +625,7 @@ pub fn draw(state: &mut ShellState) {
                     ..Default::default()
                 },
                 tiny_skia::FillRule::Winding,
-                tiny_skia::Transform::default(),
+                crate::draw::xf(),
                 None,
             );
         }
@@ -648,7 +649,7 @@ pub fn draw(state: &mut ShellState) {
                         width: 1.0,
                         ..Default::default()
                     },
-                    tiny_skia::Transform::default(),
+                    crate::draw::xf(),
                     None,
                 );
             }
@@ -678,7 +679,7 @@ pub fn draw(state: &mut ShellState) {
                     ..Default::default()
                 },
                 tiny_skia::FillRule::EvenOdd,
-                tiny_skia::Transform::default(),
+                crate::draw::xf(),
                 None,
             );
         }
@@ -696,7 +697,7 @@ pub fn draw(state: &mut ShellState) {
                 &path,
                 &ink,
                 tiny_skia::FillRule::Winding,
-                tiny_skia::Transform::default(),
+                crate::draw::xf(),
                 None,
             );
         }
@@ -714,7 +715,7 @@ pub fn draw(state: &mut ShellState) {
                     width: 1.2,
                     ..Default::default()
                 },
-                tiny_skia::Transform::default(),
+                crate::draw::xf(),
                 None,
             );
         }
@@ -746,7 +747,7 @@ pub fn draw(state: &mut ShellState) {
                 &path,
                 &moon,
                 tiny_skia::FillRule::EvenOdd,
-                tiny_skia::Transform::default(),
+                crate::draw::xf(),
                 None,
             );
         }
@@ -795,7 +796,7 @@ pub fn draw(state: &mut ShellState) {
                     ..Default::default()
                 },
                 tiny_skia::FillRule::Winding,
-                tiny_skia::Transform::default(),
+                crate::draw::xf(),
                 None,
             );
         }
@@ -835,7 +836,8 @@ pub fn draw(state: &mut ShellState) {
     }
 
     let wl_surface = layer.wl_surface().clone();
+    state.set_viewport(&wl_surface, w, h);
     buffer.attach_to(&wl_surface).ok();
-    wl_surface.damage_buffer(0, 0, w as i32, h as i32);
+    wl_surface.damage_buffer(0, 0, pw as i32, ph as i32);
     wl_surface.commit();
 }

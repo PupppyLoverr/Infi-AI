@@ -80,16 +80,17 @@ pub fn draw(state: &mut ShellState) {
         Color::from_rgba8(0xE8, 0xE8, 0xEA, 0xFF)
     };
 
-    let stride = w as i32 * 4;
+    let (pw, ph) = draw::phys(w, h);
+    let stride = pw as i32 * 4;
     let Ok((buffer, canvas)) =
         state
             .pool
-            .create_buffer(w as i32, h as i32, stride, wl_shm::Format::Abgr8888)
+            .create_buffer(pw as i32, ph as i32, stride, wl_shm::Format::Abgr8888)
     else {
         tracing::warn!("notify: pool create_buffer failed");
         return;
     };
-    let Some(mut pixmap) = PixmapMut::from_bytes(canvas, w, h) else {
+    let Some(mut pixmap) = PixmapMut::from_bytes(canvas, pw, ph) else {
         return;
     };
     // Clear before painting — inter-card gaps and rounded corners would
@@ -103,7 +104,19 @@ pub fn draw(state: &mut ShellState) {
         let ch = card_h(n) as f32;
         // Rounded card — the drop shadow comes from the compositor's
         // layer decal, so the card itself only needs fill + hairline.
-        glass::fill_glass(&mut pixmap, &crate::ShellState::wallpaper_name(), 0.0, y, NOTIFY_WIDTH as f32, ch, 12.0, (state.panel_size.0 as f32 - NOTIFY_WIDTH as f32 - 8.0).max(0.0), crate::PANEL_HEIGHT as f32 + 8.0 + y, state.dark, card);
+        glass::fill_glass(
+            &mut pixmap,
+            &crate::ShellState::wallpaper_name(),
+            0.0,
+            y,
+            NOTIFY_WIDTH as f32,
+            ch,
+            12.0,
+            (state.panel_size.0 as f32 - NOTIFY_WIDTH as f32 - 8.0).max(0.0),
+            crate::PANEL_HEIGHT as f32 + 8.0 + y,
+            state.dark,
+            card,
+        );
         draw::stroke_round_rect(
             &mut pixmap,
             0.5,
@@ -163,22 +176,14 @@ pub fn draw(state: &mut ShellState) {
             let (bx, bw) = button_geom(n.actions.len(), i);
             let by = y + CARD_H as f32 + 3.0;
             draw::fill_round_rect(&mut pixmap, bx, by, bw, 26.0, 8.0, btn_fill);
-            draw::text(
-                &mut pixmap,
-                bx,
-                by + 6.0,
-                bw,
-                16.0,
-                11.0,
-                label,
-                fg,
-            );
+            draw::text(&mut pixmap, bx, by + 6.0, bw, 16.0, 11.0, label, fg);
         }
     }
 
     let wl_surface = layer.wl_surface().clone();
+    state.set_viewport(&wl_surface, w, h);
     buffer.attach_to(&wl_surface).ok();
-    wl_surface.damage_buffer(0, 0, w as i32, h as i32);
+    wl_surface.damage_buffer(0, 0, pw as i32, ph as i32);
     wl_surface.commit();
 }
 

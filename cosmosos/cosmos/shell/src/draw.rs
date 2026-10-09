@@ -42,6 +42,35 @@ pub fn accent_soft(dark: bool) -> Color {
     })
 }
 
+thread_local! {
+    /// Output scale: surfaces are laid out in logical px and painted
+    /// into buffers of logical × SCALE (the viewport maps them back).
+    static SCALE: std::cell::Cell<f32> = const { std::cell::Cell::new(1.0) };
+}
+
+pub fn set_scale(s: f32) {
+    SCALE.with(|c| c.set(s));
+}
+
+pub fn scale() -> f32 {
+    SCALE.with(|c| c.get())
+}
+
+/// Logical → buffer transform for every paint call.
+pub fn xf() -> Transform {
+    let s = scale();
+    Transform::from_scale(s, s)
+}
+
+/// Buffer size for a `w`×`h` logical surface.
+pub fn phys(w: u32, h: u32) -> (u32, u32) {
+    let s = scale();
+    (
+        ((w as f32 * s).round() as u32).max(1),
+        ((h as f32 * s).round() as u32).max(1),
+    )
+}
+
 /// Fill a rect.
 pub fn fill_rect(pixmap: &mut PixmapMut<'_>, x: f32, y: f32, w: f32, h: f32, color: Color) {
     let Some(rect) = Rect::from_xywh(x, y, w, h) else {
@@ -54,7 +83,7 @@ pub fn fill_rect(pixmap: &mut PixmapMut<'_>, x: f32, y: f32, w: f32, h: f32, col
             anti_alias: false,
             ..Default::default()
         },
-        Transform::default(),
+        xf(),
         None,
     );
 }
@@ -103,7 +132,7 @@ pub fn fill_round_rect(
             ..Default::default()
         },
         tiny_skia::FillRule::Winding,
-        Transform::default(),
+        xf(),
         None,
     );
 }
@@ -133,7 +162,7 @@ pub fn stroke_round_rect(
             width,
             ..Default::default()
         },
-        Transform::default(),
+        xf(),
         None,
     );
 }
@@ -187,7 +216,7 @@ pub fn shadow(pixmap: &mut PixmapMut<'_>, x: f32, y: f32, w: f32, h: f32, r: f32
         (y - MARGIN as f32).round() as i32,
         px.as_ref().as_ref(),
         &tiny_skia::PixmapPaint::default(),
-        Transform::default(),
+        xf(),
         None,
     );
 }
@@ -233,7 +262,7 @@ pub fn scrim(pixmap: &mut PixmapMut<'_>, w: u32, h: u32, dark: bool) {
         0,
         px.as_ref().as_ref(),
         &tiny_skia::PixmapPaint::default(),
-        Transform::default(),
+        xf(),
         None,
     );
 }
@@ -404,8 +433,10 @@ fn text_styled(
         SWASH_CACHE.with(|cache| {
             let mut fs = fs.borrow_mut();
             let mut cache = cache.borrow_mut();
-            let mut buf = Buffer::new(&mut fs, Metrics::new(font_size, line_h));
-            buf.set_size(&mut fs, Some(max_w.max(1.0)), Some(line_h));
+            // Shaped at buffer resolution so glyphs stay crisp at 125%.
+            let k = scale();
+            let mut buf = Buffer::new(&mut fs, Metrics::new(font_size * k, line_h * k));
+            buf.set_size(&mut fs, Some((max_w * k).max(1.0)), Some(line_h * k));
             // Inter when the image ships it, DejaVu otherwise — fontdb
             // falls back per-glyph, so Name() degrades gracefully.
             let attrs = Attrs::new().family(family);
@@ -416,8 +447,8 @@ fn text_styled(
             };
             buf.set_text(&mut fs, content, &attrs, Shaping::Advanced);
             buf.shape_until_scroll(&mut fs, false);
-            let ox = x as i32;
-            let oy = y as i32;
+            let ox = (x * k) as i32;
+            let oy = (y * k) as i32;
             let pw = pixmap.width() as i32;
             let ph = pixmap.height() as i32;
             let pixels = pixmap.pixels_mut();

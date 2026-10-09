@@ -114,16 +114,17 @@ pub fn draw(state: &mut ShellState) {
     let hover = state.zoom_hover;
     let (card, prev_bg, hover_bg, sep, _fg) = theme(dark);
 
-    let stride = w as i32 * 4;
+    let (pw, ph) = draw::phys(w, h);
+    let stride = pw as i32 * 4;
     let Ok((buffer, canvas)) =
         state
             .pool
-            .create_buffer(w as i32, h as i32, stride, wl_shm::Format::Abgr8888)
+            .create_buffer(pw as i32, ph as i32, stride, wl_shm::Format::Abgr8888)
     else {
         tracing::warn!("zoomflyout: pool create_buffer failed");
         return;
     };
-    let Some(mut pixmap) = PixmapMut::from_bytes(canvas, w, h) else {
+    let Some(mut pixmap) = PixmapMut::from_bytes(canvas, pw, ph) else {
         return;
     };
     pixmap.fill(Color::TRANSPARENT);
@@ -163,8 +164,10 @@ pub fn draw(state: &mut ShellState) {
         }
     }
 
+    state.set_viewport(&layer.wl_surface().clone(), w, h);
+
     buffer.attach_to(layer.wl_surface()).ok();
-    layer.wl_surface().damage_buffer(0, 0, w as i32, h as i32);
+    layer.wl_surface().damage_buffer(0, 0, pw as i32, ph as i32);
     // Input region = the whole card; the surface IS the card, so a
     // press anywhere else already misses this surface entirely.
     layer.wl_surface().commit();

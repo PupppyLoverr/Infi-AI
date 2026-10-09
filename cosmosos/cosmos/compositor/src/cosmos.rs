@@ -1511,8 +1511,12 @@ impl<BackendData: Backend> AnvilState<BackendData> {
     /// configure to repaint.
     pub fn flush_pending_configures(&mut self) {
         for window in self.space.elements() {
+            // A toplevel that hasn't committed yet gets its initial
+            // configure from ensure_initial_configure, with its geometry.
             if let Some(toplevel) = window.0.toplevel() {
-                toplevel.send_pending_configure();
+                if toplevel.is_initial_configure_sent() {
+                    toplevel.send_pending_configure();
+                }
             }
         }
     }

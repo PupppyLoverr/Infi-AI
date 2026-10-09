@@ -8,7 +8,7 @@ use smithay_client_toolkit::{
     seat::keyboard::{KeyEvent, Keysym},
     shell::WaylandSurface,
 };
-use tiny_skia::{Color, PathBuilder, PixmapMut, Stroke, Transform};
+use tiny_skia::{Color, PathBuilder, PixmapMut, Stroke};
 use wayland_client::protocol::wl_shm;
 
 use crate::{desktop::AppEntry, dock, draw, glass, icons, ShellState, LAUNCHER_WIDTH};
@@ -602,16 +602,17 @@ pub fn draw(state: &mut ShellState) {
     // Hoisted before the pool's mutable borrow below.
     let wigs = widgets(state);
 
-    let stride = w as i32 * 4;
+    let (pw, ph) = draw::phys(w, h);
+    let stride = pw as i32 * 4;
     let Ok((buffer, canvas)) =
         state
             .pool
-            .create_buffer(w as i32, h as i32, stride, wl_shm::Format::Abgr8888)
+            .create_buffer(pw as i32, ph as i32, stride, wl_shm::Format::Abgr8888)
     else {
         tracing::warn!("launcher: pool create_buffer failed");
         return;
     };
-    let Some(mut pixmap) = PixmapMut::from_bytes(canvas, w, h) else {
+    let Some(mut pixmap) = PixmapMut::from_bytes(canvas, pw, ph) else {
         return;
     };
     // The pool slot may still carry a previous surface's frame — the dim
@@ -1024,8 +1025,9 @@ pub fn draw(state: &mut ShellState) {
     );
 
     let wl_surface = layer.wl_surface().clone();
+    state.set_viewport(&wl_surface, w, h);
     buffer.attach_to(&wl_surface).ok();
-    wl_surface.damage_buffer(0, 0, w as i32, h as i32);
+    wl_surface.damage_buffer(0, 0, pw as i32, ph as i32);
     wl_surface.commit();
 }
 
@@ -1058,13 +1060,13 @@ fn magnifier(pixmap: &mut PixmapMut<'_>, cx: f32, cy: f32, color: CtColor) {
     let mut pb = PathBuilder::new();
     pb.push_circle(cx, cy - 1.0, 4.0);
     if let Some(path) = pb.finish() {
-        pixmap.stroke_path(&path, &paint, &stroke, Transform::default(), None);
+        pixmap.stroke_path(&path, &paint, &stroke, crate::draw::xf(), None);
     }
     let mut pb = PathBuilder::new();
     pb.move_to(cx + 3.0, cy + 2.0);
     pb.line_to(cx + 6.5, cy + 5.5);
     if let Some(path) = pb.finish() {
-        pixmap.stroke_path(&path, &paint, &stroke, Transform::default(), None);
+        pixmap.stroke_path(&path, &paint, &stroke, crate::draw::xf(), None);
     }
 }
 

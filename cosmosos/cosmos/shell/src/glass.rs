@@ -38,12 +38,7 @@ fn load(name: &str) -> Option<Glass> {
         .find_map(|s| image::open(d.join(format!("{name}{s}"))).ok())?
         .to_rgba8();
     // Downscale to the working size (fast filter — blurred anyway).
-    let small = image::imageops::resize(
-        &img,
-        GW,
-        GH,
-        image::imageops::FilterType::Triangle,
-    );
+    let small = image::imageops::resize(&img, GW, GH, image::imageops::FilterType::Triangle);
     // ~40px blur at 1080p ≈ sigma ~10 at this downscale.
     let mut blurred = image::imageops::blur(&small, 10.0);
     // Saturation ×1.2 (spec-v3 §2.2) plus ±2% hash-noise dither so the
@@ -123,7 +118,7 @@ pub fn fill_glass(
                 ..Default::default()
             },
             tiny_skia::FillRule::Winding,
-            Transform::default(),
+            crate::draw::xf(),
             None,
         );
         return;
@@ -156,7 +151,7 @@ pub fn fill_glass(
             ..Default::default()
         },
         tiny_skia::FillRule::Winding,
-        Transform::default(),
+        crate::draw::xf(),
         None,
     );
     // Tint + hairline from the cosmos-theme glass tokens.
@@ -171,7 +166,7 @@ pub fn fill_glass(
             ..Default::default()
         },
         tiny_skia::FillRule::Winding,
-        Transform::default(),
+        crate::draw::xf(),
         None,
     );
     // 1px inner hairline, inset half a pixel.
@@ -190,7 +185,7 @@ pub fn fill_glass(
                 width: 1.0,
                 ..Default::default()
             },
-            Transform::default(),
+            crate::draw::xf(),
             None,
         );
     }
