@@ -24,6 +24,7 @@ mod popups;
 mod preview;
 mod quick;
 mod search;
+mod startw;
 mod switcher;
 mod sysinfo;
 mod weather;
@@ -199,6 +200,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         launcher_search: false,
         launcher_preview: None,
         launcher_card_h: 0.0,
+        start_todos: None,
+        start_todo_edit: None,
+        start_photo: None,
         ask_tx: None,
         ask_id: 0,
         ask_pid: None,
@@ -215,6 +219,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         dark: true,
         panel_dirty: true,
         launcher_dirty: false,
+        start_slide: 0,
         notify_dirty: false,
         quick_dirty: false,
         panel_hover: (0.0, false),
@@ -542,6 +547,9 @@ pub struct ShellState {
     pub launcher_preview: Option<preview::FilePreview>,
     /// Painted Search or Ask card height (pill + results/answer).
     pub launcher_card_h: f64,
+    pub start_todos: Option<Vec<startw::Todo>>,
+    pub start_todo_edit: Option<String>,
+    pub start_photo: Option<(std::path::PathBuf, tiny_skia::Pixmap)>,
     pub ask_tx: Option<calloop::channel::Sender<(u64, ask::Event)>>,
     pub ask_id: u64,
     pub ask_pid: Option<u32>,
@@ -562,6 +570,8 @@ pub struct ShellState {
     pub dark: bool,
     pub panel_dirty: bool,
     pub launcher_dirty: bool,
+    /// Start Photos slideshow step last painted (`startw::slide` period).
+    pub start_slide: u64,
     pub notify_dirty: bool,
     pub quick_dirty: bool,
     /// (x, hovering) — last pointer x on the panel, for hit highlights.
@@ -869,6 +879,7 @@ impl ShellState {
             return;
         }
         self.launcher_open = open;
+        self.start_todo_edit = None;
         if open {
             self.set_quick_open(false);
             self.launcher_query = self.launcher_preset.take().unwrap_or_default();
@@ -952,6 +963,7 @@ impl ShellState {
     }
 
     fn close_launcher(&mut self) {
+        self.start_todo_edit = None;
         if self.launcher_open {
             self.set_launcher_open(false);
             self.ipc.send(&cosmos_ipc::Request::ToggleLauncher);
@@ -1033,6 +1045,13 @@ impl ShellState {
                     let _ = desktop::launch(&app);
                 }
                 self.close_launcher();
+            }
+            launcher::Hit::Widget(dx, dy) => {
+                let w = LAUNCHER_WIDTH as f32 - 32.0;
+                if startw::press(self, w, dx as f32, dy as f32) {
+                    self.close_launcher();
+                }
+                self.launcher_dirty = true;
             }
             launcher::Hit::Action(_) | launcher::Hit::Input | launcher::Hit::List => {}
             launcher::Hit::Backdrop => self.close_launcher(),
@@ -1606,6 +1625,18 @@ impl ShellState {
 
     fn on_tick(&mut self) {
         self.panel_dirty = true; // clock
+
+        // Start's Photos slideshow steps every 6 s; nothing else repaints it.
+        let slide = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() / 6)
+            .unwrap_or(0);
+        if slide != self.start_slide {
+            self.start_slide = slide;
+            if self.launcher_open {
+                self.launcher_dirty = true;
+            }
+        }
         self.agents = activity::scan_agents();
         // Elapsed timers + approval/agent changes.
         self.refresh_island();
