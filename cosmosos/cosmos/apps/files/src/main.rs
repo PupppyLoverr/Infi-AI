@@ -846,7 +846,7 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
     }
     if f.ask
         .as_ref()
-        .is_some_and(|job| !ask::result_sheet(&ctx, job))
+        .is_some_and(|job| ask::result_sheet(&ctx, job, false) != ask::SheetResult::Open)
     {
         f.ask = None;
     }
