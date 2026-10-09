@@ -309,7 +309,7 @@ pub fn draw(state: &mut ShellState) {
         ),
         DockPos::Bottom => (
             rx as f32,
-            (state.panel_size.1 as f32 - MARGIN as f32 - STRIP as f32).max(0.0),
+            (glass::screen_size().1 - MARGIN as f32 - STRIP as f32).max(0.0),
         ),
     };
     // The pill casts its own shadow inside the surface — the compositor

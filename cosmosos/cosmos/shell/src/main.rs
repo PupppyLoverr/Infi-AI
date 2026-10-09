@@ -1627,9 +1627,12 @@ impl LayerShellHandler for ShellState {
         if self.dock_surface.as_ref() == Some(layer) {
             self.dock_size = configure.new_size;
             self.dock_dirty = true;
-            // The dock rail spans the output's height — with the panel's
-            // width that's the full screen size for glass sampling.
-            glass::set_screen_size(self.panel_size.0 as f32, configure.new_size.1 as f32);
+            // A side rail spans the output's height — with the panel's
+            // width that's the full screen size for glass sampling (a
+            // bottom dock is only its own height; xdg-output covers it).
+            if self.dock_position != dock::DockPos::Bottom {
+                glass::set_screen_size(self.panel_size.0 as f32, configure.new_size.1 as f32);
+            }
         }
         if self.switcher_surface.as_ref() == Some(layer) {
             self.switcher_size = (
@@ -1999,6 +2002,21 @@ impl PointerHandler for ShellState {
     }
 }
 
+impl ShellState {
+    /// Glass samples the wallpaper in screen space, so it needs the
+    /// output's logical size (xdg-output) — no layer surface spans it.
+    fn note_output_size(&mut self, output: &wl_output::WlOutput) {
+        let Some((w, h)) = self.output_state.info(output).and_then(|i| i.logical_size) else {
+            return;
+        };
+        if w > 0 && h > 0 && glass::screen_size() != (w as f32, h as f32) {
+            glass::set_screen_size(w as f32, h as f32);
+            self.dock_dirty = true;
+            self.panel_dirty = true;
+        }
+    }
+}
+
 impl OutputHandler for ShellState {
     fn output_state(&mut self) -> &mut OutputState {
         &mut self.output_state
@@ -2008,16 +2026,18 @@ impl OutputHandler for ShellState {
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _output: wl_output::WlOutput,
+        output: wl_output::WlOutput,
     ) {
+        self.note_output_size(&output);
     }
 
     fn update_output(
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _output: wl_output::WlOutput,
+        output: wl_output::WlOutput,
     ) {
+        self.note_output_size(&output);
     }
 
     fn output_destroyed(
