@@ -15,6 +15,8 @@ pub struct AgentActivity {
     pub busy: bool,
     pub calls: u64,
     pub paused: bool,
+    /// Stopped from the island: agentd refuses its further tool calls.
+    pub stopped: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -77,6 +79,7 @@ pub fn scan_agents() -> Vec<AgentActivity> {
         let agent = v["agent"].as_str().unwrap_or("agent").to_string();
         out.push(AgentActivity {
             paused: dir.join(format!("{}.paused", safe_name(&agent))).exists(),
+            stopped: dir.join(format!("{}.stopped", safe_name(&agent))).exists(),
             agent,
             started: v["started"].as_u64().unwrap_or(0),
             tool: v["tool"].as_str().unwrap_or("").to_string(),
@@ -100,6 +103,18 @@ pub fn set_paused(agent: &str, paused: bool) {
     if let Err(e) = r {
         tracing::warn!("agent pause flag {}: {e}", flag.display());
     }
+}
+
+/// Stop refuses every further tool call of the agent inside cosmos-agentd
+/// (and releases a held paused call, which is then refused too).
+pub fn set_stopped(agent: &str) {
+    let dir = live_dir();
+    let r = std::fs::create_dir_all(&dir)
+        .and_then(|_| std::fs::write(dir.join(format!("{}.stopped", safe_name(agent))), b""));
+    if let Err(e) = r {
+        tracing::warn!("agent stop flag {agent}: {e}");
+    }
+    set_paused(agent, false);
 }
 
 /// "4:07" / "1:02:33" since `started`.

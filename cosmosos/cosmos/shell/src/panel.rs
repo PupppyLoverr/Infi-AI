@@ -102,7 +102,7 @@ pub fn draw(state: &mut ShellState) {
     let dark = state.dark;
     let tray_x = w as f64 - status_w - 12.0;
     let pill = crate::island::pill_rect(state);
-    let pill_act = crate::island::pill_activity(state);
+    let pill_act = crate::island::pill(state);
 
     let (pw, ph) = draw::phys(w, h);
     let stride = pw as i32 * 4;
@@ -212,13 +212,11 @@ pub fn draw(state: &mut ShellState) {
         }
     }
 
-    // Dynamic island pill — a centred capsule holding the latest
-    // clipboard snippet + staged-file count; click/hover expands the
-    // island card below the menubar (droppy-style).
+    // Dynamic island — black capsule hugging the menubar centre.
     {
         let (px, py, pw, ph) = pill;
         // Keep clear of the focused-app name on the left and the pager on
-        // the right — in tight widths the pill just isn't drawn.
+        // the right — in tight widths the capsule just isn't drawn.
         let name_right = if name.is_empty() {
             LAUNCH_BTN_W + 4.0
         } else {
@@ -226,100 +224,15 @@ pub fn draw(state: &mut ShellState) {
         };
         let pager_left = w as f64 - status_w - 12.0 - ws_count as f64 * WS_CELL_W - 10.0;
         if px > name_right && px + pw < pager_left {
-            let pill_bg = if state.island_open {
-                draw::accent_soft(dark)
-            } else if dark {
-                Color::from_rgba8(0x24, 0x25, 0x2A, 0xD8)
-            } else {
-                Color::from_rgba8(0xED, 0xED, 0xF0, 0xE8)
-            };
             let hover_pill = hov && hx >= px && hx < px + pw;
-            let pill_bg = if hover_pill && !state.island_open {
-                hover_bg
-            } else {
-                pill_bg
-            };
-            draw::fill_round_rect(
+            crate::island::paint_pill(
                 &mut pixmap,
-                px as f32,
-                py as f32,
-                pw as f32,
-                ph as f32,
-                (ph / 2.0) as f32,
-                pill_bg,
+                &pill_act,
+                (px, py, pw, ph),
+                hover_pill,
+                state.island_open,
+                dark,
             );
-            if let Some(act) = &pill_act {
-                // Live activity: status dot + label (approval, agent, media).
-                draw::fill_round_rect(
-                    &mut pixmap,
-                    (px + 11.0) as f32,
-                    (py + ph / 2.0 - 3.5) as f32,
-                    7.0,
-                    7.0,
-                    3.5,
-                    if act.live {
-                        draw::accent(dark)
-                    } else {
-                        Color::from_rgba8(fg_dim.r(), fg_dim.g(), fg_dim.b(), 0xB0)
-                    },
-                );
-                draw::text(
-                    &mut pixmap,
-                    (px + 24.0) as f32,
-                    (py + ph / 2.0 - 7.0) as f32,
-                    (pw - 32.0) as f32,
-                    14.0,
-                    11.5,
-                    &act.label,
-                    fg,
-                );
-            } else {
-                let mut tx = px + 10.0;
-                icons::icon(
-                    &mut pixmap,
-                    "clipboard",
-                    tx as f32,
-                    (py + (ph - 13.0) / 2.0) as f32,
-                    13.0,
-                    glyph,
-                );
-                tx += 18.0;
-                if let Some(snip) = state.clip_history.front() {
-                    let snippet: String = snip.chars().take(22).collect();
-                    draw::text(
-                        &mut pixmap,
-                        tx as f32,
-                        (py + ph / 2.0 - 7.0) as f32,
-                        (pw - (tx - px) - 10.0) as f32,
-                        14.0,
-                        11.5,
-                        &snippet.replace('\n', " "),
-                        fg_dim,
-                    );
-                }
-            }
-            if pill_act.is_none() && !state.staged_files.is_empty() {
-                let n = state.staged_files.len().to_string();
-                draw::fill_round_rect(
-                    &mut pixmap,
-                    (px + pw - 20.0) as f32,
-                    (py + (ph - 14.0) / 2.0) as f32,
-                    14.0,
-                    14.0,
-                    7.0,
-                    draw::accent(dark),
-                );
-                draw::text(
-                    &mut pixmap,
-                    (px + pw - 20.0) as f32 + 4.0,
-                    (py + (ph - 14.0) / 2.0) as f32,
-                    12.0,
-                    12.0,
-                    9.5,
-                    &n,
-                    CtColor::rgba(0xFF, 0xFF, 0xFF, 0xFF),
-                );
-            }
         }
     }
 
