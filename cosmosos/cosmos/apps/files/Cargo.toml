@@ -10,6 +10,7 @@ cosmos-theme = { path = "../../theme" }
 cosmos-kit = { path = "../../kit" }
 cosmos-uitk = { path = "../../uitk" }
 egui = { workspace = true }
+image = { version = "0.25.1", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
