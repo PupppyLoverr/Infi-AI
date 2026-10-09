@@ -118,6 +118,11 @@ fn config_text() -> String {
     std::fs::read_to_string(path).unwrap_or_default()
 }
 
+/// The compositor's config.json, parsed (`Null` when missing or invalid).
+pub fn compositor_config() -> serde_json::Value {
+    serde_json::from_str(&config_text()).unwrap_or(serde_json::Value::Null)
+}
+
 /// Dark theme is the Cosmos default; the config file can flip it.
 /// `appearance` from config.json — parsed, because a substring test
 /// also matched the `"light"` key inside `accent_rgb` and forced every

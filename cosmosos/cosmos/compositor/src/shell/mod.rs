@@ -261,7 +261,7 @@ impl<BackendData: Backend> CompositorHandler for AnvilState<BackendData> {
             });
         }
 
-        ensure_initial_configure(surface, &self.space, &mut self.popups)
+        ensure_initial_configure(surface, &mut self.space, &mut self.popups)
     }
 }
 
@@ -349,7 +349,7 @@ pub struct SurfaceData {
 
 fn ensure_initial_configure(
     surface: &WlSurface,
-    space: &Space<WindowElement>,
+    space: &mut Space<WindowElement>,
     popups: &mut PopupManager,
 ) {
     with_surface_tree_upward(
@@ -364,11 +364,11 @@ fn ensure_initial_configure(
         |_, _, _| true,
     );
 
-    if let Some(window) = space
+    let found = space
         .elements()
         .find(|window| window.wl_surface().map(|s| &*s == surface).unwrap_or(false))
-        .cloned()
-    {
+        .cloned();
+    if let Some(window) = found {
         // send the initial configure if relevant
         #[cfg_attr(not(feature = "xwayland"), allow(irrefutable_let_patterns))]
         if let Some(toplevel) = window.0.toplevel() {
@@ -382,6 +382,7 @@ fn ensure_initial_configure(
                     .initial_configure_sent
             });
             if !initial_configure_sent {
+                apply_initial_geometry(space, &window, surface);
                 toplevel.send_configure();
             }
         }
@@ -539,6 +540,111 @@ pub fn refit_into_zone(space: &mut Space<WindowElement>, window: &WindowElement)
         tracing::info!(loc = ?loc, new_loc = ?new_loc, "cosmos: initial refit relocated window");
         space.map_element(window.clone(), new_loc, false);
     }
+}
+
+/// Cascade step between successive default-placed windows.
+const CASCADE_STEP: i32 = 28;
+/// Default-placed windows wrap back to the centre after this many steps.
+const CASCADE_WRAP: i32 = 8;
+static CASCADE_NEXT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// Last floating geometry per app id, persisted in
+/// `$XDG_STATE_HOME/cosmos/windows.json` as `{"app.id": [x, y, w, h]}`.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+pub struct WindowMemory(std::collections::HashMap<String, [i32; 4]>);
+
+impl WindowMemory {
+    fn path() -> std::path::PathBuf {
+        std::env::var("XDG_STATE_HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()))
+                    .join(".local/state")
+            })
+            .join("cosmos/windows.json")
+    }
+
+    pub fn load() -> Self {
+        std::fs::read_to_string(Self::path())
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default()
+    }
+
+    /// Record `app_id`'s floating geometry (content size, no SSD titlebar).
+    pub fn remember(app_id: &str, loc: Point<i32, Logical>, size: Size<i32, Logical>) {
+        if size.w <= 0 || size.h <= 0 {
+            return;
+        }
+        let mut mem = Self::load();
+        mem.0
+            .insert(app_id.to_string(), [loc.x, loc.y, size.w, size.h]);
+        let path = Self::path();
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Ok(text) = serde_json::to_string(&mem) {
+            let _ = std::fs::write(path, text);
+        }
+    }
+}
+
+/// Default size for a new window in `zone`: 60% × 65%, at least 800×520
+/// logical, never larger than the zone.
+pub fn default_window_size(zone: Rectangle<i32, Logical>) -> Size<i32, Logical> {
+    let w = ((zone.size.w as f64 * 0.60).round() as i32)
+        .max(800)
+        .min(zone.size.w);
+    let h = ((zone.size.h as f64 * 0.65).round() as i32)
+        .max(520)
+        .min(zone.size.h);
+    (w, h).into()
+}
+
+/// Initial geometry, decided at the first commit once the app id is known:
+/// the app's remembered size/position, else the default size centred and
+/// cascaded by [`CASCADE_STEP`].
+fn apply_initial_geometry(
+    space: &mut Space<WindowElement>,
+    window: &WindowElement,
+    surface: &WlSurface,
+) {
+    let Some(toplevel) = window.0.toplevel() else {
+        return;
+    };
+    let Some(output) = space
+        .outputs_for_element(window)
+        .first()
+        .cloned()
+        .or_else(|| space.outputs().next().cloned())
+    else {
+        return;
+    };
+    let zone = usable_zone(space, &output);
+    let (_, app_id) = crate::cosmos::toplevel_title_app(surface);
+    let remembered = app_id
+        .as_deref()
+        .and_then(|id| WindowMemory::load().0.get(id).copied());
+    let (loc, size): (Point<i32, Logical>, Size<i32, Logical>) = match remembered {
+        Some([x, y, w, h]) => {
+            let size: Size<i32, Logical> = (w.min(zone.size.w), h.min(zone.size.h)).into();
+            (clamp_loc_to_zone((x, y).into(), size, zone), size)
+        }
+        None => {
+            let size = default_window_size(zone);
+            let step = CASCADE_NEXT.fetch_add(1, Ordering::Relaxed) % CASCADE_WRAP;
+            let c = step * CASCADE_STEP;
+            let loc = (
+                zone.loc.x + (zone.size.w - size.w) / 2 + c,
+                zone.loc.y + (zone.size.h - size.h) / 2 + c,
+            )
+                .into();
+            (clamp_loc_to_zone(loc, size, zone), size)
+        }
+    };
+    toplevel.with_pending_state(|state| state.size = Some(size));
+    tracing::info!(app_id = ?app_id, ?loc, ?size, remembered = remembered.is_some(), "cosmos: initial geometry");
+    space.map_element(window.clone(), loc, false);
 }
 
 fn place_new_window(

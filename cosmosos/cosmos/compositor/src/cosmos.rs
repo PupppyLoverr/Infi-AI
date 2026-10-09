@@ -54,8 +54,12 @@ const SNAP_STATES: [xdg_toplevel::State; 5] = [
 pub struct CosmosConfig {
     /// "dark" or "light"
     pub appearance: String,
-    /// Logical output scale override (1.0 = native).
+    /// Logical output scale (1.0 = native). Recomputed per output from its
+    /// width while `scale_auto` is set.
     pub scale: f64,
+    /// Pick `scale` from the output width (see [`auto_scale`]). Cleared
+    /// once the user sets a scale explicitly.
+    pub scale_auto: bool,
     /// Disable window/workspace transition animation.
     pub reduce_motion: bool,
     /// Accent preset name (see cosmos_ipc::ACCENT_PRESETS).
@@ -72,6 +76,7 @@ impl Default for CosmosConfig {
         Self {
             appearance: "dark".to_string(),
             scale: 1.0,
+            scale_auto: true,
             reduce_motion: false,
             accent: cosmos_ipc::DEFAULT_ACCENT.to_string(),
             dock_position: "left".to_string(),
@@ -165,6 +170,12 @@ impl CosmosConfig {
                     return Err("scale out of range 0.5..=3.0".to_string());
                 }
                 self.scale = v;
+                self.scale_auto = false;
+            }
+            "scale_auto" => {
+                self.scale_auto = value
+                    .as_bool()
+                    .ok_or_else(|| "scale_auto must be a bool".to_string())?;
             }
             "reduce_motion" => {
                 self.reduce_motion = value
@@ -652,6 +663,18 @@ pub fn surface_key(window: &WindowElement) -> String {
             format!("{cid}:{}", s.id())
         })
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Default logical scale for an output `width_px` wide: 100% up to 1366,
+/// 150% from 2560, 125% between (1920×1080 → 1536×864 logical).
+pub fn auto_scale(width_px: i32) -> f64 {
+    if width_px <= 1366 {
+        1.0
+    } else if width_px >= 2560 {
+        1.5
+    } else {
+        1.25
+    }
 }
 
 /// Read the client-set title + app_id of a toplevel surface.
@@ -1764,7 +1787,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 state.borrow_mut().header_bar.invalidate();
             }
         }
-        if key == "scale" {
+        if key == "scale" || key == "scale_auto" {
             self.apply_configured_scale();
         }
         let ev = cosmos_ipc::Event::Config(self.cosmos.config.as_map());
@@ -1777,8 +1800,14 @@ impl<BackendData: Backend> AnvilState<BackendData> {
     /// preferred scale to all surfaces on the next frame.
     fn apply_configured_scale(&mut self) {
         use smithay::output::Scale;
-        let scale = self.cosmos.config.scale;
         let outputs: Vec<smithay::output::Output> = self.space.outputs().cloned().collect();
+        if self.cosmos.config.scale_auto {
+            if let Some(mode) = outputs.first().and_then(|o| o.current_mode()) {
+                self.cosmos.config.scale = auto_scale(mode.size.w);
+                self.cosmos.config.save();
+            }
+        }
+        let scale = self.cosmos.config.scale;
         for output in &outputs {
             output.change_current_state(None, None, Some(Scale::Fractional(scale)), None);
             self.backend_data.reset_buffers(output);

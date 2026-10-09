@@ -20,6 +20,8 @@ struct Cfg {
     appearance: String, // "dark" | "light"
     reduce_motion: bool,
     scale: f64,
+    /// Scale follows the display width (compositor `scale_auto`).
+    scale_auto: bool,
     terminal: String,
     launcher_rows: u32,
     accent: String,        // accent preset name (cosmos_ipc::ACCENT_PRESETS)
@@ -33,6 +35,7 @@ impl Default for Cfg {
             appearance: "dark".into(),
             reduce_motion: false,
             scale: 1.0,
+            scale_auto: true,
             terminal: "cosmos-terminal".into(),
             launcher_rows: 10,
             accent: cosmos_ipc::DEFAULT_ACCENT.into(),
@@ -49,6 +52,18 @@ fn config_path() -> PathBuf {
             PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into())).join(".config")
         })
         .join("cosmos/config.toml")
+}
+
+/// The compositor owns the effective scale (it resolves the automatic
+/// default per display), so show what it applied rather than config.toml.
+fn overlay_compositor_scale(c: &mut Cfg) {
+    let v = cosmos_uitk::theme::compositor_config();
+    if let Some(s) = v.get("scale").and_then(|s| s.as_f64()) {
+        c.scale = s;
+    }
+    if let Some(a) = v.get("scale_auto").and_then(|a| a.as_bool()) {
+        c.scale_auto = a;
+    }
 }
 
 fn load() -> Cfg {
@@ -77,6 +92,7 @@ fn load() -> Cfg {
             _ => {}
         }
     }
+    overlay_compositor_scale(&mut c);
     c
 }
 
@@ -127,6 +143,8 @@ struct App {
     cfg: Cfg,
     status: String,
     pane: Pane,
+    /// Set when automatic scale is switched on; re-read config.json then.
+    scale_refresh: Option<std::time::Instant>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -176,6 +194,7 @@ fn main() {
         cfg: load(),
         status: String::new(),
         pane: Pane::Appearance,
+        scale_refresh: None,
     };
     if let Err(e) = cosmos_uitk::run("Settings", "cosmos.settings", (760, 520), move |ui| {
         draw(ui, &mut app)
@@ -306,10 +325,34 @@ fn appearance(ui: &mut egui::Ui, kit: &Kit, app: &mut App) {
                 ui.ctx().request_repaint();
             }
             if r.drag_stopped() || (r.clicked() && r.changed()) {
+                app.cfg.scale_auto = false;
                 set(app, "scale", app.cfg.scale.into());
             }
         });
+        g.row_detail(
+            "Automatic scale",
+            Some("100% up to 1366 px wide, 125% at 1920, 150% from 2560"),
+            |ui| {
+                if toggle(ui, &mut app.cfg.scale_auto).changed() {
+                    set(app, "scale_auto", app.cfg.scale_auto.into());
+                    if app.cfg.scale_auto {
+                        app.scale_refresh = Some(std::time::Instant::now());
+                    }
+                }
+            },
+        );
     });
+    // The compositor resolves the automatic scale; read it back shortly
+    // after so the slider and % label show the applied value.
+    if let Some(t) = app.scale_refresh {
+        if t.elapsed() > std::time::Duration::from_millis(600) {
+            app.scale_refresh = None;
+            overlay_compositor_scale(&mut app.cfg);
+        } else {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        }
+    }
 }
 
 /// Preset swatches right-to-left (the row lays out from the right edge);
