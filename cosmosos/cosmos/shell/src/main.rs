@@ -244,6 +244,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         island_open: false,
         island_hover: None,
         island_tab: island::Tab::Activities,
+        island_anim: None,
+        island_anim_timer: false,
         island_dirty: false,
         island_dismissed_at: None,
         clip_history: std::collections::VecDeque::new(),
@@ -505,6 +507,10 @@ pub struct ShellState {
     pub island_open: bool,
     pub island_hover: Option<island::Hit>,
     pub island_tab: island::Tab,
+    /// Running capsule↔card morph: (start, opening). A closing card keeps
+    /// its surface until the reverse morph ends.
+    pub island_anim: Option<(std::time::Instant, bool)>,
+    pub island_anim_timer: bool,
     pub island_dirty: bool,
     /// Set when the island card just closed from a focus-loss `leave` —
     /// the pill click inside the window is the same physical click and
@@ -778,6 +784,12 @@ impl ShellState {
             return;
         }
         self.island_open = open;
+        let animate = !LITE.with(|l| l.get());
+        if open && self.island_surface.is_some() {
+            // Re-opened mid reverse-morph: turn the running morph around.
+            self.start_island_anim(true);
+            return;
+        }
         if open {
             self.island_tab = if matches!(island::pill(self), island::Pill::Idle)
                 && !self.clip_history.is_empty()
@@ -802,10 +814,56 @@ impl ShellState {
             layer.wl_surface().commit();
             self.island_surface = Some(layer);
             self.island_dirty = true;
+            if animate {
+                self.island_anim = None;
+                self.start_island_anim(true);
+            }
+        } else if animate && self.island_surface.is_some() {
+            self.island_hover = None;
+            self.start_island_anim(false);
         } else {
             self.island_surface = None;
             self.island_hover = None;
+            self.island_anim = None;
         }
+    }
+
+    /// Start (or reverse) the 280ms capsule↔card morph; a ~60fps timer
+    /// repaints the card until it ends, then drops a closed card's surface.
+    fn start_island_anim(&mut self, opening: bool) {
+        let now = std::time::Instant::now();
+        let start = match self.island_anim {
+            Some((t0, _)) => {
+                let done = (t0.elapsed().as_secs_f32() / island::MORPH.as_secs_f32()).min(1.0);
+                now - island::MORPH.mul_f32(1.0 - done)
+            }
+            None => now,
+        };
+        self.island_anim = Some((start, opening));
+        self.island_dirty = true;
+        if self.island_anim_timer {
+            return;
+        }
+        self.island_anim_timer = true;
+        let _ = self.loop_handle.insert_source(
+            Timer::from_duration(Duration::from_millis(16)),
+            |_, _, state| {
+                state.island_dirty = true;
+                let Some((t0, opening)) = state.island_anim else {
+                    state.island_anim_timer = false;
+                    return calloop::timer::TimeoutAction::Drop;
+                };
+                if t0.elapsed() < island::MORPH {
+                    return calloop::timer::TimeoutAction::ToDuration(Duration::from_millis(16));
+                }
+                state.island_anim = None;
+                state.island_anim_timer = false;
+                if !opening {
+                    state.island_surface = None;
+                }
+                calloop::timer::TimeoutAction::Drop
+            },
+        );
     }
 
     /// Shell-side close — no IPC round trip needed: the compositor just

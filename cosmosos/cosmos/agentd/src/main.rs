@@ -251,8 +251,7 @@ impl Agentd {
         stream.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
         cosmos_ipc::write_message(&mut &stream, req)?;
         let mut reader = BufReader::new(&stream);
-        cosmos_ipc::read_message(&mut reader)?
-            .context("compositor closed the IPC connection")
+        cosmos_ipc::read_message(&mut reader)?.context("compositor closed the IPC connection")
     }
 
     /// Fire-and-verify for action verbs: the compositor replies only on
@@ -275,8 +274,8 @@ impl Agentd {
     /// the user's ActionInvoked (or NotificationClosed = Deny). spec §6.6.
     fn approve(&self, tool: &str, args: &Map<String, Value>) -> Result<Decision> {
         use zbus::blocking::{Connection, Proxy};
-        let conn = Connection::session()
-            .context("no session bus — cannot show the approval card")?;
+        let conn =
+            Connection::session().context("no session bus — cannot show the approval card")?;
         let proxy = Proxy::new(
             &conn,
             "org.freedesktop.Notifications",
@@ -403,7 +402,10 @@ impl Agentd {
                 }
             }
             "files.write" => {
-                if !self.policy.path_in(&path("path")?, &self.policy.write_roots) {
+                if !self
+                    .policy
+                    .path_in(&path("path")?, &self.policy.write_roots)
+                {
                     bail!("path is outside the agent's write roots");
                 }
             }
@@ -430,7 +432,8 @@ impl Agentd {
             }
         }
         let get = |key: &str| -> Result<&Value> {
-            args.get(key).with_context(|| format!("missing argument `{key}`"))
+            args.get(key)
+                .with_context(|| format!("missing argument `{key}`"))
         };
         let text = match name {
             "desktop.windows.list" => match self.ipc(&Request::ListWindows)? {
@@ -456,25 +459,34 @@ impl Agentd {
             "desktop.windows.snap" => {
                 self.ipc_send(&Request::SnapToZone {
                     id: get("id")?.as_u64().context("`id` must be a u64")?,
-                    zone: get("zone")?.as_str().context("`zone` must be a string")?.into(),
+                    zone: get("zone")?
+                        .as_str()
+                        .context("`zone` must be a string")?
+                        .into(),
                 })?;
                 "ok".to_string()
             }
             "desktop.windows.move_workspace" => {
                 self.ipc_send(&Request::MoveWindowToWorkspace {
                     id: get("id")?.as_u64().context("`id` must be a u64")?,
-                    workspace: get("workspace")?.as_u64().context("`workspace` must be a u64")? as u8,
+                    workspace: get("workspace")?
+                        .as_u64()
+                        .context("`workspace` must be a u64")? as u8,
                 })?;
                 "ok".to_string()
             }
             "desktop.workspaces.switch" => {
                 self.ipc_send(&Request::SwitchWorkspace {
-                    workspace: get("workspace")?.as_u64().context("`workspace` must be a u64")? as u8,
+                    workspace: get("workspace")?
+                        .as_u64()
+                        .context("`workspace` must be a u64")? as u8,
                 })?;
                 "ok".to_string()
             }
             "desktop.launch" => {
-                let cmd = get("command")?.as_str().context("`command` must be a string")?;
+                let cmd = get("command")?
+                    .as_str()
+                    .context("`command` must be a string")?;
                 Command::new("sh")
                     .arg("-c")
                     .arg(cmd)
@@ -502,12 +514,10 @@ impl Agentd {
             }
             "system.settings.get" => match self.ipc(&Request::GetConfig)? {
                 Event::Config(cfg) => {
-                    if let Ok(key) = get("key").and_then(|v| {
-                        v.as_str().context("`key` must be a string")
-                    }) {
-                        serde_json::to_string_pretty(
-                            cfg.get(key).unwrap_or(&Value::Null),
-                        )?
+                    if let Ok(key) =
+                        get("key").and_then(|v| v.as_str().context("`key` must be a string"))
+                    {
+                        serde_json::to_string_pretty(cfg.get(key).unwrap_or(&Value::Null))?
                     } else {
                         serde_json::to_string_pretty(&cfg)?
                     }
@@ -515,10 +525,13 @@ impl Agentd {
                 other => bail!("unexpected reply: {other:?}"),
             },
             "system.settings.set" => {
-                let key = get("key")?.as_str().context("`key` must be a string")?.to_string();
+                let key = get("key")?
+                    .as_str()
+                    .context("`key` must be a string")?
+                    .to_string();
                 let raw = get("value")?;
-                let value: Value =
-                    serde_json::from_str(raw.as_str().unwrap_or("")).unwrap_or_else(|_| raw.clone());
+                let value: Value = serde_json::from_str(raw.as_str().unwrap_or(""))
+                    .unwrap_or_else(|_| raw.clone());
                 self.ipc_send(&Request::SetConfig { key, value })?;
                 "ok".to_string()
             }
@@ -537,7 +550,9 @@ impl Agentd {
                 if let Some(parent) = path.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                let content = get("content")?.as_str().context("`content` must be a string")?;
+                let content = get("content")?
+                    .as_str()
+                    .context("`content` must be a string")?;
                 fs::write(&path, content).with_context(|| format!("write {path:?}"))?;
                 format!("wrote {path:?}")
             }
@@ -546,7 +561,10 @@ impl Agentd {
                 if !self.policy.path_in(&root, &self.policy.read_roots) {
                     bail!("{root:?} is outside this agent's read roots");
                 }
-                let query = get("query")?.as_str().context("`query` must be a string")?.to_lowercase();
+                let query = get("query")?
+                    .as_str()
+                    .context("`query` must be a string")?
+                    .to_lowercase();
                 let mut hits = Vec::new();
                 let mut stack = vec![root];
                 let mut visited = 0usize;
@@ -560,7 +578,8 @@ impl Agentd {
                     for entry in entries.flatten() {
                         visited += 1;
                         let path = entry.path();
-                        if path.file_name()
+                        if path
+                            .file_name()
                             .map(|n| n.to_string_lossy().to_lowercase().contains(&query))
                             .unwrap_or(false)
                         {
@@ -579,7 +598,9 @@ impl Agentd {
                 if !self.policy.path_in(&from, &self.policy.read_roots)
                     || !self.policy.path_in(&to, &self.policy.write_roots)
                 {
-                    bail!("move must stay inside read roots (source) and write roots (destination)");
+                    bail!(
+                        "move must stay inside read roots (source) and write roots (destination)"
+                    );
                 }
                 if let Some(parent) = to.parent() {
                     fs::create_dir_all(parent)?;
@@ -634,7 +655,13 @@ impl Live {
         let _ = fs::create_dir_all(&dir);
         let safe: String = agent
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         let live = Live {
             path: dir.join(format!("{safe}.json")),
@@ -828,7 +855,9 @@ where
                 let outcome = if allowed {
                     state.call(&tool, &args)
                 } else {
-                    Err(anyhow::anyhow!("stopped by the user from the Dynamic Island"))
+                    Err(anyhow::anyhow!(
+                        "stopped by the user from the Dynamic Island"
+                    ))
                 };
                 if let Some(l) = live.as_ref() {
                     l.end(&tool);
@@ -863,8 +892,7 @@ fn main() -> Result<()> {
 
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
     let path = socket_path();
