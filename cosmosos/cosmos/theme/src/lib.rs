@@ -88,7 +88,7 @@ pub const DARK: Palette = Palette {
     hairline: a([0xFF, 0xFF, 0xFF], 0.08),
     text: a(DARK_TEXT, 1.0),
     text_secondary: a(DARK_TEXT, 0.62),
-    text_tertiary: a(DARK_TEXT, 0.40),
+    text_tertiary: a(DARK_TEXT, 0.42),
     glass_tint: [28, 23, 48, 140],
     glass_hairline: a([0xFF, 0xFF, 0xFF], 0.10),
 };
@@ -101,8 +101,8 @@ pub const LIGHT: Palette = Palette {
     raised: a([0xFF, 0xFF, 0xFF], 1.0),
     hairline: a([0x00, 0x00, 0x00], 0.08),
     text: a(LIGHT_TEXT, 1.0),
-    text_secondary: a(LIGHT_TEXT, 0.60),
-    text_tertiary: a(LIGHT_TEXT, 0.38),
+    text_secondary: a(LIGHT_TEXT, 0.64),
+    text_tertiary: a(LIGHT_TEXT, 0.50),
     glass_tint: [255, 255, 255, 148],
     glass_hairline: a([0xFF, 0xFF, 0xFF], 0.60),
 };
@@ -134,10 +134,26 @@ pub struct Elevation {
 
 pub mod elevation {
     use super::Elevation;
-    pub const E1: Elevation = Elevation { dy: 1.0, blur: 2.0, alpha: 0.20 };
-    pub const E2: Elevation = Elevation { dy: 8.0, blur: 24.0, alpha: 0.35 };
-    pub const E3_FOCUSED: Elevation = Elevation { dy: 18.0, blur: 48.0, alpha: 0.45 };
-    pub const E3_UNFOCUSED: Elevation = Elevation { dy: 10.0, blur: 28.0, alpha: 0.30 };
+    pub const E1: Elevation = Elevation {
+        dy: 1.0,
+        blur: 2.0,
+        alpha: 0.20,
+    };
+    pub const E2: Elevation = Elevation {
+        dy: 8.0,
+        blur: 24.0,
+        alpha: 0.35,
+    };
+    pub const E3_FOCUSED: Elevation = Elevation {
+        dy: 18.0,
+        blur: 48.0,
+        alpha: 0.45,
+    };
+    pub const E3_UNFOCUSED: Elevation = Elevation {
+        dy: 10.0,
+        blur: 28.0,
+        alpha: 0.30,
+    };
 }
 
 pub mod motion {
@@ -237,7 +253,11 @@ pub fn rgb_to_hsl(c: [u8; 3]) -> (f32, f32, f32) {
         return (0.0, 0.0, l);
     }
     let d = max - min;
-    let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+    let s = if l > 0.5 {
+        d / (2.0 - max - min)
+    } else {
+        d / (max + min)
+    };
     let h = if max == r {
         (g - b) / d + if g < b { 6.0 } else { 0.0 }
     } else if max == g {
@@ -253,7 +273,11 @@ pub fn hsl_to_rgb(h: f32, s: f32, l: f32) -> [u8; 3] {
         let v = (l * 255.0).round() as u8;
         return [v, v, v];
     }
-    let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+    let q = if l < 0.5 {
+        l * (1.0 + s)
+    } else {
+        l + s - l * s
+    };
     let p = 2.0 * l - q;
     let f = |mut t: f32| {
         if t < 0.0 {
@@ -278,6 +302,55 @@ pub fn hsl_to_rgb(h: f32, s: f32, l: f32) -> [u8; 3] {
 
 #[cfg(test)]
 mod tests {
+    /// WCAG 2 contrast of the text tokens over every opaque-ish surface,
+    /// composited over the shipped wallpapers' extreme hues (v5 §1.2:
+    /// primary >= 7, secondary >= 4.5, tertiary >= 3).
+    #[test]
+    fn text_tokens_meet_v5_contrast() {
+        fn lin(c: f64) -> f64 {
+            let c = c / 255.0;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        }
+        fn lum(c: [f64; 3]) -> f64 {
+            0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2])
+        }
+        fn over(fg: Rgba, bg: [f64; 3]) -> [f64; 3] {
+            let a = fg[3] as f64 / 255.0;
+            [0, 1, 2].map(|i| fg[i] as f64 * a + bg[i] * (1.0 - a))
+        }
+        let walls: [[f64; 3]; 5] = [
+            [153.0, 130.0, 226.0],
+            [219.0, 116.0, 253.0],
+            [40.0, 30.0, 70.0],
+            [200.0, 183.0, 162.0],
+            [131.0, 208.0, 247.0],
+        ];
+        for p in [&DARK, &LIGHT] {
+            for surface in [p.window, p.sidebar, p.raised] {
+                for wall in walls {
+                    let bg = over(surface, wall);
+                    for (tok, min) in [
+                        (p.text, 7.0),
+                        (p.text_secondary, 4.5),
+                        (p.text_tertiary, 3.0),
+                    ] {
+                        let (a, b) = (lum(over(tok, bg)), lum(bg));
+                        let ratio = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+                        assert!(
+                            ratio >= min,
+                            "dark={} {tok:?} over {surface:?}/{wall:?}: {ratio:.2} < {min}",
+                            p.dark
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     use super::*;
 
     #[test]
