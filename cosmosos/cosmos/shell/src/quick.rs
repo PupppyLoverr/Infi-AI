@@ -47,7 +47,7 @@ fn theme(dark: bool) -> (Color, Color, Color, Color, CtColor, CtColor) {
             Color::from_rgba8(0x30, 0x31, 0x35, 0xFF), // button bg
             draw::accent(true),                        // active fill
             CtColor::rgba(0xEC, 0xEC, 0xEE, 0xFF),
-            CtColor::rgba(0x8C, 0x8C, 0x92, 0xFF),
+            CtColor::rgba(0xA8, 0xA8, 0xAE, 0xFF),
         )
     } else {
         (
@@ -56,7 +56,7 @@ fn theme(dark: bool) -> (Color, Color, Color, Color, CtColor, CtColor) {
             Color::from_rgba8(0xE6, 0xE6, 0xE9, 0xFF),
             draw::accent(false),
             CtColor::rgba(0x18, 0x18, 0x1B, 0xFF),
-            CtColor::rgba(0x6A, 0x6A, 0x6E, 0xFF),
+            CtColor::rgba(0x5A, 0x5A, 0x5E, 0xFF),
         )
     }
 }
