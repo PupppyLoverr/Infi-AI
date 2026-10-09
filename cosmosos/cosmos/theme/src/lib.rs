@@ -89,7 +89,7 @@ pub const DARK: Palette = Palette {
     text: a(DARK_TEXT, 1.0),
     text_secondary: a(DARK_TEXT, 0.62),
     text_tertiary: a(DARK_TEXT, 0.42),
-    glass_tint: [28, 23, 48, 140],
+    glass_tint: [28, 23, 48, 117],
     glass_hairline: a([0xFF, 0xFF, 0xFF], 0.10),
 };
 
@@ -103,7 +103,7 @@ pub const LIGHT: Palette = Palette {
     text: a(LIGHT_TEXT, 1.0),
     text_secondary: a(LIGHT_TEXT, 0.64),
     text_tertiary: a(LIGHT_TEXT, 0.50),
-    glass_tint: [255, 255, 255, 148],
+    glass_tint: [255, 255, 255, 140],
     glass_hairline: a([0xFF, 0xFF, 0xFF], 0.60),
 };
 
