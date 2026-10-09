@@ -453,6 +453,13 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             if let Some((target, _)) = under.as_ref() {
                 tracing::info!(?loc, ?target, "cosmos: press target");
             }
+            if under.is_none() && !self.cosmos.session_locked {
+                self.ipc_broadcast(&cosmos_ipc::Event::DesktopPress {
+                    button,
+                    x: loc.x.round() as i32,
+                    y: loc.y.round() as i32,
+                });
+            }
             let pointer = self.pointer.clone();
             pointer.motion(
                 self,

@@ -12,6 +12,8 @@ use crate::{draw, glass, ShellState};
 pub const TITLES: &[&str] = &["File", "Window", "Help"];
 /// Menu index of the system menu behind the Cosmos mark.
 pub const SYSTEM: usize = 3;
+/// Menu index of the desktop context menu (right-click on the wallpaper).
+pub const DESKTOP: usize = 4;
 const TITLE_PAD: f64 = 10.0;
 const CHAR_W: f64 = 7.5;
 /// Shadow inset around the card inside the surface.
@@ -36,6 +38,11 @@ pub enum Action {
     Logout,
     Restart,
     Shutdown,
+    ChangeWallpaper,
+    NewFolder,
+    ViewOptions,
+    AskCosmos,
+    TerminalHere,
 }
 
 impl Action {
@@ -49,6 +56,11 @@ impl Action {
                 | Action::Logout
                 | Action::Restart
                 | Action::Shutdown
+                | Action::ChangeWallpaper
+                | Action::NewFolder
+                | Action::ViewOptions
+                | Action::AskCosmos
+                | Action::TerminalHere
         )
     }
 }
@@ -69,6 +81,13 @@ pub fn items(menu: usize) -> &'static [(&'static str, Action)] {
         2 => &[
             ("Keyboard Shortcuts", Action::Shortcuts),
             ("Search Apps and Files", Action::Search),
+        ],
+        DESKTOP => &[
+            ("Change Wallpaper…", Action::ChangeWallpaper),
+            ("New Folder", Action::NewFolder),
+            ("Show View Options", Action::ViewOptions),
+            ("Ask Cosmos…", Action::AskCosmos),
+            ("Open Terminal Here", Action::TerminalHere),
         ],
         _ => &[
             ("Settings…", Action::Settings),
