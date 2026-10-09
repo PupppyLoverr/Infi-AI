@@ -1,0 +1,12 @@
+[package]
+name = "cosmos-kit-gallery"
+description = "Every cosmos-kit component on one window, for review in light and dark"
+edition = "2021"
+license = "MIT"
+version = "0.1.0"
+
+[dependencies]
+cosmos-kit = { path = "../../kit" }
+cosmos-uitk = { path = "../../uitk" }
+egui = { workspace = true }
+anyhow = { workspace = true }

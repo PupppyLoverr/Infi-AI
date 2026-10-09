@@ -1,0 +1,15 @@
+[package]
+name = "cosmos-kit"
+description = "CosmosOS app kit: structural components (toolbar, sidebar, lists, controls) on uitk + cosmos-theme"
+edition = "2021"
+license = "MIT"
+version = "0.1.0"
+
+[dependencies]
+cosmos-theme = { path = "../theme" }
+cosmos-uitk = { path = "../uitk" }
+egui = { workspace = true }
+image = { version = "0.25.1", default-features = false, features = ["png"] }
+
+[build-dependencies]
+resvg = { version = "0.45", default-features = false }

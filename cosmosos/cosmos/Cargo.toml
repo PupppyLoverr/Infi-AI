@@ -6,6 +6,7 @@ members = [
     "theme",
     "shell",
     "uitk",
+    "kit",
     "portal",
     "lock",
     "greeter",
@@ -16,6 +17,7 @@ members = [
     "apps/settings",
     "apps/monitor",
     "apps/agents",
+    "apps/kit-gallery",
     "tools/wallgen",
 ]
 

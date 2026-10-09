@@ -49,7 +49,7 @@ fi
 BINDIR="$COSMOS/target/release"
 for b in cosmos-compositor cosmos-shell cosmos-files cosmos-terminal \
          cosmos-editor cosmos-settings cosmos-monitor cosmos-portal \
-         cosmos-lock cosmos-greeter cosmos-agentd cosmos-agents; do
+         cosmos-lock cosmos-greeter cosmos-agentd cosmos-agents cosmos-kit-gallery; do
   [ -x "$BINDIR/$b" ] || { echo "missing binary: $BINDIR/$b" >&2; exit 1; }
 done
 
