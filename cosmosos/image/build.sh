@@ -161,10 +161,23 @@ cat > "$OVERLAY/etc/skel/.config/opencode/opencode.json" <<'EOF'
     "cosmos": {
       "type": "local",
       "command": ["cosmos-agentd", "--stdio"],
+      "environment": {"COSMOS_AGENT": "Cosmos Helper"},
       "enabled": true
     }
   }
 }
+EOF
+
+# Cosmos Helper — the shipped demo agent: opencode through cosmos-agentd
+# (COSMOS_AGENT above), file tools only, scoped to ~/Documents; writes and
+# moves ask first. agentd expands ~ per user.
+install -d "$OVERLAY/etc/skel/.config/cosmos/agents" "$OVERLAY/etc/skel/Documents"
+cat > "$OVERLAY/etc/skel/.config/cosmos/agents/Cosmos Helper.toml" <<'EOF'
+command = "opencode"
+read_roots = ["~/Documents"]
+write_roots = ["~/Documents"]
+tools = ["files.read", "files.search", "files.write", "files.move"]
+sensitive = ["files.write", "files.move"]
 EOF
 
 # launcher/dock entry. Exec wraps opencode in cosmos-terminal -e (>= 910d3ab:
@@ -409,9 +422,9 @@ SUBVOLUME="/"
 QGROUP=""
 SPACE_LIMIT="0.5"
 FREE_LIMIT="0.2"
-ALLOW_USERS=""
+ALLOW_USERS="cosmos"
 ALLOW_GROUPS=""
-SYNC_ACL="no"
+SYNC_ACL="yes"
 BACKGROUND_COMPARISON="yes"
 NUMBER_CLEANUP="yes"
 NUMBER_MIN_AGE="1800"
@@ -531,6 +544,36 @@ polkit.addRule(function(action, subject) {
 });
 EOF
 
+# snapper home config: create-config needs the live btrfs /home, so it
+# runs once at first boot. Agents → Rollback restores files from these
+# snapshots; cosmos-agentd takes one before an agent's first change in a
+# session. ALLOW_USERS lets the cosmos user list/create without pkexec.
+install -d "$OVERLAY/usr/local/libexec"
+cat > "$OVERLAY/usr/local/libexec/cosmos-snapper-setup" <<'EOF'
+#!/bin/sh
+set -e
+snapper -c home create-config /home
+snapper -c home set-config ALLOW_USERS=cosmos SYNC_ACL=yes TIMELINE_CREATE=no \
+  NUMBER_LIMIT=20 NUMBER_LIMIT_IMPORTANT=10
+snapper -c home create --cleanup-algorithm number --description "First boot"
+snapper -c root create --cleanup-algorithm number --description "First boot"
+EOF
+chmod 755 "$OVERLAY/usr/local/libexec/cosmos-snapper-setup"
+cat > "$OVERLAY/etc/systemd/system/cosmos-snapper-setup.service" <<'EOF'
+[Unit]
+Description=Create the snapper home config on first boot
+ConditionPathExists=!/etc/snapper/configs/home
+After=local-fs.target dbus.service
+Before=greetd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/cosmos-snapper-setup
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 # systemd-resolved's LLMNR binds 0.0.0.0:5355 (tcp+udp) by default — a real
 # external listener and a spoofing surface on shared networks. The kiosk
 # resolves DNS via DHCP, so LLMNR/mDNS stay off.
@@ -623,6 +666,7 @@ update-locale LANG="$LOCALE"
 # SNAPPER_CONFIGS in /etc/default/snapper, not the configs/ dir alone.
 sed -i 's/^SNAPPER_CONFIGS=.*/SNAPPER_CONFIGS="root"/' /etc/default/snapper
 systemctl enable snapper-timeline.timer snapper-cleanup.timer || true
+systemctl enable cosmos-snapper-setup.service || true
 
 # btrfs in the initramfs: the initrd is generated while the rootfs still
 # lives on the host's ext4 — fstype autodetection would emit ext4-only
