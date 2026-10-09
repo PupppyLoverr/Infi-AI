@@ -202,12 +202,9 @@ pub fn segmented_with(
             *selected = i;
             resp.mark_changed();
         }
-        let color = if i == *selected {
-            kit.text()
-        } else {
-            kit.text2()
-        };
-        draw(ui, i, seg, dim(ui, color));
+        // Selection reads from the raised chip; every label stays primary
+        // so unselected segments clear 4.5:1 on the track (macOS does the same).
+        draw(ui, i, seg, dim(ui, kit.text()));
     }
     resp
 }
