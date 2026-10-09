@@ -622,17 +622,24 @@ pub fn tab_strip(
     ev
 }
 
-/// Popover/menu surface: raised, hairline, 14px radius, E2 shadow.
+/// Menu corner radius (context menus, popovers, submenus).
+pub const MENU_R: f32 = 10.0;
+
+/// Popover/menu surface: translucent raised glass, hairline, 10px
+/// radius, E2 shadow.
 pub fn menu_frame(kit: &Kit) -> Frame {
-    let mut fill = c32(kit.p.raised);
-    if !kit.dark {
-        fill = Color32::from_rgba_unmultiplied(fill.r(), fill.g(), fill.b(), 245);
-    }
+    let fill = c32(kit.p.raised);
+    let fill = Color32::from_rgba_unmultiplied(
+        fill.r(),
+        fill.g(),
+        fill.b(),
+        if kit.dark { 236 } else { 240 },
+    );
     let e = cosmos_theme::elevation::E2;
     Frame::new()
         .fill(fill)
         .stroke(Stroke::new(1.0, kit.hairline()))
-        .corner_radius(radius::PANEL)
+        .corner_radius(MENU_R)
         .inner_margin(6.0)
         .shadow(Shadow {
             offset: [0, e.dy as i8],
@@ -670,6 +677,39 @@ pub fn popover<R>(
 
 /// A menu row for popovers and context menus: icon, label, shortcut.
 pub fn menu_item(ui: &mut Ui, icon: Option<Icon>, label: &str, shortcut: Option<&str>) -> Response {
+    menu_row(ui, icon, label, shortcut, false)
+}
+
+/// A menu row that opens `f` as a submenu on hover (chevron on the right).
+pub fn submenu(ui: &mut Ui, icon: Option<Icon>, label: &str, f: impl FnOnce(&mut Ui)) -> Response {
+    let resp = menu_row(ui, icon, label, None, true);
+    egui::containers::menu::SubMenu::new().show(ui, &resp, |ui| {
+        ui.set_min_width(200.0);
+        f(ui)
+    });
+    resp
+}
+
+/// A small caption above a group of menu rows.
+pub fn menu_section(ui: &mut Ui, title: &str) {
+    let kit = Kit::get(ui.ctx());
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
+    ui.painter().text(
+        pos2(rect.left() + space::S8, rect.center().y),
+        Align2::LEFT_CENTER,
+        title,
+        egui::FontId::proportional(11.0),
+        kit.text2(),
+    );
+}
+
+fn menu_row(
+    ui: &mut Ui,
+    icon: Option<Icon>,
+    label: &str,
+    shortcut: Option<&str>,
+    chevron: bool,
+) -> Response {
     let kit = Kit::get(ui.ctx());
     let w = ui.available_width().max(200.0);
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 26.0), Sense::click());
@@ -696,13 +736,25 @@ pub fn menu_item(ui: &mut Ui, icon: Option<Icon>, label: &str, shortcut: Option<
         fg,
     );
     if let Some(s) = shortcut {
-        let sc = if hot { Color32::WHITE } else { kit.text3() };
+        let sc = if hot { Color32::WHITE } else { kit.text2() };
         ui.painter().text(
             pos2(rect.right() - space::S8, rect.center().y),
             Align2::RIGHT_CENTER,
             s,
             body_font(),
             sc,
+        );
+    }
+    if chevron {
+        let c = if hot { Color32::WHITE } else { kit.text2() };
+        let (cx, cy) = (rect.right() - space::S8 - 3.0, rect.center().y);
+        ui.painter().line(
+            vec![
+                pos2(cx - 3.0, cy - 4.5),
+                pos2(cx + 1.5, cy),
+                pos2(cx - 3.0, cy + 4.5),
+            ],
+            Stroke::new(1.5, c),
         );
     }
     resp

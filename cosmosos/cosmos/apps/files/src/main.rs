@@ -6,10 +6,12 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+use cosmos_kit::ask;
 use cosmos_kit::controls::{button, search_field, segmented_with, text_field, ButtonKind};
 use cosmos_kit::layout::{
-    grid_tile, menu_item, menu_separator, sheet, sidebar_item, sidebar_section, status_text,
-    toolbar_button, toolbar_spacer, toolbar_title, AppWindow, ColAlign, Column, Table,
+    grid_tile, menu_item, menu_section, menu_separator, sheet, sidebar_item, sidebar_section,
+    status_text, submenu, toolbar_button, toolbar_spacer, toolbar_title, AppWindow, ColAlign,
+    Column, Table,
 };
 use cosmos_kit::{icons, Icon, Kit};
 use cosmos_theme::space;
@@ -47,6 +49,9 @@ struct Files {
     /// Last `(dir, rows drawn, footer count)` written to the log — the
     /// drive harness asserts rows == footer from these lines.
     logged_listing: Option<(PathBuf, usize, usize)>,
+    /// Ask Cosmos result sheet (context menu → Ask Cosmos).
+    ask: Option<ask::Job>,
+    ask_pending: Option<(ask::Action, PathBuf)>,
 }
 
 struct Chooser {
@@ -123,6 +128,8 @@ impl Files {
             chooser: None,
             show_hidden: false,
             logged_listing: None,
+            ask: None,
+            ask_pending: None,
         };
         f.refresh();
         f
@@ -398,6 +405,9 @@ struct RowEvents {
     rename: Option<(PathBuf, String)>,
     trash: Option<PathBuf>,
     copy: Option<String>,
+    ask: Option<(ask::Action, PathBuf)>,
+    agent: Option<PathBuf>,
+    onboard: bool,
 }
 
 fn entry_menu(ui: &mut egui::Ui, e: &Entry, idx: usize, ev: &mut RowEvents) {
@@ -411,6 +421,26 @@ fn entry_menu(ui: &mut egui::Ui, e: &Entry, idx: usize, ev: &mut RowEvents) {
     }
     if menu_item(ui, Some(Icon::Clipboard), "Copy Path", None).clicked() {
         ev.copy = Some(e.path.display().to_string());
+        ui.close();
+    }
+    menu_separator(ui);
+    menu_section(ui, "Ask Cosmos");
+    if ask::provider_configured() {
+        submenu(ui, Some(Icon::Sparkle), "Ask Cosmos", |ui| {
+            for a in [ask::Action::Summarize, ask::Action::Explain] {
+                if menu_item(ui, None, a.label(), None).clicked() {
+                    ev.ask = Some((a, e.path.clone()));
+                    ui.close();
+                }
+            }
+            menu_separator(ui);
+            if menu_item(ui, Some(Icon::Terminal), "Open in Agent", None).clicked() {
+                ev.agent = Some(e.path.clone());
+                ui.close();
+            }
+        });
+    } else if menu_item(ui, Some(Icon::Sparkle), "Set up an agent…", None).clicked() {
+        ev.onboard = true;
         ui.close();
     }
     menu_separator(ui);
@@ -458,6 +488,19 @@ fn apply(f: &mut Files, ev: RowEvents) {
     }
     if let Some(p) = ev.copy {
         f.status = format!("path: {p}");
+    }
+    if let Some((a, p)) = ev.ask {
+        f.ask_pending = Some((a, p));
+    }
+    if let Some(p) = ev.agent {
+        if let Err(e) = ask::open_in_agent(&p) {
+            f.status = format!("can't open the agent: {e}");
+        }
+    }
+    if ev.onboard {
+        if let Err(e) = ask::open_onboarding() {
+            f.status = format!("can't open Agents: {e}");
+        }
     }
     if let Some(i) = ev.open {
         let e = &f.entries[i];
@@ -797,6 +840,16 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
         });
     let ctx = ui.ctx().clone();
     let enter = ctx.input(|i| i.key_pressed(egui::Key::Enter));
+
+    if let Some((a, p)) = f.ask_pending.take() {
+        f.ask = Some(ask::Job::start(&ctx, a, ask::Subject::Path(p)));
+    }
+    if f.ask
+        .as_ref()
+        .is_some_and(|job| !ask::result_sheet(&ctx, job))
+    {
+        f.ask = None;
+    }
 
     if let Some(mut name) = f.new_folder.take() {
         let mut done = false;
