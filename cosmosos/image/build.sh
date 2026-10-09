@@ -180,6 +180,18 @@ tools = ["files.read", "files.search", "files.write", "files.move"]
 sensitive = ["files.write", "files.move"]
 EOF
 
+# Seed content so a new account looks lived in (image/skel/): real
+# Documents (welcome guide, its PDF rendering, a budget CSV), four
+# generated photos in Pictures, and a small Rust project. Both
+# generators are stdlib-only Python on the build host.
+SEED="$ROOT/image/skel"
+install -d "$OVERLAY/etc/skel/Pictures" "$OVERLAY/etc/skel/Projects"
+install -m644 "$SEED/Documents/"* "$OVERLAY/etc/skel/Documents/"
+python3 "$SEED/mkpdf.py" "$SEED/Documents/Welcome to CosmosOS.md" \
+  "$OVERLAY/etc/skel/Documents/CosmosOS User Guide.pdf"
+python3 "$SEED/mkphotos.py" "$OVERLAY/etc/skel/Pictures"
+cp -r "$SEED/hello-cosmos" "$OVERLAY/etc/skel/Projects/"
+
 # launcher/dock entry. Exec wraps opencode in cosmos-terminal -e (>= 910d3ab:
 # args join into a command line run via $SHELL -c) so the TUI gets a real TTY.
 cat > "$OVERLAY/usr/share/applications/opencode.desktop" <<'EOF'
