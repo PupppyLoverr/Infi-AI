@@ -546,6 +546,24 @@ pub fn icon(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32, co
             rr!(pb, 13.7, 5.0, 3.8, 14.0, 1.0);
             fill(pixmap, pb, color);
         }
+        "chevron-right" => {
+            mv!(pb, 9.5, 6.0);
+            ln!(pb, 15.5, 12.0);
+            ln!(pb, 9.5, 18.0);
+            stroke(pixmap, pb, s, w, color);
+        }
+        "chevron-left" => {
+            mv!(pb, 14.5, 6.0);
+            ln!(pb, 8.5, 12.0);
+            ln!(pb, 14.5, 18.0);
+            stroke(pixmap, pb, s, w, color);
+        }
+        "check" => {
+            mv!(pb, 5.5, 12.5);
+            ln!(pb, 10.0, 17.0);
+            ln!(pb, 18.5, 7.5);
+            stroke(pixmap, pb, s, w, color);
+        }
         "sys-lock" => {
             rr!(pb, 6.0, 10.5, 12.0, 9.0, 2.0);
             mv!(pb, 8.5, 10.5);
