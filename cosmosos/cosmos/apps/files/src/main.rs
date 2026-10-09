@@ -58,6 +58,8 @@ struct Files {
     /// Space: Quick Look sheet for the selection.
     quick_look: bool,
     preview: Option<preview::Preview>,
+    /// Grid-view image thumbnails.
+    thumbs: preview::Thumbs,
 }
 
 struct Chooser {
@@ -139,6 +141,7 @@ impl Files {
             preview_pane: false,
             quick_look: false,
             preview: None,
+            thumbs: preview::Thumbs::default(),
         };
         f.refresh();
         f
@@ -187,6 +190,8 @@ impl Files {
             }
             Err(e) => self.status = format!("cannot read {}: {e}", self.dir.display()),
         }
+        self.thumbs
+            .prune(self.entries.iter().map(|e| e.path.as_path()));
     }
 
     fn nav(&mut self, dir: PathBuf) {
@@ -630,6 +635,7 @@ fn sync_preview(ctx: &egui::Context, f: &mut Files) {
     if let Some(pv) = f.preview.as_mut() {
         pv.poll(ctx);
     }
+    f.thumbs.poll(ctx);
 }
 
 fn caption(ui: &mut egui::Ui, kit: &Kit, s: &str) {
@@ -637,6 +643,23 @@ fn caption(ui: &mut egui::Ui, kit: &Kit, s: &str) {
         egui::RichText::new(s)
             .size(text::CAPTION.size)
             .color(kit.text2()),
+    );
+}
+
+/// A grid tile's image thumbnail, fitted into the tile with a hairline
+/// edge so light photos don't melt into a light window.
+fn paint_thumb(ui: &egui::Ui, tex: &egui::TextureHandle, r: egui::Rect) {
+    let ir = preview::fit(r, tex.size_vec2());
+    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    ui.painter().add(
+        egui::epaint::RectShape::filled(ir, radius::ROW, egui::Color32::WHITE)
+            .with_texture(tex.id(), uv),
+    );
+    ui.painter().rect_stroke(
+        ir,
+        radius::ROW,
+        egui::Stroke::new(1.0, egui::Color32::from_black_alpha(28)),
+        egui::StrokeKind::Inside,
     );
 }
 
@@ -798,6 +821,16 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
     let kit = Kit::get(ui.ctx());
     keyboard(ui, f);
     sync_preview(ui.ctx(), f);
+    let mut grid_thumbs = std::collections::HashMap::new();
+    if f.view == 1 {
+        for e in &f.entries {
+            if !e.is_dir && preview::is_image(&e.path) && f.shows(e) {
+                if let Some(t) = f.thumbs.get(ui.ctx(), &e.path) {
+                    grid_thumbs.insert(e.path.clone(), t);
+                }
+            }
+        }
+    }
     let (fav, loc) = places();
     let title = f
         .dir
@@ -998,9 +1031,16 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
                                     }
                                     rows += 1;
                                     let kind = FileKind::of(&e.name, e.is_dir);
-                                    let resp = grid_tile(ui, picked(f, e), &e.name, |ui, r| {
-                                        cosmos_uitk::icons::paint(ui.painter(), r.shrink(6.0), kind)
-                                    });
+                                    let thumb = grid_thumbs.get(&e.path);
+                                    let resp =
+                                        grid_tile(ui, picked(f, e), &e.name, |ui, r| match thumb {
+                                            Some(tex) => paint_thumb(ui, tex, r),
+                                            None => cosmos_uitk::icons::paint(
+                                                ui.painter(),
+                                                r.shrink(6.0),
+                                                kind,
+                                            ),
+                                        });
                                     row_click(f, e, i, &resp, &mut ev);
                                     resp.context_menu(|ui| entry_menu(ui, e, i, &mut ev));
                                 }
