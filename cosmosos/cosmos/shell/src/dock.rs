@@ -1,7 +1,7 @@
 //! The dock: an edge rail — icons racked along the screen edge like the
-//! macOS Dock rotated vertical. Default position is the LEFT edge,
-//! vertical and centred (the ref-1 sketch); `right` and `bottom` are
-//! Settings options via the `dock_position` config key.
+//! macOS Dock. Default position is the BOTTOM edge, centred (ref-3);
+//! `left` and `right` are Settings options via the `dock_position`
+//! config key.
 //!
 //! The rail reserves an exclusive zone (STRIP px on that edge) so
 //! maximised and snapped windows never overlap it. The layer surface is
@@ -19,14 +19,14 @@ use wayland_client::protocol::wl_shm;
 use crate::{desktop::AppEntry, draw, glass, icons, ShellState};
 
 /// Pill thickness — the exclusive zone reserves this + the edge margin.
-pub const STRIP: u32 = 60;
+pub const STRIP: u32 = 68;
 /// Gap between the pill and the screen edge (exclusive zone = STRIP+MARGIN).
 pub const MARGIN: u32 = 10;
 /// Transparent margin beyond the rail where labels/magnified icons pop.
 /// Not clickable — the input region covers only the rail band.
 pub const OVERHANG: u32 = 128;
-const CELL: f64 = 56.0;
-const ICON_SZ: f32 = 48.0;
+const CELL: f64 = 62.0;
+const ICON_SZ: f32 = 52.0;
 /// Extra icon px at the hover centre and its falloff radius.
 const MAG_MAX: f32 = 16.0;
 const MAG_SPAN: f64 = 115.0;

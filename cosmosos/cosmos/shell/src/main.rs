@@ -86,7 +86,7 @@ use ipc_client::IpcClient;
 use notify::{Notification, NotifyEvent};
 use sysinfo::SysInfo;
 
-pub const PANEL_HEIGHT: u32 = 32;
+pub const PANEL_HEIGHT: u32 = 30;
 pub const NOTIFY_WIDTH: u32 = 340;
 pub const NOTIFY_TIMEOUT_MS: i64 = 5000;
 pub const LAUNCHER_WIDTH: u32 = 680;
@@ -154,7 +154,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         notify_conn: None,
         panel_size: (0, PANEL_HEIGHT),
         dock_size: (0, 0),
-        dock_position: dock::DockPos::Left,
+        dock_position: dock::DockPos::Bottom,
         switcher_size: (0, 0),
         switcher_order: Vec::new(),
         switcher_sel: 0,

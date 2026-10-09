@@ -79,7 +79,7 @@ impl Default for CosmosConfig {
             scale_auto: true,
             reduce_motion: false,
             accent: cosmos_ipc::DEFAULT_ACCENT.to_string(),
-            dock_position: "left".to_string(),
+            dock_position: "bottom".to_string(),
             wallpaper: "violet".to_string(),
         }
     }
