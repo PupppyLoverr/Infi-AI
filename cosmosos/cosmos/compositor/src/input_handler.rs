@@ -190,7 +190,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             KeyAction::Launcher => {
                 self.cosmos.launcher_open = !self.cosmos.launcher_open;
                 let open = self.cosmos.launcher_open;
-                self.ipc_broadcast(&cosmos_ipc::Event::LauncherToggled { open });
+                self.ipc_broadcast(&cosmos_ipc::Event::LauncherToggled { open, search: true });
             }
             KeyAction::Fullscreen => {
                 if let Some(window) = self.focused_window() {

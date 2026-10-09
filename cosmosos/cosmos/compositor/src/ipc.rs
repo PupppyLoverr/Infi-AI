@@ -285,6 +285,7 @@ fn dispatch_request<BackendData: Backend>(
             state.cosmos.launcher_open = !state.cosmos.launcher_open;
             state.ipc_broadcast(&Event::LauncherToggled {
                 open: state.cosmos.launcher_open,
+                search: false,
             });
             None
         }

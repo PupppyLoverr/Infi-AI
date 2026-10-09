@@ -64,11 +64,16 @@ pub struct CosmosConfig {
     pub reduce_motion: bool,
     /// Accent preset name (see cosmos_ipc::ACCENT_PRESETS).
     pub accent: String,
-    /// Dock rail position: "left" (default), "right", or "bottom".
+    /// Dock rail position: "bottom" (default), "left", or "right".
     pub dock_position: String,
     /// Active wallpaper name — `<name>-<w>x<h>.png` under
     /// /usr/share/cosmos/wallpapers/.
     pub wallpaper: String,
+    /// Clock and weather cards on the desktop (top-left).
+    pub desktop_widgets: bool,
+    /// Weather place name ("" = derive from the time zone city); geocoded
+    /// via Open-Meteo by the shell.
+    pub weather_city: String,
 }
 
 impl Default for CosmosConfig {
@@ -81,6 +86,8 @@ impl Default for CosmosConfig {
             accent: cosmos_ipc::DEFAULT_ACCENT.to_string(),
             dock_position: "bottom".to_string(),
             wallpaper: "violet".to_string(),
+            desktop_widgets: true,
+            weather_city: String::new(),
         }
     }
 }
@@ -176,6 +183,20 @@ impl CosmosConfig {
                 self.scale_auto = value
                     .as_bool()
                     .ok_or_else(|| "scale_auto must be a bool".to_string())?;
+            }
+            "desktop_widgets" => {
+                self.desktop_widgets = value
+                    .as_bool()
+                    .ok_or_else(|| "desktop_widgets must be a bool".to_string())?;
+            }
+            "weather_city" => {
+                let v = value
+                    .as_str()
+                    .ok_or_else(|| "weather_city must be a string".to_string())?;
+                if v.chars().count() > 64 || v.chars().any(char::is_control) {
+                    return Err("weather_city: up to 64 printable characters".to_string());
+                }
+                self.weather_city = v.trim().to_string();
             }
             "reduce_motion" => {
                 self.reduce_motion = value
