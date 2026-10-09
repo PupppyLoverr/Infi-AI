@@ -47,6 +47,8 @@ struct State {
     /// Sidebar's System → Rollback pane instead of an agent.
     rollback_pane: bool,
     confirm_rollback: Option<u32>,
+    /// `--onboard` (Ask Cosmos → "Set up an agent…"): the provider sheet.
+    onboard: bool,
 }
 
 fn home() -> PathBuf {
@@ -339,6 +341,54 @@ fn draw(ui: &mut egui::Ui, st: &mut State) {
                 });
         });
 
+    if st.onboard {
+        let ctx = ui.ctx().clone();
+        let mut done = false;
+        let ready = cosmos_kit::ask::provider_configured();
+        let open = sheet(
+            &ctx,
+            egui::Id::new("agents-onboard"),
+            "Set Up an Agent",
+            |ui| {
+                ui.label(
+                    egui::RichText::new(
+                        "Ask Cosmos runs opencode with your own model provider. Sign in once and \
+                     Summarize, Explain and Rewrite work in Files, the Editor and Search.",
+                    )
+                    .color(kit.text2()),
+                );
+                ui.add_space(space::S12);
+                let (glyph, line) = if ready {
+                    (Icon::Check, "A model provider is connected.")
+                } else {
+                    (Icon::Info, "No model provider yet.")
+                };
+                ui.horizontal(|ui| {
+                    cosmos_kit::icons::show(ui, glyph, 16.0, kit.text());
+                    ui.label(egui::RichText::new(line).color(kit.text()));
+                });
+                ui.add_space(space::S16);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if button(ui, ButtonKind::Primary, "Done").clicked() {
+                        done = true;
+                    }
+                    if !ready && button(ui, ButtonKind::Secondary, "Sign In…").clicked() {
+                        st.status = match Command::new("cosmos-terminal")
+                            .args(["-e", "opencode auth login"])
+                            .spawn()
+                        {
+                            Ok(_) => "opened opencode sign-in in Terminal".into(),
+                            Err(e) => format!("can't open Terminal: {e}"),
+                        };
+                    }
+                });
+            },
+        );
+        if !open || done {
+            st.onboard = false;
+        }
+    }
+
     if let Some(num) = st.confirm_rollback {
         let mut done = false;
         let ctx = ui.ctx().clone();
@@ -513,7 +563,10 @@ fn main() {
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
-    let mut st = State::default();
+    let mut st = State {
+        onboard: std::env::args().any(|a| a == "--onboard"),
+        ..State::default()
+    };
     refresh_agents(&mut st);
     refresh_snapshots(&mut st);
     let mut last_tick = std::time::Instant::now() - std::time::Duration::from_secs(4);

@@ -6,6 +6,7 @@
 use cosmos_theme::{palette, Accent, Palette, Rgba};
 use egui::Color32;
 
+pub mod ask;
 pub mod controls;
 pub mod icons;
 pub mod layout;
