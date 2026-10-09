@@ -21,11 +21,11 @@ const SEC_H: f64 = 24.0;
 const FOOTER_H: f64 = 44.0;
 const CARD_R: f32 = cosmos_theme::radius::PANEL;
 const MAX_ROWS: usize = 5;
-const GRID_COLS: usize = 8;
+const GRID_COLS: usize = 6;
 const CELL_H: f64 = 104.0;
 const CELL_ICON: f32 = 56.0;
 /// Gap between overlay top edge and the launcher box.
-const TOP_PAD_FRAC: f64 = 0.16;
+const START_GAP: f64 = 12.0;
 
 /// Recently launched apps shown under the pinned grid, newest first.
 const MAX_REC: usize = 3;
@@ -213,12 +213,21 @@ fn initials(name: &str) -> String {
         .collect()
 }
 
-fn box_top(h: u32) -> f64 {
-    (h as f64 * TOP_PAD_FRAC).max(48.0)
-}
-
-fn box_left(w: u32) -> f64 {
-    ((w as f64 - LAUNCHER_WIDTH as f64) / 2.0).max(8.0)
+/// Start's card origin. With the dock at the bottom it sits just above
+/// the dock, centred; with a side dock it hugs that edge under the
+/// menubar. It never covers the menubar.
+fn box_origin(size: (u32, u32), dock_pos: dock::DockPos, height: f64) -> (f64, f64) {
+    let (w, h) = (size.0 as f64, size.1 as f64);
+    let card_w = LAUNCHER_WIDTH as f64;
+    let rail = dock::STRIP as f64 + START_GAP;
+    let min_top = crate::PANEL_HEIGHT as f64 + START_GAP;
+    let centred = ((w - card_w) / 2.0).max(8.0);
+    let (left, top) = match dock_pos {
+        dock::DockPos::Bottom => (centred, h - rail - height),
+        dock::DockPos::Left => (rail.min((w - card_w).max(8.0)), min_top),
+        dock::DockPos::Right => ((w - rail - card_w).max(8.0), min_top),
+    };
+    (left, top.max(min_top))
 }
 
 fn grid_rows(n_pinned: usize) -> usize {
@@ -254,10 +263,6 @@ fn box_height(n_items: usize, n_pinned: usize, n_rec: usize, searching: bool) ->
         h += 2.0 * SEC_H + WIDGET_H + 10.0;
     }
     h + FOOTER_H
-}
-
-fn footer_top(h: u32, n_items: usize, n_pinned: usize, n_rec: usize, searching: bool) -> f64 {
-    box_top(h) + box_height(n_items, n_pinned, n_rec, searching) - FOOTER_H
 }
 
 /// Y offset (relative to card top) where the results list starts.
@@ -536,6 +541,7 @@ pub fn rows_shown(searching: bool, n_pinned: usize, n_items: usize) -> usize {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn hit_test(
     x: f64,
     y: f64,
@@ -544,10 +550,10 @@ pub fn hit_test(
     n_pinned: usize,
     n_rec: usize,
     searching: bool,
+    dock_pos: dock::DockPos,
 ) -> Hit {
-    let left = box_left(size.0);
-    let top = box_top(size.1);
     let height = box_height(n_items, n_pinned, n_rec, searching);
+    let (left, top) = box_origin(size, dock_pos, height);
     if x < left || x > left + LAUNCHER_WIDTH as f64 || y < top || y > top + height {
         return Hit::Backdrop;
     }
@@ -1163,9 +1169,9 @@ pub fn draw(state: &mut ShellState) {
     // the corners — then the card's own soft shadow.
     draw::scrim(&mut pixmap, w, h, state.dark);
 
-    let left = box_left(w) as f32;
-    let top = box_top(h) as f32;
-    let height = box_height(rows.len(), pinned_apps.len(), rec_apps.len(), searching) as f32;
+    let height = box_height(rows.len(), pinned_apps.len(), rec_apps.len(), searching);
+    let (left, top) = box_origin((w, h), state.dock_position, height);
+    let (left, top, height) = (left as f32, top as f32, height as f32);
     draw::shadow(
         &mut pixmap,
         left,
@@ -1485,7 +1491,7 @@ pub fn draw(state: &mut ShellState) {
     }
 
     // Footer (Start-style): separator + Settings / Log out buttons.
-    let fy = footer_top(h, rows.len(), pinned_apps.len(), rec_apps.len(), searching) as f32;
+    let fy = top + height - FOOTER_H as f32;
     draw::fill_rect(
         &mut pixmap,
         left + 1.0,
@@ -1625,7 +1631,16 @@ pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {
         let searching = !state.launcher_query.is_empty();
         let n = rows_shown(searching, np, state.filtered_results().len());
         let nr = recommended(state).len();
-        hit_test(x, y, state.launcher_size, n, np, nr, searching)
+        hit_test(
+            x,
+            y,
+            state.launcher_size,
+            n,
+            np,
+            nr,
+            searching,
+            state.dock_position,
+        )
     };
     let mut dirty = false;
     // Track the hovered cell/row/button — the draw pass highlights it.
@@ -1705,6 +1720,24 @@ pub fn key_press(state: &mut ShellState, event: KeyEvent) {
 mod search_layout_tests {
     use super::*;
     use crate::search::{Kind, Row};
+
+    #[test]
+    fn start_sits_above_the_bottom_dock_and_below_the_menubar() {
+        let size = (1536, 864);
+        let (left, top) = box_origin(size, dock::DockPos::Bottom, 560.0);
+        assert_eq!(left, (1536.0 - LAUNCHER_WIDTH as f64) / 2.0);
+        assert_eq!(top + 560.0, 864.0 - dock::STRIP as f64 - START_GAP);
+        let (_, top) = box_origin(size, dock::DockPos::Bottom, 900.0);
+        assert_eq!(top, crate::PANEL_HEIGHT as f64 + START_GAP);
+        let (left, top) = box_origin(size, dock::DockPos::Left, 560.0);
+        assert_eq!(left, dock::STRIP as f64 + START_GAP);
+        assert_eq!(top, crate::PANEL_HEIGHT as f64 + START_GAP);
+        let (left, _) = box_origin(size, dock::DockPos::Right, 560.0);
+        assert_eq!(
+            left + LAUNCHER_WIDTH as f64,
+            1536.0 - dock::STRIP as f64 - START_GAP
+        );
+    }
 
     fn row(kind: Kind) -> Row {
         Row {
