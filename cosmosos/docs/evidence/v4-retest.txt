@@ -42,4 +42,5 @@ Host clippy on this tree:
   -> Finished dev profile, zero warnings, exit 0 (x86_64).
 
 A6 strict terminal RSS soak (VmRSS kB, quiet terminal, t5..t30):
-  (see report — numbers appended below at run end)
+  t5 25824 t10 25824 t15 25824 t20 25824 t25 25824 t30 25824
+  growth t5->t30 = +0.0% — STRICT PASS (byte-flat all six samples)

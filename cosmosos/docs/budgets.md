@@ -25,3 +25,6 @@ uitk shm buffer reuse (#147): terminal RSS bounded — +56.7% t0->t5 pool
 warmup, then flat t5->t30; strict <10% rule still FAILS for terminal
 (warmup counted from t0); compositor +4.2%, shell +0.3%, files +7.0%,
 editor flat, zero panics — docs/evidence/v3-soak-after.txt
+
+v4 round 2 (9bf0ac2): terminal VmRSS t5..t30 = 25824 kB flat,
++0.0% strict PASS — docs/evidence/v4-retest.txt
