@@ -224,7 +224,14 @@ fn field_frame(ui: &mut Ui, width: f32) -> (Rect, Kit) {
     ui.painter().rect_stroke(
         rect,
         radius::CONTROL,
-        Stroke::new(1.0, kit.hairline()),
+        Stroke::new(
+            1.0,
+            if kit.dark {
+                Color32::from_white_alpha(36)
+            } else {
+                kit.hairline()
+            },
+        ),
         StrokeKind::Inside,
     );
     (rect, kit)
