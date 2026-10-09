@@ -1606,6 +1606,9 @@ impl ShellState {
                 const BTN_RIGHT: u32 = 0x111;
                 self.set_menu(None, 0);
                 self.set_quick_open(false);
+                // The desktop takes no keyboard focus, so the island's
+                // focus-loss dismissal never fires for a desktop press.
+                self.close_island();
                 if button == BTN_RIGHT {
                     self.open_desktop_menu(x, y);
                 }
