@@ -77,4 +77,14 @@ Files listing (A5):
 
 ==A6 (30-min idle terminal soak)==
   cosmos-terminal spawned post-relogin, single pid 2251, window untouched.
-  VmRSS sampled every 5 min — see a6-soak table appended below.
+  VmRSS sampled every 5 min:
+
+    t5m  rss_kb=19672  pid=2251
+    t10m rss_kb=19672  pid=2251
+    t15m rss_kb=19672  pid=2251
+    t20m rss_kb=19672  pid=2251
+    t25m rss_kb=19672  pid=2251
+    t30m rss_kb=19672  pid=2251
+
+  Growth t5 -> t30: +0.0% — PASS (<10%). Byte-flat for 25 minutes
+  (vs pre-fix stepping growth still climbing at +27min).
