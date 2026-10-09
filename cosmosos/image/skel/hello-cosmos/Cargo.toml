@@ -1,0 +1,7 @@
+[package]
+name = "hello-cosmos"
+version = "0.1.0"
+edition = "2021"
+description = "A tiny program that greets you with a few facts about this machine"
+
+[dependencies]
