@@ -1391,4 +1391,14 @@ pub trait Backend {
     ) -> Result<(), String> {
         Err("screenshot capture unsupported on this backend".to_string())
     }
+    /// Render one window offscreen to a PNG thumbnail at most `max_w`
+    /// wide (Snap Assist tiles).
+    fn capture_window(
+        &mut self,
+        _window: &crate::shell::WindowElement,
+        _max_w: u32,
+        _path: &std::path::Path,
+    ) -> Result<(), String> {
+        Err("window capture unsupported on this backend".to_string())
+    }
 }

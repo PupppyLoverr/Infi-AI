@@ -12,15 +12,19 @@ use smithay_client_toolkit::{
 use tiny_skia::{Color, PixmapMut};
 use wayland_client::protocol::wl_shm;
 
-use crate::{draw, icons, ShellState, PANEL_HEIGHT};
+use crate::{draw, glass, icons, ShellState, PANEL_HEIGHT};
 
-const CARD_W: f64 = 300.0;
-const ROW_H: f64 = 44.0;
-const HEAD_H: f64 = 34.0;
-const FOOT_H: f64 = 28.0;
-const PAD: f64 = 12.0;
+const TILE_W: f64 = 220.0;
+const THUMB_H: f64 = 132.0;
+const LABEL_H: f64 = 30.0;
+const TILE_H: f64 = THUMB_H + LABEL_H;
+const TILE_GAP: f64 = 12.0;
+const TILE_R: f32 = 10.0;
+const HEAD_H: f64 = 30.0;
+const FOOT_H: f64 = 26.0;
+const PAD: f64 = 14.0;
 const CARD_R: f32 = 12.0;
-const MAX_ROWS: usize = 8;
+const MAX_ROWS: usize = 9;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Hit {
@@ -28,24 +32,51 @@ pub enum Hit {
     Backdrop,
 }
 
+/// (cols, rows) of the tile grid for `n` windows in a free half
+/// `free_w` wide: up to 3 columns, as many as fit.
+pub fn grid(n: usize, free_w: f64) -> (usize, usize) {
+    let n = n.clamp(1, MAX_ROWS);
+    let fit = ((free_w - 2.0 * PAD - 16.0 + TILE_GAP) / (TILE_W + TILE_GAP)).floor() as usize;
+    let cols = fit.clamp(1, 3).min(n);
+    (cols, n.div_ceil(cols))
+}
+
+/// Tile `i`'s offset inside the card.
+fn tile_offset(i: usize, cols: usize) -> (f64, f64) {
+    let (c, r) = ((i % cols) as f64, (i / cols) as f64);
+    (
+        PAD + c * (TILE_W + TILE_GAP),
+        PAD + HEAD_H + r * (TILE_H + TILE_GAP),
+    )
+}
+
+/// Thumbnail pixel box (physical) the shell fits captures into.
+pub fn thumb_box() -> (u32, u32) {
+    let s = draw::scale();
+    (
+        ((TILE_W - 12.0) as f32 * s) as u32,
+        ((THUMB_H - 12.0) as f32 * s) as u32,
+    )
+}
+
 fn theme(dark: bool) -> (Color, Color, Color, Color, CtColor, CtColor) {
     if dark {
         (
-            Color::from_rgba8(0x00, 0x00, 0x00, 0x90), // free-half dim
-            Color::from_rgba8(0x1A, 0x1B, 0x1E, 0xF2), // card
-            draw::accent_soft(true),                   // selection wash
-            Color::from_rgba8(0x3C, 0x3D, 0x42, 0xFF), // border
+            Color::from_rgba8(0x00, 0x00, 0x00, 0x60), // free-half dim
+            Color::from_rgba8(0x1A, 0x1B, 0x1E, 0xF2), // flat card (Lite)
+            Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x14), // tile
+            Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x24), // hairline
             CtColor::rgba(0xEC, 0xEC, 0xEE, 0xFF),
-            CtColor::rgba(0xA8, 0xA8, 0xAE, 0xFF),
+            CtColor::rgba(0xB4, 0xB4, 0xBA, 0xFF),
         )
     } else {
         (
-            Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x66),
+            Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x40),
             Color::from_rgba8(0xFA, 0xFA, 0xFB, 0xF6),
-            draw::accent_soft(false),
-            Color::from_rgba8(0xC4, 0xC4, 0xC8, 0xFF),
+            Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x9C),
+            Color::from_rgba8(0x00, 0x00, 0x00, 0x1F),
             CtColor::rgba(0x18, 0x18, 0x1B, 0xFF),
-            CtColor::rgba(0x5A, 0x5A, 0x5E, 0xFF),
+            CtColor::rgba(0x4A, 0x4A, 0x50, 0xFF),
         )
     }
 }
@@ -80,27 +111,27 @@ pub fn free_half(state: &ShellState) -> (f64, f64, f64, f64) {
 /// whichever half is free (`assist_fill_left` = the picker sits left).
 pub fn card_rect(state: &ShellState) -> (f64, f64, f64, f64) {
     let (x0, y0, fw, fh) = free_half(state);
-    let rows = state.assist_ids.len().min(MAX_ROWS).max(1) as f64;
-    let ch = PAD * 2.0 + HEAD_H + rows * ROW_H + FOOT_H;
-    let cx = x0 + fw / 2.0;
+    let (cols, rows) = grid(state.assist_ids.len(), fw);
+    let cw = PAD * 2.0 + cols as f64 * TILE_W + (cols as f64 - 1.0) * TILE_GAP;
+    let ch = PAD * 2.0 + HEAD_H + rows as f64 * TILE_H + (rows as f64 - 1.0) * TILE_GAP + FOOT_H;
     (
-        (cx - CARD_W / 2.0).max(x0 + 8.0),
+        (x0 + (fw - cw) / 2.0).max(x0 + 8.0),
         y0 + (fh - ch).max(0.0) / 2.0,
-        CARD_W,
+        cw,
         ch,
     )
 }
 
-/// Row index under (x, y), or Backdrop outside the card.
+/// Tile index under (x, y), or Backdrop outside every tile.
 pub fn hit_test(state: &ShellState, x: f64, y: f64) -> Hit {
-    let (cx, cy, cw, ch) = card_rect(state);
-    if x < cx || x >= cx + cw || y < cy || y >= cy + ch {
-        return Hit::Backdrop;
-    }
-    let ry = cy + PAD + HEAD_H;
-    let rows = state.assist_ids.len().min(MAX_ROWS);
-    for i in 0..rows {
-        if y >= ry + i as f64 * ROW_H && y < ry + (i + 1) as f64 * ROW_H {
+    let (cx, cy, _, _) = card_rect(state);
+    let (_, _, fw, _) = free_half(state);
+    let n = state.assist_ids.len().min(MAX_ROWS);
+    let (cols, _) = grid(n, fw);
+    for i in 0..n {
+        let (tx, ty) = tile_offset(i, cols);
+        let (tx, ty) = (cx + tx, cy + ty);
+        if x >= tx && x < tx + TILE_W && y >= ty && y < ty + TILE_H {
             return Hit::Row(i);
         }
     }
@@ -140,8 +171,10 @@ pub fn draw(state: &mut ShellState) {
     let items = rows(state);
     let (cx, cy, cw, ch) = card_rect(state);
     let (dx, dy, dw, dh) = free_half(state);
-    let (dim, card, sel_bg, sep, fg, fg_dim) = theme(dark);
+    let (cols, _) = grid(items.len(), dw);
+    let (dim, card, tile, sep, fg, fg_dim) = theme(dark);
     let glyph = Color::from_rgba8(fg.r(), fg.g(), fg.b(), fg.a());
+    let s = draw::scale();
 
     let (pw, ph) = draw::phys(w, h);
     let stride = pw as i32 * 4;
@@ -158,43 +191,32 @@ pub fn draw(state: &mut ShellState) {
     };
     pixmap.fill(Color::TRANSPARENT);
 
-    // Dim only the free half (below the menubar, clear of the dock
-    // rail) — the snapped window and every chrome strip stay bright.
+    // Dim only the free half (below the menubar, clear of the dock) —
+    // the snapped window and every chrome strip stay bright.
     draw::fill_rect(&mut pixmap, dx as f32, dy as f32, dw as f32, dh as f32, dim);
 
-    // Picker card — soft shadow under it like the launcher's.
-    draw::shadow(
+    // Glass card; the surface is fullscreen, so card coords are screen coords.
+    let (cxf, cyf, cwf, chf) = (cx as f32, cy as f32, cw as f32, ch as f32);
+    draw::shadow(&mut pixmap, cxf, cyf, cwf, chf, CARD_R);
+    glass::fill_glass(
         &mut pixmap,
-        cx as f32,
-        cy as f32,
-        cw as f32,
-        ch as f32,
+        &ShellState::wallpaper_name(),
+        cxf,
+        cyf,
+        cwf,
+        chf,
         CARD_R,
-    );
-    draw::fill_round_rect(
-        &mut pixmap,
-        cx as f32,
-        cy as f32,
-        cw as f32,
-        ch as f32,
-        CARD_R,
+        cxf,
+        cyf,
+        dark,
         card,
     );
-    draw::stroke_round_rect(
-        &mut pixmap,
-        cx as f32,
-        cy as f32,
-        cw as f32,
-        ch as f32,
-        CARD_R,
-        1.0,
-        sep,
-    );
+    draw::stroke_round_rect(&mut pixmap, cxf, cyf, cwf, chf, CARD_R, 1.0, sep);
 
     draw::text_bold(
         &mut pixmap,
         (cx + PAD) as f32,
-        (cy + PAD + 2.0) as f32,
+        (cy + PAD) as f32,
         (cw - PAD * 2.0) as f32,
         18.0,
         13.0,
@@ -203,33 +225,70 @@ pub fn draw(state: &mut ShellState) {
     );
 
     for (i, (_id, title, app_id)) in items.iter().enumerate() {
-        let ry = cy + PAD + HEAD_H + i as f64 * ROW_H;
-        if sel == i || hover == Some(i) {
-            draw::fill_round_rect(
-                &mut pixmap,
-                (cx + 6.0) as f32,
-                (ry + 4.0) as f32,
-                (cw - 12.0) as f32,
-                (ROW_H - 8.0) as f32,
-                8.0,
-                sel_bg,
-            );
-        }
-        icons::icon(
+        let (ox, oy) = tile_offset(i, cols);
+        let (tx, ty) = ((cx + ox) as f32, (cy + oy) as f32);
+        let (tw, th) = (TILE_W as f32, TILE_H as f32);
+        let active = sel == i || hover == Some(i);
+        draw::fill_round_rect(
             &mut pixmap,
-            &icons::key_for(app_id),
-            (cx + PAD + 8.0) as f32,
-            (ry + ROW_H / 2.0 - 10.0) as f32,
-            20.0,
-            icons::tint_for(&icons::key_for(app_id), dark).unwrap_or(glyph),
+            tx,
+            ty,
+            tw,
+            th,
+            TILE_R,
+            if active {
+                draw::accent_soft(dark)
+            } else {
+                tile
+            },
         );
+        if active {
+            draw::stroke_round_rect(&mut pixmap, tx, ty, tw, th, TILE_R, 2.0, draw::accent(dark));
+        }
+        let key = icons::key_for(app_id);
+        let tint = icons::tint_for(&key, dark).unwrap_or(glyph);
+        // Thumbnail, centred in the top box; the app icon if no capture.
+        let (bx, by, bw, bh) = (tx + 6.0, ty + 6.0, tw - 12.0, THUMB_H as f32 - 12.0);
+        match state.assist_thumbs.get(i).and_then(|t| t.as_ref()) {
+            Some(thumb) => {
+                let (lw, lh) = (thumb.width() as f32 / s, thumb.height() as f32 / s);
+                let (lx, ly) = (bx + (bw - lw) / 2.0, by + (bh - lh) / 2.0);
+                let mut clip = tiny_skia::Mask::new(pixmap.width(), pixmap.height());
+                if let (Some(clip), Some(path)) =
+                    (clip.as_mut(), draw::round_rect_path(lx, ly, lw, lh, 6.0))
+                {
+                    clip.fill_path(&path, tiny_skia::FillRule::Winding, true, draw::xf());
+                    pixmap.draw_pixmap(
+                        0,
+                        0,
+                        thumb.as_ref(),
+                        &tiny_skia::PixmapPaint {
+                            quality: tiny_skia::FilterQuality::Bilinear,
+                            ..Default::default()
+                        },
+                        draw::xf().pre_translate(lx, ly).pre_scale(1.0 / s, 1.0 / s),
+                        Some(clip),
+                    );
+                }
+            }
+            None => icons::icon(
+                &mut pixmap,
+                &key,
+                bx + bw / 2.0 - 24.0,
+                by + bh / 2.0 - 24.0,
+                48.0,
+                tint,
+            ),
+        }
+        let ly = ty + THUMB_H as f32;
+        icons::icon(&mut pixmap, &key, tx + 10.0, ly + 6.0, 16.0, tint);
         draw::text(
             &mut pixmap,
-            (cx + PAD + 36.0) as f32,
-            (ry + ROW_H / 2.0 - 8.0) as f32,
-            (cw - PAD * 2.0 - 44.0) as f32,
+            tx + 32.0,
+            ly + 6.0,
+            tw - 42.0,
             16.0,
-            13.0,
+            12.0,
             title,
             fg,
         );
@@ -238,11 +297,11 @@ pub fn draw(state: &mut ShellState) {
     draw::text(
         &mut pixmap,
         (cx + PAD) as f32,
-        (cy + ch - FOOT_H + 6.0) as f32,
+        (cy + ch - FOOT_H + 4.0) as f32,
         (cw - PAD * 2.0) as f32,
         14.0,
         11.0,
-        "↑↓ choose · Enter snap · Esc dismiss",
+        "Arrows choose · Enter snap · Esc dismiss",
         fg_dim,
     );
 
@@ -251,10 +310,7 @@ pub fn draw(state: &mut ShellState) {
     buffer.attach_to(layer.wl_surface()).ok();
     layer.wl_surface().damage_buffer(0, 0, pw as i32, ph as i32);
     // The input region is exactly the dimmed rect — free half minus
-    // menubar and dock. Clicks on the snapped window, the menubar, the
-    // tray, or the dock rail hit the surfaces underneath instead of
-    // being swallowed as a backdrop press — a tray click must open the
-    // flyout, not just cancel this.
+    // menubar and dock — so tray and dock clicks reach their surfaces.
     if let Ok(region) = Region::new(&state.compositor_state) {
         region.add(dx as i32, dy as i32, dw as i32, dh as i32);
         layer
@@ -283,14 +339,14 @@ pub fn key_press(state: &mut ShellState, event: KeyEvent) {
     match event.keysym {
         Keysym::Escape => state.close_assist(),
         Keysym::Return | Keysym::KP_Enter => state.assist_pick_selected(),
-        Keysym::Down | Keysym::Tab => {
+        Keysym::Down | Keysym::Right | Keysym::Tab => {
             let n = state.assist_ids.len().min(MAX_ROWS);
             if n > 0 {
                 state.assist_sel = (state.assist_sel + 1) % n;
                 state.assist_dirty = true;
             }
         }
-        Keysym::Up => {
+        Keysym::Up | Keysym::Left => {
             let n = state.assist_ids.len().min(MAX_ROWS);
             if n > 0 {
                 state.assist_sel = (state.assist_sel + n - 1) % n;
@@ -298,5 +354,22 @@ pub fn key_press(state: &mut ShellState, event: KeyEvent) {
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grid_fits_the_free_half() {
+        // 1920/2 free half fits 3 tiles; a narrow half falls back to 1.
+        assert_eq!(grid(5, 960.0), (3, 2));
+        assert_eq!(grid(2, 960.0), (2, 1));
+        assert_eq!(grid(4, 300.0), (1, 4));
+        assert_eq!(grid(0, 960.0), (1, 1));
+        let (cols, _) = grid(9, 960.0);
+        let (x, _) = tile_offset(cols - 1, cols);
+        assert!(x + TILE_W + PAD <= 960.0 - 16.0);
     }
 }

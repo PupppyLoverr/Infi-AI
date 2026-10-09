@@ -504,16 +504,6 @@ fn text_menu(ui: &mut egui::Ui, ed: &mut Editor) {
         ui.close();
     }
     menu_separator(ui);
-    menu_section(ui, "Ask Cosmos");
-    if !ask::provider_configured() {
-        if menu_item(ui, Some(Icon::Sparkle), "Set up an agent…", None).clicked() {
-            if let Err(e) = ask::open_onboarding() {
-                ed.status = format!("can't open Agents: {e}");
-            }
-            ui.close();
-        }
-        return;
-    }
     submenu(ui, Some(Icon::Sparkle), "Ask Cosmos", |ui| {
         for a in [
             ask::Action::Summarize,
@@ -533,6 +523,13 @@ fn text_menu(ui: &mut egui::Ui, ed: &mut Editor) {
                 .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()));
             if let Err(e) = ask::open_in_agent(&dir) {
                 ed.status = format!("can't open the agent: {e}");
+            }
+            ui.close();
+        }
+        if !ask::provider_configured() && menu_item(ui, None, "Set up an agent…", None).clicked()
+        {
+            if let Err(e) = ask::open_onboarding() {
+                ed.status = format!("can't open Agents: {e}");
             }
             ui.close();
         }
