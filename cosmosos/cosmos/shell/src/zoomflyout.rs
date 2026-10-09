@@ -3,7 +3,6 @@
 //! anchored under the button; each thumbnail previews a snap layout
 //! and its cells snap the window straight into that zone.
 
-use cosmic_text::Color as CtColor;
 use smithay_client_toolkit::{
     seat::keyboard::{KeyEvent, Keysym},
     shell::WaylandSurface,
@@ -11,7 +10,7 @@ use smithay_client_toolkit::{
 use tiny_skia::{Color, PixmapMut};
 use wayland_client::protocol::wl_shm;
 
-use crate::{draw, ShellState};
+use crate::{draw, glass, ShellState};
 
 const PREV_W: f64 = 126.0;
 const PREV_H: f64 = 80.0;
@@ -38,24 +37,41 @@ pub enum Hit {
     Backdrop,
 }
 
-fn theme(dark: bool) -> (Color, Color, Color, Color, CtColor) {
+/// Flyout palette over glass.
+struct Palette {
+    /// Flat card colour when glass is off (Lite Mode / no wallpaper).
+    card: Color,
+    /// Mini-screen behind the zone cells.
+    screen: Color,
+    /// Idle zone cell.
+    cell: Color,
+    /// Card hairline.
+    border: Color,
+}
+
+fn theme(dark: bool) -> Palette {
     if dark {
-        (
-            Color::from_rgba8(0x1A, 0x1B, 0x1E, 0xF2), // card
-            Color::from_rgba8(0x2A, 0x2B, 0x30, 0xFF), // preview bg
-            draw::accent_soft(true),                   // hover cell
-            Color::from_rgba8(0x3C, 0x3D, 0x42, 0xFF), // border
-            CtColor::rgba(0xEC, 0xEC, 0xEE, 0xFF),
-        )
+        Palette {
+            card: Color::from_rgba8(0x1A, 0x1B, 0x1E, 0xF2),
+            screen: Color::from_rgba8(0x00, 0x00, 0x00, 0x52),
+            cell: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x2E),
+            border: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x24),
+        }
     } else {
-        (
-            Color::from_rgba8(0xFA, 0xFA, 0xFB, 0xF6),
-            Color::from_rgba8(0xE8, 0xE8, 0xEB, 0xFF),
-            draw::accent_soft(false),
-            Color::from_rgba8(0xC4, 0xC4, 0xC8, 0xFF),
-            CtColor::rgba(0x18, 0x18, 0x1B, 0xFF),
-        )
+        Palette {
+            card: Color::from_rgba8(0xFA, 0xFA, 0xFB, 0xF6),
+            screen: Color::from_rgba8(0x00, 0x00, 0x00, 0x1A),
+            cell: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xC8),
+            border: Color::from_rgba8(0x00, 0x00, 0x00, 0x1F),
+        }
     }
+}
+
+/// Hovered zone: the accent, slightly see-through so the glass reads.
+fn hover_fill(dark: bool) -> Color {
+    let mut c = draw::accent(dark);
+    c.set_alpha(0.85);
+    c
 }
 
 /// Preview rect for layout `li` inside the card.
@@ -112,7 +128,8 @@ pub fn draw(state: &mut ShellState) {
     };
     let dark = state.dark;
     let hover = state.zoom_hover;
-    let (card, prev_bg, hover_bg, sep, _fg) = theme(dark);
+    let pal = theme(dark);
+    let (sx, sy) = state.zoom_origin;
 
     let (pw, ph) = draw::phys(w, h);
     let stride = pw as i32 * 4;
@@ -129,10 +146,31 @@ pub fn draw(state: &mut ShellState) {
     };
     pixmap.fill(Color::TRANSPARENT);
 
-    // Card — shadowed like every floating surface.
+    // Glass card sampled at its real screen position, like the dock.
     draw::shadow(&mut pixmap, 0.0, 0.0, w as f32, h as f32, CARD_R);
-    draw::fill_round_rect(&mut pixmap, 0.0, 0.0, w as f32, h as f32, CARD_R, card);
-    draw::stroke_round_rect(&mut pixmap, 0.0, 0.0, w as f32, h as f32, CARD_R, 1.0, sep);
+    glass::fill_glass(
+        &mut pixmap,
+        &ShellState::wallpaper_name(),
+        0.0,
+        0.0,
+        w as f32,
+        h as f32,
+        CARD_R,
+        sx as f32,
+        sy as f32,
+        dark,
+        pal.card,
+    );
+    draw::stroke_round_rect(
+        &mut pixmap,
+        0.0,
+        0.0,
+        w as f32,
+        h as f32,
+        CARD_R,
+        1.0,
+        pal.border,
+    );
 
     for (li, (_, cells)) in cosmos_ipc::SNAP_LAYOUTS.iter().enumerate() {
         let (px, py, pw, ph) = preview_rect(li);
@@ -143,14 +181,14 @@ pub fn draw(state: &mut ShellState) {
             pw as f32,
             ph as f32,
             PREV_R,
-            prev_bg,
+            pal.screen,
         );
         for (ci, (_, fx, fy, fw, fh)) in cells.iter().enumerate() {
             let (x0, y0, cw, ch) = cell_rect(li, (*fx, *fy, *fw, *fh));
             let color = if hover == Some((li, ci)) {
-                hover_bg
+                hover_fill(dark)
             } else {
-                card // cell interior = card colour, slightly raised
+                pal.cell
             };
             draw::fill_round_rect(
                 &mut pixmap,
