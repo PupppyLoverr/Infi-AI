@@ -119,19 +119,23 @@ fn local_time(secs: i64) -> String {
 
 /// The image fitted into THUMB_W×THUMB_H, premultiplied for tiny-skia.
 pub(crate) fn thumbnail(p: &Path) -> Option<Pixmap> {
-    let img = image::open(p).ok()?.to_rgba8();
+    fit_premultiplied(&image::open(p).ok()?.to_rgba8(), THUMB_W, THUMB_H)
+}
+
+/// `img` scaled down to fit `max_w`×`max_h`, premultiplied for tiny-skia.
+pub(crate) fn fit_premultiplied(img: &image::RgbaImage, max_w: u32, max_h: u32) -> Option<Pixmap> {
     let (w, h) = img.dimensions();
     if w == 0 || h == 0 {
         return None;
     }
-    let s = (THUMB_W as f32 / w as f32)
-        .min(THUMB_H as f32 / h as f32)
+    let s = (max_w as f32 / w as f32)
+        .min(max_h as f32 / h as f32)
         .min(1.0);
     let (tw, th) = (
         ((w as f32 * s) as u32).max(1),
         ((h as f32 * s) as u32).max(1),
     );
-    let small = image::imageops::thumbnail(&img, tw, th);
+    let small = image::imageops::thumbnail(img, tw, th);
     let mut data = small.into_raw();
     for i in (0..data.len()).step_by(4) {
         let a = data[i + 3] as u16;
