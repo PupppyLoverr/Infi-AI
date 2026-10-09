@@ -1,0 +1,94 @@
+shot                         region                             role                 fg            bg ratio  min  result
+v5-06-files-dark.png         Files title CosmosOS               primary   (244, 241, 250)  (27, 23, 47) 15.54  7.0  PASS
+v5-06-files-dark.png         sidebar Home row                   primary   (244, 241, 250)  (22, 18, 42) 16.30  7.0  PASS
+v5-06-files-dark.png         sidebar header Favourites          tertiary  (115, 112, 130)  (22, 18, 42)  3.79  3.0  PASS
+v5-06-files-dark.png         sidebar header Locations           tertiary  (115, 112, 130)  (22, 18, 42)  3.79  3.0  PASS
+v5-06-files-dark.png         sidebar CosmosOS selected          primary   (244, 241, 250)  (71, 67, 87)  8.52  7.0  PASS
+v5-06-files-dark.png         sidebar Temporary row              primary   (244, 241, 250)  (22, 18, 42) 16.30  7.0  PASS
+v5-06-files-dark.png         col header Name                    secondary (212, 209, 220)  (27, 23, 48) 11.51  4.5  PASS
+v5-06-files-dark.png         col header Size                    secondary (206, 203, 215)  (27, 23, 48) 10.85  4.5  PASS
+v5-06-files-dark.png         col header Date Modified           secondary (213, 210, 221)  (28, 24, 48) 11.53  4.5  PASS
+v5-06-files-dark.png         row name boot                      primary   (244, 241, 250)  (27, 23, 48) 15.52  7.0  PASS
+v5-06-files-dark.png         kind Folder                        secondary (212, 209, 220)  (27, 23, 48) 11.51  4.5  PASS
+v5-06-files-dark.png         date 2026-10-09                    secondary (212, 209, 220)  (28, 23, 48) 11.49  4.5  PASS
+v5-06-files-dark.png         search placeholder                 tertiary  (170, 167, 181)  (51, 46, 69)  5.50  3.0  PASS
+v5-06-files-dark.png         footer 23 items                    tertiary  (161, 158, 174)  (27, 23, 48)  6.62  3.0  PASS
+v5-settings-dark.png         Appearance page title              primary   (244, 241, 250)  (28, 23, 49) 15.46  7.0  PASS
+v5-settings-dark.png         Accent colour label                primary   (244, 241, 250)  (52, 46, 71) 11.55  7.0  PASS
+v5-settings-dark.png         helper cross-fade text             secondary (215, 212, 224)  (52, 46, 71)  8.84  4.5  PASS
+v5-settings-dark.png         Reduce motion label                primary   (244, 241, 250)  (52, 46, 71) 11.55  7.0  PASS
+v5-settings-dark.png         Display section header             tertiary  (244, 241, 250)  (28, 23, 49) 15.46  3.0  PASS
+v5-settings-dark.png         Scale label                        primary   (244, 241, 250)  (52, 46, 71) 11.55  7.0  PASS
+v5-settings-dark.png         125 percent                        secondary (171, 167, 182)  (52, 46, 70)  5.50  4.5  PASS
+v5-settings-dark.png         Automatic scale label              primary   (244, 241, 250)  (52, 46, 70) 11.57  7.0  PASS
+v5-settings-dark.png         auto caption line                  secondary (171, 167, 182)  (52, 46, 70)  5.50  4.5  PASS
+v5-settings-dark.png         sidebar Wallpaper                  primary   (244, 241, 250)  (22, 18, 43) 16.28  7.0  PASS
+v5-settings-dark.png         Light segment unselected           secondary (179, 174, 189)  (73, 67, 89)  4.35  4.5  FAIL
+v5-07-files-light.png        L: title CosmosOS                  primary    (25, 21, 36) (250, 249, 253) 17.06  7.0  PASS
+v5-07-files-light.png        L: sidebar Home                    primary    (25, 22, 37) (237, 233, 246) 14.87  7.0  PASS
+v5-07-files-light.png        L: header Favourites               tertiary  (130, 126, 140) (237, 233, 246)  3.31  3.0  PASS
+v5-07-files-light.png        L: header Locations                tertiary  (130, 126, 140) (237, 233, 246)  3.31  3.0  PASS
+v5-07-files-light.png        L: CosmosOS selected               primary    (25, 21, 36) (210, 206, 220) 11.59  7.0  PASS
+v5-07-files-light.png        L: Temporary row                   primary    (25, 21, 36) (237, 233, 246) 14.98  7.0  PASS
+v5-07-files-light.png        L: col Name                        secondary  (56, 52, 66) (250, 249, 253) 11.53  4.5  PASS
+v5-07-files-light.png        L: col Date Modified               secondary  (54, 50, 64) (247, 247, 248) 11.63  4.5  PASS
+v5-07-files-light.png        L: row boot                        primary    (25, 22, 37) (250, 249, 253) 16.94  7.0  PASS
+v5-07-files-light.png        L: kind Folder                     secondary  (56, 52, 66) (250, 249, 253) 11.53  4.5  PASS
+v5-07-files-light.png        L: date value                      secondary  (24, 24, 27) (230, 230, 233) 14.22  4.5  PASS
+v5-07-files-light.png        L: search placeholder              tertiary  (108, 105, 115) (255, 255, 255)  5.38  3.0  PASS
+v5-07-files-light.png        L: footer                          tertiary  (90, 78, 106) (250, 249, 253)  7.33  3.0  PASS
+v5-settings-light.png        L: Accent colour                   primary    (25, 21, 36) (255, 255, 255) 17.89  7.0  PASS
+v5-settings-light.png        L: helper text                     secondary  (61, 57, 70) (255, 255, 255) 11.22  4.5  PASS
+v5-settings-light.png        L: Reduce motion                   primary    (25, 21, 36) (255, 255, 255) 17.89  7.0  PASS
+v5-settings-light.png        L: Display header                  tertiary   (25, 21, 36) (250, 249, 253) 17.06  3.0  PASS
+v5-settings-light.png        L: Scale label                     primary    (25, 21, 36) (255, 255, 255) 17.89  7.0  PASS
+v5-settings-light.png        L: 125 percent                     secondary (108, 105, 115) (255, 255, 255)  5.38  4.5  PASS
+v5-settings-light.png        L: Automatic label                 primary    (25, 21, 36) (255, 255, 255) 17.89  7.0  PASS
+v5-settings-light.png        L: auto caption                    secondary (108, 105, 115) (255, 255, 255)  5.38  4.5  PASS
+v5-settings-light.png        L: sidebar Wallpaper               primary    (25, 21, 36) (237, 233, 246) 14.98  7.0  PASS
+v5-settings-light.png        L: Dark segment unselected         secondary  (25, 21, 36) (255, 255, 255) 17.89  4.5  PASS
+v5-start-dark.png            GLASS: PINNED header               tertiary  (140, 140, 146)  (25, 26, 29)  5.20  3.0  PASS
+v5-start-dark.png            GLASS: Terminal label              primary   (236, 236, 238)  (25, 26, 29) 14.75  7.0  PASS
+v5-start-dark.png            GLASS: search placeholder          tertiary  (140, 140, 146)  (36, 37, 41)  4.58  3.0  PASS
+v5-start-dark.png            GLASS: RECOMMENDED header          tertiary  (140, 140, 146)  (25, 26, 29)  5.20  3.0  PASS
+v5-start-dark.png            GLASS: rec row Files               primary   (236, 236, 238)  (25, 26, 29) 14.75  7.0  PASS
+v5-start-dark.png            GLASS: Just now                    secondary (140, 140, 146)  (25, 26, 29)  5.20  4.5  PASS
+v5-start-dark.png            GLASS: cosmos user row             primary   (140, 140, 146)  (26, 27, 29)  5.16  7.0  FAIL
+v5-start-dark.png            GLASS: Log out btn                 primary    (26, 26, 29)  (26, 26, 29)  1.00  7.0  FAIL
+v5-cc-dark.png               GLASS: clock line                  primary   (236, 236, 238)  (30, 28, 33) 14.32  7.0  PASS
+v5-cc-dark.png               GLASS: Network title               primary   (236, 236, 238)  (48, 49, 53) 11.01  7.0  PASS
+v5-cc-dark.png               GLASS: Wired connection            secondary (140, 140, 146)  (48, 49, 53)  3.89  4.5  FAIL
+v5-cc-dark.png               GLASS: Volume label                primary   (236, 236, 238)  (48, 49, 53) 11.01  7.0  PASS
+v5-cc-dark.png               GLASS: volume 0%                   secondary (135, 135, 141)  (48, 49, 53)  3.64  4.5  FAIL
+v5-cc-dark.png               GLASS: Theme label                 primary   (236, 236, 238)  (48, 49, 53) 11.01  7.0  PASS
+v5-cc-dark.png               GLASS: Focus label                 primary   (236, 236, 238)  (48, 49, 53) 11.01  7.0  PASS
+v5-cc-dark.png               GLASS: Focus off                   secondary (242, 242, 244)  (60, 61, 66)  9.69  4.5  PASS
+v5-cc-dark.png               GLASS: Log out button              primary   (236, 236, 238)  (48, 49, 53) 11.01  7.0  PASS
+v5-cc-dark.png               GLASS: menubar app name            primary    (37, 26, 63)  (36, 26, 62)  1.00  7.0  FAIL
+v5-cc-dark.png               GLASS: menubar File                secondary  (37, 26, 64)  (38, 27, 64)  1.01  4.5  FAIL
+v5-cc-dark.png               GLASS: menubar clock               primary   (250, 250, 250)  (67, 54, 82) 10.66  7.0  PASS
+v5-start-light.png           GLASS-L: PINNED header             tertiary  (106, 106, 110) (246, 246, 247)  4.99  3.0  PASS
+v5-start-light.png           GLASS-L: Terminal label            primary    (24, 24, 27) (245, 245, 246) 16.26  7.0  PASS
+v5-start-light.png           GLASS-L: search placeholder        tertiary  (106, 106, 110) (239, 239, 241)  4.69  3.0  PASS
+v5-start-light.png           GLASS-L: rec row Files             primary    (24, 24, 27) (246, 246, 247) 16.40  7.0  PASS
+v5-cc-light.png              GLASS-L: clock line                primary    (24, 24, 27) (246, 245, 247) 16.30  7.0  PASS
+v5-cc-light.png              GLASS-L: Network title             primary    (24, 24, 27) (230, 230, 233) 14.22  7.0  PASS
+v5-cc-light.png              GLASS-L: Wired connection          secondary (106, 106, 110) (230, 230, 233)  4.32  4.5  FAIL
+v5-cc-light.png              GLASS-L: Volume label              primary    (24, 24, 27) (230, 230, 233) 14.22  7.0  PASS
+v5-cc-light.png              GLASS-L: Theme label               primary    (24, 24, 27) (230, 230, 233) 14.22  7.0  PASS
+v5-cc-light.png              GLASS-L: Focus label               primary    (24, 24, 27) (230, 230, 233) 14.22  7.0  PASS
+v5-cc-light.png              GLASS-L: Log out button            primary    (24, 24, 27) (230, 230, 233) 14.22  7.0  PASS
+v5-cc-light.png              GLASS-L: menubar app name          primary    (26, 22, 37) (247, 243, 253) 16.19  7.0  PASS
+v5-cc-light.png              GLASS-L: menubar clock             primary       (0, 0, 0) (230, 225, 232) 16.30  7.0  PASS
+
+73/81 pass
+
+== rerun @2ea3e29 (segment fix) ==
+v5-settings-dark2.png     Light segment unselected   secondary (244,241,250) (73,67,89)   8.43  4.5  PASS
+v5-settings-dark2.png     Scale label                primary   (244,241,250) (52,46,71)  11.55  7.0  PASS
+v5-settings-dark2.png     125 percent                secondary (171,167,182) (52,46,70)   5.50  4.5  PASS
+v5-07-files-light2.png    Dark segment unselected    secondary (55,51,65) (250,249,253)  11.70  4.5  PASS
+v5-07-files-light2.png    sidebar CosmosOS           primary   (25,22,37) (210,206,220)   11.50  7.0  PASS
+v5-07-files-light2.png    header Favourites          tertiary  (130,126,140) (237,233,246) 3.31  3.0  PASS
+row-name n/a: fresh boot, Home empty (only hidden) — unchanged, not a regression.
+app-surface: ALL PASS @2ea3e29. Glass rows recorded for §1.3.

@@ -1,0 +1,893 @@
+[
+ {
+  "shot": "v5-06-files-dark.png",
+  "name": "Files title CosmosOS",
+  "box": [
+   605,
+   315,
+   115,
+   32
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-06-files-dark.png",
+  "name": "sidebar Home row",
+  "box": [
+   555,
+   432,
+   90,
+   28
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-06-files-dark.png",
+  "name": "sidebar header Favourites",
+  "box": [
+   540,
+   388,
+   110,
+   22
+  ],
+  "role": "tertiary"
+ },
+ {
+  "shot": "v5-06-files-dark.png",
+  "name": "sidebar header Locations",
+  "box": [
+   540,
+   493,
+   110,
+   22
+  ],
+  "role": "tertiary"
+ },
+ {
+  "shot": "v5-06-files-dark.png",
+  "name": "sidebar CosmosOS selected",
+  "box": [
+   575,
+   535,
+   130,
+   28
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-06-files-dark.png",
+  "name": "sidebar Temporary row",
+  "box": [
+   575,
+   580,
+   120,
+   28
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-06-files-dark.png",
+  "name": "col header Name",
+  "box": [
+   787,
+   370,
+   80,
+   26
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-06-files-dark.png",
+  "name": "col header Size",
+  "box": [
+   1240,
+   370,
+   55,
+   26
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-06-files-dark.png",
+  "name": "col header Date Modified",
+  "box": [
+   1445,
+   370,
+   120,
+   26
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-06-files-dark.png",
+  "name": "row name boot",
+  "box": [
+   818,
+   415,
+   70,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-06-files-dark.png",
+  "name": "kind Folder",
+  "box": [
+   1285,
+   415,
+   75,
+   26
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-06-files-dark.png",
+  "name": "date 2026-10-09",
+  "box": [
+   1495,
+   415,
+   105,
+   26
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-06-files-dark.png",
+  "name": "search placeholder",
+  "box": [
+   1340,
+   318,
+   90,
+   26
+  ],
+  "role": "tertiary"
+ },
+ {
+  "shot": "v5-06-files-dark.png",
+  "name": "footer 23 items",
+  "box": [
+   480,
+   938,
+   150,
+   26
+  ],
+  "role": "tertiary"
+ },
+ {
+  "shot": "v5-settings-dark.png",
+  "name": "Appearance page title",
+  "box": [
+   460,
+   285,
+   130,
+   28
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-settings-dark.png",
+  "name": "Accent colour label",
+  "box": [
+   790,
+   420,
+   145,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-settings-dark.png",
+  "name": "helper cross-fade text",
+  "box": [
+   770,
+   485,
+   230,
+   20
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-settings-dark.png",
+  "name": "Reduce motion label",
+  "box": [
+   775,
+   462,
+   135,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-settings-dark.png",
+  "name": "Display section header",
+  "box": [
+   745,
+   562,
+   90,
+   22
+  ],
+  "role": "tertiary"
+ },
+ {
+  "shot": "v5-settings-dark.png",
+  "name": "Scale label",
+  "box": [
+   770,
+   612,
+   70,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-settings-dark.png",
+  "name": "125 percent",
+  "box": [
+   1415,
+   612,
+   65,
+   26
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-settings-dark.png",
+  "name": "Automatic scale label",
+  "box": [
+   765,
+   658,
+   155,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-settings-dark.png",
+  "name": "auto caption line",
+  "box": [
+   765,
+   685,
+   310,
+   20
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-settings-dark.png",
+  "name": "sidebar Wallpaper",
+  "box": [
+   505,
+   395,
+   120,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-settings-dark.png",
+  "name": "Light segment unselected",
+  "box": [
+   1350,
+   366,
+   55,
+   26
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-07-files-light.png",
+  "name": "L: title CosmosOS",
+  "box": [
+   605,
+   315,
+   115,
+   32
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-07-files-light.png",
+  "name": "L: sidebar Home",
+  "box": [
+   555,
+   432,
+   90,
+   28
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-07-files-light.png",
+  "name": "L: header Favourites",
+  "box": [
+   540,
+   388,
+   110,
+   22
+  ],
+  "role": "tertiary"
+ },
+ {
+  "shot": "v5-07-files-light.png",
+  "name": "L: header Locations",
+  "box": [
+   540,
+   493,
+   110,
+   22
+  ],
+  "role": "tertiary"
+ },
+ {
+  "shot": "v5-07-files-light.png",
+  "name": "L: CosmosOS selected",
+  "box": [
+   575,
+   535,
+   130,
+   28
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-07-files-light.png",
+  "name": "L: Temporary row",
+  "box": [
+   575,
+   580,
+   120,
+   28
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-07-files-light.png",
+  "name": "L: col Name",
+  "box": [
+   787,
+   370,
+   80,
+   26
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-07-files-light.png",
+  "name": "L: col Date Modified",
+  "box": [
+   1445,
+   370,
+   120,
+   26
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-07-files-light.png",
+  "name": "L: row boot",
+  "box": [
+   818,
+   415,
+   70,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-07-files-light.png",
+  "name": "L: kind Folder",
+  "box": [
+   1285,
+   415,
+   75,
+   26
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-07-files-light.png",
+  "name": "L: date value",
+  "box": [
+   1495,
+   415,
+   105,
+   26
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-07-files-light.png",
+  "name": "L: search placeholder",
+  "box": [
+   1340,
+   318,
+   90,
+   26
+  ],
+  "role": "tertiary"
+ },
+ {
+  "shot": "v5-07-files-light.png",
+  "name": "L: footer",
+  "box": [
+   480,
+   938,
+   150,
+   26
+  ],
+  "role": "tertiary"
+ },
+ {
+  "shot": "v5-settings-light.png",
+  "name": "L: Accent colour",
+  "box": [
+   790,
+   420,
+   145,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-settings-light.png",
+  "name": "L: helper text",
+  "box": [
+   770,
+   485,
+   230,
+   20
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-settings-light.png",
+  "name": "L: Reduce motion",
+  "box": [
+   775,
+   462,
+   135,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-settings-light.png",
+  "name": "L: Display header",
+  "box": [
+   745,
+   562,
+   90,
+   22
+  ],
+  "role": "tertiary"
+ },
+ {
+  "shot": "v5-settings-light.png",
+  "name": "L: Scale label",
+  "box": [
+   770,
+   612,
+   70,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-settings-light.png",
+  "name": "L: 125 percent",
+  "box": [
+   1415,
+   612,
+   65,
+   26
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-settings-light.png",
+  "name": "L: Automatic label",
+  "box": [
+   765,
+   658,
+   155,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-settings-light.png",
+  "name": "L: auto caption",
+  "box": [
+   765,
+   685,
+   310,
+   20
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-settings-light.png",
+  "name": "L: sidebar Wallpaper",
+  "box": [
+   505,
+   395,
+   120,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-settings-light.png",
+  "name": "L: Dark segment unselected",
+  "box": [
+   1410,
+   366,
+   55,
+   26
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-start-dark.png",
+  "name": "GLASS: PINNED header",
+  "box": [
+   570,
+   228,
+   85,
+   22
+  ],
+  "role": "tertiary"
+ },
+ {
+  "shot": "v5-start-dark.png",
+  "name": "GLASS: Terminal label",
+  "box": [
+   550,
+   360,
+   95,
+   24
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-start-dark.png",
+  "name": "GLASS: search placeholder",
+  "box": [
+   600,
+   185,
+   360,
+   30
+  ],
+  "role": "tertiary"
+ },
+ {
+  "shot": "v5-start-dark.png",
+  "name": "GLASS: RECOMMENDED header",
+  "box": [
+   570,
+   392,
+   130,
+   22
+  ],
+  "role": "tertiary"
+ },
+ {
+  "shot": "v5-start-dark.png",
+  "name": "GLASS: rec row Files",
+  "box": [
+   575,
+   438,
+   75,
+   22
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-start-dark.png",
+  "name": "GLASS: Just now",
+  "box": [
+   1235,
+   438,
+   65,
+   22
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-start-dark.png",
+  "name": "GLASS: cosmos user row",
+  "box": [
+   575,
+   540,
+   90,
+   22
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-start-dark.png",
+  "name": "GLASS: Log out btn",
+  "box": [
+   1010,
+   540,
+   70,
+   24
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-cc-dark.png",
+  "name": "GLASS: clock line",
+  "box": [
+   1545,
+   105,
+   190,
+   28
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-cc-dark.png",
+  "name": "GLASS: Network title",
+  "box": [
+   1585,
+   155,
+   90,
+   24
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-cc-dark.png",
+  "name": "GLASS: Wired connection",
+  "box": [
+   1660,
+   155,
+   135,
+   24
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-cc-dark.png",
+  "name": "GLASS: Volume label",
+  "box": [
+   1585,
+   205,
+   80,
+   24
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-cc-dark.png",
+  "name": "GLASS: volume 0%",
+  "box": [
+   1830,
+   205,
+   45,
+   24
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-cc-dark.png",
+  "name": "GLASS: Theme label",
+  "box": [
+   1585,
+   285,
+   75,
+   24
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-cc-dark.png",
+  "name": "GLASS: Focus label",
+  "box": [
+   1585,
+   330,
+   70,
+   24
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-cc-dark.png",
+  "name": "GLASS: Focus off",
+  "box": [
+   1850,
+   330,
+   40,
+   24
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-cc-dark.png",
+  "name": "GLASS: Log out button",
+  "box": [
+   1785,
+   408,
+   95,
+   28
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-cc-dark.png",
+  "name": "GLASS: menubar app name",
+  "box": [
+   75,
+   10,
+   100,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-cc-dark.png",
+  "name": "GLASS: menubar File",
+  "box": [
+   235,
+   10,
+   60,
+   26
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-cc-dark.png",
+  "name": "GLASS: menubar clock",
+  "box": [
+   1730,
+   10,
+   120,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-start-light.png",
+  "name": "GLASS-L: PINNED header",
+  "box": [
+   570,
+   228,
+   85,
+   22
+  ],
+  "role": "tertiary"
+ },
+ {
+  "shot": "v5-start-light.png",
+  "name": "GLASS-L: Terminal label",
+  "box": [
+   550,
+   360,
+   95,
+   24
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-start-light.png",
+  "name": "GLASS-L: search placeholder",
+  "box": [
+   600,
+   185,
+   360,
+   30
+  ],
+  "role": "tertiary"
+ },
+ {
+  "shot": "v5-start-light.png",
+  "name": "GLASS-L: rec row Files",
+  "box": [
+   575,
+   438,
+   75,
+   22
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-cc-light.png",
+  "name": "GLASS-L: clock line",
+  "box": [
+   1545,
+   105,
+   190,
+   28
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-cc-light.png",
+  "name": "GLASS-L: Network title",
+  "box": [
+   1585,
+   155,
+   90,
+   24
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-cc-light.png",
+  "name": "GLASS-L: Wired connection",
+  "box": [
+   1660,
+   155,
+   135,
+   24
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-cc-light.png",
+  "name": "GLASS-L: Volume label",
+  "box": [
+   1585,
+   205,
+   80,
+   24
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-cc-light.png",
+  "name": "GLASS-L: Theme label",
+  "box": [
+   1585,
+   285,
+   75,
+   24
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-cc-light.png",
+  "name": "GLASS-L: Focus label",
+  "box": [
+   1585,
+   330,
+   70,
+   24
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-cc-light.png",
+  "name": "GLASS-L: Log out button",
+  "box": [
+   1785,
+   408,
+   95,
+   28
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-cc-light.png",
+  "name": "GLASS-L: menubar app name",
+  "box": [
+   75,
+   10,
+   100,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-cc-light.png",
+  "name": "GLASS-L: menubar clock",
+  "box": [
+   1730,
+   10,
+   120,
+   26
+  ],
+  "role": "primary"
+ }
+]
