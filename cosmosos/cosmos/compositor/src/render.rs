@@ -296,14 +296,16 @@ where
                 output_scale,
                 anim,
             ));
-            layer_shadow_elements(
-                renderer,
-                surface,
-                geo,
-                output_scale,
-                anim,
-                &mut output_render_elements,
-            );
+            if !cosmos.config.lite_mode {
+                layer_shadow_elements(
+                    renderer,
+                    surface,
+                    geo,
+                    output_scale,
+                    anim,
+                    &mut output_render_elements,
+                );
+            }
         }
 
         // Space windows, emitted manually (same ordering as smithay's
