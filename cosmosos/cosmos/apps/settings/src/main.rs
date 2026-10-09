@@ -10,6 +10,10 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 
 use cosmos_ipc::{read_message, write_message, Event, Request};
+use cosmos_kit::controls::{button, segmented, slider, text_field, toggle, ButtonKind};
+use cosmos_kit::layout::{group, sidebar_item, toolbar_title, AppWindow};
+use cosmos_kit::{Icon, Kit};
+use cosmos_theme::space;
 
 #[derive(Clone)]
 struct Cfg {
@@ -121,9 +125,45 @@ fn push(key: &str, value: serde_json::Value) -> Result<(), String> {
 
 struct App {
     cfg: Cfg,
-    dirty: bool,
     status: String,
-    ipc_ok: Option<bool>,
+    pane: Pane,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pane {
+    Appearance,
+    Wallpaper,
+    Dock,
+    Apps,
+    Session,
+}
+
+impl Pane {
+    const ALL: [Pane; 5] = [
+        Pane::Appearance,
+        Pane::Wallpaper,
+        Pane::Dock,
+        Pane::Apps,
+        Pane::Session,
+    ];
+    fn title(self) -> &'static str {
+        match self {
+            Pane::Appearance => "Appearance",
+            Pane::Wallpaper => "Wallpaper",
+            Pane::Dock => "Desktop & Dock",
+            Pane::Apps => "Apps",
+            Pane::Session => "Session",
+        }
+    }
+    fn icon(self) -> Icon {
+        match self {
+            Pane::Appearance => Icon::Appearance,
+            Pane::Wallpaper => Icon::Image,
+            Pane::Dock => Icon::Desktop,
+            Pane::Apps => Icon::Grid,
+            Pane::Session => Icon::Info,
+        }
+    }
 }
 
 fn main() {
@@ -134,11 +174,10 @@ fn main() {
         .init();
     let mut app = App {
         cfg: load(),
-        dirty: false,
         status: String::new(),
-        ipc_ok: None,
+        pane: Pane::Appearance,
     };
-    if let Err(e) = cosmos_uitk::run("Settings", "cosmos.settings", (520, 480), move |ui| {
+    if let Err(e) = cosmos_uitk::run("Settings", "cosmos.settings", (760, 520), move |ui| {
         draw(ui, &mut app)
     }) {
         tracing::error!("cosmos-settings fatal: {e}");
@@ -146,53 +185,20 @@ fn main() {
     }
 }
 
-/// Picker click: save, then push only `wallpaper`, off the UI thread.
-/// `push` waits out its 500ms read timeout (SetConfig has no success
-/// ack), so `apply()`'s eight pushes froze the window for ~4s per click.
-fn apply_wallpaper(app: &mut App) {
+/// Save, then push just `key` off the UI thread. `push` waits out its
+/// 500ms read timeout (SetConfig has no success ack), so pushing inline
+/// would stall the window on every change.
+fn set(app: &mut App, key: &'static str, value: serde_json::Value) {
     if let Err(e) = save(&app.cfg) {
         app.status = format!("save failed: {e}");
         return;
     }
-    let value: serde_json::Value = app.cfg.wallpaper.clone().into();
     std::thread::spawn(move || {
-        if let Err(e) = push("wallpaper", value) {
-            tracing::warn!("wallpaper push: {e}");
+        if let Err(e) = push(key, value) {
+            tracing::warn!("{key} push: {e}");
         }
     });
-    app.status = "wallpaper applied".into();
-}
-
-fn apply(app: &mut App) {
-    match save(&app.cfg) {
-        Ok(()) => app.status = "saved".into(),
-        Err(e) => app.status = format!("save failed: {e}"),
-    }
-    app.dirty = false;
-
-    // Push each key live; collect any errors into the status line.
-    let pairs: Vec<(&str, serde_json::Value)> = vec![
-        ("appearance", app.cfg.appearance.clone().into()),
-        ("reduce_motion", app.cfg.reduce_motion.into()),
-        ("scale", app.cfg.scale.into()),
-        ("terminal", app.cfg.terminal.clone().into()),
-        ("launcher_rows", app.cfg.launcher_rows.into()),
-        ("accent", app.cfg.accent.clone().into()),
-        ("dock_position", app.cfg.dock_position.clone().into()),
-        ("wallpaper", app.cfg.wallpaper.clone().into()),
-    ];
-    let mut errs = Vec::new();
-    for (k, v) in pairs {
-        if let Err(e) = push(k, v) {
-            errs.push(e);
-        }
-    }
-    app.ipc_ok = Some(errs.is_empty());
-    if !errs.is_empty() {
-        app.status = format!("saved; live apply: {}", errs[0]);
-    } else {
-        app.status = "saved and applied".into();
-    }
+    app.status.clear();
 }
 
 const WALLPAPERS: &[&str] = &["violet", "ocean", "coral", "aurora", "peach", "indigo"];
@@ -224,172 +230,262 @@ fn thumb(ctx: &egui::Context, stem: &str) -> Option<egui::TextureHandle> {
 }
 
 fn draw(ui: &mut egui::Ui, app: &mut App) {
-    egui::CentralPanel::default().show(ui, |ui| {
-        ui.heading("Appearance");
-        ui.horizontal(|ui| {
-            let mut dark = app.cfg.appearance == "dark";
-            if ui.radio_value(&mut dark, true, "Dark").changed()
-                || ui.radio_value(&mut dark, false, "Light").changed()
-            {
-                app.cfg.appearance = if dark { "dark" } else { "light" }.into();
-                app.dirty = true;
+    let kit = Kit::get(ui.ctx());
+    let pane = app.pane;
+    let cell = std::cell::RefCell::new(&mut *app);
+    AppWindow::new()
+        .toolbar(|ui| toolbar_title(ui, pane.title()))
+        .sidebar(|ui| {
+            let mut app = cell.borrow_mut();
+            ui.add_space(4.0);
+            for p in Pane::ALL {
+                if sidebar_item(ui, p.icon(), p.title(), app.pane == p).clicked() {
+                    app.pane = p;
+                }
             }
-            if ui
-                .checkbox(&mut app.cfg.reduce_motion, "Reduce motion")
-                .changed()
-            {
-                app.dirty = true;
-            }
+        })
+        .show(ui, |ui| {
+            let mut app = cell.borrow_mut();
+            let app = &mut **app;
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin::symmetric(24, 20))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width().min(620.0));
+                            match pane {
+                                Pane::Appearance => appearance(ui, &kit, app),
+                                Pane::Wallpaper => wallpaper(ui, &kit, app),
+                                Pane::Dock => dock(ui, app),
+                                Pane::Apps => apps(ui, app),
+                                Pane::Session => session(ui, &kit, app),
+                            }
+                            if !app.status.is_empty() {
+                                ui.add_space(space::S12);
+                                ui.label(egui::RichText::new(&app.status).color(kit.text2()));
+                            }
+                        });
+                });
         });
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.label("Scale");
-            if ui
-                .add(egui::Slider::new(&mut app.cfg.scale, 0.75..=2.0).step_by(0.05))
-                .changed()
-            {
-                app.dirty = true;
-            }
-        });
+}
 
-        ui.add_space(6.0);
-        // Accent presets — the Omarchy-style theme dial: one colour
-        // reserved for active state, reskinned live over IPC.
-        ui.horizontal(|ui| {
-            ui.label("Accent");
-            let dark = app.cfg.appearance == "dark";
-            for (name, label, d_rgb, l_rgb) in cosmos_ipc::ACCENT_PRESETS {
-                let [r, g, b] = if dark { *d_rgb } else { *l_rgb };
-                let swatch = egui::Color32::from_rgb(r, g, b);
-                let selected = app.cfg.accent == *name;
-                let resp = ui
-                    .add(
-                        egui::Button::new(egui::RichText::new(*label).small())
-                            .fill(if selected {
-                                swatch
-                            } else {
-                                egui::Color32::TRANSPARENT
-                            })
-                            .stroke(egui::Stroke::new(
-                                1.0,
+fn appearance(ui: &mut egui::Ui, kit: &Kit, app: &mut App) {
+    group(ui, None, |g| {
+        g.row("Appearance", |ui| {
+            let mut i = usize::from(app.cfg.appearance == "dark");
+            if segmented(ui, &mut i, &["Light", "Dark"]).changed() {
+                app.cfg.appearance = ["light", "dark"][i].into();
+                set(app, "appearance", app.cfg.appearance.clone().into());
+            }
+        });
+        g.row("Accent colour", |ui| accent_swatches(ui, kit, app));
+        g.row_detail(
+            "Reduce motion",
+            Some("Cross-fade instead of zoom and slide"),
+            |ui| {
+                if toggle(ui, &mut app.cfg.reduce_motion).changed() {
+                    set(app, "reduce_motion", app.cfg.reduce_motion.into());
+                }
+            },
+        );
+    });
+    ui.add_space(space::S20);
+    group(ui, Some("Display"), |g| {
+        g.row("Scale", |ui| {
+            ui.label(
+                egui::RichText::new(format!("{:.0}%", app.cfg.scale * 100.0)).color(kit.text2()),
+            );
+            ui.add_space(space::S8);
+            let mut v = app.cfg.scale as f32;
+            let r = slider(ui, &mut v, 0.75..=2.0, 200.0);
+            if r.changed() {
+                app.cfg.scale = ((v as f64) * 20.0).round() / 20.0;
+            }
+            if r.drag_stopped() || (r.clicked() && r.changed()) {
+                set(app, "scale", app.cfg.scale.into());
+            }
+        });
+    });
+}
+
+/// Preset swatches right-to-left (the row lays out from the right edge);
+/// the selected one gets an outer ring.
+fn accent_swatches(ui: &mut egui::Ui, kit: &Kit, app: &mut App) {
+    let dark = app.cfg.appearance == "dark";
+    for (name, label, d_rgb, l_rgb) in cosmos_ipc::ACCENT_PRESETS.iter().rev() {
+        let [r, g, b] = if dark { *d_rgb } else { *l_rgb };
+        let (rect, resp) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::click());
+        let c = rect.center();
+        ui.painter()
+            .circle_filled(c, 8.0, egui::Color32::from_rgb(r, g, b));
+        if app.cfg.accent == *name {
+            ui.painter()
+                .circle_stroke(c, 10.5, egui::Stroke::new(1.5, kit.text2()));
+        } else if resp.hovered() {
+            ui.painter()
+                .circle_stroke(c, 10.5, egui::Stroke::new(1.0, kit.hairline()));
+        }
+        if resp.on_hover_text(*label).clicked() {
+            app.cfg.accent = (*name).into();
+            set(app, "accent", app.cfg.accent.clone().into());
+        }
+    }
+}
+
+fn wallpaper(ui: &mut egui::Ui, kit: &Kit, app: &mut App) {
+    let dark = app.cfg.appearance == "dark";
+    group(ui, None, |g| {
+        g.custom(|ui| {
+            if let Some(t) = thumb(
+                ui.ctx(),
+                &cosmos_ipc::wallpaper_for(&app.cfg.wallpaper, dark),
+            ) {
+                let w = ui.available_width().min(320.0);
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(w, w * 9.0 / 16.0), egui::Sense::hover());
+                egui::Image::from_texture(&t)
+                    .corner_radius(10)
+                    .paint_at(ui, rect);
+            }
+            ui.add_space(space::S8);
+            ui.label(
+                egui::RichText::new(title_case(&app.cfg.wallpaper))
+                    .strong()
+                    .color(kit.text()),
+            );
+            ui.label(
+                egui::RichText::new(
+                    "The accent colour follows the wallpaper when set to Wallpaper.",
+                )
+                .size(12.0)
+                .color(kit.text2()),
+            );
+        });
+    });
+    ui.add_space(space::S20);
+    group(ui, Some("Dynamic Wallpapers"), |g| {
+        g.custom(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(space::S12, space::S12);
+            ui.horizontal_wrapped(|ui| {
+                for name in WALLPAPERS {
+                    let (rect, resp) =
+                        ui.allocate_exact_size(egui::vec2(128.0, 72.0), egui::Sense::click());
+                    if let Some(t) = thumb(ui.ctx(), &cosmos_ipc::wallpaper_for(name, dark)) {
+                        egui::Image::from_texture(&t)
+                            .corner_radius(8)
+                            .paint_at(ui, rect);
+                    }
+                    let selected = app.cfg.wallpaper == *name;
+                    if selected || resp.hovered() {
+                        ui.painter().rect_stroke(
+                            rect.expand(3.0),
+                            egui::CornerRadius::same(11),
+                            egui::Stroke::new(
+                                if selected { 2.5 } else { 1.0 },
                                 if selected {
-                                    swatch
+                                    kit.accent()
                                 } else {
-                                    egui::Color32::from_gray(90)
+                                    kit.hairline()
                                 },
-                            ))
-                            .corner_radius(egui::CornerRadius::same(10)),
-                    )
-                    .on_hover_text(*label);
-                if resp.clicked() {
-                    app.cfg.accent = (*name).into();
-                    app.dirty = true;
+                            ),
+                            egui::StrokeKind::Outside,
+                        );
+                    }
+                    // A picker click applies at once, like macOS.
+                    if resp.on_hover_text(title_case(name)).clicked() {
+                        app.cfg.wallpaper = (*name).into();
+                        set(app, "wallpaper", app.cfg.wallpaper.clone().into());
+                        app.status = "wallpaper applied".into();
+                    }
                 }
+            });
+        });
+    });
+}
+
+fn title_case(s: &str) -> String {
+    let mut c = s.chars();
+    c.next()
+        .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+        .unwrap_or_default()
+}
+
+fn dock(ui: &mut egui::Ui, app: &mut App) {
+    group(ui, Some("Dock"), |g| {
+        g.row("Position on screen", |ui| {
+            const POS: [&str; 3] = ["left", "bottom", "right"];
+            let mut i = POS
+                .iter()
+                .position(|p| *p == app.cfg.dock_position)
+                .unwrap_or(0);
+            if segmented(ui, &mut i, &["Left", "Bottom", "Right"]).changed() {
+                app.cfg.dock_position = POS[i].into();
+                set(app, "dock_position", app.cfg.dock_position.clone().into());
             }
         });
-
-        ui.add_space(6.0);
-        ui.label("Wallpaper");
-        ui.horizontal_wrapped(|ui| {
-            let dark = app.cfg.appearance == "dark";
-            let ring = ui.visuals().selection.stroke.color;
-            let hover = ui.visuals().widgets.hovered.bg_fill;
-            for name in WALLPAPERS {
-                let (rect, resp) =
-                    ui.allocate_exact_size(egui::vec2(128.0, 72.0), egui::Sense::click());
-                if let Some(t) = thumb(ui.ctx(), &cosmos_ipc::wallpaper_for(name, dark)) {
-                    egui::Image::from_texture(&t)
-                        .corner_radius(8)
-                        .paint_at(ui, rect);
+    });
+    ui.add_space(space::S20);
+    group(ui, Some("Search"), |g| {
+        g.row_detail(
+            "Results shown",
+            Some("Rows in the Search-or-Ask launcher"),
+            |ui| {
+                ui.label(app.cfg.launcher_rows.to_string());
+                ui.add_space(space::S8);
+                let mut v = app.cfg.launcher_rows as f32;
+                let r = slider(ui, &mut v, 4.0..=20.0, 160.0);
+                if r.changed() {
+                    app.cfg.launcher_rows = v.round() as u32;
                 }
-                let selected = app.cfg.wallpaper == *name;
-                if selected || resp.hovered() {
-                    ui.painter().rect_stroke(
-                        rect.expand(2.0),
-                        egui::CornerRadius::same(10),
-                        egui::Stroke::new(2.0, if selected { ring } else { hover }),
-                        egui::StrokeKind::Outside,
-                    );
+                if r.drag_stopped() || (r.clicked() && r.changed()) {
+                    set(app, "launcher_rows", app.cfg.launcher_rows.into());
                 }
-                // A picker click applies at once (like macOS) — the ring
-                // alone moving while the desktop stays put read as broken.
-                if resp.on_hover_text(*name).clicked() {
-                    app.cfg.wallpaper = (*name).into();
-                    apply_wallpaper(app);
+            },
+        );
+    });
+}
+
+fn apps(ui: &mut egui::Ui, app: &mut App) {
+    group(ui, Some("Default apps"), |g| {
+        g.row_detail("Terminal", Some("Command run by super+Enter"), |ui| {
+            let r = text_field(ui, &mut app.cfg.terminal, "cosmos-terminal", 200.0, false);
+            if r.lost_focus() && !app.cfg.terminal.trim().is_empty() {
+                set(app, "terminal", app.cfg.terminal.trim().to_string().into());
+            }
+        });
+    });
+}
+
+fn session(ui: &mut egui::Ui, kit: &Kit, app: &mut App) {
+    let connected = UnixStream::connect(cosmos_ipc::socket_path()).is_ok();
+    group(ui, None, |g| {
+        g.row("Compositor", |ui| {
+            let (t, c) = if connected {
+                ("Connected", kit.text2())
+            } else {
+                ("Not running — changes are saved to disk", kit.text3())
+            };
+            ui.label(egui::RichText::new(t).color(c));
+        });
+        g.row("Settings file", |ui| {
+            ui.label(egui::RichText::new(config_path().display().to_string()).color(kit.text2()));
+        });
+    });
+    ui.add_space(space::S20);
+    group(ui, None, |g| {
+        g.row_detail(
+            "Restart session",
+            Some("The compositor exits and the session supervisor restarts it"),
+            |ui| {
+                if button(ui, ButtonKind::Secondary, "Restart…").clicked() {
+                    app.status = match push_quit() {
+                        Ok(()) => "session ending…".into(),
+                        Err(e) => e,
+                    };
                 }
-            }
-        });
-
-        ui.add_space(6.0);
-        // Dock edge — the rail re-anchors live via the compositor's
-        // exclusive-zone layout.
-        ui.horizontal(|ui| {
-            ui.label("Dock position");
-            for (v, label) in [("left", "Left"), ("right", "Right"), ("bottom", "Bottom")] {
-                if ui
-                    .radio_value(&mut app.cfg.dock_position, v.into(), label)
-                    .changed()
-                {
-                    app.dirty = true;
-                }
-            }
-        });
-
-        ui.add_space(10.0);
-        ui.heading("Apps");
-        ui.horizontal(|ui| {
-            ui.label("Terminal");
-            if ui
-                .add(egui::TextEdit::singleline(&mut app.cfg.terminal).desired_width(160.0))
-                .changed()
-            {
-                app.dirty = true;
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label("Launcher rows");
-            if ui
-                .add(egui::DragValue::new(&mut app.cfg.launcher_rows).range(4..=20))
-                .changed()
-            {
-                app.dirty = true;
-            }
-        });
-
-        ui.add_space(10.0);
-        ui.heading("Session");
-        ui.horizontal(|ui| {
-            ui.label("Compositor:");
-            match app.ipc_ok {
-                Some(true) => ui.label("connected"),
-                Some(false) => ui.label("saved to disk (not connected)"),
-                None => ui.label("—"),
-            }
-        });
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            if ui.button("Restart session").clicked() {
-                app.status = match push_quit() {
-                    Ok(()) => "session ending…".into(),
-                    Err(e) => e,
-                };
-            }
-        });
-        ui.label("compositor exits; the session supervisor restarts it");
-
-        ui.add_space(14.0);
-        ui.separator();
-        ui.horizontal(|ui| {
-            if ui.button("Apply").clicked() {
-                apply(app);
-            }
-            if !app.status.is_empty() {
-                ui.label(&app.status);
-            }
-            if app.dirty {
-                ui.label("(unsaved)");
-            }
-        });
+            },
+        );
     });
 }
 
