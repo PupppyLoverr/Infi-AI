@@ -110,6 +110,16 @@ impl Backend for WinitData {
     ) -> Result<(), String> {
         crate::render::capture_output_to_png(self.backend.renderer(), space, cosmos, output, path)
     }
+
+    #[cfg(feature = "egl")]
+    fn capture_window(
+        &mut self,
+        window: &WindowElement,
+        max_w: u32,
+        path: &std::path::Path,
+    ) -> Result<(), String> {
+        crate::render::capture_window_to_png(self.backend.renderer(), window, max_w, path)
+    }
 }
 
 pub fn run_winit() {

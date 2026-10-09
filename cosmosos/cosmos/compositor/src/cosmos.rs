@@ -721,6 +721,16 @@ pub fn toplevel_title_app(wl_surface: &WlSurface) -> (Option<String>, Option<Str
     })
 }
 
+/// Snap Assist thumbnail width (logical px, captured at 1×) — twice
+/// the tile so it stays sharp at 200%.
+const ASSIST_THUMB_W: u32 = 480;
+
+fn drop_assist_thumbs(ids: &[u64]) {
+    for &id in ids {
+        let _ = std::fs::remove_file(cosmos_ipc::assist_thumb_path(id));
+    }
+}
+
 impl<BackendData: Backend> AnvilState<BackendData> {
     /// The workspace index a window is assigned to.
     pub fn window_workspace(&self, window: &WindowElement) -> usize {
@@ -1381,6 +1391,16 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             self.close_snap_assist();
             return;
         }
+        for &id in &candidates {
+            let Some(w) = self.window_by_id(id) else {
+                continue;
+            };
+            let path = cosmos_ipc::assist_thumb_path(id);
+            if let Err(e) = self.backend_data.capture_window(&w, ASSIST_THUMB_W, &path) {
+                tracing::warn!(id, "snap assist thumbnail: {e}");
+                let _ = std::fs::remove_file(&path);
+            }
+        }
         self.cosmos.assist = Some(AssistState {
             fill,
             candidates: candidates.clone(),
@@ -1398,7 +1418,8 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 
     /// Close Snap Assist if it is open (idempotent).
     pub fn close_snap_assist(&mut self) {
-        if self.cosmos.assist.take().is_some() {
+        if let Some(a) = self.cosmos.assist.take() {
+            drop_assist_thumbs(&a.candidates);
             self.ipc_broadcast(&cosmos_ipc::Event::SnapAssist {
                 open: false,
                 fill: String::new(),
@@ -1412,6 +1433,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         let Some(assist) = self.cosmos.assist.take() else {
             return;
         };
+        drop_assist_thumbs(&assist.candidates);
         self.ipc_broadcast(&cosmos_ipc::Event::SnapAssist {
             open: false,
             fill: String::new(),

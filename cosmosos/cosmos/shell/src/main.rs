@@ -177,6 +177,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         launcher_size: (0, 0),
         assist_size: (0, 0),
         assist_ids: Vec::new(),
+        assist_thumbs: Vec::new(),
         assist_fill_left: false,
         assist_sel: 0,
         assist_hover: None,
@@ -482,6 +483,8 @@ pub struct ShellState {
     pub assist_size: (u32, u32),
     /// Candidate window ids the picker offers (compositor order).
     pub assist_ids: Vec<u64>,
+    /// Compositor-captured thumbnails, parallel to `assist_ids`.
+    pub assist_thumbs: Vec<Option<tiny_skia::Pixmap>>,
     /// True when the picker occupies the LEFT half (snap went right).
     pub assist_fill_left: bool,
     pub assist_sel: usize,
@@ -1279,9 +1282,18 @@ impl ShellState {
             self.assist_open = false;
             self.assist_surface = None;
             self.assist_ids.clear();
+            self.assist_thumbs.clear();
             return;
         }
         self.assist_fill_left = fill_left;
+        let (tw, th) = assist::thumb_box();
+        self.assist_thumbs = ids
+            .iter()
+            .map(|id| {
+                let img = image::open(cosmos_ipc::assist_thumb_path(*id)).ok()?;
+                preview::fit_premultiplied(&img.to_rgba8(), tw, th)
+            })
+            .collect();
         self.assist_ids = ids;
         self.assist_sel = 0;
         self.assist_hover = None;

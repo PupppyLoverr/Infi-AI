@@ -21,6 +21,13 @@ pub fn socket_path() -> std::path::PathBuf {
     std::path::PathBuf::from("/tmp").join(format!("cosmos-ipc-{}.sock", unsafe { libc_uid() }))
 }
 
+/// Where the compositor writes the Snap Assist thumbnail for window
+/// `id` (PNG); the shell reads it when `Event::SnapAssist` opens.
+pub fn assist_thumb_path(id: u64) -> std::path::PathBuf {
+    let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+    std::path::PathBuf::from(dir).join(format!("cosmos-assist-{id}.png"))
+}
+
 #[inline]
 unsafe fn libc_uid() -> u32 {
     extern "C" {

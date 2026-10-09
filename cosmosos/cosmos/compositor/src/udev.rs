@@ -241,6 +241,20 @@ impl Backend for UdevData {
             .map_err(|e| format!("no renderer for {render_node}: {e}"))?;
         crate::render::capture_output_to_png(&mut renderer, space, cosmos, output, path)
     }
+
+    fn capture_window(
+        &mut self,
+        window: &WindowElement,
+        max_w: u32,
+        path: &std::path::Path,
+    ) -> Result<(), String> {
+        let node = self.primary_gpu;
+        let mut renderer = self
+            .gpus
+            .single_renderer(&node)
+            .map_err(|e| format!("no renderer for {node}: {e}"))?;
+        crate::render::capture_window_to_png(&mut renderer, window, max_w, path)
+    }
 }
 
 pub fn run_udev() {

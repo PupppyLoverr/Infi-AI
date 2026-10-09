@@ -25,7 +25,7 @@ use smithay::{
     },
     output::Output,
     reexports::wayland_server::Resource as _,
-    utils::{Logical, Physical, Point, Rectangle, Scale, Size},
+    utils::{Logical, Physical, Point, Rectangle, Scale, Size, Transform},
     wayland::shell::wlr_layer::Layer as WlrLayer,
 };
 
@@ -795,6 +795,76 @@ where
         Instant::now(),
     );
     damage_tracker.render_output(renderer, framebuffer, age, &elements, clear_color)
+}
+
+/// Render one window (its SSD chrome included) offscreen at 1× and
+/// write it as a PNG at most `max_w` wide. Backs the Snap Assist tiles.
+#[profiling::function]
+pub fn capture_window_to_png<R>(
+    renderer: &mut R,
+    window: &crate::shell::WindowElement,
+    max_w: u32,
+    path: &std::path::Path,
+) -> Result<(), String>
+where
+    R: Renderer
+        + ImportAll
+        + ImportMem
+        + smithay::backend::renderer::Offscreen<smithay::backend::renderer::gles::GlesTexture>
+        + smithay::backend::renderer::Bind<smithay::backend::renderer::gles::GlesTexture>
+        + smithay::backend::renderer::ExportMem,
+    R::TextureId: Clone + smithay::backend::renderer::Texture + 'static,
+{
+    use smithay::backend::allocator::Fourcc;
+    use smithay::backend::renderer::{gles::GlesTexture, Offscreen};
+    use smithay::utils::Buffer as BufferCoord;
+
+    let bbox = SpaceElement::bbox(window);
+    if bbox.size.w <= 0 || bbox.size.h <= 0 {
+        return Err("window has no size yet".to_string());
+    }
+    let size: Size<i32, Physical> = (bbox.size.w, bbox.size.h).into();
+    let buf_size: Size<i32, BufferCoord> = Size::from((size.w, size.h));
+    let mut texture: GlesTexture =
+        Offscreen::<GlesTexture>::create_buffer(renderer, Fourcc::Argb8888, buf_size)
+            .map_err(|e| format!("offscreen texture alloc failed: {e}"))?;
+    let mut fb = renderer
+        .bind(&mut texture)
+        .map_err(|e| format!("bind offscreen target failed: {e}"))?;
+    // bbox.loc is relative to the element origin (negative with SSD
+    // chrome), so shifting by it puts the whole bbox at (0, 0).
+    let elements: Vec<crate::shell::WindowRenderElement<R>> =
+        AsRenderElements::<R>::render_elements(
+            window,
+            renderer,
+            (-bbox.loc.x, -bbox.loc.y).into(),
+            Scale::from(1.0),
+            1.0,
+        );
+    let mut tracker = OutputDamageTracker::new(size, 1.0, Transform::Normal);
+    tracker
+        .render_output(
+            renderer,
+            &mut fb,
+            0,
+            &elements,
+            Color32F::new(0.0, 0.0, 0.0, 0.0),
+        )
+        .map_err(|e| format!("offscreen render failed: {e:?}"))?;
+    let mapping = renderer
+        .copy_framebuffer(&fb, Rectangle::from_size(buf_size), Fourcc::Abgr8888)
+        .map_err(|e| format!("framebuffer readback failed: {e}"))?;
+    let pixels = renderer
+        .map_texture(&mapping)
+        .map_err(|e| format!("map readback failed: {e}"))?;
+    let img = image::RgbaImage::from_raw(size.w as u32, size.h as u32, pixels.to_vec())
+        .ok_or_else(|| "pixel buffer size mismatch".to_string())?;
+    let (w, h) = img.dimensions();
+    let tw = w.min(max_w.max(1));
+    let th = ((h as u64 * tw as u64) / w as u64).max(1) as u32;
+    image::imageops::thumbnail(&img, tw, th)
+        .save(path)
+        .map_err(|e| format!("write {} failed: {e}", path.display()))
 }
 
 /// Render one output's full desktop (windows + layer surfaces, no cursor)
