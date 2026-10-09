@@ -135,7 +135,7 @@ impl<BackendData: Backend> XwmHandler for AnvilState<BackendData> {
             return;
         };
         self.space.map_element(elem, geometry.loc, false);
-        // TODO: We don't properly handle the order of override-redirect windows here,
+        // Known limitation: We don't properly handle the order of override-redirect windows here,
         //       they are always mapped top and then never reordered.
     }
 
@@ -316,7 +316,7 @@ impl<BackendData: Backend> XwmHandler for AnvilState<BackendData> {
 
     fn new_selection(&mut self, _xwm: XwmId, selection: SelectionTarget, mime_types: Vec<String>) {
         trace!(?selection, ?mime_types, "Got Selection from X11",);
-        // TODO check, that focused windows is X11 window before doing this
+        // Known limitation: check, that focused windows is X11 window before doing this
         match selection {
             SelectionTarget::Clipboard => {
                 set_data_device_selection(&self.display_handle, &self.seat, mime_types, ())

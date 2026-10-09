@@ -338,7 +338,7 @@ delegate_seat!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
 
 impl<BackendData: Backend> TabletSeatHandler for AnvilState<BackendData> {
     fn tablet_tool_image(&mut self, _tool: &TabletToolDescriptor, image: CursorImageStatus) {
-        // TODO: tablet tools should have their own cursors
+        // Known limitation: tablet tools should have their own cursors
         self.cursor_status = image;
     }
 }

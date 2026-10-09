@@ -2,6 +2,7 @@
 //! notification popups. Runs as a wlr-layer-shell Wayland client and talks
 //! to cosmos-compositor over cosmos-ipc.
 
+mod activity;
 mod assist;
 mod clipwatch;
 mod desktop;
@@ -212,6 +213,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         data_devices: Vec::new(),
         drop_tx,
         dnd_on_island: false,
+        agents: activity::scan_agents(),
+        media: None,
         dnd: false,
         file_index: Vec::new(),
         index_tx,
@@ -279,6 +282,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     handle.insert_source(notify_rx, |event, _, state| {
         if let ChannelEvent::Msg(ev) = event {
             state.on_notify(ev);
+        }
+    })?;
+
+    // MPRIS now-playing for the island.
+    let (media_tx, media_rx) = channel::channel::<Option<activity::Media>>();
+    activity::start_mpris(media_tx);
+    handle.insert_source(media_rx, |event, _, state| {
+        if let ChannelEvent::Msg(m) = event {
+            state.media = m;
+            state.panel_dirty = true;
+            state.refresh_island();
         }
     })?;
 
@@ -409,6 +423,10 @@ pub struct ShellState {
     pub drop_tx: calloop::channel::Sender<Vec<String>>,
     /// True while a drag hovers the island card.
     pub dnd_on_island: bool,
+    /// Connected agents (cosmos-agentd live files) — island live activity.
+    pub agents: Vec<activity::AgentActivity>,
+    /// MPRIS now-playing player, if any.
+    pub media: Option<activity::Media>,
     /// Focus mode (Do Not Disturb) — notification popups are suppressed
     /// while on; history still records. Toggled in Control Centre.
     pub dnd: bool,
@@ -618,6 +636,14 @@ impl ShellState {
         self.set_island_open(false);
     }
 
+    /// Re-size and repaint an open island card (its live rows change).
+    pub fn refresh_island(&mut self) {
+        if let Some(layer) = &self.island_surface {
+            layer.set_size(380, island::card_height(self));
+            self.island_dirty = true;
+        }
+    }
+
     /// Click inside the island card.
     pub fn island_click(&mut self, x: f64, y: f64) {
         match island::hit_test(self, x, y) {
@@ -634,7 +660,23 @@ impl ShellState {
                     clipwatch::set_clipboard(self, path);
                 }
             }
-            island::Hit::Backdrop => {}
+            island::Hit::AgentRow(i) => {
+                if let Some(a) = self.agents.get(i) {
+                    activity::set_paused(&a.agent, !a.paused);
+                }
+                self.agents = activity::scan_agents();
+                self.panel_dirty = true;
+                self.refresh_island();
+            }
+            island::Hit::MediaRow => {
+                if let Some(m) = self.media.as_mut() {
+                    activity::play_pause(m.bus.clone());
+                    m.playing = !m.playing;
+                }
+                self.panel_dirty = true;
+                self.refresh_island();
+            }
+            island::Hit::ApprovalRow(_) | island::Hit::Backdrop => {}
         }
     }
 
@@ -1287,6 +1329,9 @@ impl ShellState {
 
     fn on_tick(&mut self) {
         self.panel_dirty = true; // clock
+        self.agents = activity::scan_agents();
+        // Elapsed timers + approval/agent changes.
+        self.refresh_island();
         let before = self.notifications.len();
         let now = std::time::Instant::now();
         self.notifications.retain(|n| {

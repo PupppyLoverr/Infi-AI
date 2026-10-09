@@ -16,7 +16,7 @@ desktop stack written in Rust:
 ## Invariants (never violate)
 
 - Budgets: ISO ≤3.5 GB, installed ≤4 GB, idle RAM <1 GB, boot <15 s.
-- Nothing mocked or stubbed: every tool result is real OS state.
+- Nothing simulated or stubbed: every tool result is real OS state.
 - Design: macOS-clean, monochrome-first UI with ONE accent colour for
   "on" state. Don't restyle the OS in ad-hoc colours — use the accent
   system (`system.settings.set accent <preset>`).
