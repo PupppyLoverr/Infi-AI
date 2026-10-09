@@ -261,7 +261,43 @@ impl<BackendData: Backend> CompositorHandler for AnvilState<BackendData> {
             });
         }
 
-        ensure_initial_configure(surface, &mut self.space, &mut self.popups)
+        let new_exclusive = self
+            .space
+            .outputs()
+            .find_map(|o| {
+                layer_map_for_output(o)
+                    .layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
+                    .cloned()
+            })
+            .filter(|_| {
+                !self.cosmos.session_locked
+                    && with_states(surface, |states| {
+                        let configured = states
+                            .data_map
+                            .get::<LayerSurfaceData>()
+                            .unwrap()
+                            .lock()
+                            .unwrap()
+                            .initial_configure_sent;
+                        let s = *states
+                            .cached_state
+                            .get::<smithay::wayland::shell::wlr_layer::LayerSurfaceCachedState>()
+                            .current();
+                        !configured
+                            && s.keyboard_interactivity
+                                == smithay::wayland::shell::wlr_layer::KeyboardInteractivity::Exclusive
+                            && matches!(s.layer, Layer::Top | Layer::Overlay)
+                    })
+            });
+        ensure_initial_configure(surface, &mut self.space, &mut self.popups);
+        // Exclusive popovers (island, launcher, assist) take focus as they
+        // map; they dismiss on `leave`, which a window click never sent
+        // while focus only reached them on the first key press.
+        if let Some(layer) = new_exclusive {
+            let keyboard = self.seat.get_keyboard().unwrap();
+            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+            keyboard.set_focus(self, Some(layer.into()), serial);
+        }
     }
 }
 
@@ -328,6 +364,22 @@ impl<BackendData: Backend> WlrLayerShellHandler for AnvilState<BackendData> {
                 "cosmos: layer surface destroyed"
             );
             map.unmap_layer(&layer);
+        }
+        // A popover that held keyboard focus (closed by Esc) hands it back
+        // to the frontmost window instead of leaving nothing focused.
+        let keyboard = self.seat.get_keyboard().unwrap();
+        let had_focus = matches!(
+            keyboard.current_focus(),
+            Some(crate::focus::KeyboardFocusTarget::LayerSurface(l)) if l.layer_surface() == &surface
+        );
+        if had_focus && !self.cosmos.session_locked {
+            let top = self.space.elements().last().cloned();
+            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+            keyboard.set_focus(
+                self,
+                top.map(crate::focus::KeyboardFocusTarget::from),
+                serial,
+            );
         }
     }
 }
