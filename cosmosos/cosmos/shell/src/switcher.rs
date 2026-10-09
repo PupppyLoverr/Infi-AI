@@ -85,16 +85,17 @@ pub fn draw(state: &mut ShellState) {
     let selected = state.switcher_sel;
     let sel_glyph = Color::from_rgba8(sel_fg.r(), sel_fg.g(), sel_fg.b(), sel_fg.a());
 
-    let stride = w as i32 * 4;
+    let (pw, ph) = draw::phys(w, h);
+    let stride = pw as i32 * 4;
     let Ok((buffer, canvas)) =
         state
             .pool
-            .create_buffer(w as i32, h as i32, stride, wl_shm::Format::Abgr8888)
+            .create_buffer(pw as i32, ph as i32, stride, wl_shm::Format::Abgr8888)
     else {
         tracing::warn!("switcher: pool create_buffer failed");
         return;
     };
-    let Some(mut pixmap) = PixmapMut::from_bytes(canvas, w, h) else {
+    let Some(mut pixmap) = PixmapMut::from_bytes(canvas, pw, ph) else {
         return;
     };
     // Clear before painting — edge/corner pixels the card fill misses
@@ -170,6 +171,7 @@ pub fn draw(state: &mut ShellState) {
     }
 
     let wl_surface = layer.wl_surface().clone();
+    state.set_viewport(&wl_surface, w, h);
     buffer.attach_to(&wl_surface).ok();
     wl_surface.commit();
 }

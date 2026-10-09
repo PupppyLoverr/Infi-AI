@@ -43,6 +43,7 @@ use calloop::{
     EventLoop, Interest, LoopHandle, Mode, PostAction,
 };
 use calloop_wayland_source::WaylandSource;
+use smithay_client_toolkit::dispatch2::Dispatch2;
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     data_device_manager::{
@@ -71,6 +72,9 @@ use wayland_client::{
     globals::registry_queue_init,
     protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_surface},
     Connection, Proxy, QueueHandle,
+};
+use wayland_protocols::wp::viewporter::client::{
+    wp_viewport::WpViewport, wp_viewporter::WpViewporter,
 };
 
 use desktop::AppEntry;
@@ -130,6 +134,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         seat_state,
         output_state,
         pool,
+        viewporter: globals
+            .bind::<WpViewporter, _, _>(&qh, 1..=1, ScaleData)
+            .ok(),
+        viewports: Vec::new(),
         qh: qh.clone(),
         loop_handle: handle.clone(),
         panel: None,
@@ -338,6 +346,10 @@ pub struct ShellState {
     pub seat_state: SeatState,
     pub output_state: OutputState,
     pub pool: SlotPool,
+    /// wp_viewporter, for painting at the fractional output scale.
+    pub viewporter: Option<WpViewporter>,
+    /// Viewport per layer surface, created on first paint.
+    pub viewports: Vec<(wl_surface::WlSurface, WpViewport)>,
     pub qh: QueueHandle<Self>,
     pub loop_handle: LoopHandle<'static, Self>,
 
@@ -1249,6 +1261,24 @@ impl ShellState {
     }
 
     fn apply_config(&mut self, map: serde_json::Map<String, serde_json::Value>) {
+        // Paint at the output scale; without a viewporter the buffer
+        // would set the surface size, so stay at 1×.
+        if let Some(s) = map.get("scale").and_then(|v| v.as_f64()) {
+            let s = if self.viewporter.is_some() {
+                s as f32
+            } else {
+                1.0
+            };
+            if (s - draw::scale()).abs() > f32::EPSILON {
+                tracing::info!(scale = s, "shell: output scale");
+                draw::set_scale(s);
+                self.panel_dirty = true;
+                self.dock_dirty = true;
+                self.launcher_dirty = true;
+                self.notify_dirty = true;
+                self.switcher_dirty = true;
+            }
+        }
         if let Some(v) = map.get("appearance").and_then(|v| v.as_str()) {
             self.dark = v == "dark";
             DARK.with(|d| d.set(self.dark));
@@ -2091,4 +2121,56 @@ impl ProvidesRegistryState for ShellState {
 }
 
 smithay_client_toolkit::delegate_dispatch2!(ShellState);
+
+impl ShellState {
+    /// Map a `w`×`h` logical surface onto its logical × scale buffer.
+    pub fn set_viewport(&mut self, surface: &wl_surface::WlSurface, w: u32, h: u32) {
+        let Some(vp) = self.viewporter.as_ref() else {
+            return;
+        };
+        self.viewports.retain(|(s, v)| {
+            let alive = s.is_alive();
+            if !alive {
+                v.destroy();
+            }
+            alive
+        });
+        let idx = match self.viewports.iter().position(|(s, _)| s == surface) {
+            Some(i) => i,
+            None => {
+                let v = vp.get_viewport(surface, &self.qh, ScaleData);
+                self.viewports.push((surface.clone(), v));
+                self.viewports.len() - 1
+            }
+        };
+        self.viewports[idx].1.set_destination(w as i32, h as i32);
+    }
+}
+
+/// User data for the viewporter objects.
+struct ScaleData;
+
+impl Dispatch2<WpViewporter, ShellState> for ScaleData {
+    fn event(
+        &self,
+        _: &mut ShellState,
+        _: &WpViewporter,
+        _: <WpViewporter as Proxy>::Event,
+        _: &Connection,
+        _: &QueueHandle<ShellState>,
+    ) {
+    }
+}
+
+impl Dispatch2<WpViewport, ShellState> for ScaleData {
+    fn event(
+        &self,
+        _: &mut ShellState,
+        _: &WpViewport,
+        _: <WpViewport as Proxy>::Event,
+        _: &Connection,
+        _: &QueueHandle<ShellState>,
+    ) {
+    }
+}
 smithay_client_toolkit::delegate_registry!(ShellState);

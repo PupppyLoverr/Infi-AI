@@ -144,15 +144,17 @@ pub fn draw(state: &mut ShellState) {
     let [br, bg_, bb, ba] = pal.window;
     let fallback = Color::from_rgba8(br, bg_, bb, ba);
 
-    let Ok((buffer, canvas)) =
-        state
-            .pool
-            .create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Abgr8888)
-    else {
+    let (pw, ph) = draw::phys(w, h);
+    let Ok((buffer, canvas)) = state.pool.create_buffer(
+        pw as i32,
+        ph as i32,
+        pw as i32 * 4,
+        wl_shm::Format::Abgr8888,
+    ) else {
         tracing::warn!("menubar: pool create_buffer failed");
         return;
     };
-    let Some(mut pixmap) = PixmapMut::from_bytes(canvas, w, h) else {
+    let Some(mut pixmap) = PixmapMut::from_bytes(canvas, pw, ph) else {
         return;
     };
     pixmap.fill(Color::TRANSPARENT);
@@ -206,7 +208,8 @@ pub fn draw(state: &mut ShellState) {
             color,
         );
     }
+    state.set_viewport(&layer.wl_surface().clone(), w, h);
     buffer.attach_to(layer.wl_surface()).ok();
-    layer.wl_surface().damage_buffer(0, 0, w as i32, h as i32);
+    layer.wl_surface().damage_buffer(0, 0, pw as i32, ph as i32);
     layer.wl_surface().commit();
 }

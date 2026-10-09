@@ -104,17 +104,18 @@ pub fn draw(state: &mut ShellState) {
     let pill = crate::island::pill_rect(state);
     let pill_act = crate::island::pill_activity(state);
 
-    let stride = w as i32 * 4;
+    let (pw, ph) = draw::phys(w, h);
+    let stride = pw as i32 * 4;
     let Ok((buffer, canvas)) = state.pool.create_buffer(
-        w as i32,
-        h as i32,
+        pw as i32,
+        ph as i32,
         stride,
         wayland_client::protocol::wl_shm::Format::Abgr8888,
     ) else {
         tracing::warn!("panel: pool create_buffer failed");
         return;
     };
-    let Some(mut pixmap) = PixmapMut::from_bytes(canvas, w, h) else {
+    let Some(mut pixmap) = PixmapMut::from_bytes(canvas, pw, ph) else {
         return;
     };
     pixmap.fill(Color::TRANSPARENT);
@@ -352,7 +353,7 @@ pub fn draw(state: &mut ShellState) {
                 &path,
                 &moon,
                 tiny_skia::FillRule::EvenOdd,
-                tiny_skia::Transform::default(),
+                crate::draw::xf(),
                 None,
             );
         }
@@ -424,8 +425,9 @@ pub fn draw(state: &mut ShellState) {
 
     use smithay_client_toolkit::shell::WaylandSurface;
     let wl_surface = layer.wl_surface().clone();
+    state.set_viewport(&wl_surface, w, h);
     buffer.attach_to(&wl_surface).ok();
-    wl_surface.damage_buffer(0, 0, w as i32, h as i32);
+    wl_surface.damage_buffer(0, 0, pw as i32, ph as i32);
     wl_surface.commit();
 }
 
