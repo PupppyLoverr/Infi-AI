@@ -391,7 +391,7 @@ pub fn icon(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32, co
             // Wi-Fi fan: three arcs opening upward + a base dot.
             for r in [10.0f32, 7.0, 4.0] {
                 let mut pb = PathBuilder::new();
-                let e = r * 0.7071;
+                let e = r * std::f32::consts::FRAC_1_SQRT_2;
                 mv!(pb, 12.0 - e, 17.5 - e);
                 pb.quad_to(
                     ox + 12.0 * s,
@@ -427,7 +427,7 @@ pub fn icon(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32, co
             fill(pixmap, pb, color);
             for r in [3.0f32, 5.6] {
                 let mut pb = PathBuilder::new();
-                let e = r * 0.7071;
+                let e = r * std::f32::consts::FRAC_1_SQRT_2;
                 mv!(pb, 14.0 + e, 12.0 - e);
                 pb.quad_to(
                     ox + (14.0 + 1.2929 * r) * s,
@@ -454,6 +454,115 @@ pub fn icon(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32, co
             mv!(pb, 20.0, 9.5);
             ln!(pb, 15.0, 14.5);
             stroke(pixmap, pb, s, w * 0.85, color);
+        }
+        "user" => {
+            rr!(pb, 8.5, 4.0, 7.0, 7.0, 3.5);
+            mv!(pb, 5.0, 20.0);
+            pb.cubic_to(
+                ox + 5.0 * s,
+                oy + 14.0 * s,
+                ox + 19.0 * s,
+                oy + 14.0 * s,
+                ox + 19.0 * s,
+                oy + 20.0 * s,
+            );
+            stroke(pixmap, pb, s, w, color);
+        }
+        "bluetooth" => {
+            mv!(pb, 7.0, 7.5);
+            ln!(pb, 17.0, 16.5);
+            ln!(pb, 12.0, 20.5);
+            ln!(pb, 12.0, 3.5);
+            ln!(pb, 17.0, 7.5);
+            ln!(pb, 7.0, 16.5);
+            stroke(pixmap, pb, s, w, color);
+        }
+        "focus" => {
+            // Crescent moon.
+            mv!(pb, 15.0, 4.6);
+            pb.quad_to(ox + 2.5 * s, oy + 6.0 * s, ox + 6.5 * s, oy + 17.5 * s);
+            pb.quad_to(ox + 12.5 * s, oy + 22.5 * s, ox + 19.4 * s, oy + 15.0 * s);
+            pb.quad_to(ox + 11.0 * s, oy + 15.5 * s, ox + 15.0 * s, oy + 4.6 * s);
+            pb.close();
+            fill(pixmap, pb, color);
+        }
+        "appearance" => {
+            // Half-filled disc.
+            circle!(pb, 12.0, 12.0, 8.0);
+            stroke(pixmap, pb, s, w, color);
+            let mut pb = PathBuilder::new();
+            let k = 8.0 * 0.5523;
+            mv!(pb, 12.0, 4.0);
+            pb.cubic_to(
+                ox + (12.0 - k) * s,
+                oy + 4.0 * s,
+                ox + 4.0 * s,
+                oy + (12.0 - k) * s,
+                ox + 4.0 * s,
+                oy + 12.0 * s,
+            );
+            pb.cubic_to(
+                ox + 4.0 * s,
+                oy + (12.0 + k) * s,
+                ox + (12.0 - k) * s,
+                oy + 20.0 * s,
+                ox + 12.0 * s,
+                oy + 20.0 * s,
+            );
+            pb.close();
+            fill(pixmap, pb, color);
+        }
+        "lite" => {
+            // Bolt.
+            mv!(pb, 13.5, 3.0);
+            ln!(pb, 5.5, 13.5);
+            ln!(pb, 11.0, 13.5);
+            ln!(pb, 10.0, 21.0);
+            ln!(pb, 18.5, 10.0);
+            ln!(pb, 13.0, 10.0);
+            pb.close();
+            fill(pixmap, pb, color);
+        }
+        "sun" => {
+            circle!(pb, 12.0, 12.0, 3.8);
+            fill(pixmap, pb, color);
+            let mut pb = PathBuilder::new();
+            for i in 0..8 {
+                let a = i as f32 * std::f32::consts::FRAC_PI_4;
+                mv!(pb, 12.0 + a.cos() * 6.5, 12.0 + a.sin() * 6.5);
+                ln!(pb, 12.0 + a.cos() * 9.0, 12.0 + a.sin() * 9.0);
+            }
+            stroke(pixmap, pb, s, w, color);
+        }
+        "play" => {
+            mv!(pb, 8.0, 5.0);
+            ln!(pb, 19.0, 12.0);
+            ln!(pb, 8.0, 19.0);
+            pb.close();
+            fill(pixmap, pb, color);
+        }
+        "pause" => {
+            rr!(pb, 6.5, 5.0, 3.8, 14.0, 1.0);
+            rr!(pb, 13.7, 5.0, 3.8, 14.0, 1.0);
+            fill(pixmap, pb, color);
+        }
+        "chevron-right" => {
+            mv!(pb, 9.5, 6.0);
+            ln!(pb, 15.5, 12.0);
+            ln!(pb, 9.5, 18.0);
+            stroke(pixmap, pb, s, w, color);
+        }
+        "chevron-left" => {
+            mv!(pb, 14.5, 6.0);
+            ln!(pb, 8.5, 12.0);
+            ln!(pb, 14.5, 18.0);
+            stroke(pixmap, pb, s, w, color);
+        }
+        "check" => {
+            mv!(pb, 5.5, 12.5);
+            ln!(pb, 10.0, 17.0);
+            ln!(pb, 18.5, 7.5);
+            stroke(pixmap, pb, s, w, color);
         }
         "sys-lock" => {
             rr!(pb, 6.0, 10.5, 12.0, 9.0, 2.0);

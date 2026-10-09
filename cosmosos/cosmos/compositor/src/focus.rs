@@ -332,9 +332,7 @@ impl<BackendData: Backend> KeyboardTarget<AnvilState<BackendData>> for KeyboardF
             KeyboardFocusTarget::Popup(p) => {
                 KeyboardTarget::enter(p.wl_surface(), seat, data, keys, serial)
             }
-            KeyboardFocusTarget::WlSurface(w) => {
-                KeyboardTarget::enter(w, seat, data, keys, serial)
-            }
+            KeyboardFocusTarget::WlSurface(w) => KeyboardTarget::enter(w, seat, data, keys, serial),
         }
     }
     fn leave(
@@ -357,9 +355,7 @@ impl<BackendData: Backend> KeyboardTarget<AnvilState<BackendData>> for KeyboardF
             KeyboardFocusTarget::Popup(p) => {
                 KeyboardTarget::leave(p.wl_surface(), seat, data, serial)
             }
-            KeyboardFocusTarget::WlSurface(w) => {
-                KeyboardTarget::leave(w, seat, data, serial)
-            }
+            KeyboardFocusTarget::WlSurface(w) => KeyboardTarget::leave(w, seat, data, serial),
         }
     }
     fn key(

@@ -19,6 +19,7 @@ use cosmos_theme::space;
 struct Cfg {
     appearance: String, // "dark" | "light"
     reduce_motion: bool,
+    lite_mode: bool,
     scale: f64,
     /// Scale follows the display width (compositor `scale_auto`).
     scale_auto: bool,
@@ -36,6 +37,7 @@ impl Default for Cfg {
         Cfg {
             appearance: "dark".into(),
             reduce_motion: false,
+            lite_mode: false,
             scale: 1.0,
             scale_auto: true,
             terminal: "cosmos-terminal".into(),
@@ -58,15 +60,39 @@ fn config_path() -> PathBuf {
         .join("cosmos/config.toml")
 }
 
-/// The compositor owns the effective scale (it resolves the automatic
-/// default per display), so show what it applied rather than config.toml.
-fn overlay_compositor_scale(c: &mut Cfg) {
+/// The compositor owns the live config (it resolves the automatic scale
+/// per display, and Control Centre writes through it), so show what it
+/// applied rather than config.toml.
+fn overlay_compositor_config(c: &mut Cfg) {
     let v = cosmos_uitk::theme::compositor_config();
+    let flag = |k: &str| v.get(k).and_then(|x| x.as_bool());
+    let text = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_string);
     if let Some(s) = v.get("scale").and_then(|s| s.as_f64()) {
         c.scale = s;
     }
-    if let Some(a) = v.get("scale_auto").and_then(|a| a.as_bool()) {
+    if let Some(a) = flag("scale_auto") {
         c.scale_auto = a;
+    }
+    if let Some(on) = flag("reduce_motion") {
+        c.reduce_motion = on;
+    }
+    if let Some(on) = flag("lite_mode") {
+        c.lite_mode = on;
+    }
+    if let Some(on) = flag("desktop_widgets") {
+        c.desktop_widgets = on;
+    }
+    if let Some(a) = text("appearance") {
+        c.appearance = a;
+    }
+    if let Some(a) = text("dock_position") {
+        c.dock_position = a;
+    }
+    if let Some(a) = text("accent") {
+        c.accent = a;
+    }
+    if let Some(a) = text("wallpaper") {
+        c.wallpaper = a;
     }
 }
 
@@ -85,6 +111,7 @@ fn load() -> Cfg {
         match k.trim() {
             "appearance" => c.appearance = v.to_string(),
             "reduce_motion" => c.reduce_motion = v == "true",
+            "lite_mode" => c.lite_mode = v == "true",
             "scale" => c.scale = v.parse().unwrap_or(1.0),
             "terminal" => c.terminal = v.to_string(),
             "launcher_rows" => c.launcher_rows = v.parse().unwrap_or(10),
@@ -96,7 +123,7 @@ fn load() -> Cfg {
             _ => {}
         }
     }
-    overlay_compositor_scale(&mut c);
+    overlay_compositor_config(&mut c);
     c
 }
 
@@ -106,8 +133,8 @@ fn save(c: &Cfg) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let text = format!(
-        "# CosmosOS configuration\nappearance = \"{}\"\nreduce_motion = {}\nscale = {}\nterminal = \"{}\"\nlauncher_rows = {}\naccent = \"{}\"\ndock_position = \"{}\"\nwallpaper = \"{}\"\ndesktop_widgets = {}\nweather_city = \"{}\"\n",
-        c.appearance, c.reduce_motion, c.scale, c.terminal, c.launcher_rows, c.accent, c.dock_position, c.wallpaper,
+        "# CosmosOS configuration\nappearance = \"{}\"\nreduce_motion = {}\nlite_mode = {}\nscale = {}\nterminal = \"{}\"\nlauncher_rows = {}\naccent = \"{}\"\ndock_position = \"{}\"\nwallpaper = \"{}\"\ndesktop_widgets = {}\nweather_city = \"{}\"\n",
+        c.appearance, c.reduce_motion, c.lite_mode, c.scale, c.terminal, c.launcher_rows, c.accent, c.dock_position, c.wallpaper,
         c.desktop_widgets, c.weather_city.replace('"', "")
     );
     std::fs::write(path, text)
@@ -150,6 +177,9 @@ struct App {
     pane: Pane,
     /// Set when automatic scale is switched on; re-read config.json then.
     scale_refresh: Option<std::time::Instant>,
+    /// config.json mtime last overlaid; Control Centre and the shell
+    /// write it while Settings stays open.
+    cfg_mtime: Option<std::time::SystemTime>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -217,6 +247,7 @@ fn main() {
         status: String::new(),
         pane: pane_arg(std::env::args()).unwrap_or(Pane::Appearance),
         scale_refresh: None,
+        cfg_mtime: cosmos_uitk::theme::config_mtime(),
     };
     if let Err(e) = cosmos_uitk::run("Settings", "cosmos.settings", (760, 520), move |ui| {
         draw(ui, &mut app)
@@ -330,6 +361,15 @@ fn appearance(ui: &mut egui::Ui, kit: &Kit, app: &mut App) {
                 }
             },
         );
+        g.row_detail(
+            "Lite mode",
+            Some("Flat surfaces, no glass, shadows or animation"),
+            |ui| {
+                if toggle(ui, &mut app.cfg.lite_mode).changed() {
+                    set(app, "lite_mode", app.cfg.lite_mode.into());
+                }
+            },
+        );
     });
     ui.add_space(space::S20);
     group(ui, Some("Display"), |g| {
@@ -364,12 +404,17 @@ fn appearance(ui: &mut egui::Ui, kit: &Kit, app: &mut App) {
             },
         );
     });
+    let mtime = cosmos_uitk::theme::config_mtime();
+    if mtime != app.cfg_mtime {
+        app.cfg_mtime = mtime;
+        overlay_compositor_config(&mut app.cfg);
+    }
     // The compositor resolves the automatic scale; read it back shortly
     // after so the slider and % label show the applied value.
     if let Some(t) = app.scale_refresh {
         if t.elapsed() > std::time::Duration::from_millis(600) {
             app.scale_refresh = None;
-            overlay_compositor_scale(&mut app.cfg);
+            overlay_compositor_config(&mut app.cfg);
         } else {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));

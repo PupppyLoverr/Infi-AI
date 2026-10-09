@@ -62,6 +62,9 @@ pub struct CosmosConfig {
     pub scale_auto: bool,
     /// Disable window/workspace transition animation.
     pub reduce_motion: bool,
+    /// Lite Mode: flat tinted surfaces instead of wallpaper glass, no
+    /// animation and no layer drop shadows — for software rendering.
+    pub lite_mode: bool,
     /// Accent preset name (see cosmos_ipc::ACCENT_PRESETS).
     pub accent: String,
     /// Dock rail position: "bottom" (default), "left", or "right".
@@ -83,6 +86,7 @@ impl Default for CosmosConfig {
             scale: 1.0,
             scale_auto: true,
             reduce_motion: false,
+            lite_mode: false,
             accent: cosmos_ipc::DEFAULT_ACCENT.to_string(),
             dock_position: "bottom".to_string(),
             wallpaper: "violet".to_string(),
@@ -197,6 +201,11 @@ impl CosmosConfig {
                     return Err("weather_city: up to 64 printable characters".to_string());
                 }
                 self.weather_city = v.trim().to_string();
+            }
+            "lite_mode" => {
+                self.lite_mode = value
+                    .as_bool()
+                    .ok_or_else(|| "lite_mode must be a bool".to_string())?;
             }
             "reduce_motion" => {
                 self.reduce_motion = value
@@ -1000,9 +1009,9 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         self.cosmos.dirty = true;
     }
 
-    /// Motion enabled? Honors the `reduce_motion` user config.
+    /// Motion enabled? Off under `reduce_motion` or `lite_mode`.
     pub fn anim_on(&self) -> bool {
-        !self.cosmos.config.reduce_motion
+        !self.cosmos.config.reduce_motion && !self.cosmos.config.lite_mode
     }
 
     /// Complete a workspace slide that is mid-flight: park every window

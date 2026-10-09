@@ -1,6 +1,8 @@
-//! Quick Settings flyout (Windows-style): clicking the tray opens a card with
-//! the real network state, a draggable PipeWire volume slider + mute, battery
-//! when present, and Settings / Log out buttons.
+//! Control Centre (macOS module tiles, spec v5 §2.4): a connectivity tile
+//! (Network, Bluetooth when BlueZ has an adapter), Focus / Dark Mode /
+//! Lite Mode tiles, Display (when a backlight exists) and Sound sliders,
+//! a Now Playing tile while an MPRIS player exists, and Settings / Lock /
+//! Log out icon buttons. Every control drives the real system.
 
 use cosmic_text::Color as CtColor;
 use smithay_client_toolkit::shell::WaylandSurface;
@@ -9,152 +11,352 @@ use wayland_client::protocol::wl_shm;
 
 use crate::{draw, glass, icons, ShellState};
 
-pub const QUICK_W: u32 = 300;
-const PAD: f64 = 16.0;
-const HEADER_H: f64 = 34.0;
-const NET_H: f64 = 40.0;
-const VOL_H: f64 = 56.0;
-const BAT_H: f64 = 40.0;
-const THEME_H: f64 = 40.0;
-const FOCUS_H: f64 = 40.0;
-const BTN_H: f64 = 52.0;
-const TRACK_X: f64 = PAD + 8.0;
-const TRACK_W: f64 = QUICK_W as f64 - PAD * 2.0 - 16.0 - 30.0; // minus mute button
+pub const QUICK_W: u32 = 340;
+const PAD: f32 = 12.0;
+const GAP: f32 = 10.0;
+const ROW: f32 = 48.0;
+const SMALL_H: f32 = 84.0;
+const SLIDER_H: f32 = 64.0;
+const MEDIA_H: f32 = 64.0;
+const FOOT_H: f32 = 48.0;
+const BTN: f32 = 28.0;
+const TILE_R: f32 = 14.0;
+
+type Rect = (f32, f32, f32, f32);
+
+fn inside(r: Rect, x: f32, y: f32) -> bool {
+    x >= r.0 && x < r.0 + r.2 && y >= r.1 && y < r.1 + r.3
+}
+
+/// Which optional tiles exist — they only appear for real hardware/state.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+struct Flags {
+    bluetooth: bool,
+    backlight: bool,
+    media: bool,
+}
+
+fn flags(state: &ShellState) -> Flags {
+    Flags {
+        bluetooth: state.sysinfo.bluetooth.is_some(),
+        backlight: state.sysinfo.backlight.is_some(),
+        media: state.media.is_some(),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Layout {
+    conn: Rect,
+    net: Rect,
+    bt: Option<Rect>,
+    focus: Rect,
+    dark: Rect,
+    lite: Rect,
+    display: Option<Rect>,
+    sound: Rect,
+    media: Option<Rect>,
+    footer: Rect,
+}
+
+fn layout(f: Flags) -> Layout {
+    let w = QUICK_W as f32 - PAD * 2.0;
+    let mut y = PAD;
+    let rows = if f.bluetooth { 2.0 } else { 1.0 };
+    let conn = (PAD, y, w, rows * ROW + 8.0);
+    let net = (PAD, y + 4.0, w, ROW);
+    let bt = f.bluetooth.then_some((PAD, y + 4.0 + ROW, w, ROW));
+    y += conn.3 + GAP;
+    let tw = (w - GAP * 2.0) / 3.0;
+    let focus = (PAD, y, tw, SMALL_H);
+    let dark = (PAD + tw + GAP, y, tw, SMALL_H);
+    let lite = (PAD + (tw + GAP) * 2.0, y, tw, SMALL_H);
+    y += SMALL_H + GAP;
+    let display = if f.backlight {
+        y += SLIDER_H + GAP;
+        Some((PAD, y - SLIDER_H - GAP, w, SLIDER_H))
+    } else {
+        None
+    };
+    let sound = (PAD, y, w, SLIDER_H);
+    y += SLIDER_H + GAP;
+    let media = if f.media {
+        y += MEDIA_H + GAP;
+        Some((PAD, y - MEDIA_H - GAP, w, MEDIA_H))
+    } else {
+        None
+    };
+    let footer = (PAD, y - GAP + 2.0, w, FOOT_H);
+    Layout {
+        conn,
+        net,
+        bt,
+        focus,
+        dark,
+        lite,
+        display,
+        sound,
+        media,
+        footer,
+    }
+}
+
+/// Slider track inside a slider tile: (x0, x1, centre y).
+fn track(r: Rect) -> (f32, f32, f32) {
+    (r.0 + 52.0, r.0 + r.2 - 18.0, r.1 + 42.0)
+}
+
+fn slider_value(r: Rect, x: f32) -> f32 {
+    let (x0, x1, _) = track(r);
+    ((x - x0) / (x1 - x0)).clamp(0.0, 1.0)
+}
+
+fn footer_button(f: Rect, i: usize) -> Rect {
+    (
+        f.0 + 4.0 + i as f32 * (BTN + 12.0),
+        f.1 + (FOOT_H - BTN) / 2.0,
+        BTN,
+        BTN,
+    )
+}
+
+/// Detail chevron at the right end of a toggle row.
+fn chevron(r: Rect) -> Rect {
+    (r.0 + r.2 - 40.0, r.1, 40.0, r.3)
+}
+
+/// Detail chevron on the Sound tile's title line.
+fn sound_chevron(r: Rect) -> Rect {
+    (r.0 + r.2 - 36.0, r.1, 36.0, 26.0)
+}
+
+const DETAIL_HEAD: f32 = 40.0;
+const DETAIL_ROW: f32 = 40.0;
+const DETAIL_MAX: usize = 8;
+
+fn detail_rows(v: &crate::ccdetail::View) -> usize {
+    let n = match v {
+        crate::ccdetail::View::Wifi(n) => n.len(),
+        crate::ccdetail::View::Sound(s) => s.len(),
+    };
+    n.clamp(1, DETAIL_MAX)
+}
+
+fn detail_row(i: usize) -> Rect {
+    let w = QUICK_W as f32 - PAD * 2.0;
+    (
+        PAD,
+        PAD + DETAIL_HEAD + i as f32 * DETAIL_ROW,
+        w,
+        DETAIL_ROW,
+    )
+}
+
+fn detail_press(state: &mut ShellState, x: f32, y: f32) -> bool {
+    use crate::ccdetail::{self, View};
+    let Some(view) = state.cc_detail.clone() else {
+        return false;
+    };
+    if y < PAD + DETAIL_HEAD {
+        if x < PAD + 120.0 {
+            state.cc_detail = None;
+            resize(state);
+        }
+        return true;
+    }
+    let Some(i) = (0..detail_rows(&view)).find(|i| inside(detail_row(*i), x, y)) else {
+        return false;
+    };
+    match view {
+        View::Wifi(nets) => {
+            if let Some(n) = nets.get(i).filter(|n| !n.active) {
+                if !ccdetail::connect(n) {
+                    tracing::warn!(ssid = %n.ssid, "quick: wifi connect refused");
+                }
+                state.cc_detail = Some(View::Wifi(ccdetail::wifi_networks()));
+            }
+        }
+        View::Sound(sinks) => {
+            if let Some(s) = sinks.get(i).filter(|s| !s.default) {
+                ccdetail::set_default_sink(s.id);
+                state.cc_detail = Some(View::Sound(ccdetail::sinks()));
+            }
+        }
+    }
+    resize(state);
+    true
+}
+
+/// Ask the compositor for the height the current view needs.
+fn resize(state: &mut ShellState) {
+    let h = desired_height(state);
+    if let Some(layer) = state.quick_surface.as_ref() {
+        layer.set_size(QUICK_W, h);
+        layer.commit();
+    }
+}
+
+fn draw_detail(pm: &mut PixmapMut<'_>, v: &crate::ccdetail::View, p: &Pal) {
+    use crate::ccdetail::View;
+    let title = match v {
+        View::Wifi(_) => "Wi-Fi",
+        View::Sound(_) => "Sound Output",
+    };
+    round_button(pm, PAD, PAD + 4.0, false, "chevron-left", p);
+    draw::text_bold(pm, PAD + 38.0, PAD + 9.0, 220.0, 20.0, 15.0, title, p.fg);
+    let rows: Vec<(String, String, bool, &str)> = match v {
+        View::Wifi(nets) => nets
+            .iter()
+            .take(DETAIL_MAX)
+            .map(|n| {
+                let sub = format!(
+                    "{}%{}",
+                    n.strength,
+                    if n.secured { " · Secured" } else { "" }
+                );
+                (n.ssid.clone(), sub, n.active, "net-on")
+            })
+            .collect(),
+        View::Sound(sinks) => sinks
+            .iter()
+            .take(DETAIL_MAX)
+            .map(|s| (s.name.clone(), String::new(), s.default, "vol-on"))
+            .collect(),
+    };
+    if rows.is_empty() {
+        let empty = match v {
+            View::Wifi(_) => "No Wi-Fi networks found",
+            View::Sound(_) => "No audio outputs",
+        };
+        let r = detail_row(0);
+        draw::text(
+            pm,
+            r.0 + 10.0,
+            r.1 + 12.0,
+            r.2 - 20.0,
+            16.0,
+            13.0,
+            empty,
+            p.dim,
+        );
+        return;
+    }
+    for (i, (name, sub, on, key)) in rows.iter().enumerate() {
+        let r = detail_row(i);
+        if *on {
+            draw::fill_round_rect(pm, r.0, r.1 + 2.0, r.2, r.3 - 4.0, 10.0, p.tile);
+        }
+        icons::icon(pm, key, r.0 + 10.0, r.1 + 11.0, 18.0, p.glyph);
+        let ty = if sub.is_empty() {
+            r.1 + 12.0
+        } else {
+            r.1 + 4.0
+        };
+        draw::text(pm, r.0 + 38.0, ty, r.2 - 76.0, 17.0, 13.0, name, p.fg);
+        if !sub.is_empty() {
+            draw::text(
+                pm,
+                r.0 + 38.0,
+                r.1 + 21.0,
+                r.2 - 76.0,
+                15.0,
+                11.0,
+                sub,
+                p.dim,
+            );
+        }
+        if *on {
+            icons::icon(pm, "check", r.0 + r.2 - 28.0, r.1 + 11.0, 18.0, p.fill);
+        }
+    }
+}
+
+fn media_button(m: Rect) -> Rect {
+    (
+        m.0 + m.2 - 12.0 - BTN,
+        m.1 + (MEDIA_H - BTN) / 2.0,
+        BTN,
+        BTN,
+    )
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Hit {
-    Slider,
-    Mute,
-    /// The whole network row — Win11's connectivity tile toggles.
     Network,
-    /// Accent preset swatch (index into cosmos_ipc::ACCENT_PRESETS).
-    Swatch(usize),
-    /// Dark/light mode pill on the Theme row.
-    Mode,
-    /// Focus (Do Not Disturb) row — suppresses notification popups.
+    Bluetooth,
     Focus,
+    Dark,
+    Lite,
+    Brightness,
+    Mute,
+    Volume,
+    PlayPause,
+    NetDetail,
+    SoundDetail,
     Settings,
     Lock,
     Logout,
     Card,
 }
 
-fn theme(dark: bool) -> (Color, Color, Color, Color, CtColor, CtColor) {
-    if dark {
-        (
-            Color::from_rgba8(0x1A, 0x1B, 0x1E, 0xF2), // card
-            Color::from_rgba8(0x3C, 0x3D, 0x42, 0xFF), // border/track
-            Color::from_rgba8(0x30, 0x31, 0x35, 0xFF), // button bg
-            draw::accent(true),                        // active fill
-            CtColor::rgba(0xEC, 0xEC, 0xEE, 0xFF),
-            CtColor::rgba(0xA8, 0xA8, 0xAE, 0xFF),
-        )
-    } else {
-        (
-            Color::from_rgba8(0xFA, 0xFA, 0xFB, 0xF6),
-            Color::from_rgba8(0xC8, 0xC8, 0xCC, 0xFF),
-            Color::from_rgba8(0xE6, 0xE6, 0xE9, 0xFF),
-            draw::accent(false),
-            CtColor::rgba(0x18, 0x18, 0x1B, 0xFF),
-            CtColor::rgba(0x5A, 0x5A, 0x5E, 0xFF),
-        )
+fn hit_test(l: &Layout, x: f32, y: f32) -> Hit {
+    if inside(chevron(l.net), x, y) {
+        return Hit::NetDetail;
     }
-}
-
-/// Card height for the current sysinfo (battery row only when present).
-pub fn desired_height(info: &crate::sysinfo::SysInfo) -> u32 {
-    let mut h = PAD * 2.0 + HEADER_H + NET_H + VOL_H + THEME_H + FOCUS_H + BTN_H;
-    if info.battery.as_ref().map(|b| b.present).unwrap_or(false) {
-        h += BAT_H;
+    if inside(sound_chevron(l.sound), x, y) {
+        return Hit::SoundDetail;
     }
-    h as u32
-}
-
-fn vol_row_y() -> f64 {
-    PAD + HEADER_H + NET_H
-}
-
-fn bat_row_y() -> f64 {
-    vol_row_y() + VOL_H
-}
-
-/// Theme swatch row — after the battery row when it exists, else right
-/// under the volume row.
-fn theme_row_y(state: &ShellState) -> f64 {
-    bat_row_y()
-        + if state
-            .sysinfo
-            .battery
-            .as_ref()
-            .map(|b| b.present)
-            .unwrap_or(false)
-        {
-            BAT_H
-        } else {
-            0.0
-        }
-}
-
-/// Swatch circle center x for preset `i` — 22px stride so all six fit
-/// between the label and the dark/light pill.
-fn swatch_x(i: usize) -> f64 {
-    PAD + 68.0 + i as f64 * 22.0
-}
-
-/// Dark/light pill rect on the Theme row (right edge).
-const MODE_W: f64 = 66.0;
-fn mode_x() -> f64 {
-    QUICK_W as f64 - PAD - MODE_W
-}
-
-/// Focus (DND) row — under the Theme row.
-fn focus_row_y(state: &ShellState) -> f64 {
-    theme_row_y(state) + THEME_H
-}
-
-fn hit_test(x: f64, y: f64, state: &ShellState) -> Hit {
-    let vy = vol_row_y();
-    if y >= vy + 8.0 && y <= vy + VOL_H {
-        if x >= TRACK_X && x <= TRACK_X + TRACK_W + 12.0 {
-            return Hit::Slider;
-        }
-        if x > TRACK_X + TRACK_W + 12.0 {
-            return Hit::Mute;
-        }
-    }
-    let ny = PAD + HEADER_H;
-    if y >= ny && y < ny + NET_H {
+    if inside(l.net, x, y) {
         return Hit::Network;
     }
-    let ty = theme_row_y(state);
-    if y >= ty && y < ty + THEME_H {
-        for i in 0..cosmos_ipc::ACCENT_PRESETS.len() {
-            let cx = swatch_x(i);
-            if (x - cx).abs() <= 11.0 {
-                return Hit::Swatch(i);
-            }
-        }
-        if x >= mode_x() && x < mode_x() + MODE_W {
-            return Hit::Mode;
-        }
-        return Hit::Card;
+    if l.bt.is_some_and(|r| inside(r, x, y)) {
+        return Hit::Bluetooth;
     }
-    let fy = focus_row_y(state);
-    if y >= fy && y < fy + FOCUS_H {
-        return Hit::Focus;
+    for (r, hit) in [
+        (l.focus, Hit::Focus),
+        (l.dark, Hit::Dark),
+        (l.lite, Hit::Lite),
+    ] {
+        if inside(r, x, y) {
+            return hit;
+        }
     }
-    let by = state.quick_size.1 as f64 - BTN_H;
-    if y >= by {
-        let third = QUICK_W as f64 / 3.0;
-        if x < third {
-            return Hit::Settings;
+    if let Some(r) = l.display.filter(|r| inside(*r, x, y)) {
+        return if x >= track(r).0 - 8.0 {
+            Hit::Brightness
+        } else {
+            Hit::Card
+        };
+    }
+    if inside(l.sound, x, y) {
+        let x0 = track(l.sound).0;
+        return if x < x0 - 8.0 { Hit::Mute } else { Hit::Volume };
+    }
+    if let Some(r) = l.media.filter(|r| inside(*r, x, y)) {
+        return if inside(media_button(r), x, y) {
+            Hit::PlayPause
+        } else {
+            Hit::Card
+        };
+    }
+    for (i, hit) in [Hit::Settings, Hit::Lock, Hit::Logout]
+        .into_iter()
+        .enumerate()
+    {
+        if inside(footer_button(l.footer, i), x, y) {
+            return hit;
         }
-        if x < third * 2.0 {
-            return Hit::Lock;
-        }
-        return Hit::Logout;
     }
     Hit::Card
+}
+
+/// Card height for the tiles that currently exist.
+pub fn desired_height(state: &ShellState) -> u32 {
+    if let Some(v) = &state.cc_detail {
+        let r = detail_row(detail_rows(v) - 1);
+        return (r.1 + r.3 + PAD) as u32;
+    }
+    let l = layout(flags(state));
+    (l.footer.1 + l.footer.3) as u32
 }
 
 /// Flip NetworkManager's networking master switch over D-Bus (the same
@@ -175,38 +377,33 @@ fn nm_enable(on: bool) -> bool {
 }
 
 /// Apply a volume level for real via wpctl, then optimistically update state.
-fn set_volume(state: &mut ShellState, x: f64) {
-    let v = ((x - TRACK_X) / TRACK_W).clamp(0.0, 1.0);
+fn set_volume(state: &mut ShellState, x: f32) {
+    let v = slider_value(layout(flags(state)).sound, x);
     let _ = std::process::Command::new("wpctl")
         .args(["set-volume", "@DEFAULT_AUDIO_SINK@", &format!("{v:.2}")])
         .status();
-    state.sysinfo.volume = Some(crate::sysinfo::Volume {
-        level: v as f32,
-        muted: state
-            .sysinfo
-            .volume
-            .as_ref()
-            .map(|v| v.muted)
-            .unwrap_or(false),
-    });
+    let muted = state.sysinfo.volume.as_ref().is_some_and(|v| v.muted);
+    state.sysinfo.volume = Some(crate::sysinfo::Volume { level: v, muted });
+}
+
+fn set_brightness(state: &mut ShellState, x: f32) {
+    let Some(r) = layout(flags(state)).display else {
+        return;
+    };
+    let v = slider_value(r, x);
+    if let Some(b) = state.sysinfo.backlight.as_mut() {
+        if crate::sysinfo::set_brightness(&b.name, v) {
+            b.level = v;
+        }
+    }
 }
 
 pub fn press(state: &mut ShellState, x: f64, y: f64) -> bool {
-    match hit_test(x, y, state) {
-        Hit::Slider => {
-            state.vol_drag = true;
-            set_volume(state, x);
-            true
-        }
-        Hit::Mute => {
-            let _ = std::process::Command::new("wpctl")
-                .args(["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"])
-                .status();
-            if let Some(v) = state.sysinfo.volume.as_mut() {
-                v.muted = !v.muted;
-            }
-            true
-        }
+    let (x, y) = (x as f32, y as f32);
+    if state.cc_detail.is_some() {
+        return detail_press(state, x, y);
+    }
+    match hit_test(&layout(flags(state)), x, y) {
         Hit::Network => {
             let on = !state.sysinfo.network.online;
             if nm_enable(on) {
@@ -217,7 +414,23 @@ pub fn press(state: &mut ShellState, x: f64, y: f64) -> bool {
             }
             true
         }
-        Hit::Mode => {
+        Hit::Bluetooth => {
+            if let Some(b) = state.sysinfo.bluetooth.as_mut() {
+                if crate::sysinfo::set_bluetooth(&b.adapter, !b.powered) {
+                    b.powered = !b.powered;
+                    if !b.powered {
+                        b.device = None;
+                    }
+                }
+            }
+            true
+        }
+        Hit::Focus => {
+            let on = !state.dnd;
+            state.set_dnd(on);
+            true
+        }
+        Hit::Dark => {
             let next = if state.dark { "light" } else { "dark" };
             state.dark = !state.dark;
             state.panel_dirty = true;
@@ -233,22 +446,49 @@ pub fn press(state: &mut ShellState, x: f64, y: f64) -> bool {
             });
             true
         }
-        Hit::Swatch(i) => {
-            if let Some((name, _, _, _)) = cosmos_ipc::ACCENT_PRESETS.get(i) {
-                state.ipc.send(&cosmos_ipc::Request::SetConfig {
-                    key: "accent".to_string(),
-                    value: (*name).into(),
-                });
-                // Optimistic: the Config broadcast lands on the next
-                // event loop pass, but repaint the card immediately.
-                state.accent_name = (*name).to_string();
-                state.quick_dirty = true;
+        Hit::Lite => {
+            let on = !state.lite;
+            state.set_lite(on);
+            state.ipc.send(&cosmos_ipc::Request::SetConfig {
+                key: "lite_mode".to_string(),
+                value: serde_json::json!(on),
+            });
+            true
+        }
+        Hit::Brightness => {
+            state.bright_drag = true;
+            set_brightness(state, x);
+            true
+        }
+        Hit::Volume => {
+            state.vol_drag = true;
+            set_volume(state, x);
+            true
+        }
+        Hit::Mute => {
+            let _ = std::process::Command::new("wpctl")
+                .args(["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"])
+                .status();
+            if let Some(v) = state.sysinfo.volume.as_mut() {
+                v.muted = !v.muted;
             }
             true
         }
-        Hit::Focus => {
-            let on = !state.dnd;
-            state.set_dnd(on);
+        Hit::NetDetail => {
+            state.cc_detail = Some(crate::ccdetail::View::Wifi(crate::ccdetail::wifi_networks()));
+            resize(state);
+            true
+        }
+        Hit::SoundDetail => {
+            state.cc_detail = Some(crate::ccdetail::View::Sound(crate::ccdetail::sinks()));
+            resize(state);
+            true
+        }
+        Hit::PlayPause => {
+            if let Some(m) = state.media.as_mut() {
+                crate::activity::play_pause(m.bus.clone());
+                m.playing = !m.playing;
+            }
             true
         }
         Hit::Settings => {
@@ -274,17 +514,176 @@ pub fn press(state: &mut ShellState, x: f64, y: f64) -> bool {
     }
 }
 
-/// Pointer motion while a click is held on the slider.
+/// Pointer motion while a click is held on a slider.
 pub fn drag(state: &mut ShellState, x: f64, _y: f64) -> bool {
-    if !state.vol_drag {
+    if state.vol_drag {
+        set_volume(state, x as f32);
+    } else if state.bright_drag {
+        set_brightness(state, x as f32);
+    } else {
         return false;
     }
-    set_volume(state, x);
     true
 }
 
 pub fn release(state: &mut ShellState) {
     state.vol_drag = false;
+    state.bright_drag = false;
+}
+
+struct Pal {
+    tile: Color,
+    off: Color,
+    track: Color,
+    fill: Color,
+    knob: Color,
+    hair: Color,
+    glyph: Color,
+    fg: CtColor,
+    dim: CtColor,
+}
+
+fn palette(dark: bool) -> Pal {
+    let rgba = Color::from_rgba8;
+    if dark {
+        Pal {
+            tile: rgba(0xFF, 0xFF, 0xFF, 0x12),
+            off: rgba(0xFF, 0xFF, 0xFF, 0x1F),
+            track: rgba(0xFF, 0xFF, 0xFF, 0x2E),
+            fill: draw::accent(true),
+            knob: rgba(0xF2, 0xF2, 0xF4, 0xFF),
+            hair: rgba(0xFF, 0xFF, 0xFF, 0x1F),
+            glyph: rgba(0xEC, 0xEC, 0xEE, 0xFF),
+            fg: CtColor::rgba(0xEC, 0xEC, 0xEE, 0xFF),
+            dim: CtColor::rgba(0xD6, 0xD6, 0xDB, 0xFF),
+        }
+    } else {
+        Pal {
+            tile: rgba(0xFF, 0xFF, 0xFF, 0x80),
+            off: rgba(0x00, 0x00, 0x00, 0x14),
+            track: rgba(0x00, 0x00, 0x00, 0x24),
+            fill: draw::accent(false),
+            knob: rgba(0xFF, 0xFF, 0xFF, 0xFF),
+            hair: rgba(0x00, 0x00, 0x00, 0x1A),
+            glyph: rgba(0x18, 0x18, 0x1B, 0xFF),
+            fg: CtColor::rgba(0x18, 0x18, 0x1B, 0xFF),
+            dim: CtColor::rgba(0x3A, 0x3A, 0x40, 0xFF),
+        }
+    }
+}
+
+fn tile(pm: &mut PixmapMut<'_>, r: Rect, p: &Pal) {
+    draw::fill_round_rect(pm, r.0, r.1, r.2, r.3, TILE_R, p.tile);
+}
+
+/// 28px circle icon button — filled accent with a white glyph when on.
+fn round_button(pm: &mut PixmapMut<'_>, x: f32, y: f32, on: bool, key: &str, p: &Pal) {
+    draw::fill_round_rect(
+        pm,
+        x,
+        y,
+        BTN,
+        BTN,
+        BTN / 2.0,
+        if on { p.fill } else { p.off },
+    );
+    let c = if on {
+        Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF)
+    } else {
+        p.glyph
+    };
+    icons::icon(pm, key, x + 6.0, y + 6.0, 16.0, c);
+}
+
+/// Module row: round button, bold title, status line.
+fn toggle_row(
+    pm: &mut PixmapMut<'_>,
+    r: Rect,
+    on: bool,
+    key: &str,
+    title: &str,
+    status: &str,
+    p: &Pal,
+) {
+    round_button(pm, r.0 + 10.0, r.1 + (r.3 - BTN) / 2.0, on, key, p);
+    let tx = r.0 + 48.0;
+    draw::text_bold(pm, tx, r.1 + 7.0, r.2 - 60.0, 17.0, 13.0, title, p.fg);
+    draw::text(pm, tx, r.1 + 25.0, r.2 - 60.0, 16.0, 12.0, status, p.dim);
+}
+
+fn small_tile(pm: &mut PixmapMut<'_>, r: Rect, on: bool, key: &str, title: &str, p: &Pal) {
+    tile(pm, r, p);
+    round_button(pm, r.0 + (r.2 - BTN) / 2.0, r.1 + 12.0, on, key, p);
+    draw::text_centered(
+        pm,
+        r.0 + 4.0,
+        r.1 + 46.0,
+        r.2 - 8.0,
+        16.0,
+        12.0,
+        title,
+        p.fg,
+    );
+    draw::text_centered(
+        pm,
+        r.0 + 4.0,
+        r.1 + 62.0,
+        r.2 - 8.0,
+        16.0,
+        12.0,
+        if on { "On" } else { "Off" },
+        p.dim,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn slider_tile(
+    pm: &mut PixmapMut<'_>,
+    r: Rect,
+    title: &str,
+    value: &str,
+    level: f32,
+    key: &str,
+    pressed: bool,
+    chevron: bool,
+    p: &Pal,
+) {
+    tile(pm, r, p);
+    let right = if chevron { 36.0 } else { 14.0 };
+    if chevron {
+        let c = sound_chevron(r);
+        icons::icon(pm, "chevron-right", c.0 + 10.0, c.1 + 6.0, 16.0, p.glyph);
+    }
+    draw::text_bold(pm, r.0 + 14.0, r.1 + 8.0, 160.0, 17.0, 13.0, title, p.fg);
+    let tw = draw::text_width(12.0, value).ceil();
+    draw::text(
+        pm,
+        r.0 + r.2 - right - tw,
+        r.1 + 9.0,
+        tw + 2.0,
+        16.0,
+        12.0,
+        value,
+        p.dim,
+    );
+    round_button(pm, r.0 + 10.0, r.1 + 28.0, pressed, key, p);
+    let (x0, x1, cy) = track(r);
+    let level = level.clamp(0.0, 1.0);
+    draw::fill_round_rect(pm, x0, cy - 2.0, x1 - x0, 4.0, 2.0, p.track);
+    if level > 0.0 && !pressed {
+        draw::fill_round_rect(
+            pm,
+            x0,
+            cy - 2.0,
+            ((x1 - x0) * level).max(4.0),
+            4.0,
+            2.0,
+            p.fill,
+        );
+    }
+    let kx = x0 + (x1 - x0) * level - 7.0;
+    draw::fill_round_rect(pm, kx, cy - 7.0, 14.0, 14.0, 7.0, p.knob);
+    draw::stroke_round_rect(pm, kx + 0.5, cy - 6.5, 13.0, 13.0, 6.5, 1.0, p.hair);
 }
 
 pub fn draw(state: &mut ShellState) {
@@ -295,19 +694,13 @@ pub fn draw(state: &mut ShellState) {
     let Some(layer) = state.quick_surface.clone() else {
         return;
     };
-    let (card, sep, btn_bg, fill, fg, fg_dim) = theme(state.dark);
-    let glyph = Color::from_rgba8(fg.r(), fg.g(), fg.b(), fg.a());
-    // Row positions borrow `state` — compute before the pool borrow below.
-    let vy = vol_row_y() as f32;
-    let bat_y = bat_row_y() as f32;
-    let theme_y = theme_row_y(state) as f32;
-    let focus_y = focus_row_y(state) as f32;
-    let has_bat = state
-        .sysinfo
-        .battery
-        .as_ref()
-        .map(|b| b.present)
-        .unwrap_or(false);
+    let l = layout(flags(state));
+    let p = palette(state.dark);
+    let card = if state.dark {
+        Color::from_rgba8(0x1A, 0x1B, 0x1E, 0xF2)
+    } else {
+        Color::from_rgba8(0xFA, 0xFA, 0xFB, 0xF6)
+    };
 
     let (pw, ph) = draw::phys(w, h);
     let stride = pw as i32 * 4;
@@ -349,495 +742,245 @@ pub fn draw(state: &mut ShellState) {
         h as f32 - 1.0,
         cosmos_theme::radius::PANEL - 0.5,
         1.0,
-        sep,
+        p.hair,
     );
 
+    let detail = state.cc_detail.clone();
+    if let Some(v) = &detail {
+        draw_detail(&mut pixmap, v, &p);
+    }
     let info = &state.sysinfo;
-
-    // macOS Control Center grouping: each module block sits on a quiet
-    // rounded card inside the panel.
-    draw::fill_round_rect(
-        &mut pixmap,
-        PAD as f32 - 6.0,
-        (PAD + HEADER_H) as f32 - 6.0,
-        w as f32 - (PAD as f32 - 6.0) * 2.0,
-        (NET_H + VOL_H) as f32 + 12.0,
-        10.0,
-        btn_bg,
-    );
-    let group2_y = if has_bat { bat_y - 6.0 } else { theme_y - 6.0 };
-    let group2_h = (if has_bat { BAT_H } else { 0.0 } + THEME_H + FOCUS_H) as f32 + 12.0;
-    draw::fill_round_rect(
-        &mut pixmap,
-        PAD as f32 - 6.0,
-        group2_y,
-        w as f32 - (PAD as f32 - 6.0) * 2.0,
-        group2_h,
-        10.0,
-        btn_bg,
-    );
-
-    // Header: one line — the clock string already carries the weekday and date.
-    draw::text(
-        &mut pixmap,
-        PAD as f32,
-        PAD as f32 + 2.0,
-        w as f32 - PAD as f32 * 2.0,
-        20.0,
-        15.0,
-        &info.clock,
-        fg,
-    );
-
-    // Network row.
-    let ny = (PAD + HEADER_H) as f32;
-    let net_label = if info.network.online {
-        info.network.label.as_str()
-    } else {
-        "Offline"
-    };
-    icons::icon(
-        &mut pixmap,
-        if info.network.online {
-            "net-on"
+    if detail.is_none() {
+        // Connectivity tile.
+        tile(&mut pixmap, l.conn, &p);
+        let online = info.network.online;
+        let net_status = if online {
+            info.network.label.as_str()
         } else {
-            "net-off"
-        },
-        PAD as f32,
-        ny + 2.0,
-        14.0,
-        glyph,
-    );
-    draw::text(
-        &mut pixmap,
-        PAD as f32 + 20.0,
-        ny + 4.0,
-        200.0,
-        15.0,
-        13.0,
-        "Network",
-        fg,
-    );
-    draw::text(
-        &mut pixmap,
-        w as f32 - PAD as f32 - 140.0 - 42.0,
-        ny + 4.0,
-        140.0,
-        15.0,
-        12.0,
-        net_label,
-        fg_dim,
-    );
-    // Win11-style toggle: the whole row flips NM's networking switch.
-    let sw_x = w as f32 - PAD as f32 - 34.0;
-    let sw_y = ny + 11.0;
-    draw::fill_round_rect(
-        &mut pixmap,
-        sw_x,
-        sw_y,
-        34.0,
-        18.0,
-        9.0,
-        if info.network.online { fill } else { sep },
-    );
-    let knob_x = if info.network.online {
-        sw_x + 25.0
-    } else {
-        sw_x + 9.0
-    };
-    let mut pb = tiny_skia::PathBuilder::new();
-    pb.push_circle(knob_x, sw_y + 9.0, 6.0);
-    if let Some(path) = pb.finish() {
-        pixmap.fill_path(
-            &path,
-            &tiny_skia::Paint {
-                // The knob stays near-white either way — it must read
-                // against both the accent and the grey track.
-                shader: tiny_skia::Shader::SolidColor(Color::from_rgba8(0xF2, 0xF2, 0xF4, 0xFF)),
-                anti_alias: true,
-                ..Default::default()
-            },
-            tiny_skia::FillRule::Winding,
-            crate::draw::xf(),
-            None,
-        );
-    }
-
-    // Volume row: label, slider track + fill + knob, mute button.
-    let level = info
-        .volume
-        .as_ref()
-        .map(|v| v.level.clamp(0.0, 1.0))
-        .unwrap_or(0.0);
-    let muted = info.volume.as_ref().map(|v| v.muted).unwrap_or(false);
-    icons::icon(
-        &mut pixmap,
-        if muted { "vol-mute" } else { "vol-on" },
-        PAD as f32,
-        vy - 2.0,
-        14.0,
-        glyph,
-    );
-    draw::text(
-        &mut pixmap,
-        PAD as f32 + 20.0,
-        vy,
-        100.0,
-        15.0,
-        13.0,
-        "Volume",
-        fg,
-    );
-    let vol_label = if muted {
-        "Muted".to_string()
-    } else {
-        format!("{}%", (level * 100.0).round() as i32)
-    };
-    draw::text(
-        &mut pixmap,
-        w as f32 - PAD as f32 - 60.0,
-        vy,
-        60.0,
-        15.0,
-        12.0,
-        &vol_label,
-        fg_dim,
-    );
-    let ty = vy + 26.0;
-    draw::fill_round_rect(
-        &mut pixmap,
-        TRACK_X as f32,
-        ty,
-        TRACK_W as f32,
-        4.0,
-        2.0,
-        sep,
-    );
-    if !muted && level > 0.0 {
-        draw::fill_round_rect(
+            "Off"
+        };
+        toggle_row(
             &mut pixmap,
-            TRACK_X as f32,
-            ty,
-            (TRACK_W as f32 * level).max(4.0),
-            4.0,
-            2.0,
-            fill,
+            l.net,
+            online,
+            if online { "net-on" } else { "net-off" },
+            "Network",
+            net_status,
+            &p,
         );
-    }
-    // Knob stays near-white so it reads against the accent progress.
-    let kx = TRACK_X as f32 + TRACK_W as f32 * level - 6.0;
-    draw::fill_round_rect(
-        &mut pixmap,
-        kx,
-        ty - 4.0,
-        12.0,
-        12.0,
-        6.0,
-        if state.dark {
-            Color::from_rgba8(0xF2, 0xF2, 0xF4, 0xFF)
-        } else {
-            Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF)
-        },
-    );
-    // Mute button.
-    let mx = w as f32 - PAD as f32 - 30.0;
-    draw::fill_round_rect(
-        &mut pixmap,
-        mx,
-        ty - 6.0,
-        30.0,
-        16.0,
-        8.0,
-        if muted { fill } else { btn_bg },
-    );
-    // Speaker glyph centred in the pill (matches the menubar tray icon).
-    icons::icon(
-        &mut pixmap,
-        if muted { "vol-mute" } else { "vol-on" },
-        mx + 9.0,
-        ty - 4.0,
-        12.0,
-        if muted {
-            // White glyph on the accent mute pill.
-            Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xF0)
-        } else {
-            glyph
-        },
-    );
+        let c = chevron(l.net);
+        icons::icon(
+            &mut pixmap,
+            "chevron-right",
+            c.0 + 12.0,
+            c.1 + 14.0,
+            18.0,
+            p.glyph,
+        );
+        if let (Some(r), Some(bt)) = (l.bt, info.bluetooth.as_ref()) {
+            let status = match (&bt.device, bt.powered) {
+                (Some(d), true) => d.as_str(),
+                (None, true) => "On",
+                _ => "Off",
+            };
+            toggle_row(
+                &mut pixmap,
+                r,
+                bt.powered,
+                "bluetooth",
+                "Bluetooth",
+                status,
+                &p,
+            );
+        }
 
-    // Battery row.
-    if let Some(b) = &info.battery {
-        if b.present {
-            icons::battery(&mut pixmap, PAD as f32, bat_y + 3.0, 14.0, glyph, b.percent);
+        small_tile(&mut pixmap, l.focus, state.dnd, "focus", "Focus", &p);
+        small_tile(
+            &mut pixmap,
+            l.dark,
+            state.dark,
+            "appearance",
+            "Dark Mode",
+            &p,
+        );
+        small_tile(&mut pixmap, l.lite, state.lite, "lite", "Lite Mode", &p);
+
+        if let (Some(r), Some(b)) = (l.display, info.backlight.as_ref()) {
+            let pct = format!("{}%", (b.level * 100.0).round() as i32);
+            slider_tile(
+                &mut pixmap,
+                r,
+                "Display",
+                &pct,
+                b.level,
+                "sun",
+                false,
+                false,
+                &p,
+            );
+        }
+
+        let level = info.volume.as_ref().map(|v| v.level).unwrap_or(0.0);
+        let muted = info.volume.as_ref().is_some_and(|v| v.muted);
+        let vol = match &info.volume {
+            None => "No output".to_string(),
+            Some(_) if muted => "Muted".to_string(),
+            Some(_) => format!("{}%", (level.clamp(0.0, 1.0) * 100.0).round() as i32),
+        };
+        slider_tile(
+            &mut pixmap,
+            l.sound,
+            "Sound",
+            &vol,
+            level,
+            if muted { "vol-mute" } else { "vol-on" },
+            muted,
+            true,
+            &p,
+        );
+
+        if let (Some(r), Some(m)) = (l.media, state.media.as_ref()) {
+            tile(&mut pixmap, r, &p);
+            let tw = r.2 - 28.0 - BTN - 12.0;
+            let title = if m.title.is_empty() {
+                "Now Playing"
+            } else {
+                m.title.as_str()
+            };
+            draw::text_bold(
+                &mut pixmap,
+                r.0 + 14.0,
+                r.1 + 13.0,
+                tw,
+                17.0,
+                13.0,
+                title,
+                p.fg,
+            );
             draw::text(
                 &mut pixmap,
-                PAD as f32 + 22.0,
-                bat_y + 4.0,
-                200.0,
-                15.0,
-                13.0,
-                "Battery",
-                fg,
+                r.0 + 14.0,
+                r.1 + 33.0,
+                tw,
+                16.0,
+                12.0,
+                &m.artist,
+                p.dim,
             );
+            let b = media_button(r);
+            round_button(
+                &mut pixmap,
+                b.0,
+                b.1,
+                false,
+                if m.playing { "pause" } else { "play" },
+                &p,
+            );
+        }
+
+        // Footer: Settings / Lock / Log out icon buttons; battery on the right.
+        for (i, key) in ["cosmos-settings", "sys-lock", "sys-logout"]
+            .into_iter()
+            .enumerate()
+        {
+            let b = footer_button(l.footer, i);
+            round_button(&mut pixmap, b.0, b.1, false, key, &p);
+        }
+        if let Some(b) = info.battery.as_ref().filter(|b| b.present) {
             let txt = format!(
                 "{}%{}",
                 b.percent,
                 if b.charging { " charging" } else { "" }
             );
+            let tw = draw::text_width(12.0, &txt).ceil();
+            let f = l.footer;
+            let tx = f.0 + f.2 - 6.0 - tw;
             draw::text(
                 &mut pixmap,
-                w as f32 - PAD as f32 - 140.0,
-                bat_y + 4.0,
-                140.0,
-                15.0,
+                tx,
+                f.1 + 16.0,
+                tw + 2.0,
+                16.0,
                 12.0,
                 &txt,
-                fg_dim,
+                p.dim,
             );
+            icons::battery(&mut pixmap, tx - 22.0, f.1 + 16.0, 16.0, p.glyph, b.percent);
         }
     }
-
-    // Accent preset row — Omarchy's theme dial, as a swatch strip.
-    let ty = theme_y;
-    draw::text(
-        &mut pixmap,
-        PAD as f32,
-        ty + 13.0,
-        50.0,
-        15.0,
-        13.0,
-        "Theme",
-        fg,
-    );
-    for (i, (name, _, d_rgb, l_rgb)) in cosmos_ipc::ACCENT_PRESETS.iter().enumerate() {
-        let [r, g, b] = if state.dark { *d_rgb } else { *l_rgb };
-        let cx = swatch_x(i) as f32;
-        let cy = ty + 20.0;
-        // Filled disc; the selected preset gets a hairline ring outside it.
-        let mut pb = tiny_skia::PathBuilder::new();
-        pb.push_circle(cx, cy, 8.0);
-        if let Some(path) = pb.finish() {
-            pixmap.fill_path(
-                &path,
-                &tiny_skia::Paint {
-                    shader: tiny_skia::Shader::SolidColor(Color::from_rgba8(r, g, b, 0xFF)),
-                    anti_alias: true,
-                    ..Default::default()
-                },
-                tiny_skia::FillRule::Winding,
-                crate::draw::xf(),
-                None,
-            );
-        }
-        if state.accent_name == *name {
-            let mut pb = tiny_skia::PathBuilder::new();
-            pb.push_circle(cx, cy, 11.0);
-            if let Some(path) = pb.finish() {
-                pixmap.stroke_path(
-                    &path,
-                    &tiny_skia::Paint {
-                        shader: tiny_skia::Shader::SolidColor(Color::from_rgba8(
-                            fg.r(),
-                            fg.g(),
-                            fg.b(),
-                            0xFF,
-                        )),
-                        anti_alias: true,
-                        ..Default::default()
-                    },
-                    &tiny_skia::Stroke {
-                        width: 1.0,
-                        ..Default::default()
-                    },
-                    crate::draw::xf(),
-                    None,
-                );
-            }
-        }
-    }
-
-    // Dark/light mode pill — right edge of the Theme row, macOS Control
-    // Center's dark-mode tile shape.
-    let mx = mode_x() as f32;
-    let my = ty + 9.0;
-    draw::fill_round_rect(&mut pixmap, mx, my, MODE_W as f32, 22.0, 11.0, btn_bg);
-    let gx = mx + 13.0;
-    let gcy = my + 11.0;
-    let mut pb = tiny_skia::PathBuilder::new();
-    if state.dark {
-        // Moon crescent — a big disc minus an offset disc (EvenOdd).
-        pb.push_circle(gx, gcy, 5.5);
-        pb.push_circle(gx + 3.0, gcy - 2.0, 4.6);
-        if let Some(path) = pb.finish() {
-            pixmap.fill_path(
-                &path,
-                &tiny_skia::Paint {
-                    shader: tiny_skia::Shader::SolidColor(Color::from_rgba8(
-                        0xFF, 0xFF, 0xFF, 0xD8,
-                    )),
-                    anti_alias: true,
-                    ..Default::default()
-                },
-                tiny_skia::FillRule::EvenOdd,
-                crate::draw::xf(),
-                None,
-            );
-        }
-    } else {
-        // Sun — filled disc + 8 stroked rays.
-        let ink = tiny_skia::Paint {
-            shader: tiny_skia::Shader::SolidColor(Color::from_rgba8(0x20, 0x20, 0x24, 0xE0)),
-            anti_alias: true,
-            ..Default::default()
-        };
-        let mut disc = tiny_skia::PathBuilder::new();
-        disc.push_circle(gx, gcy, 3.6);
-        if let Some(path) = disc.finish() {
-            pixmap.fill_path(
-                &path,
-                &ink,
-                tiny_skia::FillRule::Winding,
-                crate::draw::xf(),
-                None,
-            );
-        }
-        let mut rays = tiny_skia::PathBuilder::new();
-        for i in 0..8 {
-            let a = i as f32 * std::f32::consts::FRAC_PI_4;
-            rays.move_to(gx + a.cos() * 5.2, gcy + a.sin() * 5.2);
-            rays.line_to(gx + a.cos() * 7.4, gcy + a.sin() * 7.4);
-        }
-        if let Some(path) = rays.finish() {
-            pixmap.stroke_path(
-                &path,
-                &ink,
-                &tiny_skia::Stroke {
-                    width: 1.2,
-                    ..Default::default()
-                },
-                crate::draw::xf(),
-                None,
-            );
-        }
-    }
-    draw::text(
-        &mut pixmap,
-        mx + 22.0,
-        my + 4.0,
-        MODE_W as f32 - 26.0,
-        15.0,
-        11.0,
-        if state.dark { "Dark" } else { "Light" },
-        fg,
-    );
-
-    // Focus row: moon glyph + "Do Not Disturb" + toggle pill — a real
-    // Focus mode that suppresses notification popups.
-    {
-        let moon = tiny_skia::Paint {
-            shader: tiny_skia::Shader::SolidColor(if state.dnd { fill } else { glyph }),
-            anti_alias: true,
-            ..Default::default()
-        };
-        let mut pb = tiny_skia::PathBuilder::new();
-        pb.push_circle(PAD as f32 + 7.0, focus_y + 18.0, 6.0);
-        pb.push_circle(PAD as f32 + 10.0, focus_y + 15.5, 5.0);
-        if let Some(path) = pb.finish() {
-            pixmap.fill_path(
-                &path,
-                &moon,
-                tiny_skia::FillRule::EvenOdd,
-                crate::draw::xf(),
-                None,
-            );
-        }
-        draw::text(
-            &mut pixmap,
-            PAD as f32 + 20.0,
-            focus_y + 11.0,
-            100.0,
-            15.0,
-            13.0,
-            "Focus",
-            fg,
-        );
-        draw::text(
-            &mut pixmap,
-            PAD as f32 + 68.0,
-            focus_y + 12.0,
-            90.0,
-            14.0,
-            11.0,
-            if state.dnd { "On" } else { "Off" },
-            fg_dim,
-        );
-        let sw_x = w as f32 - PAD as f32 - 34.0;
-        let sw_y = focus_y + 11.0;
-        draw::fill_round_rect(
-            &mut pixmap,
-            sw_x,
-            sw_y,
-            34.0,
-            18.0,
-            9.0,
-            if state.dnd { fill } else { sep },
-        );
-        let knob_x = if state.dnd { sw_x + 25.0 } else { sw_x + 9.0 };
-        let mut pb = tiny_skia::PathBuilder::new();
-        pb.push_circle(knob_x, sw_y + 9.0, 6.0);
-        if let Some(path) = pb.finish() {
-            pixmap.fill_path(
-                &path,
-                &tiny_skia::Paint {
-                    shader: tiny_skia::Shader::SolidColor(Color::from_rgba8(
-                        0xF2, 0xF2, 0xF4, 0xFF,
-                    )),
-                    anti_alias: true,
-                    ..Default::default()
-                },
-                tiny_skia::FillRule::Winding,
-                crate::draw::xf(),
-                None,
-            );
-        }
-    }
-
-    // Footer buttons — Settings | Lock | Log out, thirds.
-    let by = h as f32 - BTN_H as f32;
-    draw::fill_rect(&mut pixmap, 1.0, by, w as f32 - 2.0, 1.0, sep);
-    let third = w as f32 / 3.0;
-    let footer = [
-        ("cosmos-settings", "Settings"),
-        ("sys-lock", "Lock"),
-        ("sys-logout", "Log out"),
-    ];
-    for (i, (glyph_name, label)) in footer.iter().enumerate() {
-        let bx = PAD as f32 + i as f32 * (third - PAD as f32);
-        draw::fill_round_rect(
-            &mut pixmap,
-            bx,
-            by + 10.0,
-            third - PAD as f32 - 4.0,
-            32.0,
-            6.0,
-            btn_bg,
-        );
-        icons::icon(&mut pixmap, glyph_name, bx + 8.0, by + 19.0, 14.0, glyph);
-        draw::text(
-            &mut pixmap,
-            bx + 26.0,
-            by + 18.0,
-            80.0,
-            16.0,
-            12.0,
-            label,
-            fg,
-        );
-    }
-
     let wl_surface = layer.wl_surface().clone();
     state.set_viewport(&wl_surface, w, h);
     buffer.attach_to(&wl_surface).ok();
     wl_surface.damage_buffer(0, 0, pw as i32, ph as i32);
     wl_surface.commit();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn centre(r: Rect) -> (f32, f32) {
+        (r.0 + r.2 / 2.0, r.1 + r.3 / 2.0)
+    }
+
+    #[test]
+    fn tiles_stack_without_overlap_and_optional_ones_appear() {
+        let bare = layout(Flags::default());
+        assert!(bare.bt.is_none() && bare.display.is_none() && bare.media.is_none());
+        assert_eq!(bare.focus.1, bare.conn.1 + bare.conn.3 + GAP);
+        assert_eq!(bare.sound.1, bare.focus.1 + SMALL_H + GAP);
+        assert!(bare.footer.1 >= bare.sound.1 + SLIDER_H);
+        let full = layout(Flags {
+            bluetooth: true,
+            backlight: true,
+            media: true,
+        });
+        let d = full.display.unwrap();
+        let m = full.media.unwrap();
+        assert_eq!(d.1, full.focus.1 + SMALL_H + GAP);
+        assert_eq!(full.sound.1, d.1 + SLIDER_H + GAP);
+        assert_eq!(m.1, full.sound.1 + SLIDER_H + GAP);
+        assert!(full.footer.1 >= m.1 + MEDIA_H);
+        let grow = (full.footer.1 - bare.footer.1).round();
+        assert_eq!(grow, ROW + SLIDER_H + GAP + MEDIA_H + GAP);
+        // Three small tiles fill the row edge to edge.
+        assert_eq!(full.lite.0 + full.lite.2, QUICK_W as f32 - PAD);
+    }
+
+    #[test]
+    fn hit_test_finds_every_control() {
+        let l = layout(Flags {
+            bluetooth: true,
+            backlight: true,
+            media: true,
+        });
+        let at = |r: Rect| {
+            let (x, y) = centre(r);
+            hit_test(&l, x, y)
+        };
+        assert_eq!(at(l.net), Hit::Network);
+        assert_eq!(at(l.bt.unwrap()), Hit::Bluetooth);
+        assert_eq!(at(l.focus), Hit::Focus);
+        assert_eq!(at(l.dark), Hit::Dark);
+        assert_eq!(at(l.lite), Hit::Lite);
+        assert_eq!(at(l.display.unwrap()), Hit::Brightness);
+        assert_eq!(at(l.sound), Hit::Volume);
+        assert_eq!(hit_test(&l, l.sound.0 + 24.0, l.sound.1 + 42.0), Hit::Mute);
+        assert_eq!(at(media_button(l.media.unwrap())), Hit::PlayPause);
+        assert_eq!(at(footer_button(l.footer, 0)), Hit::Settings);
+        assert_eq!(at(footer_button(l.footer, 1)), Hit::Lock);
+        assert_eq!(at(footer_button(l.footer, 2)), Hit::Logout);
+        assert_eq!(hit_test(&l, 1.0, 1.0), Hit::Card);
+        assert_eq!(at(chevron(l.net)), Hit::NetDetail);
+        assert_eq!(at(sound_chevron(l.sound)), Hit::SoundDetail);
+    }
+
+    #[test]
+    fn slider_maps_track_ends() {
+        let r = layout(Flags::default()).sound;
+        let (x0, x1, _) = track(r);
+        assert_eq!(slider_value(r, x0 - 20.0), 0.0);
+        assert_eq!(slider_value(r, x1 + 20.0), 1.0);
+        assert!((slider_value(r, (x0 + x1) / 2.0) - 0.5).abs() < 1e-4);
+    }
 }
