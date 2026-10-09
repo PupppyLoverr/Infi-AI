@@ -224,6 +224,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         dark: true,
         panel_dirty: true,
         launcher_dirty: false,
+        start_slide: 0,
         notify_dirty: false,
         quick_dirty: false,
         panel_hover: (0.0, false),
@@ -608,6 +609,8 @@ pub struct ShellState {
     pub dark: bool,
     pub panel_dirty: bool,
     pub launcher_dirty: bool,
+    /// Start Photos slideshow step last painted (`startw::slide` period).
+    pub start_slide: u64,
     pub notify_dirty: bool,
     pub quick_dirty: bool,
     /// (x, hovering) — last pointer x on the panel, for hit highlights.
@@ -1650,6 +1653,9 @@ impl ShellState {
                 const BTN_RIGHT: u32 = 0x111;
                 self.set_menu(None, 0);
                 self.set_quick_open(false);
+                // The desktop takes no keyboard focus, so the island's
+                // focus-loss dismissal never fires for a desktop press.
+                self.close_island();
                 if button == BTN_RIGHT {
                     self.open_desktop_menu(x, y);
                 }
@@ -1805,6 +1811,18 @@ impl ShellState {
 
     fn on_tick(&mut self) {
         self.panel_dirty = true; // clock
+
+        // Start's Photos slideshow steps every 6 s; nothing else repaints it.
+        let slide = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() / 6)
+            .unwrap_or(0);
+        if slide != self.start_slide {
+            self.start_slide = slide;
+            if self.launcher_open {
+                self.launcher_dirty = true;
+            }
+        }
         self.agents = activity::scan_agents();
         // Elapsed timers + approval/agent changes.
         self.refresh_island();
