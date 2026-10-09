@@ -8,6 +8,10 @@
 use std::io::{Read, Write};
 use std::sync::mpsc;
 
+use cosmos_kit::controls::{button, ButtonKind};
+use cosmos_kit::layout::{status_text, toolbar_button, toolbar_spacer, toolbar_title, AppWindow};
+use cosmos_kit::Icon;
+
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
 const FONT: f32 = 14.0;
@@ -318,7 +322,40 @@ fn draw(ui: &mut egui::Ui, term: &mut Term) {
         }
     }
 
-    egui::CentralPanel::default().show(ui, |ui| {
+    let shell = std::env::var("SHELL")
+        .ok()
+        .and_then(|s| s.rsplit('/').next().map(str::to_string))
+        .unwrap_or_else(|| "sh".into());
+    let title = format!("{shell} — {}×{}", term.cols, term.rows);
+    let back = term.parser.screen().scrollback();
+    let cell = std::cell::RefCell::new(&mut *term);
+    let mut win = AppWindow::new().toolbar(|ui| {
+        toolbar_title(ui, &title);
+        toolbar_spacer(ui, 28.0);
+        if toolbar_button(ui, Icon::Plus, "New Window", false).clicked() {
+            match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).spawn()) {
+                Ok(mut child) => {
+                    std::thread::spawn(move || {
+                        let _ = child.wait();
+                    });
+                }
+                Err(e) => tracing::warn!("new terminal window: {e}"),
+            }
+        }
+    });
+    if back > 0 {
+        win = win.status(|ui| {
+            status_text(ui, &format!("Viewing scrollback — {back} lines up"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if button(ui, ButtonKind::Plain, "Jump to Bottom").clicked() {
+                    cell.borrow_mut().parser.screen_mut().set_scrollback(0);
+                }
+            });
+        });
+    }
+    win.show(ui, |ui| {
+        let mut term = cell.borrow_mut();
+        let term: &mut Term = &mut term;
         let avail = ui.available_size();
         // ~0.6 width factor for egui's monospace advance.
         let cell_w = FONT * 0.60;
