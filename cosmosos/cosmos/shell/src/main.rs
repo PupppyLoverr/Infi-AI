@@ -3,6 +3,7 @@
 //! to cosmos-compositor over cosmos-ipc.
 
 mod activity;
+mod ask;
 mod assist;
 mod clipwatch;
 mod desktop;
@@ -20,6 +21,7 @@ mod menubar;
 mod notify;
 mod panel;
 mod popups;
+mod preview;
 mod quick;
 mod search;
 mod switcher;
@@ -195,6 +197,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         launcher_query: String::new(),
         launcher_preset: None,
         launcher_search: false,
+        launcher_preview: None,
+        launcher_card_h: 0.0,
+        ask_tx: None,
+        ask_id: 0,
+        ask_pid: None,
+        ask_query: String::new(),
+        ask_text: String::new(),
+        ask_done: None,
         launcher_sel: 0,
         recent: launcher::load_recent(),
         apps,
@@ -257,6 +267,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     state.create_widgets(&qh);
     let (weather_tx, weather_rx) = channel::channel::<Option<weather::Weather>>();
     state.weather_tx = Some(weather::start(weather_tx, String::new()));
+    let (ask_tx, ask_rx) = channel::channel::<(u64, ask::Event)>();
+    state.ask_tx = Some(ask_tx);
+    handle.insert_source(ask_rx, |event, _, state| {
+        if let ChannelEvent::Msg((id, ev)) = event {
+            if id != state.ask_id {
+                return;
+            }
+            match ev {
+                ask::Event::Started(pid) => state.ask_pid = Some(pid),
+                ask::Event::Chunk(s) => state.ask_text.push_str(&s),
+                ask::Event::Done(r) => {
+                    state.ask_pid = None;
+                    state.ask_done = Some(r);
+                }
+            }
+            state.launcher_dirty = true;
+        }
+    })?;
     handle.insert_source(weather_rx, |event, _, state| {
         if let ChannelEvent::Msg(w) = event {
             if w != state.weather {
@@ -510,6 +538,18 @@ pub struct ShellState {
     pub launcher_preset: Option<String>,
     /// Open as Search or Ask (super+Space / Ask Cosmos) instead of Start.
     pub launcher_search: bool,
+    /// Preview of the selected Files result (Search or Ask).
+    pub launcher_preview: Option<preview::FilePreview>,
+    /// Painted Search or Ask card height (pill + results/answer).
+    pub launcher_card_h: f64,
+    pub ask_tx: Option<calloop::channel::Sender<(u64, ask::Event)>>,
+    pub ask_id: u64,
+    pub ask_pid: Option<u32>,
+    /// Question being answered ("" = none).
+    pub ask_query: String,
+    pub ask_text: String,
+    /// None while streaming; the outcome once opencode exits.
+    pub ask_done: Option<Result<(), String>>,
     pub launcher_sel: usize,
     /// App launch MRU (desktop ids, newest first) — the launcher's
     /// RECOMMENDED section; persisted to ~/.local/share/cosmos-shell.
@@ -853,6 +893,8 @@ impl ShellState {
         } else {
             self.launcher_surface = None;
             self.launcher_search = false;
+            self.launcher_preview = None;
+            self.cancel_ask();
         }
     }
 
@@ -887,6 +929,28 @@ impl ShellState {
     /// launcher is open after a local close — `launcher_open` only flips
     /// on `ToggleLauncher` — so notify it, or the NEXT toggle request
     /// (dock glyph, Super) is silently eaten and the launcher looks stuck.
+    /// Stream an answer to `q` into the Search or Ask card.
+    fn start_ask(&mut self, q: String) {
+        self.cancel_ask();
+        self.ask_id += 1;
+        self.ask_query = q.trim().to_string();
+        self.ask_text.clear();
+        self.ask_done = None;
+        if let Some(tx) = &self.ask_tx {
+            ask::start(self.ask_query.clone(), self.ask_id, tx.clone());
+        }
+        self.launcher_dirty = true;
+    }
+
+    fn cancel_ask(&mut self) {
+        if let Some(pid) = self.ask_pid.take() {
+            // SAFETY: plain kill(2) on the opencode child we spawned.
+            unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+        }
+        self.ask_id += 1;
+        self.ask_query.clear();
+    }
+
     fn close_launcher(&mut self) {
         if self.launcher_open {
             self.set_launcher_open(false);
@@ -899,7 +963,14 @@ impl ShellState {
         if self.launcher_search {
             let rows = self.filtered_results();
             let empty = self.launcher_query.is_empty();
-            match launcher::hit_test_search(x, y, self.launcher_size, &rows, empty) {
+            match launcher::hit_test_search(
+                x,
+                y,
+                self.launcher_size,
+                &rows,
+                empty,
+                self.launcher_card_h,
+            ) {
                 launcher::Hit::Item(idx) => {
                     self.launcher_sel = idx;
                     self.launch_selected();
@@ -1006,6 +1077,10 @@ impl ShellState {
             search::Kind::Setting(pane) => {
                 spawn_quiet("cosmos-settings", &["--pane", pane]);
                 self.record_launch("cosmos-settings");
+            }
+            search::Kind::Ask(q) if self.launcher_search => {
+                self.start_ask(q);
+                return;
             }
             search::Kind::Ask(q) => {
                 let cmd = format!("opencode run {}", search::shell_quote(&q));
