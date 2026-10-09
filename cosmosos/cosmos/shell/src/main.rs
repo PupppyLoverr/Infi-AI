@@ -1713,6 +1713,7 @@ impl ShellState {
             self.dock_dirty = true;
             self.launcher_dirty = true;
             self.notify_dirty = true;
+            self.widgets_dirty = true;
         }
         if let Some(on) = map.get("lite_mode").and_then(|v| v.as_bool()) {
             if on != self.lite {
@@ -1728,6 +1729,7 @@ impl ShellState {
                 WALLPAPER.with(|w| *w.borrow_mut() = v.to_string());
                 self.panel_dirty = true;
                 self.dock_dirty = true;
+                self.widgets_dirty = true;
             }
         }
         if let Some(on) = map.get("desktop_widgets").and_then(|v| v.as_bool()) {
