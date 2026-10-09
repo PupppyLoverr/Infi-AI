@@ -159,6 +159,9 @@ pub enum Event {
     /// Something external toggled the launcher.
     LauncherToggled {
         open: bool,
+        /// Opened as Search or Ask (super+Space) rather than Start.
+        #[serde(default)]
+        search: bool,
     },
     /// Something external toggled the keybind cheatsheet.
     HelpToggled {
@@ -365,7 +368,7 @@ pub fn accent_known(name: &str) -> bool {
 pub const KEYBINDS: &[(&str, &str, &str)] = &[
     ("Apps", "Super + Return", "Terminal"),
     ("Apps", "Super + E", "File manager"),
-    ("Apps", "Super + Space", "Launcher"),
+    ("Apps", "Super + Space", "Search or Ask"),
     ("Apps", "Super + Q", "Close window"),
     ("Apps", "Super + F", "Fullscreen"),
     ("Apps", "Super + M", "Minimize"),

@@ -14,6 +14,85 @@ pub enum Kind {
     File(String),
     /// `?question` — ask opencode in a terminal.
     Ask(String),
+    /// Settings pane id (`cosmos-settings --pane <id>`).
+    Setting(&'static str),
+}
+
+/// Result groups, in display order after the Top Hit.
+const GROUPS: [&str; 6] = ["Apps", "Files", "Settings", "Calculator", "Commands", "Ask"];
+
+pub fn group(kind: &Kind) -> &'static str {
+    match kind {
+        Kind::App(_) => "Apps",
+        Kind::File(_) => "Files",
+        Kind::Setting(_) => "Settings",
+        Kind::Calc(_) => "Calculator",
+        Kind::Cmd(_) => "Commands",
+        Kind::Ask(_) => "Ask",
+    }
+}
+
+/// Settings panes searchable by title and keyword.
+const PANES: [(&str, &str, &str); 5] = [
+    (
+        "appearance",
+        "Appearance",
+        "dark light mode theme accent colour color scale display zoom reduce motion",
+    ),
+    ("wallpaper", "Wallpaper", "background desktop picture image"),
+    (
+        "dock",
+        "Desktop & Dock",
+        "dock widgets weather clock position left right bottom menubar",
+    ),
+    ("apps", "Default Apps", "terminal launcher rows apps"),
+    (
+        "session",
+        "Session",
+        "log out logout lock sign out restart shut down power",
+    ),
+];
+
+fn settings_rows(q: &str) -> Vec<Row> {
+    let q = q.to_lowercase();
+    if q.chars().count() < 2 {
+        return Vec::new();
+    }
+    PANES
+        .iter()
+        .filter(|(_, title, words)| {
+            title
+                .to_lowercase()
+                .split(|c: char| !c.is_alphanumeric())
+                .chain(words.split(' '))
+                .any(|w| w.starts_with(&q))
+                || title.to_lowercase().starts_with(&q)
+        })
+        .map(|(id, title, _)| Row {
+            kind: Kind::Setting(id),
+            title: (*title).to_string(),
+            hint: "Settings",
+            icon: "cosmos-settings".into(),
+            sub: "System Settings".into(),
+        })
+        .collect()
+}
+
+/// Spotlight order: one Top Hit (an app whose name starts with the
+/// query, else the first result), then the rest grouped by `GROUPS`.
+fn order(mut rows: Vec<Row>, q: &str) -> Vec<Row> {
+    if rows.is_empty() {
+        return rows;
+    }
+    let ql = q.to_lowercase();
+    let top = rows
+        .iter()
+        .position(|r| matches!(r.kind, Kind::App(_)) && r.title.to_lowercase().starts_with(&ql))
+        .unwrap_or(0);
+    let hit = rows.remove(top);
+    rows.sort_by_key(|r| GROUPS.iter().position(|g| *g == group(&r.kind)));
+    rows.insert(0, hit);
+    rows
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +143,7 @@ pub fn results(state: &ShellState) -> Vec<Row> {
 
     let mut out = Vec::new();
     if !q.is_empty() {
+        out.extend(settings_rows(q));
         if let Some(v) = eval_calc(q) {
             out.push(Row {
                 kind: Kind::Calc(v.clone()),
@@ -102,7 +182,11 @@ pub fn results(state: &ShellState) -> Vec<Row> {
             sub: app.comment.clone(),
         });
     }
-    out
+    if q.is_empty() {
+        out
+    } else {
+        order(out, q)
+    }
 }
 
 /// `sh`-quote a string for embedding in a `cosmos-terminal -e` command.
@@ -227,5 +311,58 @@ fn atom(s: &[char], p: &mut usize) -> Option<f64> {
             s[start..*p].iter().collect::<String>().parse().ok()
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod group_tests {
+    use super::*;
+
+    fn row(kind: Kind, title: &str) -> Row {
+        Row {
+            kind,
+            title: title.into(),
+            hint: "",
+            icon: String::new(),
+            sub: String::new(),
+        }
+    }
+
+    #[test]
+    fn settings_match_title_and_keywords() {
+        let ids = |q: &str| -> Vec<&str> {
+            settings_rows(q)
+                .into_iter()
+                .filter_map(|r| match r.kind {
+                    Kind::Setting(id) => Some(id),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(ids("dark"), ["appearance"]);
+        assert_eq!(ids("Wall"), ["wallpaper"]);
+        assert_eq!(ids("weather"), ["dock"]);
+        assert_eq!(ids("dock"), ["dock"]);
+        assert!(ids("d").is_empty());
+    }
+
+    #[test]
+    fn top_hit_then_groups() {
+        let rows = vec![
+            row(Kind::Calc("4".into()), "= 4"),
+            row(Kind::File("/home/u/files.txt".into()), "files.txt"),
+            row(Kind::Setting("dock"), "Desktop & Dock"),
+            row(Kind::Cmd("ls".into()), "ls"),
+            row(Kind::File("/home/u/a".into()), "a"),
+        ];
+        let got: Vec<&str> = order(rows.clone(), "fi")
+            .iter()
+            .map(|r| group(&r.kind))
+            .collect();
+        // No app prefix match: the first row is the Top Hit.
+        assert_eq!(
+            got,
+            ["Calculator", "Files", "Files", "Settings", "Commands"]
+        );
     }
 }

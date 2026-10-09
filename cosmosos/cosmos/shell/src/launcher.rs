@@ -11,7 +11,7 @@ use smithay_client_toolkit::{
 use tiny_skia::{Color, PathBuilder, PixmapMut, Stroke};
 use wayland_client::protocol::wl_shm;
 
-use crate::{desktop::AppEntry, dock, draw, glass, icons, ShellState, LAUNCHER_WIDTH};
+use crate::{desktop::AppEntry, dock, draw, glass, icons, search, ShellState, LAUNCHER_WIDTH};
 
 const INPUT_H: f64 = 48.0;
 const ROW_H: f64 = 36.0;
@@ -31,6 +31,11 @@ const MAX_REC: usize = 3;
 const WIDGET_H: f64 = 60.0;
 /// Footer avatar + name hit/draw width.
 const USER_W: f64 = 220.0;
+/// Search or Ask (super+Space): a 680×56 pill in the upper third whose
+/// results expand beneath it in the same glass.
+const SEARCH_W: f64 = 680.0;
+const PILL_H: f64 = 56.0;
+const SEARCH_ROWS: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Hit {
@@ -583,6 +588,255 @@ fn theme(dark: bool) -> (Color, Color, Color, Color, CtColor, CtColor) {
     }
 }
 
+fn search_origin(size: (u32, u32)) -> (f64, f64) {
+    (
+        ((size.0 as f64 - SEARCH_W) / 2.0).max(8.0),
+        (size.1 as f64 * 0.22).max(48.0),
+    )
+}
+
+/// Y offsets (from the pill's top) of group headers and rows, and the
+/// card's total height.
+pub struct SearchLayout {
+    pub headers: Vec<(f64, &'static str)>,
+    pub rows: Vec<f64>,
+    pub height: f64,
+}
+
+pub fn search_layout(rows: &[search::Row], query_empty: bool) -> SearchLayout {
+    let mut out = SearchLayout {
+        headers: Vec::new(),
+        rows: Vec::new(),
+        height: PILL_H,
+    };
+    if query_empty {
+        return out;
+    }
+    let mut y = PILL_H + 6.0;
+    if rows.is_empty() {
+        out.height = y + ROW_H + 6.0;
+        return out;
+    }
+    let mut prev = "";
+    for (i, row) in rows.iter().take(SEARCH_ROWS).enumerate() {
+        let label = if i == 0 {
+            "TOP HIT"
+        } else {
+            search::group(&row.kind)
+        };
+        if label != prev {
+            out.headers.push((y, label));
+            y += SEC_H;
+            prev = label;
+        }
+        out.rows.push(y);
+        y += ROW_H;
+    }
+    out.height = y + 8.0;
+    out
+}
+
+pub fn hit_test_search(
+    x: f64,
+    y: f64,
+    size: (u32, u32),
+    rows: &[search::Row],
+    query_empty: bool,
+) -> Hit {
+    let (left, top) = search_origin(size);
+    let lay = search_layout(rows, query_empty);
+    if x < left || x > left + SEARCH_W || y < top || y > top + lay.height {
+        return Hit::Backdrop;
+    }
+    let ry = y - top;
+    if ry < PILL_H {
+        return Hit::Input;
+    }
+    lay.rows
+        .iter()
+        .position(|&r| ry >= r && ry < r + ROW_H)
+        .map(Hit::Item)
+        .unwrap_or(Hit::List)
+}
+
+fn draw_search(
+    pixmap: &mut PixmapMut<'_>,
+    size: (u32, u32),
+    rows: &[search::Row],
+    query: &str,
+    sel: usize,
+    dark: bool,
+) {
+    let (box_bg, sel_bg, sep, _input_bg, fg, fg_dim) = theme(dark);
+    let (left, top) = search_origin(size);
+    let lay = search_layout(rows, query.is_empty());
+    let (l, t, sw, ht) = (left as f32, top as f32, SEARCH_W as f32, lay.height as f32);
+    let r = if query.is_empty() {
+        PILL_H as f32 / 2.0
+    } else {
+        CARD_R
+    };
+    draw::shadow(pixmap, l, t, sw, ht, r);
+    glass::fill_glass(
+        pixmap,
+        &crate::ShellState::wallpaper_name(),
+        l,
+        t,
+        sw,
+        ht,
+        r,
+        l,
+        t,
+        dark,
+        box_bg,
+    );
+    draw::stroke_round_rect(
+        pixmap,
+        l + 0.5,
+        t + 0.5,
+        sw - 1.0,
+        ht - 1.0,
+        r - 0.5,
+        1.0,
+        sep,
+    );
+
+    // The pill: magnifier (or an "Ask" chip in ? mode), query, caret.
+    let ask = query.starts_with('?');
+    let shown = if ask { query[1..].trim_start() } else { query };
+    let mid = t + PILL_H as f32 / 2.0;
+    let text_x = if ask {
+        draw::fill_round_rect(pixmap, l + 14.0, mid - 12.0, 46.0, 24.0, 12.0, sel_bg);
+        draw::text_centered(pixmap, l + 14.0, mid - 8.0, 46.0, 16.0, 12.0, "Ask", fg);
+        l + 70.0
+    } else {
+        magnifier(pixmap, l + 26.0, mid, fg_dim);
+        l + 50.0
+    };
+    let (label, color) = match (shown.is_empty(), ask) {
+        (false, _) => (shown, fg),
+        (true, true) => ("Ask Cosmos anything", fg_dim),
+        (true, false) => ("Search or Ask", fg_dim),
+    };
+    draw::text(
+        pixmap,
+        text_x,
+        mid - 12.0,
+        sw - (text_x - l) - 120.0,
+        24.0,
+        20.0,
+        label,
+        color,
+    );
+    let caret_x = text_x + shown.chars().count() as f32 * 10.4 + 1.0;
+    draw::fill_rect(
+        pixmap,
+        caret_x,
+        mid - 11.0,
+        2.0,
+        22.0,
+        Color::from_rgba8(fg.r(), fg.g(), fg.b(), 0xFF),
+    );
+    if !ask {
+        draw::text(
+            pixmap,
+            l + sw - 104.0,
+            mid - 7.0,
+            88.0,
+            14.0,
+            11.0,
+            "Tab to Ask",
+            fg_dim,
+        );
+    }
+    if query.is_empty() {
+        return;
+    }
+
+    draw::fill_rect(pixmap, l + 12.0, t + PILL_H as f32, sw - 24.0, 1.0, sep);
+    for &(y, label) in &lay.headers {
+        section(
+            pixmap,
+            l + 16.0,
+            t + y as f32,
+            &label.to_uppercase(),
+            fg_dim,
+        );
+    }
+    if rows.is_empty() {
+        draw::text(
+            pixmap,
+            l + 20.0,
+            t + PILL_H as f32 + 14.0,
+            sw - 40.0,
+            18.0,
+            13.0,
+            "No results",
+            fg_dim,
+        );
+    }
+    let sel = sel.min(lay.rows.len().saturating_sub(1));
+    for (i, (row, &y)) in rows.iter().zip(&lay.rows).enumerate() {
+        let ry = t + y as f32;
+        let rh = ROW_H as f32;
+        if i == sel {
+            draw::fill_round_rect(pixmap, l + 6.0, ry + 2.0, sw - 12.0, rh - 4.0, 8.0, sel_bg);
+        }
+        let big = i == 0;
+        let isz = if big { 24.0 } else { 20.0 };
+        icons::app_tile(pixmap, &row.icon, l + 16.0, ry + (rh - isz) / 2.0, isz);
+        let title: String = row.title.chars().take(48).collect();
+        let tx = l + 50.0;
+        if big {
+            draw::text_bold(
+                pixmap,
+                tx,
+                ry + (rh - 18.0) / 2.0,
+                sw * 0.5,
+                18.0,
+                14.0,
+                &title,
+                fg,
+            );
+        } else {
+            draw::text(
+                pixmap,
+                tx,
+                ry + (rh - 18.0) / 2.0,
+                sw * 0.5,
+                18.0,
+                13.0,
+                &title,
+                fg,
+            );
+        }
+        if !row.sub.is_empty() {
+            let sx = tx + (title.chars().count() as f32 * 7.4).min(sw * 0.5) + 10.0;
+            let sub: String = row.sub.chars().take(40).collect();
+            draw::text(
+                pixmap,
+                sx,
+                ry + (rh - 14.0) / 2.0,
+                l + sw - 100.0 - sx,
+                14.0,
+                11.0,
+                &sub,
+                fg_dim,
+            );
+        }
+        draw::text(
+            pixmap,
+            l + sw - 84.0,
+            ry + (rh - 14.0) / 2.0,
+            70.0,
+            14.0,
+            11.0,
+            row.hint,
+            fg_dim,
+        );
+    }
+}
+
 pub fn draw(state: &mut ShellState) {
     let (w, h) = state.launcher_size;
     if w == 0 || h == 0 {
@@ -619,6 +873,23 @@ pub fn draw(state: &mut ShellState) {
     // scrim blends SrcOver, so stale bytes would show through as a dimmed
     // ghost. Clear to transparent first.
     pixmap.fill(Color::TRANSPARENT);
+    if state.launcher_search {
+        draw::scrim(&mut pixmap, w, h, state.dark);
+        draw_search(
+            &mut pixmap,
+            (w, h),
+            &rows,
+            &state.launcher_query,
+            state.launcher_sel,
+            state.dark,
+        );
+        let wl_surface = layer.wl_surface().clone();
+        state.set_viewport(&wl_surface, w, h);
+        buffer.attach_to(&wl_surface).ok();
+        wl_surface.damage_buffer(0, 0, pw as i32, ph as i32);
+        wl_surface.commit();
+        return;
+    }
 
     // Spotlight idiom: a vignette scrim — airy near the card, deeper at
     // the corners — then the card's own soft shadow.
@@ -1071,11 +1342,22 @@ fn magnifier(pixmap: &mut PixmapMut<'_>, cx: f32, cy: f32, color: CtColor) {
 }
 
 pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {
-    let np = pinned(state).len();
-    let searching = !state.launcher_query.is_empty();
-    let n = rows_shown(searching, np, state.filtered_results().len());
-    let nr = recommended(state).len();
-    let hit = hit_test(x, y, state.launcher_size, n, np, nr, searching);
+    let hit = if state.launcher_search {
+        let rows = state.filtered_results();
+        hit_test_search(
+            x,
+            y,
+            state.launcher_size,
+            &rows,
+            state.launcher_query.is_empty(),
+        )
+    } else {
+        let np = pinned(state).len();
+        let searching = !state.launcher_query.is_empty();
+        let n = rows_shown(searching, np, state.filtered_results().len());
+        let nr = recommended(state).len();
+        hit_test(x, y, state.launcher_size, n, np, nr, searching)
+    };
     let mut dirty = false;
     // Track the hovered cell/row/button — the draw pass highlights it.
     if state.launcher_hover != Some(hit) {
@@ -1105,13 +1387,27 @@ pub fn key_press(state: &mut ShellState, event: KeyEvent) {
         }
         Keysym::Down => {
             let n = state.filtered_results().len();
+            let max = if state.launcher_search {
+                SEARCH_ROWS
+            } else {
+                MAX_ROWS
+            };
             if n > 0 {
-                state.launcher_sel = (state.launcher_sel + 1).min(n.min(MAX_ROWS) - 1);
+                state.launcher_sel = (state.launcher_sel + 1).min(n.min(max) - 1);
                 state.launcher_dirty = true;
             }
         }
         Keysym::Up => {
             state.launcher_sel = state.launcher_sel.saturating_sub(1);
+            state.launcher_dirty = true;
+        }
+        Keysym::Tab if state.launcher_search => {
+            // Tab flips between Search and Ask.
+            match state.launcher_query.strip_prefix('?') {
+                Some(rest) => state.launcher_query = rest.to_string(),
+                None => state.launcher_query.insert(0, '?'),
+            }
+            state.launcher_sel = 0;
             state.launcher_dirty = true;
         }
         Keysym::Tab => {
@@ -1133,5 +1429,46 @@ pub fn key_press(state: &mut ShellState, event: KeyEvent) {
                 state.launcher_dirty = true;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod search_layout_tests {
+    use super::*;
+    use crate::search::{Kind, Row};
+
+    fn row(kind: Kind) -> Row {
+        Row {
+            kind,
+            title: "x".into(),
+            hint: "",
+            icon: String::new(),
+            sub: String::new(),
+        }
+    }
+
+    #[test]
+    fn pill_alone_until_typing_then_grouped() {
+        assert_eq!(search_layout(&[], true).height, PILL_H);
+        let rows = [
+            row(Kind::Setting("dock")),
+            row(Kind::File("/a".into())),
+            row(Kind::File("/b".into())),
+        ];
+        let lay = search_layout(&rows, false);
+        let labels: Vec<&str> = lay.headers.iter().map(|h| h.1).collect();
+        assert_eq!(labels, ["TOP HIT", "Files"]);
+        assert_eq!(lay.rows.len(), 3);
+        let size = (1536, 864);
+        let (l, t) = search_origin(size);
+        assert_eq!(
+            hit_test_search(l + 100.0, t + 20.0, size, &rows, false),
+            Hit::Input
+        );
+        assert_eq!(
+            hit_test_search(l + 100.0, t + lay.rows[2] + 5.0, size, &rows, false),
+            Hit::Item(2)
+        );
+        assert_eq!(hit_test_search(5.0, 5.0, size, &rows, false), Hit::Backdrop);
     }
 }

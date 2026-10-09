@@ -194,6 +194,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         launcher_open: false,
         launcher_query: String::new(),
         launcher_preset: None,
+        launcher_search: false,
         launcher_sel: 0,
         recent: launcher::load_recent(),
         apps,
@@ -507,6 +508,8 @@ pub struct ShellState {
     pub launcher_query: String,
     /// Query the next launcher open starts with ("?" = Ask mode).
     pub launcher_preset: Option<String>,
+    /// Open as Search or Ask (super+Space / Ask Cosmos) instead of Start.
+    pub launcher_search: bool,
     pub launcher_sel: usize,
     /// App launch MRU (desktop ids, newest first) — the launcher's
     /// RECOMMENDED section; persisted to ~/.local/share/cosmos-shell.
@@ -849,6 +852,7 @@ impl ShellState {
             self.launcher_dirty = true;
         } else {
             self.launcher_surface = None;
+            self.launcher_search = false;
         }
     }
 
@@ -892,6 +896,19 @@ impl ShellState {
 
     /// Pointer click inside the launcher surface.
     pub fn launcher_click(&mut self, x: f64, y: f64) {
+        if self.launcher_search {
+            let rows = self.filtered_results();
+            let empty = self.launcher_query.is_empty();
+            match launcher::hit_test_search(x, y, self.launcher_size, &rows, empty) {
+                launcher::Hit::Item(idx) => {
+                    self.launcher_sel = idx;
+                    self.launch_selected();
+                }
+                launcher::Hit::Backdrop => self.close_launcher(),
+                _ => {}
+            }
+            return;
+        }
         let np = launcher::pinned(self).len();
         let n_items = launcher::rows_shown(
             !self.launcher_query.is_empty(),
@@ -985,6 +1002,10 @@ impl ShellState {
                         .to_string();
                     spawn_quiet("cosmos-files", &[&dir]);
                 }
+            }
+            search::Kind::Setting(pane) => {
+                spawn_quiet("cosmos-settings", &["--pane", pane]);
+                self.record_launch("cosmos-settings");
             }
             search::Kind::Ask(q) => {
                 let cmd = format!("opencode run {}", search::shell_quote(&q));
@@ -1331,7 +1352,12 @@ impl ShellState {
                 self.workspaces = workspaces;
                 self.panel_dirty = true;
             }
-            LauncherToggled { open } => self.set_launcher_open(open),
+            LauncherToggled { open, search } => {
+                if open && !self.launcher_open {
+                    self.launcher_search = search || self.launcher_preset.is_some();
+                }
+                self.set_launcher_open(open);
+            }
             HelpToggled { open } => self.set_help_open(open),
             SnapAssist {
                 open,
