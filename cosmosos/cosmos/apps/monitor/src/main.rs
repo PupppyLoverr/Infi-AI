@@ -5,6 +5,14 @@
 use std::collections::{HashMap, VecDeque};
 use std::fs;
 
+use cosmos_kit::controls::{search_field, segmented_with};
+use cosmos_kit::layout::{
+    card, status_text, toolbar_button, toolbar_spacer, toolbar_title, AppWindow, ColAlign, Column,
+    Table,
+};
+use cosmos_kit::{Icon, Kit, State};
+use cosmos_theme::space;
+
 struct Proc {
     pid: u32,
     name: String,
@@ -230,6 +238,15 @@ unsafe fn libc_clk() -> u64 {
     sysconf(SC_CLK_TCK) as u64
 }
 
+#[derive(Default)]
+struct View {
+    /// 0 = by CPU, 1 = by memory.
+    sort: usize,
+    query: String,
+    selected: Option<u32>,
+    status: String,
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -237,66 +254,90 @@ fn main() {
         )
         .init();
     let mut stats = Stats::new();
+    let mut view = View::default();
     let mut last_tick = std::time::Instant::now() - std::time::Duration::from_secs(2);
-    if let Err(e) = cosmos_uitk::run("System Monitor", "cosmos.monitor", (600, 460), move |ui| {
+    if let Err(e) = cosmos_uitk::run("Activity", "cosmos.monitor", (720, 520), move |ui| {
         if last_tick.elapsed() >= std::time::Duration::from_secs(1) {
             stats.tick();
             last_tick = std::time::Instant::now();
         }
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(500));
-        draw(ui, &mut stats);
+        draw(ui, &stats, &mut view);
     }) {
         tracing::error!("cosmos-monitor fatal: {e}");
         std::process::exit(1);
     }
 }
 
-fn bar(ui: &mut egui::Ui, label: &str, frac: f64, detail: &str) {
-    ui.horizontal(|ui| {
-        ui.label(format!("{label:>6}"));
-        let (rect, _) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width() - 200.0, 14.0),
-            egui::Sense::hover(),
-        );
-        let painter = ui.painter();
-        let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
-        let fill = ui.visuals().selection.bg_fill;
-        painter.rect_filled(rect, 2.0, ui.visuals().extreme_bg_color);
-        let mut inner = rect;
-        inner.max.x = rect.min.x + rect.width() * frac.clamp(0.0, 1.0) as f32;
-        painter.rect_filled(inner, 2.0, fill);
-        painter.rect_stroke(rect, 2.0, stroke, egui::StrokeKind::Inside);
-        ui.label(detail);
-    });
+/// Filled-area history graph, 0–100.
+fn sparkline(ui: &mut egui::Ui, kit: &Kit, hist: &VecDeque<f64>, h: f32) {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), h), egui::Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, 6.0, kit.fill(State::Rest));
+    if hist.len() < 2 {
+        return;
+    }
+    let n = (HIST - 1) as f32;
+    let off = (HIST - hist.len()) as f32;
+    let pts: Vec<egui::Pos2> = hist
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            egui::pos2(
+                rect.min.x + rect.width() * (off + i as f32) / n,
+                rect.max.y - 2.0 - (rect.height() - 4.0) * (*v as f32 / 100.0).clamp(0.0, 1.0),
+            )
+        })
+        .collect();
+    let base = rect.max.y - 1.0;
+    let a = kit.accent();
+    let tint = egui::Color32::from_rgba_unmultiplied(a.r(), a.g(), a.b(), 46);
+    let mut mesh = egui::Mesh::default();
+    for w in pts.windows(2) {
+        let i = mesh.vertices.len() as u32;
+        for p in [
+            w[0],
+            w[1],
+            egui::pos2(w[1].x, base),
+            egui::pos2(w[0].x, base),
+        ] {
+            mesh.colored_vertex(p, tint);
+        }
+        mesh.add_triangle(i, i + 1, i + 2);
+        mesh.add_triangle(i, i + 2, i + 3);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+    painter.add(egui::Shape::line(pts, egui::Stroke::new(1.5, a)));
 }
 
-fn sparkline(ui: &mut egui::Ui, hist: &VecDeque<f64>) {
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 36.0), egui::Sense::hover());
-    let painter = ui.painter();
-    painter.rect_filled(rect, 2.0, ui.visuals().extreme_bg_color);
-    if hist.len() > 1 {
-        let pts: Vec<egui::Pos2> = hist
-            .iter()
-            .enumerate()
-            .map(|(i, v)| {
-                egui::pos2(
-                    rect.min.x + rect.width() * i as f32 / (hist.len() - 1).max(1) as f32,
-                    rect.max.y - rect.height() * (*v as f32 / 100.0).clamp(0.0, 1.0),
-                )
-            })
-            .collect();
-        painter.add(egui::Shape::line(
-            pts,
-            egui::Stroke::new(
-                1.5,
-                ui.visuals()
-                    .override_text_color
-                    .unwrap_or(egui::Color32::WHITE),
-            ),
-        ));
-    }
+fn stat_card(
+    ui: &mut egui::Ui,
+    kit: &Kit,
+    w: f32,
+    title: &str,
+    value: &str,
+    detail: &str,
+    hist: Option<&VecDeque<f64>>,
+) {
+    ui.allocate_ui(egui::vec2(w, 132.0), |ui| {
+        card(ui, |ui| {
+            ui.set_height(108.0);
+            ui.label(egui::RichText::new(title).size(12.0).color(kit.text2()));
+            ui.label(
+                egui::RichText::new(value)
+                    .size(22.0)
+                    .strong()
+                    .color(kit.text()),
+            );
+            ui.label(egui::RichText::new(detail).size(12.0).color(kit.text3()));
+            ui.add_space(4.0);
+            if let Some(h) = hist {
+                sparkline(ui, kit, h, 36.0);
+            }
+        });
+    });
 }
 
 fn fmt_uptime(s: u64) -> String {
@@ -312,64 +353,193 @@ fn fmt_uptime(s: u64) -> String {
     }
 }
 
-fn draw(ui: &mut egui::Ui, st: &mut Stats) {
-    egui::CentralPanel::default().show(ui, |ui| {
-        ui.heading("System Monitor");
-        ui.horizontal(|ui| {
-            ui.label(format!(
-                "load {:.2} {:.2} {:.2}",
-                st.load[0], st.load[1], st.load[2]
-            ));
-            ui.separator();
-            ui.label(format!("up {}", fmt_uptime(st.uptime_s)));
-        });
-        ui.add_space(4.0);
-        bar(
-            ui,
-            "CPU",
-            st.cpu_pct / 100.0,
-            &format!("{:.0}%", st.cpu_pct),
-        );
-        sparkline(ui, &st.cpu_hist);
-        let mem_used = st.mem_total.saturating_sub(st.mem_avail);
-        bar(
-            ui,
-            "Memory",
-            mem_used as f64 / st.mem_total.max(1) as f64,
-            &format!("{}/{} MiB", mem_used / 1024, st.mem_total / 1024),
-        );
-        sparkline(ui, &st.mem_hist);
-        if st.swap_total > 0 {
-            let su = st.swap_total - st.swap_free;
-            bar(
+fn draw(ui: &mut egui::Ui, st: &Stats, v: &mut View) {
+    let kit = Kit::get(ui.ctx());
+    let cell = std::cell::RefCell::new(&mut *v);
+    AppWindow::new()
+        .toolbar(|ui| {
+            let mut v = cell.borrow_mut();
+            toolbar_title(ui, "Activity");
+            let fixed = 2.0 * 72.0 + 28.0 + 3.0 * space::S12;
+            let sw = (ui.available_width() - fixed - space::S8).clamp(96.0, 200.0);
+            toolbar_spacer(ui, fixed + sw);
+            ui.add_enabled_ui(v.selected.is_some(), |ui| {
+                if toolbar_button(ui, Icon::Close, "Quit Process", false).clicked() {
+                    if let Some(pid) = v.selected {
+                        v.status = match std::process::Command::new("kill")
+                            .arg(pid.to_string())
+                            .status()
+                        {
+                            Ok(s) if s.success() => format!("sent SIGTERM to {pid}"),
+                            Ok(s) => format!("kill {pid}: {s}"),
+                            Err(e) => format!("kill {pid}: {e}"),
+                        };
+                        v.selected = None;
+                    }
+                }
+            });
+            ui.add_space(space::S12);
+            segmented_with(ui, &mut v.sort, 2, 72.0, |ui, i, r, c| {
+                ui.painter().text(
+                    r.center(),
+                    egui::Align2::CENTER_CENTER,
+                    ["CPU", "Memory"][i],
+                    egui::FontId::proportional(13.0),
+                    c,
+                );
+            });
+            ui.add_space(space::S12);
+            search_field(ui, &mut v.query, "Search", sw);
+        })
+        .status(|ui| {
+            let v = cell.borrow();
+            status_text(
                 ui,
-                "Swap",
-                su as f64 / st.swap_total as f64,
-                &format!("{}/{} MiB", su / 1024, st.swap_total / 1024),
+                &format!(
+                    "{} processes · load {:.2} {:.2} {:.2} · up {}",
+                    st.procs.len(),
+                    st.load[0],
+                    st.load[1],
+                    st.load[2],
+                    fmt_uptime(st.uptime_s)
+                ),
             );
-        }
-        ui.add_space(8.0);
-        ui.heading("Processes");
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::Grid::new("procs")
-                .num_columns(5)
-                .striped(true)
-                .show(ui, |ui| {
-                    ui.strong("PID");
-                    ui.strong("Name");
-                    ui.strong("State");
-                    ui.strong("CPU%");
-                    ui.strong("RSS");
-                    ui.end_row();
-                    for p in &st.procs {
-                        ui.label(p.pid.to_string());
-                        ui.label(&p.name);
-                        ui.label(p.state.to_string());
-                        ui.label(format!("{:.0}", p.cpu));
-                        ui.label(format!("{} KiB", p.rss_kib));
-                        ui.end_row();
+            if !v.status.is_empty() {
+                status_text(ui, &format!("· {}", v.status));
+            }
+        })
+        .show(ui, |ui| {
+            let mut v = cell.borrow_mut();
+            egui::Frame::new().inner_margin(space::S16).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                let mem_used = st.mem_total.saturating_sub(st.mem_avail);
+                let cards = if st.swap_total > 0 { 3.0 } else { 2.0 };
+                let w = (ui.available_width() - (cards - 1.0) * space::S12) / cards;
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = space::S12;
+                    stat_card(
+                        ui,
+                        &kit,
+                        w,
+                        "CPU",
+                        &format!("{:.0}%", st.cpu_pct),
+                        &format!("{} cores", st.cpus.len().max(1)),
+                        Some(&st.cpu_hist),
+                    );
+                    stat_card(
+                        ui,
+                        &kit,
+                        w,
+                        "Memory",
+                        &format!("{} MiB", mem_used / 1024),
+                        &format!(
+                            "of {} MiB · {:.0}%",
+                            st.mem_total / 1024,
+                            100.0 * mem_used as f64 / st.mem_total.max(1) as f64
+                        ),
+                        Some(&st.mem_hist),
+                    );
+                    if st.swap_total > 0 {
+                        let su = st.swap_total - st.swap_free;
+                        stat_card(
+                            ui,
+                            &kit,
+                            w,
+                            "Swap",
+                            &format!("{} MiB", su / 1024),
+                            &format!("of {} MiB", st.swap_total / 1024),
+                            None,
+                        );
                     }
                 });
+                ui.add_space(space::S12);
+                card(ui, |ui| {
+                    let cols = [
+                        Column {
+                            title: "Process",
+                            width: 0.0,
+                            align: ColAlign::Left,
+                        },
+                        Column {
+                            title: "PID",
+                            width: 72.0,
+                            align: ColAlign::Right,
+                        },
+                        Column {
+                            title: "State",
+                            width: 64.0,
+                            align: ColAlign::Left,
+                        },
+                        Column {
+                            title: "% CPU",
+                            width: 72.0,
+                            align: ColAlign::Right,
+                        },
+                        Column {
+                            title: "Memory",
+                            width: 96.0,
+                            align: ColAlign::Right,
+                        },
+                    ];
+                    let t = Table { cols: &cols };
+                    t.header(ui);
+                    let q = v.query.to_lowercase();
+                    let mut rows: Vec<&Proc> = st
+                        .procs
+                        .iter()
+                        .filter(|p| {
+                            q.is_empty()
+                                || p.name.to_lowercase().contains(&q)
+                                || p.pid.to_string() == q
+                        })
+                        .collect();
+                    if v.sort == 0 {
+                        rows.sort_by(|a, b| {
+                            b.cpu
+                                .partial_cmp(&a.cpu)
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                                .then(b.rss_kib.cmp(&a.rss_kib))
+                        });
+                    } else {
+                        rows.sort_by(|a, b| b.rss_kib.cmp(&a.rss_kib));
+                    }
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            for p in rows {
+                                let mem = if p.rss_kib >= 1024 {
+                                    format!("{:.1} MB", p.rss_kib as f64 / 1024.0)
+                                } else {
+                                    format!("{} KB", p.rss_kib)
+                                };
+                                let state = match p.state {
+                                    'R' => "Running",
+                                    'S' => "Sleeping",
+                                    'D' => "Waiting",
+                                    'Z' => "Zombie",
+                                    'T' | 't' => "Stopped",
+                                    'I' => "Idle",
+                                    _ => "Other",
+                                };
+                                let r = t.row(
+                                    ui,
+                                    v.selected == Some(p.pid),
+                                    None,
+                                    &[
+                                        &p.name,
+                                        &p.pid.to_string(),
+                                        state,
+                                        &format!("{:.1}", p.cpu),
+                                        &mem,
+                                    ],
+                                );
+                                if r.clicked() {
+                                    v.selected = Some(p.pid);
+                                }
+                            }
+                        });
+                });
+            });
         });
-    });
 }
