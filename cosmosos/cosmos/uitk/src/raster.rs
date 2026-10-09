@@ -1,7 +1,7 @@
 //! Software rasterizer for egui output: tessellated meshes painted into an
 //! ARGB8888 shm buffer with per-pixel barycentric UV/colour interpolation.
 //! Same semantics as GPU egui renderers: `texel * interpolated_vertex_colour`,
-//! composited source-over.
+//! both premultiplied (egui's `Color32` convention), composited source-over.
 
 use std::collections::HashMap;
 
@@ -17,7 +17,7 @@ pub struct Painter {
 struct Texture {
     w: usize,
     h: usize,
-    px: Vec<u8>, // RGBA8, unpremultiplied
+    px: Vec<u8>, // RGBA8, premultiplied (egui `Color32`)
 }
 
 impl Default for Texture {
@@ -224,7 +224,7 @@ fn color(c: Color32) -> [f32; 4] {
 
 #[inline]
 fn blend(buf: &mut [u8], i: usize, r: f32, g: f32, b: f32, a: f32) {
-    // Source-over with unpremultiplied source.
+    // Source-over: premultiplied source onto the unpremultiplied buffer.
     let da = buf[i + 3] as f32 / 255.0;
     let dr = buf[i] as f32 / 255.0;
     let dg = buf[i + 1] as f32 / 255.0;
@@ -233,11 +233,43 @@ fn blend(buf: &mut [u8], i: usize, r: f32, g: f32, b: f32, a: f32) {
     if oa <= 0.0 {
         return;
     }
-    let or_ = (r * a + dr * da * (1.0 - a)) / oa;
-    let og = (g * a + dg * da * (1.0 - a)) / oa;
-    let ob = (b * a + db * da * (1.0 - a)) / oa;
+    let or_ = ((r + dr * da * (1.0 - a)) / oa).min(1.0);
+    let og = ((g + dg * da * (1.0 - a)) / oa).min(1.0);
+    let ob = ((b + db * da * (1.0 - a)) / oa).min(1.0);
     buf[i] = (or_ * 255.0) as u8;
     buf[i + 1] = (og * 255.0) as u8;
     buf[i + 2] = (ob * 255.0) as u8;
     buf[i + 3] = (oa * 255.0) as u8;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vert(x: f32, y: f32, color: Color32) -> egui::epaint::Vertex {
+        egui::epaint::Vertex {
+            pos: egui::pos2(x, y),
+            uv: egui::pos2(0.0, 0.0),
+            color,
+        }
+    }
+
+    // egui colours are premultiplied: white at alpha 36 over opaque black
+    // must land at ~36, not 36 * 36 / 255 ≈ 5.
+    #[test]
+    fn translucent_white_is_not_squared() {
+        let mut buf = vec![0u8, 0, 0, 255].repeat(16);
+        let c = Color32::from_white_alpha(36);
+        let clip = Clip {
+            x0: 0,
+            y0: 0,
+            x1: 4,
+            y1: 4,
+        };
+        let tex = Texture::default();
+        let (a, b, d) = (vert(0.0, 0.0, c), vert(8.0, 0.0, c), vert(0.0, 8.0, c));
+        fill_tri(&mut buf, 4, &tex, clip, 1.0, &a, &b, &d);
+        assert!((34..=38).contains(&buf[0]), "got {}", buf[0]);
+        assert_eq!(buf[3], 255);
+    }
 }
