@@ -227,7 +227,7 @@ pub fn shadow(pixmap: &mut PixmapMut<'_>, x: f32, y: f32, w: f32, h: f32, r: f32
 /// theme.
 pub fn scrim(pixmap: &mut PixmapMut<'_>, w: u32, h: u32, dark: bool) {
     // Alpha at the focal point / at the far edge.
-    let (base, edge) = if dark { (0.30, 0.62) } else { (0.16, 0.40) };
+    let (base, edge) = if dark { (0.12, 0.20) } else { (0.08, 0.16) };
     // Lightest near the card zone (upper-centre where the card floats).
     let (fx, fy) = (w as f32 * 0.5, h as f32 * 0.42);
     // Distance at which the scrim reaches `edge` alpha: ~55% of the

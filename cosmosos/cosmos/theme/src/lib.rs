@@ -83,13 +83,13 @@ pub const DARK: Palette = Palette {
     dark: true,
     base: a([0x14, 0x11, 0x1F], 1.0),
     window: a([0x1C, 0x17, 0x30], 0.90),
-    sidebar: a([0x16, 0x12, 0x2A], 0.92),
+    sidebar: a([0x16, 0x12, 0x2A], 0.78),
     raised: a([0x26, 0x20, 0x40], 1.0),
     hairline: a([0xFF, 0xFF, 0xFF], 0.08),
     text: a(DARK_TEXT, 1.0),
     text_secondary: a(DARK_TEXT, 0.62),
     text_tertiary: a(DARK_TEXT, 0.42),
-    glass_tint: [28, 23, 48, 140],
+    glass_tint: [28, 23, 48, 117],
     glass_hairline: a([0xFF, 0xFF, 0xFF], 0.10),
 };
 
@@ -97,13 +97,13 @@ pub const LIGHT: Palette = Palette {
     dark: false,
     base: a([0xF3, 0xF1, 0xF8], 1.0),
     window: a([0xFB, 0xFA, 0xFE], 0.92),
-    sidebar: a([0xEC, 0xE8, 0xF5], 0.94),
+    sidebar: a([0xEC, 0xE8, 0xF5], 0.90),
     raised: a([0xFF, 0xFF, 0xFF], 1.0),
     hairline: a([0x00, 0x00, 0x00], 0.08),
     text: a(LIGHT_TEXT, 1.0),
     text_secondary: a(LIGHT_TEXT, 0.64),
     text_tertiary: a(LIGHT_TEXT, 0.50),
-    glass_tint: [255, 255, 255, 148],
+    glass_tint: [255, 255, 255, 140],
     glass_hairline: a([0xFF, 0xFF, 0xFF], 0.60),
 };
 
