@@ -584,7 +584,8 @@ impl WindowMemory {
             let _ = std::fs::create_dir_all(dir);
         }
         if let Ok(text) = serde_json::to_string(&mem) {
-            let _ = std::fs::write(path, text);
+            let ok = std::fs::write(&path, text).is_ok();
+            tracing::info!(app_id, ?loc, ?size, ok, "cosmos: remembered geometry");
         }
     }
 }
