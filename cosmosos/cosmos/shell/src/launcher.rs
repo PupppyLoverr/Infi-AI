@@ -11,7 +11,9 @@ use smithay_client_toolkit::{
 use tiny_skia::{Color, PathBuilder, PixmapMut, Stroke};
 use wayland_client::protocol::wl_shm;
 
-use crate::{desktop::AppEntry, dock, draw, glass, icons, search, ShellState, LAUNCHER_WIDTH};
+use crate::{
+    ask, desktop::AppEntry, dock, draw, glass, icons, preview, search, ShellState, LAUNCHER_WIDTH,
+};
 
 const INPUT_H: f64 = 48.0;
 const ROW_H: f64 = 36.0;
@@ -36,6 +38,34 @@ const USER_W: f64 = 220.0;
 const SEARCH_W: f64 = 680.0;
 const PILL_H: f64 = 56.0;
 const SEARCH_ROWS: usize = 8;
+/// Right-hand preview pane for a selected Files result.
+const PREVIEW_W: f32 = 276.0;
+const PREVIEW_MIN_H: f64 = 250.0;
+const ASK_LINES: usize = 14;
+const ASK_LINE_H: f32 = 19.0;
+
+/// Keep the preview in step with the selected row (loaded once per path).
+fn update_preview(state: &mut ShellState) {
+    let rows = state.filtered_results();
+    let path = rows.get(state.launcher_sel).and_then(|r| match &r.kind {
+        search::Kind::File(p) => Some(p.clone()),
+        _ => None,
+    });
+    match path {
+        Some(p) if state.launcher_preview.as_ref().map(|v| v.path.as_str()) != Some(p.as_str()) => {
+            state.launcher_preview = Some(preview::load(&p));
+        }
+        Some(_) => {}
+        None => state.launcher_preview = None,
+    }
+}
+
+/// The streamed answer, while the query is still the question asked.
+fn ask_view(state: &ShellState) -> Option<(String, Option<Result<(), String>>)> {
+    let q = state.launcher_query.strip_prefix('?')?.trim();
+    (!state.ask_query.is_empty() && q == state.ask_query)
+        .then(|| (state.ask_text.clone(), state.ask_done.clone()))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Hit {
@@ -642,10 +672,11 @@ pub fn hit_test_search(
     size: (u32, u32),
     rows: &[search::Row],
     query_empty: bool,
+    card_h: f64,
 ) -> Hit {
     let (left, top) = search_origin(size);
     let lay = search_layout(rows, query_empty);
-    if x < left || x > left + SEARCH_W || y < top || y > top + lay.height {
+    if x < left || x > left + SEARCH_W || y < top || y > top + lay.height.max(card_h) {
         return Hit::Backdrop;
     }
     let ry = y - top;
@@ -659,6 +690,7 @@ pub fn hit_test_search(
         .unwrap_or(Hit::List)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_search(
     pixmap: &mut PixmapMut<'_>,
     size: (u32, u32),
@@ -666,11 +698,29 @@ fn draw_search(
     query: &str,
     sel: usize,
     dark: bool,
-) {
+    preview: Option<&preview::FilePreview>,
+    answer: Option<(String, Option<Result<(), String>>)>,
+) -> f64 {
     let (box_bg, sel_bg, sep, _input_bg, fg, fg_dim) = theme(dark);
     let (left, top) = search_origin(size);
     let lay = search_layout(rows, query.is_empty());
-    let (l, t, sw, ht) = (left as f32, top as f32, SEARCH_W as f32, lay.height as f32);
+    let sw = SEARCH_W as f32;
+    let answer = answer.map(|(text, done)| {
+        let mut lines = ask::wrap(&text, sw - 48.0, |s| draw::text_width(13.0, s));
+        if lines.len() > ASK_LINES {
+            lines.drain(..lines.len() - ASK_LINES);
+        }
+        (lines, done)
+    });
+    let height = match &answer {
+        Some((lines, done)) => {
+            let n = lines.len() + matches!(done, Some(Err(_))) as usize * 2;
+            PILL_H + 46.0 + n.max(1) as f64 * ASK_LINE_H as f64 + 14.0
+        }
+        None if preview.is_some() => lay.height.max(PILL_H + 8.0 + PREVIEW_MIN_H + 8.0),
+        None => lay.height,
+    };
+    let (l, t, ht) = (left as f32, top as f32, height as f32);
     let r = if query.is_empty() {
         PILL_H as f32 / 2.0
     } else {
@@ -750,10 +800,28 @@ fn draw_search(
         );
     }
     if query.is_empty() {
-        return;
+        return height;
     }
 
     draw::fill_rect(pixmap, l + 12.0, t + PILL_H as f32, sw - 24.0, 1.0, sep);
+    if let Some((lines, done)) = answer {
+        draw_answer(
+            pixmap,
+            (l, t, sw, ht),
+            &lines,
+            done.as_ref(),
+            dark,
+            fg,
+            fg_dim,
+        );
+        return height;
+    }
+    // Rows share the card with the preview pane when one is showing.
+    let rw = if preview.is_some() {
+        sw - PREVIEW_W - 20.0
+    } else {
+        sw
+    };
     for &(y, label) in &lay.headers {
         section(
             pixmap,
@@ -780,7 +848,7 @@ fn draw_search(
         let ry = t + y as f32;
         let rh = ROW_H as f32;
         if i == sel {
-            draw::fill_round_rect(pixmap, l + 6.0, ry + 2.0, sw - 12.0, rh - 4.0, 8.0, sel_bg);
+            draw::fill_round_rect(pixmap, l + 6.0, ry + 2.0, rw - 12.0, rh - 4.0, 8.0, sel_bg);
         }
         let big = i == 0;
         let isz = if big { 24.0 } else { 20.0 };
@@ -792,7 +860,7 @@ fn draw_search(
                 pixmap,
                 tx,
                 ry + (rh - 18.0) / 2.0,
-                sw * 0.5,
+                rw * 0.5,
                 18.0,
                 14.0,
                 &title,
@@ -803,7 +871,7 @@ fn draw_search(
                 pixmap,
                 tx,
                 ry + (rh - 18.0) / 2.0,
-                sw * 0.5,
+                rw * 0.5,
                 18.0,
                 13.0,
                 &title,
@@ -811,13 +879,14 @@ fn draw_search(
             );
         }
         if !row.sub.is_empty() {
-            let sx = tx + (title.chars().count() as f32 * 7.4).min(sw * 0.5) + 10.0;
+            let sx =
+                tx + draw::text_width(if big { 14.0 } else { 13.0 }, &title).min(rw * 0.5) + 10.0;
             let sub: String = row.sub.chars().take(40).collect();
             draw::text(
                 pixmap,
                 sx,
                 ry + (rh - 14.0) / 2.0,
-                l + sw - 100.0 - sx,
+                l + rw - 100.0 - sx,
                 14.0,
                 11.0,
                 &sub,
@@ -826,7 +895,7 @@ fn draw_search(
         }
         draw::text(
             pixmap,
-            l + sw - 84.0,
+            l + rw - 84.0,
             ry + (rh - 14.0) / 2.0,
             70.0,
             14.0,
@@ -835,9 +904,195 @@ fn draw_search(
             fg_dim,
         );
     }
+    if let Some(p) = preview {
+        let (px, py) = (l + sw - PREVIEW_W - 12.0, t + PILL_H as f32 + 8.0);
+        draw_preview(
+            pixmap,
+            p,
+            px,
+            py,
+            ht - PILL_H as f32 - 16.0,
+            sel_bg,
+            fg,
+            fg_dim,
+        );
+    }
+    height
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_preview(
+    pixmap: &mut PixmapMut<'_>,
+    p: &preview::FilePreview,
+    x: f32,
+    y: f32,
+    h: f32,
+    bg: Color,
+    fg: CtColor,
+    fg_dim: CtColor,
+) {
+    draw::fill_round_rect(pixmap, x, y, PREVIEW_W, h, 12.0, bg);
+    let inner = PREVIEW_W - 28.0;
+    let body_h = preview::THUMB_H as f32;
+    match &p.body {
+        preview::Body::Image(img) => {
+            let ix = x + (PREVIEW_W - img.width() as f32) / 2.0;
+            let iy = y + 14.0 + (body_h - img.height() as f32) / 2.0;
+            pixmap.draw_pixmap(
+                ix.round() as i32,
+                iy.round() as i32,
+                img.as_ref(),
+                &tiny_skia::PixmapPaint::default(),
+                draw::xf(),
+                None,
+            );
+        }
+        preview::Body::Text(lines) => {
+            for (i, line) in lines.iter().enumerate() {
+                draw::text_mono(
+                    pixmap,
+                    x + 14.0,
+                    y + 14.0 + i as f32 * 16.0,
+                    inner,
+                    16.0,
+                    11.0,
+                    line,
+                    fg_dim,
+                );
+            }
+        }
+        preview::Body::None => {
+            let icon = if p.info.starts_with("Folder") {
+                "cosmos-files"
+            } else {
+                "search-doc"
+            };
+            icons::app_tile(
+                pixmap,
+                icon,
+                x + (PREVIEW_W - 64.0) / 2.0,
+                y + 14.0 + (body_h - 64.0) / 2.0,
+                64.0,
+            );
+        }
+    }
+    let ty = y + 14.0 + body_h + 14.0;
+    let name: String = p.name.chars().take(34).collect();
+    draw::text_bold(pixmap, x + 14.0, ty, inner, 18.0, 13.0, &name, fg);
+    draw::text(
+        pixmap,
+        x + 14.0,
+        ty + 20.0,
+        inner,
+        15.0,
+        11.0,
+        &p.info,
+        fg_dim,
+    );
+    draw::text(
+        pixmap,
+        x + 14.0,
+        ty + 36.0,
+        inner,
+        15.0,
+        11.0,
+        &p.modified,
+        fg_dim,
+    );
+}
+
+/// The streamed answer, edged with the accent gradient (spec §2.2).
+#[allow(clippy::too_many_arguments)]
+fn draw_answer(
+    pixmap: &mut PixmapMut<'_>,
+    (l, t, sw, ht): (f32, f32, f32, f32),
+    lines: &[String],
+    done: Option<&Result<(), String>>,
+    dark: bool,
+    fg: CtColor,
+    fg_dim: CtColor,
+) {
+    let accent = draw::accent(dark);
+    let fade =
+        Color::from_rgba(accent.red(), accent.green(), accent.blue(), 0.15).unwrap_or(accent);
+    for (width, alpha) in [(5.0, 0.22), (1.5, 1.0)] {
+        let shader = tiny_skia::LinearGradient::new(
+            tiny_skia::Point::from_xy(l, t),
+            tiny_skia::Point::from_xy(l + sw, t + ht),
+            vec![
+                tiny_skia::GradientStop::new(0.0, accent),
+                tiny_skia::GradientStop::new(0.5, fade),
+                tiny_skia::GradientStop::new(1.0, accent),
+            ],
+            tiny_skia::SpreadMode::Pad,
+            tiny_skia::Transform::identity(),
+        );
+        let (Some(path), Some(mut shader)) = (
+            draw::round_rect_path(l + 0.75, t + 0.75, sw - 1.5, ht - 1.5, CARD_R - 0.75),
+            shader,
+        ) else {
+            break;
+        };
+        shader.apply_opacity(alpha);
+        let paint = tiny_skia::Paint {
+            shader,
+            anti_alias: true,
+            ..Default::default()
+        };
+        let stroke = Stroke {
+            width,
+            ..Default::default()
+        };
+        pixmap.stroke_path(&path, &paint, &stroke, draw::xf(), None);
+    }
+    let y0 = t + PILL_H as f32 + 14.0;
+    let status = match done {
+        None if lines.is_empty() => "Thinking…",
+        None => "Answering…",
+        Some(Ok(())) => "Done",
+        Some(Err(_)) => "Couldn't answer",
+    };
+    draw::text_bold(pixmap, l + 24.0, y0, 200.0, 18.0, 13.0, "Cosmos", fg);
+    draw::text(
+        pixmap,
+        l + sw - 144.0,
+        y0 + 2.0,
+        120.0,
+        15.0,
+        11.0,
+        status,
+        fg_dim,
+    );
+    let mut y = y0 + 28.0;
+    for line in lines {
+        draw::text(pixmap, l + 24.0, y, sw - 48.0, ASK_LINE_H, 13.0, line, fg);
+        y += ASK_LINE_H;
+    }
+    if let Some(Err(e)) = done {
+        let e: String = e.chars().take(90).collect();
+        draw::text(pixmap, l + 24.0, y, sw - 48.0, ASK_LINE_H, 12.0, &e, fg_dim);
+        draw::text(
+            pixmap,
+            l + 24.0,
+            y + ASK_LINE_H,
+            sw - 48.0,
+            ASK_LINE_H,
+            12.0,
+            "Set up a model provider in Terminal: opencode auth login",
+            fg_dim,
+        );
+    }
 }
 
 pub fn draw(state: &mut ShellState) {
+    if state.launcher_search {
+        update_preview(state);
+    }
+    let answer = if state.launcher_search {
+        ask_view(state)
+    } else {
+        None
+    };
     let (w, h) = state.launcher_size;
     if w == 0 || h == 0 {
         return;
@@ -875,14 +1130,17 @@ pub fn draw(state: &mut ShellState) {
     pixmap.fill(Color::TRANSPARENT);
     if state.launcher_search {
         draw::scrim(&mut pixmap, w, h, state.dark);
-        draw_search(
+        let card_h = draw_search(
             &mut pixmap,
             (w, h),
             &rows,
             &state.launcher_query,
             state.launcher_sel,
             state.dark,
+            state.launcher_preview.as_ref(),
+            answer,
         );
+        state.launcher_card_h = card_h;
         let wl_surface = layer.wl_surface().clone();
         state.set_viewport(&wl_surface, w, h);
         buffer.attach_to(&wl_surface).ok();
@@ -1350,6 +1608,7 @@ pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {
             state.launcher_size,
             &rows,
             state.launcher_query.is_empty(),
+            state.launcher_card_h,
         )
     } else {
         let np = pinned(state).len();
@@ -1462,13 +1721,21 @@ mod search_layout_tests {
         let size = (1536, 864);
         let (l, t) = search_origin(size);
         assert_eq!(
-            hit_test_search(l + 100.0, t + 20.0, size, &rows, false),
+            hit_test_search(l + 100.0, t + 20.0, size, &rows, false, 0.0),
             Hit::Input
         );
         assert_eq!(
-            hit_test_search(l + 100.0, t + lay.rows[2] + 5.0, size, &rows, false),
+            hit_test_search(l + 100.0, t + lay.rows[2] + 5.0, size, &rows, false, 0.0),
             Hit::Item(2)
         );
-        assert_eq!(hit_test_search(5.0, 5.0, size, &rows, false), Hit::Backdrop);
+        assert_eq!(
+            hit_test_search(5.0, 5.0, size, &rows, false, 0.0),
+            Hit::Backdrop
+        );
+        // A preview pane makes the card taller than its rows; clicks there stay inside.
+        assert_eq!(
+            hit_test_search(l + 600.0, t + 280.0, size, &rows, false, 330.0),
+            Hit::List
+        );
     }
 }
