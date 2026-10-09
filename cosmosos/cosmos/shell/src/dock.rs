@@ -30,7 +30,8 @@ const ICON_SZ: f32 = 48.0;
 /// Extra icon px at the hover centre and its falloff radius.
 const MAG_MAX: f32 = 16.0;
 const MAG_SPAN: f64 = 115.0;
-const PAD: f64 = 9.0;
+/// Inner padding between the pill edge and the first/last icon (spec D: 8px).
+const PAD: f64 = 8.0;
 const SEP_W: f64 = 13.0;
 /// Pinned apps, top→bottom on a vertical rail (desktop ids without
 /// ".desktop").
@@ -301,14 +302,39 @@ pub fn draw(state: &mut ShellState) {
     let (rx, ry, rw, rh) = rail_rect(pos, w, h, content);
     let (sx, sy) = match pos {
         DockPos::Left => (rx as f32, ry as f32),
-        DockPos::Right => ((state.panel_size.0 as f32 - MARGIN as f32 - STRIP as f32).max(0.0), ry as f32),
-        DockPos::Bottom => (rx as f32, (state.panel_size.1 as f32 - MARGIN as f32 - STRIP as f32).max(0.0)),
+        DockPos::Right => (
+            (state.panel_size.0 as f32 - MARGIN as f32 - STRIP as f32).max(0.0),
+            ry as f32,
+        ),
+        DockPos::Bottom => (
+            rx as f32,
+            (state.panel_size.1 as f32 - MARGIN as f32 - STRIP as f32).max(0.0),
+        ),
     };
     // The pill casts its own shadow inside the surface — the compositor
     // no longer shadows the dock layer (its full-height surface made a
     // dark band at the screen edge).
-    draw::shadow(&mut pixmap, rx as f32, ry as f32, rw as f32, rh as f32, 22.0);
-    glass::fill_glass(&mut pixmap, &crate::ShellState::wallpaper_name(), rx as f32, ry as f32, rw as f32, rh as f32, 22.0, sx, sy, state.dark, bg);
+    draw::shadow(
+        &mut pixmap,
+        rx as f32,
+        ry as f32,
+        rw as f32,
+        rh as f32,
+        22.0,
+    );
+    glass::fill_glass(
+        &mut pixmap,
+        &crate::ShellState::wallpaper_name(),
+        rx as f32,
+        ry as f32,
+        rw as f32,
+        rh as f32,
+        22.0,
+        sx,
+        sy,
+        state.dark,
+        bg,
+    );
 
     // Icon column/row centred along the rail axis.
     let span = axis_span(pos, w, h);
@@ -392,23 +418,27 @@ pub fn draw(state: &mut ShellState) {
                 icon_sz,
             );
         }
-        // Running indicator: a small dot on the rail's inner edge.
+        // Running indicator: an accent dot centred under the icon — in the
+        // 8px gap below it on a vertical rail, under it on a bottom dock.
         if !item.windows.is_empty() {
-            let dot_r = 1.8f32;
-            let (dcx, dcy) = axis_xy(pos, cell_center, STRIP as f64 - 6.5);
+            let dot_r = if item.focused { 2.2f32 } else { 1.8f32 };
+            let (dcx, dcy) = match pos {
+                DockPos::Bottom => axis_xy(pos, cell_center, STRIP as f64 - 3.5),
+                _ => axis_xy(
+                    pos,
+                    cell_center + icon_sz as f64 / 2.0 + (CELL - ICON_SZ as f64) / 2.0,
+                    STRIP as f64 / 2.0,
+                ),
+            };
             let mut pb = tiny_skia::PathBuilder::new();
             pb.push_circle(dcx as f32, dcy as f32, dot_r);
             if let Some(path) = pb.finish() {
                 pixmap.fill_path(
                     &path,
                     &tiny_skia::Paint {
-                        // Focused app gets the accent dot; running-only
-                        // stays dim.
-                        shader: tiny_skia::Shader::SolidColor(if item.focused {
-                            draw::accent(state.dark)
-                        } else {
-                            Color::from_rgba8(fg.r(), fg.g(), fg.b(), 0x90)
-                        }),
+                        // Every running app gets the accent dot; the focused
+                        // one is slightly larger.
+                        shader: tiny_skia::Shader::SolidColor(draw::accent(state.dark)),
                         anti_alias: true,
                         ..Default::default()
                     },
