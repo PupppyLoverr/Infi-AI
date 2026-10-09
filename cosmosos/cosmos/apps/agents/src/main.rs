@@ -178,9 +178,9 @@ fn refresh_audit(st: &mut State, agent: &str) {
             st.audit.push(AuditRow {
                 ts: v
                     .get("ts")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("")
-                    .to_string(),
+                    .and_then(|t| t.as_u64())
+                    .map(ago)
+                    .unwrap_or_default(),
                 tool: v
                     .get("tool")
                     .and_then(|t| t.as_str())
@@ -188,16 +188,42 @@ fn refresh_audit(st: &mut State, agent: &str) {
                     .to_string(),
                 ok: v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false),
                 detail: v
-                    .get("error")
+                    .get("detail")
                     .and_then(|d| d.as_str())
-                    .unwrap_or("")
-                    .to_string(),
+                    .map(one_line)
+                    .unwrap_or_default(),
             });
             if st.audit.len() >= 200 {
                 break 'outer;
             }
         }
     }
+}
+
+/// agentd stamps audit entries in epoch seconds; show them relative so
+/// the table needs no timezone database.
+fn ago(ts: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(ts);
+    match now.saturating_sub(ts) {
+        0..=59 => "Just now".into(),
+        s @ 60..=3599 => format!("{} min ago", s / 60),
+        s @ 3600..=86_399 => format!("{} h ago", s / 3600),
+        s => format!("{} d ago", s / 86_400),
+    }
+}
+
+/// Audit detail on one row: results are often pretty-printed JSON, so
+/// fold every line and run of whitespace into single spaces.
+fn one_line(d: &str) -> String {
+    let line = d.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut out: String = line.chars().take(80).collect();
+    if line.chars().count() > 80 {
+        out.push('…');
+    }
+    out
 }
 
 fn refresh_snapshots(st: &mut State) {

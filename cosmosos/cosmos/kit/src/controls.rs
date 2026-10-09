@@ -74,9 +74,17 @@ pub fn button(ui: &mut Ui, kind: ButtonKind, label: &str) -> Response {
             kit.accent(),
         ),
     };
+    // Disabled buttons drop their kind colour for a neutral bordered
+    // chip, so they stay legible on dark glass instead of fading out.
+    let enabled = ui.is_enabled();
+    let (fill, fg) = if enabled {
+        (fill, fg)
+    } else {
+        (kit.fill(State::Rest), kit.text2().gamma_multiply(0.7))
+    };
     let p = ui.painter();
-    p.rect_filled(rect, radius::CONTROL, dim(ui, fill));
-    if kind == ButtonKind::Secondary {
+    p.rect_filled(rect, radius::CONTROL, fill);
+    if kind == ButtonKind::Secondary || !enabled {
         p.rect_stroke(
             rect,
             radius::CONTROL,
@@ -84,13 +92,7 @@ pub fn button(ui: &mut Ui, kind: ButtonKind, label: &str) -> Response {
             StrokeKind::Inside,
         );
     }
-    p.text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        label,
-        body_font(),
-        dim(ui, fg),
-    );
+    p.text(rect.center(), Align2::CENTER_CENTER, label, body_font(), fg);
     if resp.has_focus() {
         focus_ring(ui, &kit, rect, radius::CONTROL);
     }
@@ -106,10 +108,19 @@ pub fn toggle(ui: &mut Ui, on: &mut bool) -> Response {
         resp.mark_changed();
     }
     let t = ui.ctx().animate_bool_responsive(resp.id, *on);
-    let off = kit.fill(State::Press);
+    // Off track: a solid neutral, stronger than control fills, so the
+    // switch reads as a switch (not a lone knob) on dark glass.
+    let off = crate::with_alpha(kit.p.text, if kit.dark { 72 } else { 40 });
     let track = lerp_color(off, kit.accent(), t);
     let p = ui.painter();
     p.rect_filled(rect, rect.height() / 2.0, dim(ui, track));
+    // The off track is a faint fill; a hairline keeps its shape on glass.
+    p.rect_stroke(
+        rect,
+        rect.height() / 2.0,
+        Stroke::new(1.0, kit.hairline().gamma_multiply(1.0 - t)),
+        StrokeKind::Inside,
+    );
     let x = egui::lerp(rect.left() + 11.0..=rect.right() - 11.0, t);
     let c = pos2(x, rect.center().y);
     p.circle_filled(c + vec2(0.0, 0.5), 9.5, Color32::from_black_alpha(40));
@@ -165,13 +176,15 @@ pub fn segmented_with(
         );
         let hovered = resp.hover_pos().is_some_and(|h| seg.contains(h));
         if i == *selected {
+            // Dark: a lifted chip plus hairline, so the choice reads at a
+            // glance instead of blending into the track.
             let raised = if kit.dark {
-                kit.fill(State::Press)
+                crate::with_alpha(kit.p.text, 72)
             } else {
                 crate::c32(kit.p.raised)
             };
             p.rect_filled(seg, radius::ROW, raised);
-            if !kit.dark {
+            {
                 p.rect_stroke(
                     seg,
                     radius::ROW,

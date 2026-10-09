@@ -1,0 +1,15 @@
+kit-gallery visual inspection @1920x1080 (tree 9d039e1)
+
+PASS: dark + light launch, sidebar, toolbar, Buttons, Controls, Grouped
+settings, Tabs, Table, footer (44 icons), dropdown open state (checkmark +
+Violet/Ocean/Coral rows render over content)
+
+DEFECTS:
+1. Popover and Sheet segments in the Ada/Password/Popover/Sheet row produce
+   no open state on click. Press lands on the surface (journal press target
+   verified) but no popover or sheet appears. Dropdown in same row works.
+2. Dark theme: the "Disabled" button in the Buttons row is effectively
+   invisible (renders dark-on-dark; only visible in the light shot).
+3. No maximized layout: gallery opens at ~1240px floating; fine but worth
+   noting vs. task request to maximize (window had no maximize affordance
+   driven; content fully visible at default size).

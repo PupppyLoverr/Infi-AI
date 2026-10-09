@@ -59,7 +59,7 @@ echo "== staging overlay =="
 sudo rm -rf "$OVERLAY"   # previous run's files are chowned root below
 mkdir -p "$OVERLAY"/{usr/local/bin,usr/share/applications,etc/profile.d,etc/skel,etc/systemd/network,etc/systemd/system/getty@tty1.service.d,etc/polkit-1/rules.d,etc/sudoers.d}
 
-install -m755 "$BINDIR"/cosmos-{compositor,shell,files,terminal,editor,settings,monitor,portal,lock,greeter,agentd,agents} \
+install -m755 "$BINDIR"/cosmos-{compositor,shell,files,terminal,editor,settings,monitor,portal,lock,greeter,agentd,agents,kit-gallery} \
   "$OVERLAY/usr/local/bin/"
 install -m644 "$COSMOS"/apps/*/cosmos-*.desktop "$OVERLAY/usr/share/applications/"
 
