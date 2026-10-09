@@ -27,6 +27,8 @@ struct Cfg {
     accent: String,        // accent preset name (cosmos_ipc::ACCENT_PRESETS)
     dock_position: String, // "left" | "right" | "bottom"
     wallpaper: String,     // wallpaper stem under /usr/share/cosmos/wallpapers
+    desktop_widgets: bool,
+    weather_city: String, // "" = time zone city
 }
 
 impl Default for Cfg {
@@ -41,6 +43,8 @@ impl Default for Cfg {
             accent: cosmos_ipc::DEFAULT_ACCENT.into(),
             dock_position: "bottom".into(),
             wallpaper: "violet".into(),
+            desktop_widgets: true,
+            weather_city: String::new(),
         }
     }
 }
@@ -87,6 +91,8 @@ fn load() -> Cfg {
             "accent" => c.accent = v.to_string(),
             "dock_position" => c.dock_position = v.to_string(),
             "wallpaper" => c.wallpaper = v.to_string(),
+            "desktop_widgets" => c.desktop_widgets = v != "false",
+            "weather_city" => c.weather_city = v.to_string(),
             _ => {}
         }
     }
@@ -100,8 +106,9 @@ fn save(c: &Cfg) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let text = format!(
-        "# CosmosOS configuration\nappearance = \"{}\"\nreduce_motion = {}\nscale = {}\nterminal = \"{}\"\nlauncher_rows = {}\naccent = \"{}\"\ndock_position = \"{}\"\nwallpaper = \"{}\"\n",
-        c.appearance, c.reduce_motion, c.scale, c.terminal, c.launcher_rows, c.accent, c.dock_position, c.wallpaper
+        "# CosmosOS configuration\nappearance = \"{}\"\nreduce_motion = {}\nscale = {}\nterminal = \"{}\"\nlauncher_rows = {}\naccent = \"{}\"\ndock_position = \"{}\"\nwallpaper = \"{}\"\ndesktop_widgets = {}\nweather_city = \"{}\"\n",
+        c.appearance, c.reduce_motion, c.scale, c.terminal, c.launcher_rows, c.accent, c.dock_position, c.wallpaper,
+        c.desktop_widgets, c.weather_city.replace('"', "")
     );
     std::fs::write(path, text)
 }
@@ -485,6 +492,35 @@ fn dock(ui: &mut egui::Ui, app: &mut App) {
                 set(app, "dock_position", app.cfg.dock_position.clone().into());
             }
         });
+    });
+    ui.add_space(space::S20);
+    group(ui, Some("Desktop"), |g| {
+        g.row_detail(
+            "Show widgets",
+            Some("Clock and weather on the desktop"),
+            |ui| {
+                if toggle(ui, &mut app.cfg.desktop_widgets).changed() {
+                    set(app, "desktop_widgets", app.cfg.desktop_widgets.into());
+                }
+            },
+        );
+        g.row_detail(
+            "Weather location",
+            Some("City for Open-Meteo; empty uses your time zone"),
+            |ui| {
+                let r = text_field(
+                    ui,
+                    &mut app.cfg.weather_city,
+                    "Time zone city",
+                    200.0,
+                    false,
+                );
+                if r.lost_focus() {
+                    app.cfg.weather_city = app.cfg.weather_city.trim().replace('"', "");
+                    set(app, "weather_city", app.cfg.weather_city.clone().into());
+                }
+            },
+        );
     });
     ui.add_space(space::S20);
     group(ui, Some("Search"), |g| {

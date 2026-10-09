@@ -24,6 +24,8 @@ mod quick;
 mod search;
 mod switcher;
 mod sysinfo;
+mod weather;
+mod widgets;
 mod zoomflyout;
 
 const DEFAULT_WALLPAPER: &str = "violet";
@@ -146,6 +148,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         loop_handle: handle.clone(),
         panel: None,
         dock_surface: None,
+        widgets_surface: None,
+        widgets_size: (0, 0),
+        widgets_dirty: false,
+        show_widgets: true,
+        weather: None,
+        weather_city: String::new(),
+        weather_tx: None,
+        widgets_clock: String::new(),
         switcher_surface: None,
         launcher_surface: None,
         notify_surface: None,
@@ -243,6 +253,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     state.create_panel(&qh);
     state.create_dock(&qh);
+    state.create_widgets(&qh);
+    let (weather_tx, weather_rx) = channel::channel::<Option<weather::Weather>>();
+    state.weather_tx = Some(weather::start(weather_tx, String::new()));
+    handle.insert_source(weather_rx, |event, _, state| {
+        if let ChannelEvent::Msg(w) = event {
+            if w != state.weather {
+                let resize = w.is_some() != state.weather.is_some();
+                state.weather = w;
+                if resize {
+                    state.resize_widgets();
+                }
+                state.widgets_dirty = true;
+            }
+        }
+    })?;
     clipwatch::init(&mut state, &globals);
     if let Some(reader) = state.ipc.connect() {
         register_ipc_source(&handle, reader);
@@ -258,6 +283,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             state.sysinfo = info;
             state.panel_dirty = true;
             state.quick_dirty = state.quick_open;
+            let minute = widgets::clock_lines().0;
+            if minute != state.widgets_clock {
+                state.widgets_clock = minute;
+                state.widgets_dirty = true;
+            }
         }
     })?;
 
@@ -360,6 +390,19 @@ pub struct ShellState {
 
     pub panel: Option<LayerSurface>,
     pub dock_surface: Option<LayerSurface>,
+    /// Desktop clock/weather cards (layer Bottom), when enabled.
+    pub widgets_surface: Option<LayerSurface>,
+    pub widgets_size: (u32, u32),
+    pub widgets_dirty: bool,
+    /// Config `desktop_widgets`.
+    pub show_widgets: bool,
+    /// Latest Open-Meteo reading; `None` (offline/unknown place) hides the card.
+    pub weather: Option<weather::Weather>,
+    /// Config `weather_city` as last sent to the weather thread.
+    pub weather_city: String,
+    pub weather_tx: Option<std::sync::mpsc::Sender<String>>,
+    /// Minute shown on the clock card (redraw only when it changes).
+    pub widgets_clock: String,
     pub switcher_surface: Option<LayerSurface>,
     pub launcher_surface: Option<LayerSurface>,
     pub notify_surface: Option<LayerSurface>,
@@ -548,6 +591,34 @@ impl ShellState {
     /// zone on its edge so maximised and snapped windows never slide
     /// underneath; the surface is wider than the zone by the label
     /// overhang, which stays transparent and input-free.
+    /// Clock + weather cards, top-left under the menubar, below windows.
+    pub fn create_widgets(&mut self, qh: &QueueHandle<Self>) {
+        if !self.show_widgets || self.widgets_surface.is_some() {
+            return;
+        }
+        let surface = self.compositor_state.create_surface(qh);
+        let layer = self.layer_shell.create_layer_surface(
+            qh,
+            surface,
+            Layer::Bottom,
+            Some("cosmos-widgets"),
+            None,
+        );
+        layer.set_anchor(Anchor::TOP | Anchor::LEFT);
+        layer.set_margin(widgets::MARGIN, 0, 0, widgets::MARGIN);
+        layer.set_size(widgets::W, widgets::height(self.weather.is_some()));
+        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        layer.wl_surface().commit();
+        self.widgets_surface = Some(layer);
+    }
+
+    fn resize_widgets(&mut self) {
+        if let Some(layer) = &self.widgets_surface {
+            layer.set_size(widgets::W, widgets::height(self.weather.is_some()));
+            layer.wl_surface().commit();
+        }
+    }
+
     pub fn create_dock(&mut self, qh: &QueueHandle<Self>) {
         let surface = self.compositor_state.create_surface(qh);
         let layer = self.layer_shell.create_layer_surface(
@@ -1352,6 +1423,25 @@ impl ShellState {
                 self.dock_dirty = true;
             }
         }
+        if let Some(on) = map.get("desktop_widgets").and_then(|v| v.as_bool()) {
+            if on != self.show_widgets {
+                self.show_widgets = on;
+                if on {
+                    let qh = self.qh.clone();
+                    self.create_widgets(&qh);
+                } else {
+                    self.widgets_surface = None;
+                }
+            }
+        }
+        if let Some(city) = map.get("weather_city").and_then(|v| v.as_str()) {
+            if city != self.weather_city {
+                self.weather_city = city.to_string();
+                if let Some(tx) = &self.weather_tx {
+                    let _ = tx.send(city.to_string());
+                }
+            }
+        }
         // Dock edge — a position change re-anchors the surface entirely
         // (anchors + exclusive zone), so the layer is recreated.
         if let Some(pos) = map
@@ -1362,6 +1452,7 @@ impl ShellState {
             if pos != self.dock_position {
                 self.dock_position = pos;
                 self.dock_surface = None;
+                self.widgets_dirty = true;
                 let qh = self.qh.clone();
                 self.create_dock(&qh);
             }
@@ -1493,6 +1584,10 @@ impl ShellState {
         if self.dock_dirty && self.dock_surface.is_some() {
             self.dock_dirty = false;
             dock::draw(self);
+        }
+        if self.widgets_dirty && self.widgets_surface.is_some() {
+            self.widgets_dirty = false;
+            widgets::draw(self);
         }
         if self.switcher_dirty && self.switcher_surface.is_some() {
             self.switcher_dirty = false;
@@ -1643,6 +1738,10 @@ impl LayerShellHandler for ShellState {
                 switcher::SWITCHER_H,
             );
             self.switcher_dirty = true;
+        }
+        if self.widgets_surface.as_ref() == Some(layer) {
+            self.widgets_size = configure.new_size;
+            self.widgets_dirty = true;
         }
         if self.launcher_surface.as_ref() == Some(layer) {
             self.launcher_size = configure.new_size;
