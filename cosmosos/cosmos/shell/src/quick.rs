@@ -119,6 +119,157 @@ fn footer_button(f: Rect, i: usize) -> Rect {
     )
 }
 
+/// Detail chevron at the right end of a toggle row.
+fn chevron(r: Rect) -> Rect {
+    (r.0 + r.2 - 40.0, r.1, 40.0, r.3)
+}
+
+/// Detail chevron on the Sound tile's title line.
+fn sound_chevron(r: Rect) -> Rect {
+    (r.0 + r.2 - 36.0, r.1, 36.0, 26.0)
+}
+
+const DETAIL_HEAD: f32 = 40.0;
+const DETAIL_ROW: f32 = 40.0;
+const DETAIL_MAX: usize = 8;
+
+fn detail_rows(v: &crate::ccdetail::View) -> usize {
+    let n = match v {
+        crate::ccdetail::View::Wifi(n) => n.len(),
+        crate::ccdetail::View::Sound(s) => s.len(),
+    };
+    n.clamp(1, DETAIL_MAX)
+}
+
+fn detail_row(i: usize) -> Rect {
+    let w = QUICK_W as f32 - PAD * 2.0;
+    (
+        PAD,
+        PAD + DETAIL_HEAD + i as f32 * DETAIL_ROW,
+        w,
+        DETAIL_ROW,
+    )
+}
+
+fn detail_press(state: &mut ShellState, x: f32, y: f32) -> bool {
+    use crate::ccdetail::{self, View};
+    let Some(view) = state.cc_detail.clone() else {
+        return false;
+    };
+    if y < PAD + DETAIL_HEAD {
+        if x < PAD + 120.0 {
+            state.cc_detail = None;
+            resize(state);
+        }
+        return true;
+    }
+    let Some(i) = (0..detail_rows(&view)).find(|i| inside(detail_row(*i), x, y)) else {
+        return false;
+    };
+    match view {
+        View::Wifi(nets) => {
+            if let Some(n) = nets.get(i).filter(|n| !n.active) {
+                if !ccdetail::connect(n) {
+                    tracing::warn!(ssid = %n.ssid, "quick: wifi connect refused");
+                }
+                state.cc_detail = Some(View::Wifi(ccdetail::wifi_networks()));
+            }
+        }
+        View::Sound(sinks) => {
+            if let Some(s) = sinks.get(i).filter(|s| !s.default) {
+                ccdetail::set_default_sink(s.id);
+                state.cc_detail = Some(View::Sound(ccdetail::sinks()));
+            }
+        }
+    }
+    resize(state);
+    true
+}
+
+/// Ask the compositor for the height the current view needs.
+fn resize(state: &mut ShellState) {
+    let h = desired_height(state);
+    if let Some(layer) = state.quick_surface.as_ref() {
+        layer.set_size(QUICK_W, h);
+        layer.commit();
+    }
+}
+
+fn draw_detail(pm: &mut PixmapMut<'_>, v: &crate::ccdetail::View, p: &Pal) {
+    use crate::ccdetail::View;
+    let title = match v {
+        View::Wifi(_) => "Wi-Fi",
+        View::Sound(_) => "Sound Output",
+    };
+    round_button(pm, PAD, PAD + 4.0, false, "chevron-left", p);
+    draw::text_bold(pm, PAD + 38.0, PAD + 9.0, 220.0, 20.0, 15.0, title, p.fg);
+    let rows: Vec<(String, String, bool, &str)> = match v {
+        View::Wifi(nets) => nets
+            .iter()
+            .take(DETAIL_MAX)
+            .map(|n| {
+                let sub = format!(
+                    "{}%{}",
+                    n.strength,
+                    if n.secured { " · Secured" } else { "" }
+                );
+                (n.ssid.clone(), sub, n.active, "net-on")
+            })
+            .collect(),
+        View::Sound(sinks) => sinks
+            .iter()
+            .take(DETAIL_MAX)
+            .map(|s| (s.name.clone(), String::new(), s.default, "vol-on"))
+            .collect(),
+    };
+    if rows.is_empty() {
+        let empty = match v {
+            View::Wifi(_) => "No Wi-Fi networks found",
+            View::Sound(_) => "No audio outputs",
+        };
+        let r = detail_row(0);
+        draw::text(
+            pm,
+            r.0 + 10.0,
+            r.1 + 12.0,
+            r.2 - 20.0,
+            16.0,
+            13.0,
+            empty,
+            p.dim,
+        );
+        return;
+    }
+    for (i, (name, sub, on, key)) in rows.iter().enumerate() {
+        let r = detail_row(i);
+        if *on {
+            draw::fill_round_rect(pm, r.0, r.1 + 2.0, r.2, r.3 - 4.0, 10.0, p.tile);
+        }
+        icons::icon(pm, key, r.0 + 10.0, r.1 + 11.0, 18.0, p.glyph);
+        let ty = if sub.is_empty() {
+            r.1 + 12.0
+        } else {
+            r.1 + 4.0
+        };
+        draw::text(pm, r.0 + 38.0, ty, r.2 - 76.0, 17.0, 13.0, name, p.fg);
+        if !sub.is_empty() {
+            draw::text(
+                pm,
+                r.0 + 38.0,
+                r.1 + 21.0,
+                r.2 - 76.0,
+                15.0,
+                11.0,
+                sub,
+                p.dim,
+            );
+        }
+        if *on {
+            icons::icon(pm, "check", r.0 + r.2 - 28.0, r.1 + 11.0, 18.0, p.fill);
+        }
+    }
+}
+
 fn media_button(m: Rect) -> Rect {
     (
         m.0 + m.2 - 12.0 - BTN,
@@ -139,6 +290,8 @@ enum Hit {
     Mute,
     Volume,
     PlayPause,
+    NetDetail,
+    SoundDetail,
     Settings,
     Lock,
     Logout,
@@ -146,6 +299,12 @@ enum Hit {
 }
 
 fn hit_test(l: &Layout, x: f32, y: f32) -> Hit {
+    if inside(chevron(l.net), x, y) {
+        return Hit::NetDetail;
+    }
+    if inside(sound_chevron(l.sound), x, y) {
+        return Hit::SoundDetail;
+    }
     if inside(l.net, x, y) {
         return Hit::Network;
     }
@@ -192,6 +351,10 @@ fn hit_test(l: &Layout, x: f32, y: f32) -> Hit {
 
 /// Card height for the tiles that currently exist.
 pub fn desired_height(state: &ShellState) -> u32 {
+    if let Some(v) = &state.cc_detail {
+        let r = detail_row(detail_rows(v) - 1);
+        return (r.1 + r.3 + PAD) as u32;
+    }
     let l = layout(flags(state));
     (l.footer.1 + l.footer.3) as u32
 }
@@ -237,6 +400,9 @@ fn set_brightness(state: &mut ShellState, x: f32) {
 
 pub fn press(state: &mut ShellState, x: f64, y: f64) -> bool {
     let (x, y) = (x as f32, y as f32);
+    if state.cc_detail.is_some() {
+        return detail_press(state, x, y);
+    }
     match hit_test(&layout(flags(state)), x, y) {
         Hit::Network => {
             let on = !state.sysinfo.network.online;
@@ -306,6 +472,16 @@ pub fn press(state: &mut ShellState, x: f64, y: f64) -> bool {
             if let Some(v) = state.sysinfo.volume.as_mut() {
                 v.muted = !v.muted;
             }
+            true
+        }
+        Hit::NetDetail => {
+            state.cc_detail = Some(crate::ccdetail::View::Wifi(crate::ccdetail::wifi_networks()));
+            resize(state);
+            true
+        }
+        Hit::SoundDetail => {
+            state.cc_detail = Some(crate::ccdetail::View::Sound(crate::ccdetail::sinks()));
+            resize(state);
             true
         }
         Hit::PlayPause => {
@@ -469,14 +645,20 @@ fn slider_tile(
     level: f32,
     key: &str,
     pressed: bool,
+    chevron: bool,
     p: &Pal,
 ) {
     tile(pm, r, p);
+    let right = if chevron { 36.0 } else { 14.0 };
+    if chevron {
+        let c = sound_chevron(r);
+        icons::icon(pm, "chevron-right", c.0 + 10.0, c.1 + 6.0, 16.0, p.glyph);
+    }
     draw::text_bold(pm, r.0 + 14.0, r.1 + 8.0, 160.0, 17.0, 13.0, title, p.fg);
     let tw = draw::text_width(12.0, value).ceil();
     draw::text(
         pm,
-        r.0 + r.2 - 14.0 - tw,
+        r.0 + r.2 - right - tw,
         r.1 + 9.0,
         tw + 2.0,
         16.0,
@@ -563,145 +745,169 @@ pub fn draw(state: &mut ShellState) {
         p.hair,
     );
 
+    let detail = state.cc_detail.clone();
+    if let Some(v) = &detail {
+        draw_detail(&mut pixmap, v, &p);
+    }
     let info = &state.sysinfo;
-
-    // Connectivity tile.
-    tile(&mut pixmap, l.conn, &p);
-    let online = info.network.online;
-    let net_status = if online {
-        info.network.label.as_str()
-    } else {
-        "Off"
-    };
-    toggle_row(
-        &mut pixmap,
-        l.net,
-        online,
-        if online { "net-on" } else { "net-off" },
-        "Network",
-        net_status,
-        &p,
-    );
-    if let (Some(r), Some(bt)) = (l.bt, info.bluetooth.as_ref()) {
-        let status = match (&bt.device, bt.powered) {
-            (Some(d), true) => d.as_str(),
-            (None, true) => "On",
-            _ => "Off",
+    if detail.is_none() {
+        // Connectivity tile.
+        tile(&mut pixmap, l.conn, &p);
+        let online = info.network.online;
+        let net_status = if online {
+            info.network.label.as_str()
+        } else {
+            "Off"
         };
         toggle_row(
             &mut pixmap,
-            r,
-            bt.powered,
-            "bluetooth",
-            "Bluetooth",
-            status,
+            l.net,
+            online,
+            if online { "net-on" } else { "net-off" },
+            "Network",
+            net_status,
             &p,
         );
-    }
+        let c = chevron(l.net);
+        icons::icon(
+            &mut pixmap,
+            "chevron-right",
+            c.0 + 12.0,
+            c.1 + 14.0,
+            18.0,
+            p.glyph,
+        );
+        if let (Some(r), Some(bt)) = (l.bt, info.bluetooth.as_ref()) {
+            let status = match (&bt.device, bt.powered) {
+                (Some(d), true) => d.as_str(),
+                (None, true) => "On",
+                _ => "Off",
+            };
+            toggle_row(
+                &mut pixmap,
+                r,
+                bt.powered,
+                "bluetooth",
+                "Bluetooth",
+                status,
+                &p,
+            );
+        }
 
-    small_tile(&mut pixmap, l.focus, state.dnd, "focus", "Focus", &p);
-    small_tile(
-        &mut pixmap,
-        l.dark,
-        state.dark,
-        "appearance",
-        "Dark Mode",
-        &p,
-    );
-    small_tile(&mut pixmap, l.lite, state.lite, "lite", "Lite Mode", &p);
+        small_tile(&mut pixmap, l.focus, state.dnd, "focus", "Focus", &p);
+        small_tile(
+            &mut pixmap,
+            l.dark,
+            state.dark,
+            "appearance",
+            "Dark Mode",
+            &p,
+        );
+        small_tile(&mut pixmap, l.lite, state.lite, "lite", "Lite Mode", &p);
 
-    if let (Some(r), Some(b)) = (l.display, info.backlight.as_ref()) {
-        let pct = format!("{}%", (b.level * 100.0).round() as i32);
-        slider_tile(&mut pixmap, r, "Display", &pct, b.level, "sun", false, &p);
-    }
+        if let (Some(r), Some(b)) = (l.display, info.backlight.as_ref()) {
+            let pct = format!("{}%", (b.level * 100.0).round() as i32);
+            slider_tile(
+                &mut pixmap,
+                r,
+                "Display",
+                &pct,
+                b.level,
+                "sun",
+                false,
+                false,
+                &p,
+            );
+        }
 
-    let level = info.volume.as_ref().map(|v| v.level).unwrap_or(0.0);
-    let muted = info.volume.as_ref().is_some_and(|v| v.muted);
-    let vol = match &info.volume {
-        None => "No output".to_string(),
-        Some(_) if muted => "Muted".to_string(),
-        Some(_) => format!("{}%", (level.clamp(0.0, 1.0) * 100.0).round() as i32),
-    };
-    slider_tile(
-        &mut pixmap,
-        l.sound,
-        "Sound",
-        &vol,
-        level,
-        if muted { "vol-mute" } else { "vol-on" },
-        muted,
-        &p,
-    );
-
-    if let (Some(r), Some(m)) = (l.media, state.media.as_ref()) {
-        tile(&mut pixmap, r, &p);
-        let tw = r.2 - 28.0 - BTN - 12.0;
-        let title = if m.title.is_empty() {
-            "Now Playing"
-        } else {
-            m.title.as_str()
+        let level = info.volume.as_ref().map(|v| v.level).unwrap_or(0.0);
+        let muted = info.volume.as_ref().is_some_and(|v| v.muted);
+        let vol = match &info.volume {
+            None => "No output".to_string(),
+            Some(_) if muted => "Muted".to_string(),
+            Some(_) => format!("{}%", (level.clamp(0.0, 1.0) * 100.0).round() as i32),
         };
-        draw::text_bold(
+        slider_tile(
             &mut pixmap,
-            r.0 + 14.0,
-            r.1 + 13.0,
-            tw,
-            17.0,
-            13.0,
-            title,
-            p.fg,
-        );
-        draw::text(
-            &mut pixmap,
-            r.0 + 14.0,
-            r.1 + 33.0,
-            tw,
-            16.0,
-            12.0,
-            &m.artist,
-            p.dim,
-        );
-        let b = media_button(r);
-        round_button(
-            &mut pixmap,
-            b.0,
-            b.1,
-            false,
-            if m.playing { "pause" } else { "play" },
+            l.sound,
+            "Sound",
+            &vol,
+            level,
+            if muted { "vol-mute" } else { "vol-on" },
+            muted,
+            true,
             &p,
         );
-    }
 
-    // Footer: Settings / Lock / Log out icon buttons; battery on the right.
-    for (i, key) in ["cosmos-settings", "sys-lock", "sys-logout"]
-        .into_iter()
-        .enumerate()
-    {
-        let b = footer_button(l.footer, i);
-        round_button(&mut pixmap, b.0, b.1, false, key, &p);
-    }
-    if let Some(b) = info.battery.as_ref().filter(|b| b.present) {
-        let txt = format!(
-            "{}%{}",
-            b.percent,
-            if b.charging { " charging" } else { "" }
-        );
-        let tw = draw::text_width(12.0, &txt).ceil();
-        let f = l.footer;
-        let tx = f.0 + f.2 - 6.0 - tw;
-        draw::text(
-            &mut pixmap,
-            tx,
-            f.1 + 16.0,
-            tw + 2.0,
-            16.0,
-            12.0,
-            &txt,
-            p.dim,
-        );
-        icons::battery(&mut pixmap, tx - 22.0, f.1 + 16.0, 16.0, p.glyph, b.percent);
-    }
+        if let (Some(r), Some(m)) = (l.media, state.media.as_ref()) {
+            tile(&mut pixmap, r, &p);
+            let tw = r.2 - 28.0 - BTN - 12.0;
+            let title = if m.title.is_empty() {
+                "Now Playing"
+            } else {
+                m.title.as_str()
+            };
+            draw::text_bold(
+                &mut pixmap,
+                r.0 + 14.0,
+                r.1 + 13.0,
+                tw,
+                17.0,
+                13.0,
+                title,
+                p.fg,
+            );
+            draw::text(
+                &mut pixmap,
+                r.0 + 14.0,
+                r.1 + 33.0,
+                tw,
+                16.0,
+                12.0,
+                &m.artist,
+                p.dim,
+            );
+            let b = media_button(r);
+            round_button(
+                &mut pixmap,
+                b.0,
+                b.1,
+                false,
+                if m.playing { "pause" } else { "play" },
+                &p,
+            );
+        }
 
+        // Footer: Settings / Lock / Log out icon buttons; battery on the right.
+        for (i, key) in ["cosmos-settings", "sys-lock", "sys-logout"]
+            .into_iter()
+            .enumerate()
+        {
+            let b = footer_button(l.footer, i);
+            round_button(&mut pixmap, b.0, b.1, false, key, &p);
+        }
+        if let Some(b) = info.battery.as_ref().filter(|b| b.present) {
+            let txt = format!(
+                "{}%{}",
+                b.percent,
+                if b.charging { " charging" } else { "" }
+            );
+            let tw = draw::text_width(12.0, &txt).ceil();
+            let f = l.footer;
+            let tx = f.0 + f.2 - 6.0 - tw;
+            draw::text(
+                &mut pixmap,
+                tx,
+                f.1 + 16.0,
+                tw + 2.0,
+                16.0,
+                12.0,
+                &txt,
+                p.dim,
+            );
+            icons::battery(&mut pixmap, tx - 22.0, f.1 + 16.0, 16.0, p.glyph, b.percent);
+        }
+    }
     let wl_surface = layer.wl_surface().clone();
     state.set_viewport(&wl_surface, w, h);
     buffer.attach_to(&wl_surface).ok();
@@ -765,6 +971,8 @@ mod tests {
         assert_eq!(at(footer_button(l.footer, 1)), Hit::Lock);
         assert_eq!(at(footer_button(l.footer, 2)), Hit::Logout);
         assert_eq!(hit_test(&l, 1.0, 1.0), Hit::Card);
+        assert_eq!(at(chevron(l.net)), Hit::NetDetail);
+        assert_eq!(at(sound_chevron(l.sound)), Hit::SoundDetail);
     }
 
     #[test]
