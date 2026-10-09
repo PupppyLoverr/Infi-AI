@@ -6,6 +6,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+mod preview;
+
 use cosmos_kit::ask;
 use cosmos_kit::controls::{button, search_field, segmented_with, text_field, ButtonKind};
 use cosmos_kit::layout::{
@@ -13,7 +15,7 @@ use cosmos_kit::layout::{
     submenu, toolbar_button, toolbar_spacer, toolbar_title, AppWindow, ColAlign, Column, Table,
 };
 use cosmos_kit::{icons, Icon, Kit};
-use cosmos_theme::space;
+use cosmos_theme::{radius, space, text};
 use cosmos_uitk::icons::FileKind;
 
 struct Entry {
@@ -51,6 +53,11 @@ struct Files {
     /// Ask Cosmos result sheet (context menu → Ask Cosmos).
     ask: Option<ask::Job>,
     ask_pending: Option<(ask::Action, PathBuf)>,
+    /// Finder-style preview column (Cmd+Shift+P / toolbar).
+    preview_pane: bool,
+    /// Space: Quick Look sheet for the selection.
+    quick_look: bool,
+    preview: Option<preview::Preview>,
 }
 
 struct Chooser {
@@ -129,6 +136,9 @@ impl Files {
             logged_listing: None,
             ask: None,
             ask_pending: None,
+            preview_pane: false,
+            quick_look: false,
+            preview: None,
         };
         f.refresh();
         f
@@ -556,6 +566,9 @@ fn keyboard(ui: &egui::Ui, f: &mut Files) {
     if chord(M::COMMAND | M::SHIFT, egui::Key::N) {
         f.new_folder = Some("untitled folder".into());
     }
+    if chord(M::COMMAND | M::SHIFT, egui::Key::P) {
+        f.preview_pane = !f.preview_pane;
+    }
     if chord(M::COMMAND, egui::Key::H) {
         f.show_hidden = !f.show_hidden;
     }
@@ -592,15 +605,199 @@ fn keyboard(ui: &egui::Ui, f: &mut Files) {
         } else if key(egui::Key::Delete) {
             let p = f.entries[i].path.clone();
             move_to_trash(f, p);
+        } else if key(egui::Key::Space) {
+            f.quick_look = !f.quick_look;
         } else if key(egui::Key::F2) {
             f.rename = Some((f.entries[i].path.clone(), f.entries[i].name.clone()));
         }
     }
 }
 
+/// Keep `f.preview` loading whatever the pane or Quick Look shows.
+fn sync_preview(ctx: &egui::Context, f: &mut Files) {
+    if f.selected.is_none() {
+        f.quick_look = false;
+    }
+    let want = f
+        .selected
+        .clone()
+        .filter(|_| f.preview_pane || f.quick_look);
+    match (want, &f.preview) {
+        (Some(p), Some(pv)) if pv.path == p => {}
+        (Some(p), _) => f.preview = Some(preview::Preview::start(ctx, p)),
+        (None, _) => f.preview = None,
+    }
+    if let Some(pv) = f.preview.as_mut() {
+        pv.poll(ctx);
+    }
+}
+
+fn caption(ui: &mut egui::Ui, kit: &Kit, s: &str) {
+    ui.label(
+        egui::RichText::new(s)
+            .size(text::CAPTION.size)
+            .color(kit.text2()),
+    );
+}
+
+/// Paint `content` for `e` into `r`: fitted image, text head, or icon.
+fn paint_content(
+    ui: &egui::Ui,
+    kit: &Kit,
+    e: &Entry,
+    content: Option<&preview::Content>,
+    r: egui::Rect,
+    mono: f32,
+) {
+    use preview::Content;
+    match content {
+        Some(Content::Image(tex, _)) => {
+            let ir = preview::fit(r, tex.size_vec2());
+            let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+            ui.painter().add(
+                egui::epaint::RectShape::filled(ir, radius::ROW, egui::Color32::WHITE)
+                    .with_texture(tex.id(), uv),
+            );
+        }
+        Some(Content::Text(t)) if !t.trim().is_empty() => {
+            ui.painter().rect_stroke(
+                r,
+                radius::ROW,
+                egui::Stroke::new(1.0, kit.hairline()),
+                egui::StrokeKind::Inside,
+            );
+            let inner = r.shrink(space::S8);
+            let lines = ((inner.height() / (mono * 1.35)).floor() as usize).max(1);
+            let head: String = t.lines().take(lines).collect::<Vec<_>>().join("\n");
+            let g = ui.painter().layout(
+                head,
+                egui::FontId::monospace(mono),
+                kit.text2(),
+                inner.width(),
+            );
+            ui.painter()
+                .with_clip_rect(inner)
+                .galley(inner.min, g, kit.text2());
+        }
+        _ => {
+            let kind = FileKind::of(&e.name, e.is_dir);
+            let side = r.height().min(r.width()).min(96.0);
+            cosmos_uitk::icons::paint(
+                ui.painter(),
+                egui::Rect::from_center_size(r.center(), egui::vec2(side, side)),
+                kind,
+            );
+        }
+    }
+}
+
+/// One-line facts under the preview: kind, size or item count, pixels.
+fn facts(e: &Entry, content: Option<&preview::Content>) -> String {
+    use preview::Content;
+    let kind = FileKind::of(&e.name, e.is_dir).label().to_string();
+    match content {
+        Some(Content::Folder(n)) => format!("{kind} · {n} item{}", if *n == 1 { "" } else { "s" }),
+        Some(Content::Image(_, [w, h])) => format!("{kind} · {} · {w}×{h}", fmt_size(e.size)),
+        _ if e.is_dir => kind,
+        _ => format!("{kind} · {}", fmt_size(e.size)),
+    }
+}
+
+const PANE_W: f32 = 260.0;
+/// The list keeps at least this width before the pane is dropped.
+const PANE_MIN_LIST: f32 = 380.0;
+
+fn preview_pane(ui: &mut egui::Ui, kit: &Kit, e: Option<&Entry>, pv: Option<&preview::Preview>) {
+    let Some(e) = e else {
+        let r = ui.max_rect();
+        ui.painter().text(
+            r.center(),
+            egui::Align2::CENTER_CENTER,
+            "No Selection",
+            egui::FontId::proportional(text::BODY.size),
+            kit.text3(),
+        );
+        return;
+    };
+    let content = pv.map(|p| &p.content);
+    let w = ui.available_width();
+    let (r, _) = ui.allocate_exact_size(egui::vec2(w, w * 0.75), egui::Sense::hover());
+    paint_content(ui, kit, e, content, r, 10.5);
+    ui.add_space(space::S12);
+    ui.label(
+        egui::RichText::new(&e.name)
+            .size(text::BODY.size)
+            .strong()
+            .color(kit.text()),
+    );
+    caption(ui, kit, &facts(e, content));
+    caption(ui, kit, &format!("Modified {}", e.modified));
+}
+
+fn quick_look(ctx: &egui::Context, kit: &Kit, f: &mut Files) {
+    let Some(e) = f
+        .selected
+        .as_ref()
+        .and_then(|p| f.entries.iter().find(|e| &e.path == p))
+    else {
+        f.quick_look = false;
+        return;
+    };
+    let content = f.preview.as_ref().map(|p| &p.content);
+    let screen = ctx.content_rect();
+    let w = (screen.width() * 0.7).clamp(320.0, 900.0);
+    let h = (screen.height() * 0.7).clamp(240.0, 640.0);
+    let mut close = false;
+    let resp = egui::Modal::new(egui::Id::new("files-quick-look"))
+        .frame(
+            cosmos_kit::layout::menu_frame(kit)
+                .inner_margin(space::S16)
+                .corner_radius(radius::PANEL),
+        )
+        .backdrop_color(egui::Color32::from_black_alpha(90))
+        .show(ctx, |ui| {
+            ui.set_width(w);
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(&e.name)
+                        .size(text::TITLE3.size)
+                        .strong()
+                        .color(kit.text()),
+                );
+                caption(ui, kit, &facts(e, content));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    close |= toolbar_button(ui, Icon::Close, "Close", false).clicked();
+                });
+            });
+            ui.add_space(space::S8);
+            match content {
+                Some(preview::Content::Text(t)) if !t.trim().is_empty() => {
+                    egui::ScrollArea::vertical()
+                        .max_height(h)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new(t.as_str())
+                                    .font(egui::FontId::monospace(12.0))
+                                    .color(kit.text()),
+                            );
+                        });
+                }
+                _ => {
+                    let (r, _) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::hover());
+                    paint_content(ui, kit, e, content, r, 12.0);
+                }
+            }
+        });
+    if close || resp.should_close() {
+        f.quick_look = false;
+    }
+}
+
 fn draw(ui: &mut egui::Ui, f: &mut Files) {
     let kit = Kit::get(ui.ctx());
     keyboard(ui, f);
+    sync_preview(ui.ctx(), f);
     let (fav, loc) = places();
     let title = f
         .dir
@@ -624,7 +821,7 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
                 }
             });
             toolbar_title(ui, &title);
-            let fixed = 2.0 * 32.0 + 28.0 + 3.0 * space::S12;
+            let fixed = 2.0 * 32.0 + 2.0 * 28.0 + 4.0 + 3.0 * space::S12;
             let search_w = (ui.available_width() - fixed - space::S8).clamp(96.0, 200.0);
             toolbar_spacer(ui, fixed + search_w);
             segmented_with(ui, &mut f.view, 2, 32.0, |ui, i, r, c| {
@@ -641,6 +838,10 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
             ui.add_space(space::S12);
             if toolbar_button(ui, Icon::FolderPlus, "New Folder", false).clicked() {
                 f.new_folder = Some("untitled folder".into());
+            }
+            if toolbar_button(ui, Icon::Sidebar, "Preview (Ctrl+Shift+P)", f.preview_pane).clicked()
+            {
+                f.preview_pane = !f.preview_pane;
             }
         })
         .sidebar(|ui| {
@@ -710,6 +911,17 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
             let f = &mut **f;
             let mut rows = 0usize;
             let mut ev = RowEvents::default();
+            if f.preview_pane && ui.available_width() >= PANE_W + PANE_MIN_LIST {
+                let sel = f
+                    .selected
+                    .as_ref()
+                    .and_then(|p| f.entries.iter().find(|e| &e.path == p));
+                egui::Panel::right("files-preview")
+                    .exact_size(PANE_W)
+                    .resizable(false)
+                    .frame(egui::Frame::NONE.inner_margin(space::S12))
+                    .show(ui, |ui| preview_pane(ui, &kit, sel, f.preview.as_ref()));
+            }
             let picked = |f: &Files, e: &Entry| {
                 f.chooser
                     .as_ref()
@@ -838,6 +1050,10 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
         });
     let ctx = ui.ctx().clone();
     let enter = ctx.input(|i| i.key_pressed(egui::Key::Enter));
+
+    if f.quick_look {
+        quick_look(&ctx, &kit, f);
+    }
 
     if let Some((a, p)) = f.ask_pending.take() {
         f.ask = Some(ask::Job::start(&ctx, a, ask::Subject::Path(p)));
