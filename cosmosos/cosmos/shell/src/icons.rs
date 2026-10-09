@@ -391,7 +391,7 @@ pub fn icon(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32, co
             // Wi-Fi fan: three arcs opening upward + a base dot.
             for r in [10.0f32, 7.0, 4.0] {
                 let mut pb = PathBuilder::new();
-                let e = r * 0.7071;
+                let e = r * std::f32::consts::FRAC_1_SQRT_2;
                 mv!(pb, 12.0 - e, 17.5 - e);
                 pb.quad_to(
                     ox + 12.0 * s,
@@ -427,7 +427,7 @@ pub fn icon(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32, co
             fill(pixmap, pb, color);
             for r in [3.0f32, 5.6] {
                 let mut pb = PathBuilder::new();
-                let e = r * 0.7071;
+                let e = r * std::f32::consts::FRAC_1_SQRT_2;
                 mv!(pb, 14.0 + e, 12.0 - e);
                 pb.quad_to(
                     ox + (14.0 + 1.2929 * r) * s,
@@ -454,6 +454,19 @@ pub fn icon(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32, co
             mv!(pb, 20.0, 9.5);
             ln!(pb, 15.0, 14.5);
             stroke(pixmap, pb, s, w * 0.85, color);
+        }
+        "user" => {
+            rr!(pb, 8.5, 4.0, 7.0, 7.0, 3.5);
+            mv!(pb, 5.0, 20.0);
+            pb.cubic_to(
+                ox + 5.0 * s,
+                oy + 14.0 * s,
+                ox + 19.0 * s,
+                oy + 14.0 * s,
+                ox + 19.0 * s,
+                oy + 20.0 * s,
+            );
+            stroke(pixmap, pb, s, w, color);
         }
         "sys-lock" => {
             rr!(pb, 6.0, 10.5, 12.0, 9.0, 2.0);
