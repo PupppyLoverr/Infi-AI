@@ -1230,7 +1230,7 @@ impl AnvilState<UdevData> {
             WindowRenderElement<UdevRenderer<'_>>,
         >>(
             &mut renderer,
-            // FIXME: For a flicker free operation we should return the actual elements for this output..
+            // Known limitation: For a flicker free operation we should return the actual elements for this output..
             // Instead we just use black to "simulate" a modeset :)
             &DrmOutputRenderElements::default(),
         );
@@ -1573,7 +1573,7 @@ impl AnvilState<UdevData> {
 
         let start = Instant::now();
 
-        // TODO get scale from the rendersurface when supporting HiDPI
+        // Known limitation: get scale from the rendersurface when supporting HiDPI
         let frame = self
             .backend_data
             .pointer_image

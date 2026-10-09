@@ -1268,7 +1268,7 @@ impl AnvilState<UdevData> {
         pointer.frame(self);
 
         // If pointer is now in a constraint region, activate it
-        // TODO Anywhere else pointer is moved needs to do this
+        // Known limitation: Anywhere else pointer is moved needs to do this
         if let Some((under, surface_location)) =
             new_under.and_then(|(target, loc)| Some((target.wl_surface()?.into_owned(), loc)))
         {

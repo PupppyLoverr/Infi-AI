@@ -208,7 +208,7 @@ where
         damage: &[Rectangle<i32, Physical>],
         _opaque_regions: &[Rectangle<i32, Physical>],
     ) -> Result<(), R::Error> {
-        // FIXME: respect the src for cropping
+        // Known limitation: respect the src for cropping
         let scale = dst.size.to_f64() / self.src().size;
         let value_str = std::cmp::min(self.value, 999).to_string();
         let mut offset: Point<f64, Physical> = Point::from((0.0, 0.0));
