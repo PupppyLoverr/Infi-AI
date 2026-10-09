@@ -12,7 +12,7 @@ use std::sync::mpsc::{Receiver, channel};
 
 use anyhow::{Context as _, Result};
 use egui::{Align2, Color32, FontId, Key, RichText, Vec2};
-use greetd_ipc::{AuthMessageType, Request, Response, codec::SyncCodec};
+use greetd_ipc::{AuthMessageType, ErrorType, Request, Response, codec::SyncCodec};
 
 /// Result of one sign-in attempt on the IPC worker thread.
 enum AuthOutcome {
@@ -114,9 +114,8 @@ fn authenticate(user: String, password: String) -> AuthOutcome {
                     description,
                 } => {
                     let _ = Request::CancelSession.write_to(&mut stream);
-                    return Ok(AuthOutcome::Rejected(format!(
-                        "{error_type:?}: {description}"
-                    )));
+                    tracing::warn!("greetd refused sign-in: {error_type:?}: {description}");
+                    return Ok(AuthOutcome::Rejected(refusal_text(&error_type).into()));
                 }
                 Response::Success => {
                     // Authenticated — launch the session.
@@ -139,7 +138,10 @@ fn authenticate(user: String, password: String) -> AuthOutcome {
                         Response::Success => return Ok(AuthOutcome::Started),
                         Response::Error { description, .. } => {
                             let _ = Request::CancelSession.write_to(&mut stream);
-                            return Ok(AuthOutcome::Rejected(description));
+                            tracing::warn!("greetd could not start the session: {description}");
+                            return Ok(AuthOutcome::Rejected(
+                                "Couldn't start your session. Try again.".into(),
+                            ));
                         }
                         _ => return Ok(AuthOutcome::Failed("unexpected greetd reply".into())),
                     }
@@ -148,6 +150,15 @@ fn authenticate(user: String, password: String) -> AuthOutcome {
         }
     };
     inner().unwrap_or_else(|e| AuthOutcome::Failed(format!("{e:#}")))
+}
+
+/// What the card says when greetd refuses a sign-in. greetd's own text
+/// ("pam_authenticate: AUTH_ERR") is for the log, not the user.
+fn refusal_text(error_type: &ErrorType) -> &'static str {
+    match error_type {
+        ErrorType::AuthError => "Incorrect password",
+        ErrorType::Error => "Couldn't sign in. Try again.",
+    }
 }
 
 fn draw_greeter(ui: &mut egui::Ui, greeter: &mut Greeter) {
@@ -164,7 +175,8 @@ fn draw_greeter(ui: &mut egui::Ui, greeter: &mut Greeter) {
                 });
             }
             AuthOutcome::Failed(msg) => {
-                greeter.error = Some(msg);
+                tracing::warn!("sign-in failed: {msg}");
+                greeter.error = Some("Couldn't reach the login service. Try again.".into());
             }
         }
     }
@@ -222,21 +234,17 @@ fn draw_greeter(ui: &mut egui::Ui, greeter: &mut Greeter) {
                         let (_r, painter) =
                             ui.allocate_painter(Vec2::splat(64.0), egui::Sense::hover());
                         let c = painter.clip_rect().center();
-                        let accent = ui.visuals().hyperlink_color;
-                        painter.circle_filled(c, 30.0, accent.gamma_multiply(0.3));
-                        painter.circle_stroke(c, 30.0, egui::Stroke::new(1.5, accent));
-                        // Round avatar with the user's initial, not '>'.
-                        let initial = greeter
-                            .user
-                            .chars()
-                            .next()
-                            .map(|c| c.to_ascii_uppercase())
-                            .unwrap_or('?');
-                        painter.text(
+                        // Same person glyph as the lock card — no letter avatars.
+                        painter.circle_filled(c, 30.0, Color32::from_white_alpha(38));
+                        painter.circle_stroke(
                             c,
-                            Align2::CENTER_CENTER,
-                            initial.to_string(),
-                            FontId::proportional(24.0),
+                            30.0,
+                            egui::Stroke::new(1.0, Color32::from_white_alpha(46)),
+                        );
+                        cosmos_kit::icons::paint(
+                            ui,
+                            cosmos_kit::Icon::Person,
+                            egui::Rect::from_center_size(c, Vec2::splat(34.0)),
                             Color32::WHITE,
                         );
                         ui.add_space(12.0);
@@ -327,4 +335,18 @@ fn main() -> Result<()> {
     cosmos_uitk::run("Cosmos", "cosmos-greeter", (480, 360), move |ui| {
         draw_greeter(ui, &mut greeter);
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refusals_read_as_plain_language() {
+        assert_eq!(refusal_text(&ErrorType::AuthError), "Incorrect password");
+        for t in [ErrorType::AuthError, ErrorType::Error] {
+            let text = refusal_text(&t);
+            assert!(!text.contains("pam") && !text.contains("Error"), "{text}");
+        }
+    }
 }
