@@ -93,7 +93,7 @@ use sysinfo::SysInfo;
 pub const PANEL_HEIGHT: u32 = 30;
 pub const NOTIFY_WIDTH: u32 = 340;
 pub const NOTIFY_TIMEOUT_MS: i64 = 5000;
-pub const LAUNCHER_WIDTH: u32 = 680;
+pub const LAUNCHER_WIDTH: u32 = 760;
 
 fn main() {
     tracing_subscriber::fmt()
@@ -994,6 +994,7 @@ impl ShellState {
             np,
             launcher::recommended(self).len(),
             !self.launcher_query.is_empty(),
+            self.dock_position,
         );
         match hit {
             launcher::Hit::Item(idx) => {
