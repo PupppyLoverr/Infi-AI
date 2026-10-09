@@ -29,6 +29,12 @@ type Rect = (f64, f64, f64, f64);
 /// Capsule ↔ card morph length (v5 §2.5).
 pub const MORPH: std::time::Duration = std::time::Duration::from_millis(280);
 
+/// Ease-out cubic progress of a MORPH-long transition started at `t0`.
+pub fn eased(t0: std::time::Instant) -> f32 {
+    let p = (t0.elapsed().as_secs_f32() / MORPH.as_secs_f32()).min(1.0);
+    1.0 - (1.0 - p).powi(3)
+}
+
 /// Eased morph progress: 0 = capsule, 1 = full card (also when idle).
 pub fn morph(state: &ShellState) -> f32 {
     let Some((t0, opening)) = state.island_anim else {
