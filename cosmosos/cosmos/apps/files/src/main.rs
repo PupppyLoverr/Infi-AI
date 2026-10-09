@@ -28,6 +28,9 @@ struct Files {
     chooser: Option<Chooser>,
     /// Dotfiles are hidden unless toggled with Ctrl+H.
     show_hidden: bool,
+    /// Last `(dir, rows drawn, footer count)` written to the log — the
+    /// drive harness asserts rows == footer from these lines.
+    logged_listing: Option<(PathBuf, usize, usize)>,
 }
 
 struct Chooser {
@@ -98,9 +101,20 @@ impl Files {
             path_edit: None,
             chooser: None,
             show_hidden: false,
+            logged_listing: None,
         };
         f.refresh();
         f
+    }
+
+    /// Whether `e` gets a row — the footer count and the list share it.
+    fn shows(&self, e: &Entry) -> bool {
+        (self.show_hidden || !e.name.starts_with('.'))
+            && self.chooser.as_ref().map(|c| c.matches(e)).unwrap_or(true)
+    }
+
+    fn shown_count(&self) -> usize {
+        self.entries.iter().filter(|e| self.shows(e)).count()
     }
 
     fn refresh(&mut self) {
@@ -313,7 +327,16 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
                     }
                 });
             } else {
-                ui.label(format!("{} items", f.entries.len()));
+                let shown = f.shown_count();
+                let hidden = f.entries.len() - shown;
+                let mut text = match shown {
+                    1 => "1 item".to_string(),
+                    n => format!("{n} items"),
+                };
+                if hidden > 0 && !f.show_hidden {
+                    text.push_str(&format!(", {hidden} hidden"));
+                }
+                ui.label(text);
                 ui.separator();
                 if !f.status.is_empty() {
                     ui.label(&f.status);
@@ -346,6 +369,7 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
         if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::H)) {
             f.show_hidden = !f.show_hidden;
         }
+        let mut rows = 0usize;
         egui::ScrollArea::vertical().show(ui, |ui| {
             egui::Grid::new("list")
                 .num_columns(4)
@@ -362,12 +386,8 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
                     let mut delete_target: Option<PathBuf> = None;
                     let mut rename_target: Option<(PathBuf, String)> = None;
                     let mut copy_path: Option<String> = None;
-                    for e in f
-                        .entries
-                        .iter()
-                        .filter(|e| f.show_hidden || !e.name.starts_with('.'))
-                        .filter(|e| f.chooser.as_ref().map(|c| c.matches(e)).unwrap_or(true))
-                    {
+                    for e in f.entries.iter().filter(|e| f.shows(e)) {
+                        rows += 1;
                         let kind = cosmos_uitk::icons::FileKind::of(&e.name, e.is_dir);
                         let picked = f
                             .chooser
@@ -456,7 +476,28 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
                         f.status = format!("path: {p}");
                     }
                 });
+            if rows == 0 {
+                let hidden = f.entries.len();
+                ui.add_space(48.0);
+                ui.vertical_centered(|ui| {
+                    cosmos_uitk::icons::show(ui, cosmos_uitk::icons::FileKind::of("", true), 48.0);
+                    ui.add_space(8.0);
+                    if hidden > 0 && !f.show_hidden {
+                        ui.weak(format!(
+                            "Only hidden items here ({hidden}). Ctrl+H shows them."
+                        ));
+                    } else {
+                        ui.weak("This folder is empty");
+                    }
+                });
+            }
         });
+        let footer = f.shown_count();
+        let listing = (f.dir.clone(), rows, footer);
+        if f.logged_listing.as_ref() != Some(&listing) {
+            tracing::info!(dir = %f.dir.display(), rows, footer, "files: listing");
+            f.logged_listing = Some(listing);
+        }
     });
 
     // New-folder modal

@@ -135,6 +135,10 @@ pub enum Request {
     },
     /// Ask the session to end (logout).
     QuitSession,
+    /// Lock the session: the compositor spawns `cosmos-lock` itself so
+    /// the locker runs in the session's PAM context. A no-op while a
+    /// live locker already holds the lock.
+    Lock,
 }
 
 /// Compositor → client events, broadcast to subscribers.
