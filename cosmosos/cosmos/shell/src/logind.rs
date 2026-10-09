@@ -16,6 +16,20 @@ pub fn request_lock() -> Result<(), String> {
         .map_err(|e| format!("ipc: {e}"))
 }
 
+/// logind Session.SetBrightness on this session (no root needed).
+pub fn set_brightness(device: &str, value: u32) -> zbus::Result<()> {
+    let conn = Connection::system()?;
+    let path = session_path(&conn)?;
+    conn.call_method(
+        Some(LOGIN1),
+        path.as_str(),
+        Some("org.freedesktop.login1.Session"),
+        "SetBrightness",
+        &("backlight", device, value),
+    )?;
+    Ok(())
+}
+
 pub fn spawn_listener() {
     let spawned = std::thread::Builder::new()
         .name("logind-lock".into())
