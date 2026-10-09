@@ -1076,6 +1076,11 @@ impl AnvilState<UdevData> {
             output.set_preferred(wl_mode);
             // Honor the configured logical scale at connect time; the
             // fractional-scale manager then pushes it to every surface.
+            if self.cosmos.config.scale_auto && self.space.outputs().next().is_none() {
+                self.cosmos.config.scale = crate::cosmos::auto_scale(wl_mode.size.w);
+                self.cosmos.config.save();
+                tracing::info!(scale = self.cosmos.config.scale, "cosmos: auto scale");
+            }
             let scale = self.cosmos.config.scale;
             output.change_current_state(
                 Some(wl_mode),

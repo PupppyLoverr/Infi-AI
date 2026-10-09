@@ -23,6 +23,7 @@ use smithay_client_toolkit::{
         data_source::{CopyPasteSource, DataSourceHandler},
         DataDeviceManagerState, WritePipe,
     },
+    dispatch2::Dispatch2,
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
@@ -50,6 +51,13 @@ use wayland_client::{
         wl_pointer, wl_seat, wl_shm, wl_surface,
     },
     Connection, Proxy, QueueHandle,
+};
+use wayland_protocols::wp::{
+    fractional_scale::v1::client::{
+        wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
+        wp_fractional_scale_v1::{self, WpFractionalScaleV1},
+    },
+    viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter},
 };
 /// MIME types we offer on copy / accept on paste — the usual text set.
 /// Double-buffering plus one spare for a frame the compositor is slow to release.
@@ -88,6 +96,20 @@ pub fn run(
     window.set_title(title);
     window.set_app_id(app_id);
     window.set_min_size(Some(min_size));
+    // Fractional scale (125%/150%): render at buffer = logical × scale and
+    // let the viewport map it back onto the logical surface size.
+    let viewport = globals
+        .bind::<WpViewporter, _, _>(&qh, 1..=1, ScaleData)
+        .ok()
+        .map(|vp| vp.get_viewport(window.wl_surface(), &qh, ScaleData));
+    let fractional = viewport
+        .as_ref()
+        .and_then(|_| {
+            globals
+                .bind::<WpFractionalScaleManagerV1, _, _>(&qh, 1..=1, ScaleData)
+                .ok()
+        })
+        .map(|m| m.get_fractional_scale(window.wl_surface(), &qh, ScaleData));
     window.commit();
 
     let ctx = egui::Context::default();
@@ -125,6 +147,9 @@ pub fn run(
         qh: qh.clone(),
         loop_handle: handle.clone(),
         window: Some(window),
+        scale: 1.0,
+        viewport,
+        _fractional: fractional,
         width: min_size.0.max(320),
         height: min_size.1.max(200),
         configured: false,
@@ -198,6 +223,10 @@ pub struct UiState {
     configured: bool,
     ctx: egui::Context,
     painter: raster::Painter,
+    /// Compositor-preferred scale (wp_fractional_scale_v1); 1.0 without it.
+    scale: f32,
+    viewport: Option<WpViewport>,
+    _fractional: Option<WpFractionalScaleV1>,
     pointer_pos: Pos2,
     pending: Vec<egui::Event>,
     modifiers: egui::Modifiers,
@@ -221,9 +250,9 @@ impl UiState {
             self.cfg_mtime = mt;
             theme::apply(&self.ctx, theme::dark_from_config());
         }
-        let ppp = 1.0f32;
-        let size = egui::vec2(self.width as f32 / ppp, self.height as f32 / ppp);
-        let input = RawInput {
+        let ppp = self.scale;
+        let size = egui::vec2(self.width as f32, self.height as f32);
+        let mut input = RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
             time: Some(self.start.elapsed().as_secs_f64()),
             events: std::mem::take(&mut self.pending),
@@ -231,6 +260,11 @@ impl UiState {
             max_texture_side: Some(2048),
             ..Default::default()
         };
+        input
+            .viewports
+            .entry(egui::ViewportId::ROOT)
+            .or_default()
+            .native_pixels_per_point = Some(ppp);
         let mut out = self.ctx.run_ui(input, |ui| (self.app)(ui));
 
         for (id, deltas) in &out.textures_delta.set {
@@ -288,7 +322,9 @@ impl UiState {
         qh: &QueueHandle<UiState>,
     ) {
         let Some(window) = &self.window else { return };
-        let (w, h) = (self.width as i32, self.height as i32);
+        let (lw, lh) = (self.width as i32, self.height as i32);
+        let w = (lw as f32 * self.scale).round() as i32;
+        let h = (lh as f32 * self.scale).round() as i32;
         let stride = w * 4;
         // Recycle a released buffer of the current size. A fresh slot per
         // frame fragmented the pool so it kept growing (idle terminal soak:
@@ -318,7 +354,7 @@ impl UiState {
             return;
         };
         self.painter
-            .paint(canvas, w as u32, h as u32, prims, 1.0, clear);
+            .paint(canvas, w as u32, h as u32, prims, self.scale, clear);
         if self.debug {
             let covered = canvas
                 .iter()
@@ -343,6 +379,9 @@ impl UiState {
         let surface = window.wl_surface();
         if let Err(e) = buffer.attach_to(surface) {
             tracing::warn!("uitk: buffer attach_to failed: {e}");
+        }
+        if let Some(vp) = &self.viewport {
+            vp.set_destination(lw, lh);
         }
         surface.damage_buffer(0, 0, w, h);
         surface.commit();
@@ -848,4 +887,63 @@ impl DataOfferHandler for UiState {
 type _SelectionOfferAlias = SelectionOffer;
 
 smithay_client_toolkit::delegate_dispatch2!(UiState);
+
+/// User data for the viewporter / fractional-scale objects.
+struct ScaleData;
+
+impl Dispatch2<WpViewporter, UiState> for ScaleData {
+    fn event(
+        &self,
+        _: &mut UiState,
+        _: &WpViewporter,
+        _: <WpViewporter as Proxy>::Event,
+        _: &Connection,
+        _: &QueueHandle<UiState>,
+    ) {
+    }
+}
+
+impl Dispatch2<WpViewport, UiState> for ScaleData {
+    fn event(
+        &self,
+        _: &mut UiState,
+        _: &WpViewport,
+        _: <WpViewport as Proxy>::Event,
+        _: &Connection,
+        _: &QueueHandle<UiState>,
+    ) {
+    }
+}
+
+impl Dispatch2<WpFractionalScaleManagerV1, UiState> for ScaleData {
+    fn event(
+        &self,
+        _: &mut UiState,
+        _: &WpFractionalScaleManagerV1,
+        _: <WpFractionalScaleManagerV1 as Proxy>::Event,
+        _: &Connection,
+        _: &QueueHandle<UiState>,
+    ) {
+    }
+}
+
+impl Dispatch2<WpFractionalScaleV1, UiState> for ScaleData {
+    fn event(
+        &self,
+        state: &mut UiState,
+        _: &WpFractionalScaleV1,
+        event: wp_fractional_scale_v1::Event,
+        _: &Connection,
+        _: &QueueHandle<UiState>,
+    ) {
+        if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
+            let s = scale as f32 / 120.0;
+            if (s - state.scale).abs() > f32::EPSILON {
+                tracing::info!("uitk: preferred scale {s}");
+                state.scale = s;
+                state.dirty = true;
+            }
+        }
+    }
+}
 smithay_client_toolkit::delegate_registry!(UiState);

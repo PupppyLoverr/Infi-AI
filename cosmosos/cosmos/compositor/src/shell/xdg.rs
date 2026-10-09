@@ -92,6 +92,7 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
             .into_iter()
             .find(|w| w.wl_surface().as_deref() == Some(surface.wl_surface()))
         {
+            remember_floating_geometry(&self.space, &window, &surface);
             if let Some(id) = self.cosmos.id_of(&window) {
                 tracing::info!(id, "cosmos: window closed");
                 self.cosmos.anims.windows.remove(&id);
@@ -838,4 +839,31 @@ fn handle_toplevel_commit(space: &mut Space<WindowElement>, surface: &WlSurface)
     refit_into_zone(space, &window);
 
     Some(())
+}
+
+/// Persist a closing window's floating geometry for its next launch.
+/// Maximised, fullscreen and snapped windows keep the previous record.
+fn remember_floating_geometry(
+    space: &Space<WindowElement>,
+    window: &WindowElement,
+    surface: &ToplevelSurface,
+) {
+    let st = surface.current_state();
+    let tiled = [
+        xdg_toplevel::State::Maximized,
+        xdg_toplevel::State::Fullscreen,
+        xdg_toplevel::State::TiledLeft,
+        xdg_toplevel::State::TiledRight,
+    ]
+    .iter()
+    .any(|s| st.states.contains(*s));
+    if tiled {
+        return;
+    }
+    let (_, app_id) = crate::cosmos::toplevel_title_app(surface.wl_surface());
+    let (Some(app_id), Some(loc), Some(size)) = (app_id, space.element_location(window), st.size)
+    else {
+        return;
+    };
+    super::WindowMemory::remember(&app_id, loc, size);
 }
