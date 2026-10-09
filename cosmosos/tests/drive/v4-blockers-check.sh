@@ -70,7 +70,7 @@ sleep 3
 OLD=$(pgrep -x cosmos-lock | head -1)
 say "killing locker pid=$OLD while locked"
 kill -9 "$OLD" 2>/dev/null
-if await "locker died while locked" 10 && await "takeover=true" 15; then
+if await "locker died while locked" 10 && await "lock taken over by respawned locker" 15; then
   NEW=$(pgrep -x cosmos-lock | head -1)
   say "PASS A2: locker died, session stayed locked, respawned locker pid=$NEW took over"
 else
