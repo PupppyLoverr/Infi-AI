@@ -810,6 +810,8 @@ name = "cosmos-settings"
 version = "0.1.0"
 dependencies = [
  "cosmos-ipc",
+ "cosmos-kit",
+ "cosmos-theme",
  "cosmos-uitk",
  "egui",
  "image",
