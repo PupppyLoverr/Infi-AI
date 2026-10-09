@@ -21,20 +21,20 @@ use smithay_client_toolkit::{
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
+        Capability, SeatHandler, SeatState,
         keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
         pointer::{PointerEvent, PointerEventKind, PointerHandler},
-        Capability, SeatHandler, SeatState,
     },
     session_lock::{
         SessionLock, SessionLockHandler, SessionLockState, SessionLockSurface,
         SessionLockSurfaceConfigure,
     },
-    shm::{slot::SlotPool, Shm, ShmHandler},
+    shm::{Shm, ShmHandler, slot::SlotPool},
 };
 use wayland_client::{
+    Connection, QueueHandle,
     globals::registry_queue_init,
     protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
-    Connection, QueueHandle,
 };
 
 struct LockSurfaceEntry {
@@ -69,6 +69,12 @@ struct LockState {
     password: String,
     error: Option<String>,
     failed_at: Option<Instant>,
+    /// Blurred active wallpaper, the lock card's glass backdrop.
+    wallpaper: Option<egui::TextureHandle>,
+    lite: bool,
+    /// XKB layout code shown bottom-right ("US").
+    layout: String,
+    power_open: bool,
 }
 
 fn main() -> Result<()> {
@@ -90,6 +96,10 @@ fn main() -> Result<()> {
     let ctx = egui::Context::default();
     cosmos_uitk::fonts::install(&ctx);
     cosmos_uitk::theme::apply(&ctx, cosmos_uitk::theme::dark_from_config());
+
+    let cfg = config_text();
+    let lite = cfg_bool(&cfg, "lite_mode");
+    let wallpaper = (!lite).then(|| load_wallpaper(&ctx, &cfg)).flatten();
 
     let session_lock = session_lock_state
         .lock::<LockState>(&qh)
@@ -118,6 +128,10 @@ fn main() -> Result<()> {
         password: String::new(),
         error: None,
         failed_at: None,
+        wallpaper,
+        lite,
+        layout: keyboard_layout(),
+        power_open: false,
     };
 
     WaylandSource::new(conn.clone(), queue)
@@ -204,9 +218,9 @@ impl LockState {
         out.textures_delta.clear();
 
         let stride = w as i32 * 4;
-        let Ok((buffer, canvas)) = self
-            .pool
-            .create_buffer(w as i32, h as i32, stride, wl_shm::Format::Abgr8888)
+        let Ok((buffer, canvas)) =
+            self.pool
+                .create_buffer(w as i32, h as i32, stride, wl_shm::Format::Abgr8888)
         else {
             tracing::warn!("cosmos-lock: shm alloc failed");
             return Duration::from_secs(1);
@@ -253,8 +267,7 @@ impl LockState {
 }
 
 fn pam_auth(user: &str, password: &str) -> Result<()> {
-    let mut auth =
-        pam::Client::with_password("cosmos-lock").context("PAM cosmos-lock service")?;
+    let mut auth = pam::Client::with_password("cosmos-lock").context("PAM cosmos-lock service")?;
     auth.conversation_mut().set_credentials(user, password);
     auth.authenticate().context("PAM authenticate")?;
     Ok(())
@@ -281,8 +294,18 @@ fn clock_now() -> (String, String) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = if m <= 2 { y + 1 } else { y };
     let months = [
-        "January", "February", "March", "April", "May", "June", "July", "August", "September",
-        "October", "November", "December",
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
     ];
     (
         format!("{:02}:{:02}", hh, mm),
@@ -292,112 +315,400 @@ fn clock_now() -> (String, String) {
 
 /// The whole lock UI — translucent scrim + centered card. Paints the same
 /// on every output; sized by that surface's screen_rect.
+fn config_text() -> String {
+    let home = std::env::var("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into()))
+                .join(".config")
+        });
+    std::fs::read_to_string(home.join("cosmos/config.json")).unwrap_or_default()
+}
+
+/// `"key": "value"` from the config without a JSON dep.
+fn cfg_str(text: &str, key: &str) -> Option<String> {
+    let pat = format!("\"{key}\"");
+    let i = text.find(&pat)? + pat.len();
+    let rest = text[i..].trim_start_matches([' ', ':', '\t']);
+    rest.strip_prefix('"')?
+        .split('"')
+        .next()
+        .map(str::to_string)
+}
+
+fn cfg_bool(text: &str, key: &str) -> bool {
+    let pat = format!("\"{key}\"");
+    text.find(&pat).is_some_and(|i| {
+        text[i + pat.len()..]
+            .trim_start_matches([' ', ':', '\t', '\n'])
+            .starts_with("true")
+    })
+}
+
+/// The active wallpaper, downscaled and blurred once: sampled under the
+/// card so it reads as glass over the compositor's wallpaper.
+fn load_wallpaper(ctx: &egui::Context, cfg: &str) -> Option<egui::TextureHandle> {
+    let name = cfg_str(cfg, "wallpaper").unwrap_or_else(|| "violet".to_string());
+    let dark = cfg_str(cfg, "appearance").as_deref() != Some("light");
+    let name = cosmos_ipc::wallpaper_for(&name, dark);
+    let dir = std::env::var("COSMOS_WALLPAPER_DIR")
+        .unwrap_or_else(|_| "/usr/share/cosmos/wallpapers".to_string());
+    let img = ["1920x1080", "3840x2160"].iter().find_map(|r| {
+        image::open(std::path::Path::new(&dir).join(format!("{name}-{r}.png"))).ok()
+    })?;
+    let small = image::imageops::resize(
+        &img.to_rgba8(),
+        480,
+        270,
+        image::imageops::FilterType::Triangle,
+    );
+    let blurred = image::imageops::blur(&small, 8.0);
+    let ci = egui::ColorImage::from_rgba_unmultiplied([480, 270], blurred.as_raw());
+    Some(ctx.load_texture("lock-wallpaper", ci, egui::TextureOptions::LINEAR))
+}
+
+/// The compositor builds its keymap from XKB_DEFAULT_LAYOUT (xkbcommon
+/// default "us"); Debian records the console layout in /etc/default/keyboard.
+fn keyboard_layout() -> String {
+    std::env::var("XKB_DEFAULT_LAYOUT")
+        .ok()
+        .or_else(|| {
+            std::fs::read_to_string("/etc/default/keyboard")
+                .ok()?
+                .lines()
+                .find_map(|l| l.strip_prefix("XKBLAYOUT="))
+                .map(|v| v.trim_matches('"').to_string())
+        })
+        .and_then(|l| l.split(',').next().map(str::to_string))
+        .filter(|l| !l.is_empty())
+        .unwrap_or_else(|| "us".to_string())
+        .to_uppercase()
+}
+
+fn power(method: &str) {
+    let r = zbus::blocking::Connection::system().and_then(|c| {
+        c.call_method(
+            Some("org.freedesktop.login1"),
+            "/org/freedesktop/login1",
+            Some("org.freedesktop.login1.Manager"),
+            method,
+            &(false,),
+        )
+        .map(|_| ())
+    });
+    if let Err(e) = r {
+        tracing::warn!("cosmos-lock: {method} failed: {e}");
+    }
+}
+
+const CARD_W: f32 = 380.0;
+const CARD_R: u8 = 22;
+const FIELD_W: f32 = 300.0;
+const FIELD_H: f32 = 36.0;
+const SHAKE: f32 = 0.45;
+
+/// Horizontal wrong-password shake: 6 Hz, decaying to rest over SHAKE s.
+fn shake_offset(since: f32) -> f32 {
+    if !(0.0..SHAKE).contains(&since) {
+        return 0.0;
+    }
+    12.0 * (since * std::f32::consts::TAU * 6.0).sin() * (1.0 - since / SHAKE)
+}
+
 fn draw_lock_ui(ui: &mut egui::Ui, state: &mut LockState) {
     let rect = ui.max_rect();
-    ui.painter()
-        .rect_filled(rect, egui::CornerRadius::ZERO, Color32::from_black_alpha(140));
-
-    // Clock upper-third.
-    let (clock, date) = clock_now();
-    ui.painter().text(
-        Pos2::new(rect.center().x, rect.height() * 0.22),
-        Align2::CENTER_CENTER,
-        clock,
-        FontId::proportional(72.0),
-        Color32::WHITE,
+    let ctx = ui.ctx().clone();
+    ui.painter().rect_filled(
+        rect,
+        egui::CornerRadius::ZERO,
+        Color32::from_black_alpha(56),
     );
+
+    let (clock, date) = clock_now();
+    let top = rect.height() * 0.17;
     ui.painter().text(
-        Pos2::new(rect.center().x, rect.height() * 0.22 + 52.0),
+        Pos2::new(rect.center().x, top - 58.0),
         Align2::CENTER_CENTER,
         date,
-        FontId::proportional(18.0),
-        Color32::from_white_alpha(170),
+        FontId::proportional(22.0),
+        Color32::from_white_alpha(230),
+    );
+    ui.painter().text(
+        Pos2::new(rect.center().x, top + 16.0),
+        Align2::CENTER_CENTER,
+        clock,
+        FontId::proportional(96.0),
+        Color32::WHITE,
     );
 
-    let ctx = ui.ctx().clone();
-    egui::Area::new(egui::Id::new("lock-card"))
-        .anchor(Align2::CENTER_CENTER, Vec2::new(0.0, rect.height() * 0.06))
+    let since = state
+        .failed_at
+        .map_or(f32::MAX, |t| t.elapsed().as_secs_f32());
+    let dx = if state.lite { 0.0 } else { shake_offset(since) };
+    if dx != 0.0 || since < SHAKE {
+        ctx.request_repaint();
+    }
+
+    let card_h = 24.0 + 72.0 + 14.0 + 28.0 + 18.0 + FIELD_H + 10.0 + 18.0 + 22.0;
+    let card = Rect::from_center_size(
+        Pos2::new(rect.center().x + dx, rect.height() * 0.58),
+        Vec2::new(CARD_W, card_h),
+    );
+    let painter = ui.painter().clone();
+    match &state.wallpaper {
+        Some(tex) if !state.lite => {
+            let uv = Rect::from_min_max(
+                Pos2::new(card.min.x / rect.width(), card.min.y / rect.height()),
+                Pos2::new(card.max.x / rect.width(), card.max.y / rect.height()),
+            );
+            painter.add(
+                egui::epaint::RectShape::filled(card, CARD_R, Color32::WHITE)
+                    .with_texture(tex.id(), uv),
+            );
+            painter.rect_filled(
+                card,
+                CARD_R,
+                Color32::from_rgba_unmultiplied(0x1C, 0x17, 0x30, 120),
+            );
+        }
+        _ => {
+            painter.rect_filled(card, CARD_R, Color32::from_rgb(0x1E, 0x1B, 0x2A));
+        }
+    }
+    painter.rect_stroke(
+        card,
+        CARD_R,
+        egui::Stroke::new(1.0, Color32::from_white_alpha(40)),
+        egui::StrokeKind::Inside,
+    );
+
+    // Avatar: a person glyph in a 72px disc — no letter avatars.
+    let mut y = card.min.y + 24.0;
+    let av = Pos2::new(card.center().x, y + 36.0);
+    painter.circle_filled(av, 36.0, Color32::from_white_alpha(38));
+    painter.circle_stroke(
+        av,
+        36.0,
+        egui::Stroke::new(1.0, Color32::from_white_alpha(46)),
+    );
+    cosmos_kit::icons::paint(
+        ui,
+        cosmos_kit::Icon::Person,
+        Rect::from_center_size(av, Vec2::splat(40.0)),
+        Color32::WHITE,
+    );
+    y += 72.0 + 14.0;
+    painter.text(
+        Pos2::new(card.center().x, y + 14.0),
+        Align2::CENTER_CENTER,
+        &state.user,
+        FontId::proportional(22.0),
+        Color32::WHITE,
+    );
+    y += 28.0 + 18.0;
+
+    // Glass pill field: centred placeholder/bullets, arrow inside on the right.
+    let field = Rect::from_center_size(
+        Pos2::new(card.center().x, y + FIELD_H / 2.0),
+        Vec2::new(FIELD_W, FIELD_H),
+    );
+    painter.rect_filled(field, FIELD_H / 2.0, Color32::from_white_alpha(30));
+    painter.rect_stroke(
+        field,
+        FIELD_H / 2.0,
+        egui::Stroke::new(1.0, Color32::from_white_alpha(52)),
+        egui::StrokeKind::Inside,
+    );
+    let arrow_d = FIELD_H - 8.0;
+    let arrow = Rect::from_center_size(
+        Pos2::new(field.max.x - 4.0 - arrow_d / 2.0, field.center().y),
+        Vec2::splat(arrow_d),
+    );
+    // Symmetric insets keep the text optically centred on the field.
+    let text_rect = field.shrink2(Vec2::new(arrow_d + 10.0, 0.0));
+    let pwd_id = egui::Id::new("pwd");
+    let mut submit = false;
+    egui::Area::new(egui::Id::new("lock-field"))
+        .fixed_pos(text_rect.min)
         .show(&ctx, |ui| {
-            egui::Frame::new()
-                .fill(Color32::from_black_alpha(170))
-                .stroke(egui::Stroke::new(1.0, Color32::from_white_alpha(30)))
-                .corner_radius(16.0)
-                .inner_margin(28.0)
-                .show(ui, |ui| {
-                    ui.set_width(300.0);
-                    ui.vertical_centered(|ui| {
-                        // Avatar ring + username.
-                        let (_resp, painter) =
-                            ui.allocate_painter(Vec2::splat(64.0), egui::Sense::hover());
-                        let c = painter.clip_rect().center();
-                        let accent = ui.visuals().hyperlink_color;
-                        painter.circle_filled(c, 30.0, accent.gamma_multiply(0.3));
-                        painter.circle_stroke(c, 30.0, egui::Stroke::new(1.5, accent));
-                        painter.text(
-                            c,
-                            Align2::CENTER_CENTER,
-                            state
-                                .user
-                                .chars()
-                                .next()
-                                .unwrap_or('?')
-                                .to_ascii_uppercase()
-                                .to_string(),
-                            FontId::proportional(26.0),
-                            Color32::WHITE,
-                        );
-                        ui.add_space(10.0);
-                        ui.label(
-                            RichText::new(&state.user)
-                                .size(18.0)
-                                .strong()
-                                .color(Color32::WHITE),
-                        );
-                        ui.add_space(14.0);
-
-                        let pwd_id = egui::Id::new("pwd");
-                        let resp = ui.add_sized(
-                            Vec2::new(300.0, 40.0),
-                            egui::TextEdit::singleline(&mut state.password)
-                                .id(pwd_id)
-                                .password(true)
-                                .desired_width(300.0)
-                                .font(FontId::proportional(15.0))
-                                .hint_text("Password"),
-                        );
-                        if !ctx.memory(|m| m.has_focus(pwd_id)) {
-                            ctx.memory_mut(|m| m.request_focus(pwd_id));
+            ui.visuals_mut().extreme_bg_color = Color32::TRANSPARENT;
+            ui.visuals_mut().override_text_color = Some(Color32::WHITE);
+            let resp = ui.put(
+                Rect::from_min_size(text_rect.min, text_rect.size()),
+                egui::TextEdit::singleline(&mut state.password)
+                    .id(pwd_id)
+                    .password(true)
+                    .frame(egui::Frame::NONE)
+                    .vertical_align(egui::Align::Center)
+                    .horizontal_align(egui::Align::Center)
+                    .desired_width(text_rect.width())
+                    .font(FontId::proportional(15.0))
+                    .hint_text(
+                        RichText::new("Enter Password").color(Color32::from_white_alpha(150)),
+                    ),
+            );
+            if !ctx.memory(|m| m.has_focus(pwd_id)) {
+                ctx.memory_mut(|m| m.request_focus(pwd_id));
+            }
+            let enter = ui.input(|i| {
+                i.events.iter().any(|e| {
+                    matches!(
+                        e,
+                        egui::Event::Key {
+                            key: Key::Enter,
+                            pressed: true,
+                            ..
                         }
-
-                        ui.add_space(6.0);
-                        let hint = if let Some(err) = &state.error {
-                            RichText::new(err.clone()).color(Color32::from_rgb(255, 120, 110))
-                        } else {
-                            RichText::new("Press Return to unlock")
-                                .color(Color32::from_white_alpha(120))
-                        };
-                        ui.label(hint.size(12.5));
-
-                        let enter =
-                            resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-                        let typed_return = ui.input(|i| {
-                            i.events.iter().any(|e| {
-                                matches!(
-                                    e,
-                                    egui::Event::Key {
-                                        key: Key::Enter,
-                                        pressed: true,
-                                        ..
-                                    }
-                                )
-                            })
-                        });
-                        if enter || (typed_return && !state.password.is_empty()) {
-                            state.try_auth();
-                        }
-                    });
-                });
+                    )
+                })
+            });
+            submit |= (enter || resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)))
+                && !state.password.is_empty();
+            if resp.changed() {
+                state.error = None;
+            }
         });
+    let ready = !state.password.is_empty();
+    let arrow_resp = ui.interact(arrow, egui::Id::new("lock-arrow"), egui::Sense::click());
+    painter.circle_filled(
+        arrow.center(),
+        arrow_d / 2.0,
+        Color32::from_white_alpha(match (ready, arrow_resp.hovered()) {
+            (true, true) => 96,
+            (true, false) => 64,
+            _ => 26,
+        }),
+    );
+    cosmos_kit::icons::paint(
+        ui,
+        cosmos_kit::Icon::ArrowRight,
+        Rect::from_center_size(arrow.center(), Vec2::splat(16.0)),
+        Color32::from_white_alpha(if ready { 255 } else { 120 }),
+    );
+    submit |= arrow_resp.clicked() && ready;
+    y += FIELD_H + 10.0;
+    if let Some(err) = &state.error {
+        painter.text(
+            Pos2::new(card.center().x, y + 9.0),
+            Align2::CENTER_CENTER,
+            err,
+            FontId::proportional(12.5),
+            Color32::from_rgb(255, 150, 140),
+        );
+    }
+    if submit {
+        state.try_auth();
+    }
+
+    // Bottom-right: keyboard layout, then power with Restart / Shut Down.
+    let base = Pos2::new(rect.max.x - 28.0, rect.max.y - 28.0);
+    let pw = Rect::from_center_size(Pos2::new(base.x - 12.0, base.y - 12.0), Vec2::splat(32.0));
+    let pw_resp = ui.interact(pw, egui::Id::new("lock-power"), egui::Sense::click());
+    if pw_resp.hovered() || state.power_open {
+        painter.circle_filled(pw.center(), 16.0, Color32::from_white_alpha(38));
+    }
+    cosmos_kit::icons::paint(
+        ui,
+        cosmos_kit::Icon::Power,
+        Rect::from_center_size(pw.center(), Vec2::splat(20.0)),
+        Color32::WHITE,
+    );
+    if pw_resp.clicked() {
+        state.power_open = !state.power_open;
+    }
+    let kb_x = pw.min.x - 20.0;
+    let galley = painter.layout_no_wrap(
+        state.layout.clone(),
+        FontId::proportional(13.0),
+        Color32::from_white_alpha(230),
+    );
+    let text_pos = Pos2::new(
+        kb_x - galley.size().x,
+        pw.center().y - galley.size().y / 2.0,
+    );
+    painter.galley(text_pos, galley, Color32::WHITE);
+    cosmos_kit::icons::paint(
+        ui,
+        cosmos_kit::Icon::Keyboard,
+        Rect::from_center_size(
+            Pos2::new(text_pos.x - 16.0, pw.center().y),
+            Vec2::splat(20.0),
+        ),
+        Color32::WHITE,
+    );
+    if state.power_open {
+        let menu = Rect::from_min_max(
+            Pos2::new(pw.max.x - 150.0, pw.min.y - 8.0 - 2.0 * 30.0 - 12.0),
+            Pos2::new(pw.max.x, pw.min.y - 8.0),
+        );
+        painter.rect_filled(
+            menu,
+            10,
+            Color32::from_rgba_unmultiplied(0x1C, 0x17, 0x30, 235),
+        );
+        painter.rect_stroke(
+            menu,
+            10,
+            egui::Stroke::new(1.0, Color32::from_white_alpha(40)),
+            egui::StrokeKind::Inside,
+        );
+        for (i, (label, method)) in [("Restart", "Reboot"), ("Shut Down", "PowerOff")]
+            .into_iter()
+            .enumerate()
+        {
+            let row = Rect::from_min_size(
+                Pos2::new(menu.min.x + 6.0, menu.min.y + 6.0 + i as f32 * 30.0),
+                Vec2::new(menu.width() - 12.0, 30.0),
+            );
+            let r = ui.interact(
+                row,
+                egui::Id::new(("lock-power-row", i)),
+                egui::Sense::click(),
+            );
+            if r.hovered() {
+                painter.rect_filled(row, 6, Color32::from_white_alpha(30));
+            }
+            painter.text(
+                Pos2::new(row.min.x + 10.0, row.center().y),
+                Align2::LEFT_CENTER,
+                label,
+                FontId::proportional(13.0),
+                Color32::WHITE,
+            );
+            if r.clicked() {
+                state.power_open = false;
+                power(method);
+            }
+        }
+        if ui.input(|i| i.pointer.any_pressed())
+            && !pw_resp.clicked()
+            && !ui.rect_contains_pointer(menu)
+        {
+            state.power_open = false;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shake_decays_to_rest() {
+        assert_eq!(shake_offset(f32::MAX), 0.0);
+        assert_eq!(shake_offset(SHAKE), 0.0);
+        assert!(shake_offset(0.04).abs() > 4.0);
+        assert!(shake_offset(0.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn config_lookups() {
+        let c = r#"{"wallpaper": "peach", "lite_mode": true, "dark": false}"#;
+        assert_eq!(cfg_str(c, "wallpaper").as_deref(), Some("peach"));
+        assert!(cfg_bool(c, "lite_mode"));
+        assert!(!cfg_bool(c, "dark"));
+        assert!(!cfg_bool(c, "missing"));
+    }
 }
 
 fn map_key(sym: Keysym) -> Option<Key> {
@@ -427,7 +738,7 @@ fn map_key(sym: Keysym) -> Option<Key> {
                             .to_ascii_uppercase()
                             .to_string()
                             .as_str(),
-                    )
+                    );
                 }
                 0x30..=0x39 => return Key::from_name(char::from_u32(raw)?.to_string().as_str()),
                 _ => return None,
@@ -699,7 +1010,12 @@ impl OutputHandler for LockState {
     }
     fn new_output(&mut self, _c: &Connection, _q: &QueueHandle<Self>, _o: wl_output::WlOutput) {}
     fn update_output(&mut self, _c: &Connection, _q: &QueueHandle<Self>, _o: wl_output::WlOutput) {}
-    fn output_destroyed(&mut self, _c: &Connection, _q: &QueueHandle<Self>, o: wl_output::WlOutput) {
+    fn output_destroyed(
+        &mut self,
+        _c: &Connection,
+        _q: &QueueHandle<Self>,
+        o: wl_output::WlOutput,
+    ) {
         self.lock_surfaces.retain(|s| s.output != o);
     }
 }
