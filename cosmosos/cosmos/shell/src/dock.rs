@@ -30,8 +30,12 @@ const ICON_SZ: f32 = 52.0;
 /// Extra icon px at the hover centre and its falloff radius.
 const MAG_MAX: f32 = 16.0;
 const MAG_SPAN: f64 = 115.0;
-/// Inner padding between the pill edge and the first/last icon (spec D: 8px).
-const PAD: f64 = 8.0;
+/// Pill end to the first/last cell; with the cell's own (CELL - ICON_SZ)/2
+/// inset the visible icon sits 8px from the pill edge (spec D).
+const PAD: f64 = 3.0;
+/// The start glyph has no tile, so its cell hugs the glyph (≈35px drawn
+/// inside its 52px box) to keep the same 8px visible inset.
+const START_CELL: f64 = 44.0;
 const SEP_W: f64 = 13.0;
 /// Pinned apps, top→bottom on a vertical rail (desktop ids without
 /// ".desktop").
@@ -168,15 +172,22 @@ fn entries(state: &ShellState) -> Vec<DockEntry> {
     out
 }
 
+fn cell_len(item: &DockEntry) -> f64 {
+    if item.icon == "start" {
+        START_CELL
+    } else {
+        CELL
+    }
+}
+
 /// Content length along the rail axis for the current item set.
 fn content_len(items: &[DockEntry]) -> f64 {
-    let n = items.len() as f64;
     let extra_sep = if first_extra(items).is_some() {
         SEP_W
     } else {
         0.0
     };
-    n * CELL + SEP_W + extra_sep
+    items.iter().map(cell_len).sum::<f64>() + SEP_W + extra_sep
 }
 
 /// Requested surface size for `pos` — the rail axis size is 0 so the
@@ -357,16 +368,17 @@ pub fn draw(state: &mut ShellState) {
             );
             a += SEP_W;
         }
-        let cell_center = a + CELL / 2.0;
+        let cell = cell_len(item);
+        let cell_center = a + cell / 2.0;
         let hovered = dock_hover
-            .map(|hx| hx >= a && hx < a + CELL)
+            .map(|hx| hx >= a && hx < a + cell)
             .unwrap_or(false);
         if hovered || item.focused {
             let (hx, hy) = axis_xy(pos, a + 2.0, 2.0);
             let (hw, hh) = if vertical {
-                (STRIP as f64 - 4.0, CELL - 4.0)
+                (STRIP as f64 - 4.0, cell - 4.0)
             } else {
-                (CELL - 4.0, STRIP as f64 - 4.0)
+                (cell - 4.0, STRIP as f64 - 4.0)
             };
             draw::fill_round_rect(
                 &mut pixmap,
@@ -449,7 +461,7 @@ pub fn draw(state: &mut ShellState) {
                 );
             }
         }
-        a += CELL;
+        a += cell;
     }
 
     // Hover label: a name pill floating outward into the overhang —
@@ -469,16 +481,16 @@ pub fn draw(state: &mut ShellState) {
         // were laid out (centred column + separators).
         let extra_sep_idx = first_extra(&items);
         let mut a2 = ((span - content_len(&items)) / 2.0).max(PAD);
-        let mut t = a2 + CELL / 2.0;
-        for i in 0..items.len() {
+        let mut t = a2 + cell_len(&items[0]) / 2.0;
+        for (i, it) in items.iter().enumerate() {
             if i == 1 || Some(i) == extra_sep_idx {
                 a2 += SEP_W;
             }
             if i == idx {
-                t = a2 + CELL / 2.0;
+                t = a2 + cell_len(it) / 2.0;
                 break;
             }
-            a2 += CELL;
+            a2 += cell_len(it);
         }
         let text_est = name.chars().count() as f32 * 7.0;
         let pill_w = text_est + 16.0;
@@ -529,14 +541,14 @@ fn hit(a: f64, pos: DockPos, span: f64, items: &[DockEntry]) -> Option<usize> {
     let _ = pos;
     let mut a0 = ((span - content_len(items)) / 2.0).max(PAD);
     let extra_sep_idx = first_extra(items);
-    for idx in 0..items.len() {
+    for (idx, item) in items.iter().enumerate() {
         if idx == 1 || Some(idx) == extra_sep_idx {
             a0 += SEP_W;
         }
-        if a >= a0 && a < a0 + CELL {
+        if a >= a0 && a < a0 + cell_len(item) {
             return Some(idx);
         }
-        a0 += CELL;
+        a0 += cell_len(item);
     }
     None
 }
