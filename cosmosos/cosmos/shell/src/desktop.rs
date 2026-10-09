@@ -198,7 +198,9 @@ fn dbus_power(method: &str) -> Result<(), String> {
         "/org/freedesktop/login1",
         Some("org.freedesktop.login1.Manager"),
         method,
-        &(),
+        // login1.Manager.PowerOff/Reboot(b interactive): with no
+        // argument logind rejects the call as an invalid signature.
+        &(false,),
     )
     .map(|_| ())
     .map_err(|e| e.to_string())
