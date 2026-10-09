@@ -290,7 +290,7 @@ pub fn zone_known(name: &str) -> bool {
 }
 
 /// Hover dwell on the green zoom button before the flyout opens.
-pub const ZOOM_FLYOUT_DELAY_MS: u64 = 450;
+pub const ZOOM_FLYOUT_DELAY_MS: u64 = 300;
 
 /// Curated accent presets — the Omarchy-style "theme" dial. Each is one
 /// accent color reserved for active state; every surface that honors
