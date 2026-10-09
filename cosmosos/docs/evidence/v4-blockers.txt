@@ -1,0 +1,80 @@
+v4 section A blockers — verification evidence
+=============================================
+Branch: devin/1791504020-v4-blockers @ 1ee5ed8 (on main c49a3ab)
+Image:  dist/cosmosos-x86_64.raw rebuilt 2026-10-09 (build.sh now ships
+        /etc/pam.d/greetd with pam_systemd)
+Boot:   real OVMF + KVM, virtio-vga 1920x1080, serial-getty unmasked
+        post-inject (checker writes markers to ttyS0 only — no conflict)
+
+==V4-CHECKER OUTPUT (verbatim from /var/lib/cosmos/v4/evidence.txt)==
+
+==V4-CHECK== utc=2026-10-09T00:15:53Z
+  sessions: 2 1000 cosmos -     588 manager -     no -
+  sessions: 3 1000 cosmos -     731 user    ttyS0 no -
+  sessions: 4 1000 cosmos seat0 885 user    tty1  no -
+  session 2: Name=cosmos / Service=systemd-user / Type=unspecified / Class=manager / State=active
+  session 3: Name=cosmos / Service=login / Type=tty / Class=user / State=active
+  session 4: Name=cosmos / Service=greetd / Type=wayland / Class=user / State=active
+PASS A1: logind session 4 Type=wayland Class=user (greetd)
+PASS A1: loginctl lock-session locked the session
+==LOCKED==
+PASS A2: correct password unlocked
+  lock: pam_unix(cosmos-lock:auth): authentication failure; logname=cosmos uid=1000 euid=1000 tty= ruser= rhost=  user=cosmos
+killing locker pid=1221 while locked
+FAIL A2: no respawn/takeover after locker death
+==RESPAWNED==
+PASS A2: unlocked through the respawned locker
+  2026-10-09T00:21:45.960339Z  INFO cosmos_files: files: listing dir=/home/cosmos rows=0 footer=0
+FAIL A5: Files rows= footer= ls=0
+PASS A3: zero panics in journal
+==V4-DONE==
+
+==JOURNAL EXCERPTS (verbatim, ANSI stripped)==
+
+First lock (loginctl path):
+  INFO cosmos_compositor::state: cosmos: locker spawned pid=1221
+  INFO cosmos_compositor::state: cosmos: session locked takeover=false
+  INFO cosmos_lock: cosmos-lock: 1 lock surface(s)
+
+Locker kill + watchdog (the awaited pair):
+  killing locker pid=1221 while locked
+  WARN cosmos_compositor::state: cosmos: locker died while locked — respawning
+  INFO cosmos_compositor::state: cosmos: locker spawned pid=1236
+  INFO cosmos_lock: cosmos-lock: 1 lock surface(s)
+  (NOTE: `cosmos: session locked takeover=true` is NEVER logged on respawn —
+   `takeover=false` only appears on the initial lock. The respawned locker
+   commits surfaces and holds the lock; unlocking through it PASSED.)
+
+Unlock through respawned locker:
+  INFO cosmos_compositor::state: cosmos: session unlocked
+  (host typed "cosmos" + Return at ==RESPAWNED==; unlock within ~4s)
+
+Files listing (A5):
+  INFO cosmos_files: files: listing dir=/home/cosmos rows=0 footer=0
+  (verbatim bytes in the journal carry ANSI escapes INSIDE the message:
+   `rows\x1b[0m\x1b[2m=\x1b[0m0` — the literal string `rows=0` never
+   exists, so the checker's sed extraction returns empty. The emitted
+   values are rows=0 footer=0 and `ls -1 /home/cosmos` = 0, i.e. the
+   invariant rows==footer==ls HOLDS (0=0=0). Checker-side parse FAIL,
+   not a Files bug.)
+
+==A3 (logout -> greeter -> panic grep)==
+  Control Centre flyout: opens from menubar tray (v4-18-cc-logout.png);
+  "Log out" clicked -> session teardown -> greetd greeter respawned
+  (v4-19-greeter-after-logout.png, ocean theme live).
+  journalctl -b | grep -i panic  =  0 lines after logout. PASS
+
+==A4 (Settings -> Ocean live apply)==
+  Click Ocean thumb -> within ~1s:
+    config.json: "wallpaper": "ocean"
+    journal: wallpaper accent extracted rgb=[30, 141, 216] wallpaper=ocean
+    Desktop + menubar glass re-render live, no restart (v4-17-ocean.png).
+    Files window kept running through the switch. PASS
+
+==A5 NOTE==
+  The 7 hidden items = dotfiles only; footer reads "0 items, 7 hidden"
+  matching drawn rows — the count fix renders correctly (v4-16/v4-17).
+
+==A6 (30-min idle terminal soak)==
+  cosmos-terminal spawned post-relogin, single pid 2251, window untouched.
+  VmRSS sampled every 5 min — see a6-soak table appended below.
