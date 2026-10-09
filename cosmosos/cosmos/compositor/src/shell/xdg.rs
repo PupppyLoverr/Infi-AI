@@ -861,9 +861,9 @@ fn remember_floating_geometry(
         return;
     }
     let (_, app_id) = crate::cosmos::toplevel_title_app(surface.wl_surface());
-    let (Some(app_id), Some(loc), Some(size)) = (app_id, space.element_location(window), st.size)
-    else {
+    let (Some(app_id), Some(loc)) = (app_id, space.element_location(window)) else {
         return;
     };
+    let size = st.size.unwrap_or_else(|| window.geometry().size);
     super::WindowMemory::remember(&app_id, loc, size);
 }
