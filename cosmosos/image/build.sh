@@ -574,7 +574,7 @@ sudo chown -R root:root "$OVERLAY"
 
 PACKAGES="systemd-sysv udev dbus libpam-systemd kmod \
 linux-image-amd64 initramfs-tools systemd-resolved \
-network-manager polkitd pipewire pipewire-alsa wireplumber upower \
+network-manager polkitd pipewire pipewire-alsa wireplumber upower bluez \
 libudev1 libxkbcommon0 libwayland-server0 libwayland-client0 \
 libwayland-egl1 libwayland-cursor0 libdrm2 libgbm1 libegl1 libgles2 \
 libgl1-mesa-dri libinput10 libseat1 libdisplay-info2 libpixman-1-0 \

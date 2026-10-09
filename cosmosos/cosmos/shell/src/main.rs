@@ -34,6 +34,8 @@ mod zoomflyout;
 const DEFAULT_WALLPAPER: &str = "violet";
 
 thread_local! {
+    /// Mirror of ShellState::lite — glass draws flat while set.
+    pub static LITE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Mirror of ShellState::wallpaper so static helpers can reach it.
     /// Starts at the same default: apply_config only writes it on a change,
     /// so an empty start left glass with no wallpaper on a fresh account.
@@ -228,6 +230,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         quick_open: false,
         quick_dismissed_at: None,
         vol_drag: false,
+        bright_drag: false,
         accent_name: cosmos_ipc::DEFAULT_ACCENT.to_string(),
         wallpaper: DEFAULT_WALLPAPER.to_string(),
         help_surface: None,
@@ -253,6 +256,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         dnd_on_island: false,
         agents: activity::scan_agents(),
         media: None,
+        lite: false,
         dnd: false,
         file_index: Vec::new(),
         index_tx,
@@ -520,6 +524,8 @@ pub struct ShellState {
     pub agents: Vec<activity::AgentActivity>,
     /// MPRIS now-playing player, if any.
     pub media: Option<activity::Media>,
+    /// Lite Mode (config `lite_mode`): flat surfaces, see [`LITE`].
+    pub lite: bool,
     /// Focus mode (Do Not Disturb) — notification popups are suppressed
     /// while on; history still records. Toggled in Control Centre.
     pub dnd: bool,
@@ -588,6 +594,8 @@ pub struct ShellState {
     pub quick_dismissed_at: Option<std::time::Instant>,
     /// Held while the pointer is dragging the volume slider.
     pub vol_drag: bool,
+    /// Control Centre brightness slider held.
+    pub bright_drag: bool,
     /// Current accent preset name (from Config events) — the Quick
     /// Settings swatch strip draws its selection ring from this.
     pub accent_name: String,
@@ -821,6 +829,18 @@ impl ShellState {
     }
 
     /// Toggle the quick-settings flyout (Win11-style tray popover).
+    /// Flip Lite Mode locally and repaint every glass surface.
+    pub fn set_lite(&mut self, on: bool) {
+        self.lite = on;
+        LITE.with(|l| l.set(on));
+        self.panel_dirty = true;
+        self.dock_dirty = true;
+        self.launcher_dirty = true;
+        self.notify_dirty = true;
+        self.quick_dirty = true;
+        self.switcher_dirty = true;
+    }
+
     pub fn set_quick_open(&mut self, open: bool) {
         if open == self.quick_open {
             return;
@@ -828,6 +848,7 @@ impl ShellState {
         self.quick_open = open;
         if open {
             self.vol_drag = false;
+            self.bright_drag = false;
             let surface = self.compositor_state.create_surface(&self.qh);
             let layer = self.layer_shell.create_layer_surface(
                 &self.qh,
@@ -837,7 +858,7 @@ impl ShellState {
                 None,
             );
             layer.set_anchor(Anchor::TOP | Anchor::RIGHT);
-            layer.set_size(quick::QUICK_W, quick::desired_height(&self.sysinfo));
+            layer.set_size(quick::QUICK_W, quick::desired_height(self));
             layer.set_exclusive_zone(0);
             layer.set_margin((PANEL_HEIGHT + 4) as i32, 8, 0, 0);
             // Exclusive keyboard interactivity is what makes the flyout
@@ -851,6 +872,7 @@ impl ShellState {
         } else {
             self.quick_surface = None;
             self.vol_drag = false;
+            self.bright_drag = false;
         }
     }
 
@@ -1530,6 +1552,11 @@ impl ShellState {
             self.launcher_dirty = true;
             self.notify_dirty = true;
         }
+        if let Some(on) = map.get("lite_mode").and_then(|v| v.as_bool()) {
+            if on != self.lite {
+                self.set_lite(on);
+            }
+        }
         if let Some(v) = map.get("accent").and_then(|v| v.as_str()) {
             self.accent_name = v.to_string();
         }
@@ -1879,7 +1906,7 @@ impl LayerShellHandler for ShellState {
             self.notify_dirty = true;
         }
         if self.quick_surface.as_ref() == Some(layer) {
-            self.quick_size = (quick::QUICK_W, quick::desired_height(&self.sysinfo));
+            self.quick_size = (quick::QUICK_W, quick::desired_height(self));
             self.quick_dirty = true;
         }
         if self.assist_surface.as_ref() == Some(layer) {
@@ -2168,7 +2195,9 @@ impl PointerHandler for ShellState {
                         self.dock_dirty |= dock::hover(self, ev.position.0, ev.position.1);
                     } else if self.launcher_surface.as_ref() == Some(&layer) {
                         self.launcher_dirty |= launcher::hover(self, ev.position.0, ev.position.1);
-                    } else if self.quick_surface.as_ref() == Some(&layer) && self.vol_drag {
+                    } else if self.quick_surface.as_ref() == Some(&layer)
+                        && (self.vol_drag || self.bright_drag)
+                    {
                         self.quick_dirty |= quick::drag(self, ev.position.0, ev.position.1);
                     } else if self.assist_surface.as_ref() == Some(&layer) {
                         self.assist_dirty |= assist::hover(self, ev.position.0, ev.position.1);

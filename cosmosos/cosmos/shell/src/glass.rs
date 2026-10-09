@@ -159,7 +159,8 @@ pub fn fill_glass(
     let Some(path) = round_rect_path(x, y, w, h, r) else {
         return;
     };
-    let Some(g) = glass_for(name, dark) else {
+    let lite = crate::LITE.with(|l| l.get());
+    let Some(g) = glass_for(name, dark).filter(|_| !lite) else {
         // Wallpaper not installed (dev shell) — keep the flat colour.
         pixmap.fill_path(
             &path,

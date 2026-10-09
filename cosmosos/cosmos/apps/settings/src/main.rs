@@ -19,6 +19,7 @@ use cosmos_theme::space;
 struct Cfg {
     appearance: String, // "dark" | "light"
     reduce_motion: bool,
+    lite_mode: bool,
     scale: f64,
     /// Scale follows the display width (compositor `scale_auto`).
     scale_auto: bool,
@@ -36,6 +37,7 @@ impl Default for Cfg {
         Cfg {
             appearance: "dark".into(),
             reduce_motion: false,
+            lite_mode: false,
             scale: 1.0,
             scale_auto: true,
             terminal: "cosmos-terminal".into(),
@@ -85,6 +87,7 @@ fn load() -> Cfg {
         match k.trim() {
             "appearance" => c.appearance = v.to_string(),
             "reduce_motion" => c.reduce_motion = v == "true",
+            "lite_mode" => c.lite_mode = v == "true",
             "scale" => c.scale = v.parse().unwrap_or(1.0),
             "terminal" => c.terminal = v.to_string(),
             "launcher_rows" => c.launcher_rows = v.parse().unwrap_or(10),
@@ -106,8 +109,8 @@ fn save(c: &Cfg) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let text = format!(
-        "# CosmosOS configuration\nappearance = \"{}\"\nreduce_motion = {}\nscale = {}\nterminal = \"{}\"\nlauncher_rows = {}\naccent = \"{}\"\ndock_position = \"{}\"\nwallpaper = \"{}\"\ndesktop_widgets = {}\nweather_city = \"{}\"\n",
-        c.appearance, c.reduce_motion, c.scale, c.terminal, c.launcher_rows, c.accent, c.dock_position, c.wallpaper,
+        "# CosmosOS configuration\nappearance = \"{}\"\nreduce_motion = {}\nlite_mode = {}\nscale = {}\nterminal = \"{}\"\nlauncher_rows = {}\naccent = \"{}\"\ndock_position = \"{}\"\nwallpaper = \"{}\"\ndesktop_widgets = {}\nweather_city = \"{}\"\n",
+        c.appearance, c.reduce_motion, c.lite_mode, c.scale, c.terminal, c.launcher_rows, c.accent, c.dock_position, c.wallpaper,
         c.desktop_widgets, c.weather_city.replace('"', "")
     );
     std::fs::write(path, text)
@@ -327,6 +330,15 @@ fn appearance(ui: &mut egui::Ui, kit: &Kit, app: &mut App) {
             |ui| {
                 if toggle(ui, &mut app.cfg.reduce_motion).changed() {
                     set(app, "reduce_motion", app.cfg.reduce_motion.into());
+                }
+            },
+        );
+        g.row_detail(
+            "Lite mode",
+            Some("Flat surfaces, no glass, shadows or animation"),
+            |ui| {
+                if toggle(ui, &mut app.cfg.lite_mode).changed() {
+                    set(app, "lite_mode", app.cfg.lite_mode.into());
                 }
             },
         );

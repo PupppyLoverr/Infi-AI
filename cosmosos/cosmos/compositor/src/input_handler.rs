@@ -513,19 +513,17 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             && !touch.map(|touch| touch.is_grabbed()).unwrap_or(false)
         {
             // ext-session-lock: clicks land on the lock surface only.
-        if self.cosmos.session_locked {
-            if let Some((ls, _)) = self.cosmos.lock_surfaces.first() {
-                keyboard.set_focus(
-                    self,
-                    Some(KeyboardFocusTarget::WlSurface(
-                        ls.wl_surface().clone(),
-                    )),
-                    serial,
-                );
+            if self.cosmos.session_locked {
+                if let Some((ls, _)) = self.cosmos.lock_surfaces.first() {
+                    keyboard.set_focus(
+                        self,
+                        Some(KeyboardFocusTarget::WlSurface(ls.wl_surface().clone())),
+                        serial,
+                    );
+                }
+                return;
             }
-            return;
-        }
-        let output = self.space.output_under(location).next().cloned();
+            let output = self.space.output_under(location).next().cloned();
             if let Some(output) = output.as_ref() {
                 let output_geo = self.space.output_geometry(output).unwrap();
                 if let Some(window) = output
