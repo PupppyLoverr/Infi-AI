@@ -7,6 +7,9 @@ use cosmos_theme::{palette, Accent, Palette, Rgba};
 use egui::Color32;
 
 pub mod controls;
+pub mod icons;
+
+pub use icons::Icon;
 
 /// Resolved theme for the current frame.
 #[derive(Clone, Copy, Debug)]

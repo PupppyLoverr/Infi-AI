@@ -9,3 +9,7 @@ version = "0.1.0"
 cosmos-theme = { path = "../theme" }
 cosmos-uitk = { path = "../uitk" }
 egui = { workspace = true }
+image = { version = "0.25.1", default-features = false, features = ["png"] }
+
+[build-dependencies]
+resvg = { version = "0.45", default-features = false }
