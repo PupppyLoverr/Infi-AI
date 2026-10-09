@@ -119,11 +119,23 @@ OC_TGZ="$WORK/cache/opencode-linux-x64-$OC_VER.tar.gz"
   "https://github.com/sst/opencode/releases/download/$OC_VER/opencode-linux-x64.tar.gz"
 OC_TMP="$(mktemp -d)"
 tar -xzf "$OC_TGZ" -C "$OC_TMP" opencode
-install -m755 "$OC_TMP/opencode" "$OVERLAY/usr/local/bin/opencode"
-# host-side sanity: the staged binary must at least report its version
-"$OVERLAY/usr/local/bin/opencode" --version >/dev/null || \
-  { echo "opencode --version failed on staged binary" >&2; exit 1; }
+install -Dm755 "$OC_TMP/opencode" "$OVERLAY/usr/local/lib/opencode/opencode"
 rm -rf "$OC_TMP"
+# Upstream's build needs AVX2 and dies with SIGILL and a bun.report URL
+# without it. Its -baseline build still SIGILLs on qemu64 and adds ~150MB,
+# so instead say plainly why opencode can't run on this CPU.
+cat > "$OVERLAY/usr/local/bin/opencode" <<'EOF_OC'
+#!/bin/sh
+if ! grep -qw avx2 /proc/cpuinfo 2>/dev/null; then
+  echo "opencode needs a CPU with AVX2, and this one doesn't have it." >&2
+  exit 1
+fi
+exec /usr/local/lib/opencode/opencode "$@"
+EOF_OC
+chmod 755 "$OVERLAY/usr/local/bin/opencode"
+# host-side sanity: the staged binary must at least report its version
+"$OVERLAY/usr/local/lib/opencode/opencode" --version >/dev/null || \
+  { echo "opencode --version failed on staged binary" >&2; exit 1; }
 
 # xwayland-satellite — no Debian package (trixie) and not on crates.io;
 # build from upstream git on the host and ship the binary. It owns :0 and
@@ -629,7 +641,7 @@ sudo chown -R root:root "$OVERLAY"
 
 PACKAGES="systemd-sysv udev dbus libpam-systemd kmod \
 linux-image-amd64 initramfs-tools systemd-resolved \
-network-manager polkitd pipewire pipewire-alsa wireplumber upower bluez \
+network-manager polkitd pkexec pipewire pipewire-alsa wireplumber upower bluez \
 libudev1 libxkbcommon0 libwayland-server0 libwayland-client0 \
 libwayland-egl1 libwayland-cursor0 libdrm2 libgbm1 libegl1 libgles2 \
 libgl1-mesa-dri libinput10 libseat1 libdisplay-info2 libpixman-1-0 \

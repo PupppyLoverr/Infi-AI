@@ -11,9 +11,8 @@ mod preview;
 use cosmos_kit::ask;
 use cosmos_kit::controls::{button, search_field, segmented_with, text_field, ButtonKind};
 use cosmos_kit::layout::{
-    grid_tile, menu_item, menu_section, menu_separator, sheet, sidebar_item, sidebar_section,
-    status_text, submenu, toolbar_button, toolbar_spacer, toolbar_title, AppWindow, ColAlign,
-    Column, Table,
+    grid_tile, menu_item, menu_separator, sheet, sidebar_item, sidebar_section, status_text,
+    submenu, toolbar_button, toolbar_spacer, toolbar_title, AppWindow, ColAlign, Column, Table,
 };
 use cosmos_kit::{icons, Icon, Kit};
 use cosmos_theme::{radius, space, text};
@@ -434,25 +433,24 @@ fn entry_menu(ui: &mut egui::Ui, e: &Entry, idx: usize, ev: &mut RowEvents) {
         ui.close();
     }
     menu_separator(ui);
-    menu_section(ui, "Ask Cosmos");
-    if ask::provider_configured() {
-        submenu(ui, Some(Icon::Sparkle), "Ask Cosmos", |ui| {
-            for a in [ask::Action::Summarize, ask::Action::Explain] {
-                if menu_item(ui, None, a.label(), None).clicked() {
-                    ev.ask = Some((a, e.path.clone()));
-                    ui.close();
-                }
-            }
-            menu_separator(ui);
-            if menu_item(ui, Some(Icon::Terminal), "Open in Agent", None).clicked() {
-                ev.agent = Some(e.path.clone());
+    submenu(ui, Some(Icon::Sparkle), "Ask Cosmos", |ui| {
+        for a in [ask::Action::Summarize, ask::Action::Explain] {
+            if menu_item(ui, None, a.label(), None).clicked() {
+                ev.ask = Some((a, e.path.clone()));
                 ui.close();
             }
-        });
-    } else if menu_item(ui, Some(Icon::Sparkle), "Set up an agent…", None).clicked() {
-        ev.onboard = true;
-        ui.close();
-    }
+        }
+        menu_separator(ui);
+        if menu_item(ui, Some(Icon::Terminal), "Open in Agent", None).clicked() {
+            ev.agent = Some(e.path.clone());
+            ui.close();
+        }
+        if !ask::provider_configured() && menu_item(ui, None, "Set up an agent…", None).clicked()
+        {
+            ev.onboard = true;
+            ui.close();
+        }
+    });
     menu_separator(ui);
     if menu_item(ui, Some(Icon::Trash), "Move to Trash", Some("Del")).clicked() {
         ev.trash = Some(e.path.clone());

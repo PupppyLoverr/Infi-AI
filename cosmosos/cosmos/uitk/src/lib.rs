@@ -70,6 +70,59 @@ const TEXT_MIMES: [&str; 4] = [
     "STRING",
 ];
 
+/// Wake the event loop when another thread calls `ctx.request_repaint()`
+/// (e.g. a pty reader), so apps never need to poll for background work.
+/// Delayed requests are already scheduled through `repaint_delay`.
+/// Let the window show through: frames start from `fill` (premultiplied)
+/// instead of the opaque window colour. Call every frame it should apply.
+pub fn set_clear_color(ctx: &egui::Context, fill: egui::Color32) {
+    ctx.data_mut(|d| d.insert_temp(clear_id(), fill));
+}
+
+fn clear_id() -> egui::Id {
+    egui::Id::new("cosmos-uitk-clear")
+}
+
+fn clear_color(ctx: &egui::Context) -> egui::Color32 {
+    ctx.data(|d| d.get_temp(clear_id()))
+        .unwrap_or_else(|| ctx.global_style().visuals.window_fill())
+}
+
+/// Poll config.json's mtime so an idle window repaints as soon as the
+/// theme or accent changes, not at its next input or 30 s wake-up.
+fn watch_config(handle: &LoopHandle<'static, UiState>) -> Result<()> {
+    const EVERY: Duration = Duration::from_millis(500);
+    handle
+        .insert_source(
+            calloop::timer::Timer::from_duration(EVERY),
+            |_, _, state: &mut UiState| {
+                if theme::config_mtime() != state.cfg_mtime {
+                    state.dirty = true;
+                }
+                calloop::timer::TimeoutAction::ToDuration(EVERY)
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("config watch: {e}"))?;
+    Ok(())
+}
+
+fn install_waker<S: 'static>(
+    handle: &LoopHandle<'static, S>,
+    ctx: &egui::Context,
+    on_wake: fn(&mut S),
+) -> Result<()> {
+    let (ping, source) = calloop::ping::make_ping().context("wake ping")?;
+    handle
+        .insert_source(source, move |_, _, state| on_wake(state))
+        .map_err(|e| anyhow::anyhow!("wake source: {e}"))?;
+    ctx.set_request_repaint_callback(move |info| {
+        if info.delay.is_zero() {
+            ping.ping();
+        }
+    });
+    Ok(())
+}
+
 /// Run a Cosmos app: one window, `app` paints its egui UI each frame.
 pub fn run(
     title: &str,
@@ -113,6 +166,7 @@ pub fn run(
     window.commit();
 
     let ctx = egui::Context::default();
+    install_waker(&handle, &ctx, |state: &mut UiState| state.dirty = true)?;
     fonts::install(&ctx);
     theme::apply(&ctx, theme::dark_from_config());
 
@@ -127,6 +181,7 @@ pub fn run(
             }
         })
         .map_err(|e| anyhow::anyhow!("paste channel: {e}"))?;
+    watch_config(&handle)?;
 
     let mut state = UiState {
         registry_state: RegistryState::new(&globals),
@@ -273,7 +328,7 @@ impl UiState {
             }
         }
         let prims = self.ctx.tessellate(out.shapes, out.pixels_per_point);
-        let bg = self.ctx.global_style().visuals.window_fill();
+        let bg = clear_color(&self.ctx);
         self.paint(&prims, [bg.r(), bg.g(), bg.b(), bg.a()], qh);
         for id in &out.textures_delta.free {
             self.painter.free_texture(*id);
@@ -947,3 +1002,46 @@ impl Dispatch2<WpFractionalScaleV1, UiState> for ScaleData {
     }
 }
 smithay_client_toolkit::delegate_registry!(UiState);
+
+#[cfg(test)]
+mod waker_tests {
+    use super::*;
+
+    #[test]
+    fn repaint_from_another_thread_wakes_the_loop() {
+        let mut event_loop: EventLoop<bool> = EventLoop::try_new().unwrap();
+        let ctx = egui::Context::default();
+        install_waker(&event_loop.handle(), &ctx, |woken| *woken = true).unwrap();
+        let remote = ctx.clone();
+        std::thread::spawn(move || remote.request_repaint())
+            .join()
+            .unwrap();
+        let mut woken = false;
+        event_loop
+            .dispatch(Duration::from_secs(2), &mut woken)
+            .unwrap();
+        assert!(woken);
+    }
+
+    #[test]
+    fn clear_defaults_to_window_fill_until_overridden() {
+        let ctx = egui::Context::default();
+        assert_eq!(clear_color(&ctx), ctx.global_style().visuals.window_fill());
+        let glass = egui::Color32::from_rgba_unmultiplied(28, 23, 48, 235);
+        set_clear_color(&ctx, glass);
+        assert_eq!(clear_color(&ctx), glass);
+    }
+
+    #[test]
+    fn delayed_repaint_does_not_wake_the_loop() {
+        let mut event_loop: EventLoop<bool> = EventLoop::try_new().unwrap();
+        let ctx = egui::Context::default();
+        install_waker(&event_loop.handle(), &ctx, |woken| *woken = true).unwrap();
+        ctx.request_repaint_after(Duration::from_millis(500));
+        let mut woken = false;
+        event_loop
+            .dispatch(Duration::from_millis(50), &mut woken)
+            .unwrap();
+        assert!(!woken);
+    }
+}
