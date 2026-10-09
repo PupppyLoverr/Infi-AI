@@ -8,6 +8,7 @@ use egui::Color32;
 
 pub mod controls;
 pub mod icons;
+pub mod layout;
 
 pub use icons::Icon;
 
