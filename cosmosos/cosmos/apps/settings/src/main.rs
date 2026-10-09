@@ -68,9 +68,7 @@ fn overlay_compositor_scale(c: &mut Cfg) {
 
 fn load() -> Cfg {
     let mut c = Cfg::default();
-    let Ok(text) = std::fs::read_to_string(config_path()) else {
-        return c;
-    };
+    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
     for line in text.lines() {
         let line = line.trim();
         if line.starts_with('#') {
