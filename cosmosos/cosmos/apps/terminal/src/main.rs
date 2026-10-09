@@ -6,7 +6,7 @@
 //! `man` all work inside it.
 
 use std::io::{Read, Write};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, OnceLock};
 
 use cosmos_kit::controls::{button, ButtonKind};
 use cosmos_kit::layout::{
@@ -35,6 +35,8 @@ struct Term {
     cell_wh: (f32, f32),
     /// Currently-held mouse button code while mouse reporting is on.
     mouse_down: Option<u8>,
+    /// Set on the first frame; the pty reader uses it to wake the UI.
+    waker: Arc<OnceLock<egui::Context>>,
 }
 
 impl Term {
@@ -83,6 +85,8 @@ impl Term {
         let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
 
         let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        let waker = Arc::new(OnceLock::<egui::Context>::new());
+        let reader_waker = waker.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 8192];
             loop {
@@ -91,6 +95,9 @@ impl Term {
                     Ok(n) => {
                         if tx.send(buf[..n].to_vec()).is_err() {
                             break;
+                        }
+                        if let Some(ctx) = reader_waker.get() {
+                            ctx.request_repaint();
                         }
                     }
                 }
@@ -109,6 +116,7 @@ impl Term {
             origin: egui::Pos2::ZERO,
             cell_wh: (1.0, 1.0),
             mouse_down: None,
+            waker,
         })
     }
 
@@ -272,14 +280,11 @@ fn main() {
         if !term.dead {
             term.send_input(ui);
         }
+        term.waker.get_or_init(|| ui.ctx().clone());
         draw(ui, &mut term);
-        // New output → paint now; otherwise poll at ~60fps while idle so the
-        // reader channel is drained promptly when output starts.
+        // Idle frames cost nothing: the reader thread wakes us on output.
         if got {
             ui.ctx().request_repaint();
-        } else {
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_millis(16));
         }
     }) {
         tracing::error!("cosmos-terminal fatal: {e}");
@@ -305,6 +310,7 @@ impl Term {
             origin: egui::Pos2::ZERO,
             cell_wh: (1.0, 1.0),
             mouse_down: None,
+            waker: Default::default(),
         }
     }
 }

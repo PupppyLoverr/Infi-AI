@@ -70,6 +70,26 @@ const TEXT_MIMES: [&str; 4] = [
     "STRING",
 ];
 
+/// Wake the event loop when another thread calls `ctx.request_repaint()`
+/// (e.g. a pty reader), so apps never need to poll for background work.
+/// Delayed requests are already scheduled through `repaint_delay`.
+fn install_waker<S: 'static>(
+    handle: &LoopHandle<'static, S>,
+    ctx: &egui::Context,
+    on_wake: fn(&mut S),
+) -> Result<()> {
+    let (ping, source) = calloop::ping::make_ping().context("wake ping")?;
+    handle
+        .insert_source(source, move |_, _, state| on_wake(state))
+        .map_err(|e| anyhow::anyhow!("wake source: {e}"))?;
+    ctx.set_request_repaint_callback(move |info| {
+        if info.delay.is_zero() {
+            ping.ping();
+        }
+    });
+    Ok(())
+}
+
 /// Run a Cosmos app: one window, `app` paints its egui UI each frame.
 pub fn run(
     title: &str,
@@ -113,6 +133,7 @@ pub fn run(
     window.commit();
 
     let ctx = egui::Context::default();
+    install_waker(&handle, &ctx, |state: &mut UiState| state.dirty = true)?;
     fonts::install(&ctx);
     theme::apply(&ctx, theme::dark_from_config());
 
@@ -947,3 +968,37 @@ impl Dispatch2<WpFractionalScaleV1, UiState> for ScaleData {
     }
 }
 smithay_client_toolkit::delegate_registry!(UiState);
+
+#[cfg(test)]
+mod waker_tests {
+    use super::*;
+
+    #[test]
+    fn repaint_from_another_thread_wakes_the_loop() {
+        let mut event_loop: EventLoop<bool> = EventLoop::try_new().unwrap();
+        let ctx = egui::Context::default();
+        install_waker(&event_loop.handle(), &ctx, |woken| *woken = true).unwrap();
+        let remote = ctx.clone();
+        std::thread::spawn(move || remote.request_repaint())
+            .join()
+            .unwrap();
+        let mut woken = false;
+        event_loop
+            .dispatch(Duration::from_secs(2), &mut woken)
+            .unwrap();
+        assert!(woken);
+    }
+
+    #[test]
+    fn delayed_repaint_does_not_wake_the_loop() {
+        let mut event_loop: EventLoop<bool> = EventLoop::try_new().unwrap();
+        let ctx = egui::Context::default();
+        install_waker(&event_loop.handle(), &ctx, |woken| *woken = true).unwrap();
+        ctx.request_repaint_after(Duration::from_millis(500));
+        let mut woken = false;
+        event_loop
+            .dispatch(Duration::from_millis(50), &mut woken)
+            .unwrap();
+        assert!(!woken);
+    }
+}
