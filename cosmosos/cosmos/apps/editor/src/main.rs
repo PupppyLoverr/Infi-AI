@@ -354,6 +354,7 @@ fn draw(ui: &mut egui::Ui, ed: &mut Editor) {
                             ui.fonts_mut(|f| f.layout_job(job))
                         };
                         let before = ed.text.len();
+                        let kept = ed.selection;
                         let out = egui::TextEdit::multiline(&mut ed.text)
                             .font(egui::FontId::monospace(CODE_PT))
                             .frame(egui::Frame::NONE)
@@ -368,10 +369,8 @@ fn draw(ui: &mut egui::Ui, ed: &mut Editor) {
                         }
                         if let Some(r) = out.cursor_range {
                             ed.cursor = line_col(&ed.text, r.primary.index.into());
-                            let (a, b): (usize, usize) =
-                                (r.primary.index.into(), r.secondary.index.into());
-                            ed.selection = (a != b).then(|| (a.min(b), a.max(b)));
                         }
+                        ed.selection = selection_after(ui, &out, kept);
                         out.response.context_menu(|ui| text_menu(ui, ed));
                         let painter = ui.painter();
                         let mut n = 1;
@@ -465,6 +464,36 @@ fn draw(ui: &mut egui::Ui, ed: &mut Editor) {
 
 /// Right-click menu in the text area: Copy, then the Ask Cosmos group
 /// for the current selection.
+/// The sorted selection after this frame. egui collapses a TextEdit
+/// selection on any press, so a right-click restores the previous one
+/// for the context menu to act on.
+fn selection_after(
+    ui: &egui::Ui,
+    out: &egui::text_edit::TextEditOutput,
+    kept: Option<(usize, usize)>,
+) -> Option<(usize, usize)> {
+    let right_press = out.response.hovered()
+        && ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Secondary));
+    if let (true, Some((a, b))) = (right_press, kept) {
+        let mut state = out.state.clone();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(a),
+                egui::text::CCursor::new(b),
+            )));
+        state.store(ui.ctx(), out.response.id);
+        return kept;
+    }
+    match out.cursor_range {
+        Some(r) => {
+            let (a, b): (usize, usize) = (r.primary.index.into(), r.secondary.index.into());
+            (a != b).then(|| (a.min(b), a.max(b)))
+        }
+        None => kept,
+    }
+}
+
 fn text_menu(ui: &mut egui::Ui, ed: &mut Editor) {
     let Some(range) = ed.selection else {
         menu_section(ui, "Ask Cosmos");
@@ -478,16 +507,6 @@ fn text_menu(ui: &mut egui::Ui, ed: &mut Editor) {
         ui.close();
     }
     menu_separator(ui);
-    menu_section(ui, "Ask Cosmos");
-    if !ask::provider_configured() {
-        if menu_item(ui, Some(Icon::Sparkle), "Set up an agent…", None).clicked() {
-            if let Err(e) = ask::open_onboarding() {
-                ed.status = format!("can't open Agents: {e}");
-            }
-            ui.close();
-        }
-        return;
-    }
     submenu(ui, Some(Icon::Sparkle), "Ask Cosmos", |ui| {
         for a in [
             ask::Action::Summarize,
@@ -510,6 +529,13 @@ fn text_menu(ui: &mut egui::Ui, ed: &mut Editor) {
             }
             ui.close();
         }
+        if !ask::provider_configured() && menu_item(ui, None, "Set up an agent…", None).clicked()
+        {
+            if let Err(e) = ask::open_onboarding() {
+                ed.status = format!("can't open Agents: {e}");
+            }
+            ui.close();
+        }
     });
 }
 
@@ -522,5 +548,63 @@ mod ask_tests {
         let s = "héllo wörld";
         assert_eq!(char_slice(s, (6, 11)), "wörld");
         assert_eq!(byte_at(s, 99), s.len());
+    }
+
+    fn frame(
+        ctx: &egui::Context,
+        text: &mut String,
+        kept: Option<(usize, usize)>,
+        events: Vec<egui::Event>,
+    ) -> Option<(usize, usize)> {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(400.0, 200.0),
+            )),
+            events,
+            ..Default::default()
+        };
+        let mut sel = None;
+        let mut out = ctx.run_ui(input, |ui| {
+            let out = egui::TextEdit::multiline(text)
+                .id(egui::Id::new("t"))
+                .desired_width(f32::INFINITY)
+                .show(ui);
+            sel = Some(selection_after(ui, &out, kept));
+        });
+        out.textures_delta.clear();
+        sel.flatten()
+    }
+
+    fn press(button: egui::PointerButton, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos: egui::pos2(30.0, 10.0),
+            button,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn right_click_keeps_the_selection_for_the_menu() {
+        let ctx = egui::Context::default();
+        let mut text = "hello world, this is a test".to_string();
+        frame(&ctx, &mut text, None, vec![]);
+        let mut state = egui::text_edit::TextEditState::load(&ctx, egui::Id::new("t")).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(0),
+                egui::text::CCursor::new(11),
+            )));
+        state.store(&ctx, egui::Id::new("t"));
+        let hover = vec![egui::Event::PointerMoved(egui::pos2(30.0, 10.0))];
+        let kept = frame(&ctx, &mut text, Some((0, 11)), hover);
+        assert_eq!(kept, Some((0, 11)));
+        let right = vec![press(egui::PointerButton::Secondary, true)];
+        let after = frame(&ctx, &mut text, kept, right);
+        let up = vec![press(egui::PointerButton::Secondary, false)];
+        let later = frame(&ctx, &mut text, after, up);
+        assert_eq!((after, later), (Some((0, 11)), Some((0, 11))));
     }
 }
