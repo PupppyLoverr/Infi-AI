@@ -59,10 +59,12 @@ mkdir -p "$WORK"
 KVM=(-enable-kvm)
 [ -e /dev/kvm ] || { echo "note: /dev/kvm missing — TCG emulation"; KVM=(); }
 
-# default qemu64 lacks AVX — some binaries (e.g. Bun-compiled opencode)
-# misbehave on it. CPU_MODEL=host exposes the real CPU feature set.
+# Under KVM pass the host CPU through, so guests see the same feature set
+# (AVX2 etc.) as real hardware. qemu64 lacks it, and Bun-compiled opencode
+# crashes there. CPU_MODEL overrides, e.g. CPU_MODEL=qemu64 to test old CPUs.
+CPU_MODEL="${CPU_MODEL:-$([ ${#KVM[@]} -gt 0 ] && echo host)}"
 CPU=()
-[ -n "${CPU_MODEL:-}" ] && CPU=(-cpu "$CPU_MODEL")
+[ -n "$CPU_MODEL" ] && CPU=(-cpu "$CPU_MODEL")
 
 # GUEST_MEM overrides the 1G spec memory — e.g. opencode's Bun runtime wants
 # ~1G by itself, so drive tests that exercise it should use GUEST_MEM=2G.
