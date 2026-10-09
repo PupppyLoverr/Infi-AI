@@ -58,12 +58,19 @@ boot. Raw logs: `v4-blockers.txt` (first A round) and `v4-retest.txt` (final rou
 | Zero markers | PASS | `grep -rnE "TODO\|FIXME\|todo!\|unimplemented!\|placeholder\|mock" cosmosos/{cosmos,image,tests,provision}` = 0 outside `target/` (#158, 36b37d4) |
 | Self-review top 5 | PASS | #159/#160/#161: Files name column, disabled buttons, Monitor stacked cards, Agents Time/Detail, dark control fills; all re-shot |
 
-## Not shot this round
+## Late captures (compositor IPC screenshots, main 36b37d4 @1920×1080)
 
-`v4-01-desktop-dark.png`, `v4-02-desktop-light.png`, `v4-10-start-glass.png`,
-`v4-11-control-centre.png` are not in `evidence/`. Glass on the menubar and
-dock is visible in every shot above; Start and Control Centre glass have
-no v4 capture.
+| Shot | Verdict | Proof |
+|---|---|---|
+| v4-01-desktop-dark | PASS | Dark menubar+dock+wallpaper; Files window open showing "0 items, 7 hidden" footer |
+| v4-02-desktop-light | PASS | Shell + Files window fully light after live `set_config appearance=light`; "Light" selected in CC |
+| v4-10-start-glass | PASS | Start open via `toggle_launcher`: glass panel over wallpaper — search bar, PINNED apps, widgets, Log out |
+| v4-11-control-centre | PASS | CC open from menubar clock: Network/Volume/Theme/Focus card + Settings/Lock/Log out row, glass over wallpaper |
+
+All captured with the compositor IPC `{"op":"screenshot"}` op (not monitor
+screendump). Note: on the first light flip, Files repainted its title bar
+immediately but the body took ~3-5 s to re-render light — cosmetic lag only,
+verified light on the next frame.
 
 ## Open
 
