@@ -52,7 +52,36 @@ impl<'a> AppWindow<'a> {
         let kit = Kit::get(ui.ctx());
         let full = ui.max_rect();
         let p = ui.painter().clone();
-        p.rect_filled(full, 0.0, c32(kit.p.window));
+        // Content stays opaque so windows behind never ghost through; only
+        // the sidebar column is translucent material over the wallpaper.
+        let opaque = c32(kit.p.window).to_opaque();
+        if self.sidebar.is_some() {
+            let tb_h = if self.toolbar.is_some() {
+                TOOLBAR_H
+            } else {
+                0.0
+            };
+            let st_h = if self.status.is_some() { STATUS_H } else { 0.0 };
+            let (t, b) = (full.top() + tb_h, full.bottom() - st_h);
+            let split = full.left() + SIDEBAR_W;
+            p.rect_filled(
+                Rect::from_min_max(full.min, pos2(full.right(), t)),
+                0.0,
+                opaque,
+            );
+            p.rect_filled(
+                Rect::from_min_max(pos2(full.left(), b), full.max),
+                0.0,
+                opaque,
+            );
+            p.rect_filled(
+                Rect::from_min_max(pos2(split, t), pos2(full.right(), b)),
+                0.0,
+                opaque,
+            );
+        } else {
+            p.rect_filled(full, 0.0, opaque);
+        }
         let mut top = full.top();
         let mut bottom = full.bottom();
         if let Some(tb) = self.toolbar {
