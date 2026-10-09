@@ -335,6 +335,10 @@ fn dispatch_request<BackendData: Backend>(
                 }),
             }
         }
+        Request::Lock => {
+            state.spawn_locker();
+            None
+        }
         Request::QuitSession => {
             info!("ipc: quit session requested");
             state.ipc_broadcast(&Event::SessionEnding);

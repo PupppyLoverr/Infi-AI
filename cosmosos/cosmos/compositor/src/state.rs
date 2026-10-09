@@ -1217,6 +1217,78 @@ pub fn take_presentation_feedback(
     output_presentation_feedback
 }
 
+impl<BackendData: Backend + 'static> AnvilState<BackendData> {
+    /// Spawn `cosmos-lock` from the compositor, so it runs in the
+    /// session's PAM context. While locked with a dead locker this is
+    /// the recovery path: the replacement takes over the held lock.
+    pub fn spawn_locker(&mut self) {
+        if self
+            .cosmos
+            .lock_owner
+            .as_ref()
+            .is_some_and(|l| l.is_alive())
+        {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if self
+            .cosmos
+            .locker_spawned_at
+            .is_some_and(|t| now.duration_since(t) < Duration::from_secs(1))
+        {
+            return;
+        }
+        self.cosmos.locker_spawned_at = Some(now);
+        let mut cmd = std::process::Command::new("cosmos-lock");
+        if let Some(socket) = &self.socket_name {
+            cmd.env("WAYLAND_DISPLAY", socket);
+        }
+        match cmd.spawn() {
+            Ok(mut child) => {
+                info!(pid = child.id(), "cosmos: locker spawned");
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+            }
+            Err(e) => warn!("cosmos: cosmos-lock spawn failed: {e}"),
+        }
+    }
+
+    /// While locked, poll the lock owner: if the locker died the session
+    /// stays locked (wallpaper only) and a fresh locker is spawned.
+    fn arm_lock_watchdog(&mut self) {
+        if self.cosmos.lock_watchdog {
+            return;
+        }
+        self.cosmos.lock_watchdog = true;
+        let period = Duration::from_millis(500);
+        let timer = calloop::timer::Timer::from_duration(period);
+        let armed = self.handle.insert_source(timer, move |_, _, state| {
+            if !state.cosmos.session_locked {
+                state.cosmos.lock_watchdog = false;
+                return calloop::timer::TimeoutAction::Drop;
+            }
+            if !state
+                .cosmos
+                .lock_owner
+                .as_ref()
+                .is_some_and(|l| l.is_alive())
+            {
+                if state.cosmos.lock_owner.take().is_some() {
+                    warn!("cosmos: locker died while locked — respawning");
+                }
+                state.cosmos.lock_surfaces.retain(|(s, _)| s.alive());
+                state.spawn_locker();
+            }
+            calloop::timer::TimeoutAction::ToDuration(period)
+        });
+        if let Err(e) = armed {
+            self.cosmos.lock_watchdog = false;
+            warn!("cosmos: lock watchdog not armed: {e}");
+        }
+    }
+}
+
 // ---------------------------------------------------------------------
 // ext-session-lock — cosmos-lock draws the unlock card; while locked the
 // render path only composites lock surfaces over the wallpaper, and
@@ -1227,7 +1299,24 @@ impl<BackendData: Backend> SessionLockHandler for AnvilState<BackendData> {
     }
 
     fn lock(&mut self, confirmation: SessionLocker) {
-        tracing::info!("cosmos: session locked");
+        if self.cosmos.session_locked
+            && self
+                .cosmos
+                .lock_owner
+                .as_ref()
+                .is_some_and(|l| l.is_alive())
+        {
+            // Dropping the locker sends `finished` to the newcomer.
+            tracing::info!("cosmos: lock refused — a live locker already holds it");
+            return;
+        }
+        let takeover = self.cosmos.session_locked;
+        tracing::info!(takeover, "cosmos: session locked");
+        if takeover {
+            // Plain-text marker (no structured field) for journal greps.
+            tracing::info!("cosmos: lock taken over by respawned locker");
+        }
+        self.cosmos.lock_owner = Some(confirmation.ext_session_lock().clone());
         self.cosmos.session_locked = true;
         self.cosmos.lock_surfaces.clear();
         let keyboard = self.seat.get_keyboard().unwrap();
@@ -1235,10 +1324,13 @@ impl<BackendData: Backend> SessionLockHandler for AnvilState<BackendData> {
         // Every queued frame from here on composites no client content,
         // so confirming immediately cannot leak a stale client frame.
         confirmation.lock();
+        self.arm_lock_watchdog();
     }
 
     fn unlock(&mut self) {
+        tracing::info!("cosmos: session unlocked");
         self.cosmos.session_locked = false;
+        self.cosmos.lock_owner = None;
         self.cosmos.lock_surfaces.clear();
         self.update_keyboard_focus(
             self.pointer.current_location(),

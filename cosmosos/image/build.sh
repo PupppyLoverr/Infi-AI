@@ -325,6 +325,21 @@ Exec=cosmos-session
 Type=Application
 DesktopNames=cosmos
 EOF
+# greetd's session phase runs pam_systemd explicitly so logind registers
+# the wayland session (XDG_SESSION_TYPE/CLASS come from the greeter's
+# StartSession env) — loginctl list-sessions/lock-session depend on it.
+cat > "$OVERLAY/etc/pam.d/greetd" <<'EOF'
+#%PAM-1.0
+auth     include  common-auth
+account  include  common-account
+password include  common-password
+session  required pam_loginuid.so
+session  required pam_limits.so
+session  required pam_env.so readenv=1
+session  required pam_env.so readenv=1 envfile=/etc/default/locale
+session  required pam_unix.so
+session  optional pam_systemd.so
+EOF
 # cosmos-lock authenticates via pam::Client("cosmos-lock") — without this
 # service file every unlock attempt fails before pam_unix runs.
 cat > "$OVERLAY/etc/pam.d/cosmos-lock" <<'EOF'
