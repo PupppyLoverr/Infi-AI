@@ -64,8 +64,9 @@ impl Painter {
     }
 
     /// Paint clipped primitives into `buf` (ARGB8888, packed, `w*h*4`),
-    /// over an opaque `clear` colour — a committed frame can never be
-    /// transparent, even when `prims` is empty.
+    /// over the `clear` colour (opaque unless the app asked for a
+    /// translucent body), so a frame is never blank even when `prims`
+    /// is empty.
     pub fn paint(
         &mut self,
         buf: &mut [u8],

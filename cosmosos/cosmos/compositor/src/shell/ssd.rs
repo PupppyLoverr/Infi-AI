@@ -250,6 +250,7 @@ impl WindowShadow {
         let x1 = x0 + w as f32;
         let y1 = y0 + h as f32;
         let corner = 10.0f32;
+        let top = SHADOW_MARGIN as f32;
         let sigma2 = 2.0 * SHADOW_SIGMA * SHADOW_SIGMA;
         for y in 0..sh as i32 {
             for x in 0..sw as i32 {
@@ -260,7 +261,15 @@ impl WindowShadow {
                 let dy = (y0 + corner - py).max(py - (y1 - corner)).max(0.0);
                 let edge = (dx * dx + dy * dy).sqrt() - corner;
                 let d = edge.max(0.0);
-                let a = SHADOW_ALPHA * (-d * d / sigma2).exp();
+                let wy = (top + corner - py)
+                    .max(py - (top + h as f32 - corner))
+                    .max(0.0);
+                let under_window = (dx * dx + wy * wy).sqrt() < corner;
+                let a = if under_window {
+                    0.0
+                } else {
+                    SHADOW_ALPHA * (-d * d / sigma2).exp()
+                };
                 let i = ((y * sw as i32 + x) * 4) as usize;
                 // Premultiplied black — RGB 0, alpha = falloff.
                 self.pixels[i + 3] = (a * 255.0) as u8;
@@ -882,5 +891,25 @@ impl WindowElement {
         } else {
             0
         }
+    }
+}
+
+#[cfg(test)]
+mod shadow_tests {
+    use super::*;
+
+    fn alpha(s: &WindowShadow, x: i32, y: i32) -> u8 {
+        s.pixels[((y * s.size.0 as i32 + x) * 4 + 3) as usize]
+    }
+
+    #[test]
+    fn no_shadow_under_the_window_itself() {
+        let mut s = WindowShadow::default();
+        s.repaint(200, 120);
+        let (m, w, h) = (SHADOW_MARGIN, 200, 120);
+        assert_eq!(alpha(&s, m + w / 2, m + h / 2), 0);
+        assert_eq!(alpha(&s, m + 12, m + 12), 0);
+        assert!(alpha(&s, m + w / 2, m + h + SHADOW_DY / 2) > 0);
+        assert!(alpha(&s, m - 2, m + h / 2) > 0);
     }
 }

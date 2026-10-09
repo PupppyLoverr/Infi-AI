@@ -104,11 +104,9 @@ impl<'a> AppWindow<'a> {
                 0.0,
                 opaque,
             );
-            p.rect_filled(
-                Rect::from_min_max(pos2(full.left(), t), pos2(full.right(), b)),
-                0.0,
-                fill,
-            );
+            // Painting `fill` over uitk's opaque base would flatten it, so
+            // the frame starts from `fill` instead.
+            cosmos_uitk::set_clear_color(ui.ctx(), fill);
         } else {
             p.rect_filled(full, 0.0, opaque);
         }
