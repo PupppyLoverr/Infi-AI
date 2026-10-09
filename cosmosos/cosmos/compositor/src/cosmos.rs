@@ -1678,6 +1678,15 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             })
     }
 
+    /// The window the menubar names: the focused one, or the frontmost
+    /// while a shell popover (island, Start) holds keyboard focus.
+    fn app_window(&self) -> Option<WindowElement> {
+        match self.seat.get_keyboard().and_then(|k| k.current_focus()) {
+            Some(KeyboardFocusTarget::LayerSurface(_)) => self.space.elements().last().cloned(),
+            _ => self.focused_window(),
+        }
+    }
+
     /// Build the IPC `Windows` event payload.
     pub fn ipc_windows(&self) -> Vec<cosmos_ipc::WindowInfo> {
         self.all_windows()
@@ -1702,7 +1711,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             meta.map(|m| m.parked_loc).unwrap_or_default()
         };
         let geo = w.geometry();
-        let focused = self.focused_window().map(|f| f == *w).unwrap_or(false);
+        let focused = self.app_window().map(|f| f == *w).unwrap_or(false);
         let states = toplevel
             .map(|t| t.current_state().states)
             .unwrap_or_default();
