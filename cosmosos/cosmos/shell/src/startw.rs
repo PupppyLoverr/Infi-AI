@@ -202,9 +202,9 @@ use tiny_skia::{
     SpreadMode, Stroke, Transform,
 };
 
-pub const TODO_ROWS: usize = 4;
-const TODO_TOP: f32 = 36.0;
-const TODO_ROW: f32 = 25.0;
+pub const TASK_ROWS: usize = 4;
+const TASK_TOP: f32 = 36.0;
+const TASK_ROW: f32 = 25.0;
 const VOL_X: f32 = 44.0;
 
 pub struct Palette {
@@ -252,12 +252,12 @@ fn ring(pm: &mut PixmapMut<'_>, cx: f32, cy: f32, r: f32, frac: f32, color: Colo
 /// Index of the todo row under `py` (relative to the todo card), counting
 /// the in-progress entry row when one is open.
 fn todo_row(py: f32, editing: bool, n: usize) -> Option<usize> {
-    let row = ((py - TODO_TOP) / TODO_ROW).floor();
+    let row = ((py - TASK_TOP) / TASK_ROW).floor();
     if row < 0.0 {
         return None;
     }
     let row = row as usize;
-    let shown = n.min(TODO_ROWS - usize::from(editing));
+    let shown = n.min(TASK_ROWS - usize::from(editing));
     let row = row.checked_sub(usize::from(editing))?;
     (row < shown).then_some(row)
 }
@@ -372,9 +372,9 @@ pub fn draw_board(
     );
     draw::fill_round_rect(pm, tx + tw - 34.0, ty + 8.0, 22.0, 22.0, 6.0, p.track);
     draw::text_centered(pm, tx + tw - 34.0, ty + 9.0, 22.0, 18.0, 14.0, "+", p.fg);
-    let mut row_y = ty + TODO_TOP;
+    let mut row_y = ty + TASK_TOP;
     if let Some(buf) = edit {
-        draw::fill_round_rect(pm, tx + 8.0, row_y, tw - 16.0, TODO_ROW - 3.0, 6.0, p.track);
+        draw::fill_round_rect(pm, tx + 8.0, row_y, tw - 16.0, TASK_ROW - 3.0, 6.0, p.track);
         let shown = if buf.is_empty() {
             "New task, Enter to add"
         } else {
@@ -399,7 +399,7 @@ pub fn draw_board(
                 draw::text_width(12.0, buf).min(tw - 32.0)
             };
         draw::fill_rect(pm, caret, row_y + 4.0, 1.0, 14.0, p.accent);
-        row_y += TODO_ROW;
+        row_y += TASK_ROW;
     } else if todos.is_empty() {
         draw::text(
             pm,
@@ -412,7 +412,7 @@ pub fn draw_board(
             p.dim,
         );
     }
-    for t in todos.iter().take(TODO_ROWS - usize::from(edit.is_some())) {
+    for t in todos.iter().take(TASK_ROWS - usize::from(edit.is_some())) {
         draw::fill_round_rect(
             pm,
             tx + 12.0,
@@ -447,7 +447,7 @@ pub fn draw_board(
             "×",
             p.dim,
         );
-        row_y += TODO_ROW;
+        row_y += TASK_ROW;
     }
 
     // Volume: the PipeWire default sink.
@@ -565,7 +565,7 @@ pub fn press(state: &mut crate::ShellState, w: f32, px: f32, py: f32) -> bool {
     let c = layout(0.0, 0.0, w);
     if inside(c.todos, px, py) {
         let (tx, ty, tw, _) = c.todos;
-        if px >= tx + tw - 38.0 && py < ty + TODO_TOP {
+        if px >= tx + tw - 38.0 && py < ty + TASK_TOP {
             state.start_todo_edit = Some(String::new());
             return false;
         }
@@ -666,10 +666,10 @@ mod tests {
         assert_eq!(c.photos.1 + c.photos.3, HEIGHT);
         assert!(inside(c.todos, 400.0, 10.0) && !inside(c.todos, 10.0, 10.0));
         assert_eq!(slide(3, 13), 2);
-        assert_eq!(todo_row(TODO_TOP + 1.0, false, 3), Some(0));
-        assert_eq!(todo_row(TODO_TOP + 1.0, true, 3), None);
-        assert_eq!(todo_row(TODO_TOP + TODO_ROW + 1.0, true, 3), Some(0));
-        assert_eq!(todo_row(TODO_TOP + 3.0 * TODO_ROW + 1.0, false, 3), None);
+        assert_eq!(todo_row(TASK_TOP + 1.0, false, 3), Some(0));
+        assert_eq!(todo_row(TASK_TOP + 1.0, true, 3), None);
+        assert_eq!(todo_row(TASK_TOP + TASK_ROW + 1.0, true, 3), Some(0));
+        assert_eq!(todo_row(TASK_TOP + 3.0 * TASK_ROW + 1.0, false, 3), None);
         assert_eq!(todo_row(5.0, false, 3), None);
     }
 
