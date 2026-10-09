@@ -555,7 +555,7 @@ fn palette(dark: bool) -> Pal {
             hair: rgba(0xFF, 0xFF, 0xFF, 0x1F),
             glyph: rgba(0xEC, 0xEC, 0xEE, 0xFF),
             fg: CtColor::rgba(0xEC, 0xEC, 0xEE, 0xFF),
-            dim: CtColor::rgba(0xB8, 0xB8, 0xBE, 0xFF),
+            dim: CtColor::rgba(0xD6, 0xD6, 0xDB, 0xFF),
         }
     } else {
         Pal {
@@ -567,7 +567,7 @@ fn palette(dark: bool) -> Pal {
             hair: rgba(0x00, 0x00, 0x00, 0x1A),
             glyph: rgba(0x18, 0x18, 0x1B, 0xFF),
             fg: CtColor::rgba(0x18, 0x18, 0x1B, 0xFF),
-            dim: CtColor::rgba(0x52, 0x52, 0x58, 0xFF),
+            dim: CtColor::rgba(0x3A, 0x3A, 0x40, 0xFF),
         }
     }
 }
@@ -629,8 +629,8 @@ fn small_tile(pm: &mut PixmapMut<'_>, r: Rect, on: bool, key: &str, title: &str,
         r.0 + 4.0,
         r.1 + 62.0,
         r.2 - 8.0,
-        15.0,
-        11.0,
+        16.0,
+        12.0,
         if on { "On" } else { "Off" },
         p.dim,
     );

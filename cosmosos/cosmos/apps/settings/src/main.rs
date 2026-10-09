@@ -60,15 +60,39 @@ fn config_path() -> PathBuf {
         .join("cosmos/config.toml")
 }
 
-/// The compositor owns the effective scale (it resolves the automatic
-/// default per display), so show what it applied rather than config.toml.
-fn overlay_compositor_scale(c: &mut Cfg) {
+/// The compositor owns the live config (it resolves the automatic scale
+/// per display, and Control Centre writes through it), so show what it
+/// applied rather than config.toml.
+fn overlay_compositor_config(c: &mut Cfg) {
     let v = cosmos_uitk::theme::compositor_config();
+    let flag = |k: &str| v.get(k).and_then(|x| x.as_bool());
+    let text = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_string);
     if let Some(s) = v.get("scale").and_then(|s| s.as_f64()) {
         c.scale = s;
     }
-    if let Some(a) = v.get("scale_auto").and_then(|a| a.as_bool()) {
+    if let Some(a) = flag("scale_auto") {
         c.scale_auto = a;
+    }
+    if let Some(on) = flag("reduce_motion") {
+        c.reduce_motion = on;
+    }
+    if let Some(on) = flag("lite_mode") {
+        c.lite_mode = on;
+    }
+    if let Some(on) = flag("desktop_widgets") {
+        c.desktop_widgets = on;
+    }
+    if let Some(a) = text("appearance") {
+        c.appearance = a;
+    }
+    if let Some(a) = text("dock_position") {
+        c.dock_position = a;
+    }
+    if let Some(a) = text("accent") {
+        c.accent = a;
+    }
+    if let Some(a) = text("wallpaper") {
+        c.wallpaper = a;
     }
 }
 
@@ -99,7 +123,7 @@ fn load() -> Cfg {
             _ => {}
         }
     }
-    overlay_compositor_scale(&mut c);
+    overlay_compositor_config(&mut c);
     c
 }
 
@@ -381,7 +405,7 @@ fn appearance(ui: &mut egui::Ui, kit: &Kit, app: &mut App) {
     if let Some(t) = app.scale_refresh {
         if t.elapsed() > std::time::Duration::from_millis(600) {
             app.scale_refresh = None;
-            overlay_compositor_scale(&mut app.cfg);
+            overlay_compositor_config(&mut app.cfg);
         } else {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
