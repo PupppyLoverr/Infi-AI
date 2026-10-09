@@ -17,11 +17,17 @@ exec >"$OUT" 2>&1
 say() { echo "$@"; echo "$@" > /dev/ttyS0 2>/dev/null || true; }
 XRD=/run/user/1000
 IPC=$XRD/cosmos-ipc.sock
+# Journal since cursor $CUR with ANSI colour escapes stripped: tracing's
+# fmt layer colours field names, so `rows=0` is stored as
+# `rows\e[0m\e[2m=\e[0m0` and a plain grep for `rows=` never matches.
+jlog() {
+  journalctl -b --after-cursor="$CUR" --no-pager -o cat 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'
+}
 # Wait until `pattern` appears in the journal after cursor $CUR (max $2 s).
 await() {
   i=0
   while [ $i -lt "$2" ]; do
-    journalctl -b --after-cursor="$CUR" --no-pager -o cat 2>/dev/null | grep -q "$1" && return 0
+    jlog | grep -q "$1" && return 0
     sleep 1; i=$((i+1))
   done
   return 1
@@ -64,7 +70,7 @@ sleep 3
 OLD=$(pgrep -x cosmos-lock | head -1)
 say "killing locker pid=$OLD while locked"
 kill -9 "$OLD" 2>/dev/null
-if await "locker died while locked" 10 && await "takeover=true" 15; then
+if await "locker died while locked" 10 && await "lock taken over by respawned locker" 15; then
   NEW=$(pgrep -x cosmos-lock | head -1)
   say "PASS A2: locker died, session stayed locked, respawned locker pid=$NEW took over"
 else
@@ -80,7 +86,7 @@ WL=$(ls $XRD | grep -m1 '^wayland-[0-9]*$')
 EXPECT=$(ls -1 /home/cosmos | wc -l)
 su -l cosmos -c "WAYLAND_DISPLAY=$WL XDG_RUNTIME_DIR=$XRD cosmos-files 2>&1 | logger -t cosmos-files &"
 if await "files: listing" 20; then
-  line=$(journalctl -b --after-cursor="$CUR" --no-pager -o cat | grep "files: listing" | tail -1)
+  line=$(jlog | grep "files: listing" | tail -1)
   echo "  $line"
   rows=$(echo "$line" | sed -n 's/.*rows=\([0-9]*\).*/\1/p')
   footer=$(echo "$line" | sed -n 's/.*footer=\([0-9]*\).*/\1/p')
