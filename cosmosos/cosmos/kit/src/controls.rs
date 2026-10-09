@@ -167,13 +167,15 @@ pub fn segmented_with(
         );
         let hovered = resp.hover_pos().is_some_and(|h| seg.contains(h));
         if i == *selected {
+            // Dark: a lifted chip plus hairline, so the choice reads at a
+            // glance instead of blending into the track.
             let raised = if kit.dark {
-                kit.fill(State::Press)
+                crate::with_alpha(kit.p.text, 72)
             } else {
                 crate::c32(kit.p.raised)
             };
             p.rect_filled(seg, radius::ROW, raised);
-            if !kit.dark {
+            {
                 p.rect_stroke(
                     seg,
                     radius::ROW,

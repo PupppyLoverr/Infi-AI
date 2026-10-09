@@ -66,11 +66,11 @@ impl Kit {
     /// Neutral control fill for `state` (rest/hover/press), over any surface.
     pub fn fill(&self, state: State) -> Color32 {
         let a = match (state, self.dark) {
-            (State::Rest, true) => 18,
+            (State::Rest, true) => 28,
             (State::Rest, false) => 12,
-            (State::Hover, true) => 30,
+            (State::Hover, true) => 40,
             (State::Hover, false) => 22,
-            (State::Press, true) => 42,
+            (State::Press, true) => 56,
             (State::Press, false) => 32,
         };
         with_alpha(self.p.text, a)
