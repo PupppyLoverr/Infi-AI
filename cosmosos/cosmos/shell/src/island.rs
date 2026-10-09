@@ -401,6 +401,35 @@ fn clip_rect(i: usize) -> Rect {
     (PAD + c * (cw + gap), BODY_Y + r * (ch + gap), cw, ch)
 }
 
+/// An image clip's thumbnail centred in its card, clipped to the card's
+/// rounded corners. Thumbnails are decoded at 2× the card, so draw them
+/// at half size in logical space.
+fn paint_thumb(pm: &mut PixmapMut<'_>, thumb: &tiny_skia::Pixmap, r: Rect) {
+    let (tw, th) = (thumb.width() as f64 / 2.0, thumb.height() as f64 / 2.0);
+    let s = ((r.2 - 8.0) / tw).min((r.3 - 8.0) / th).min(1.0);
+    let (dw, dh) = (tw * s, th * s);
+    let (dx, dy) = (r.0 + (r.2 - dw) / 2.0, r.1 + (r.3 - dh) / 2.0);
+    let k = (s / 2.0) as f32;
+    let xf = draw::xf()
+        .pre_translate(dx as f32, dy as f32)
+        .pre_scale(k, k);
+    let mut clip = tiny_skia::Mask::new(pm.width(), pm.height());
+    if let (Some(clip), Some(path)) = (
+        clip.as_mut(),
+        draw::round_rect_path(dx as f32, dy as f32, dw as f32, dh as f32, 6.0),
+    ) {
+        clip.fill_path(&path, FillRule::Winding, true, draw::xf());
+        pm.draw_pixmap(
+            0,
+            0,
+            thumb.as_ref(),
+            &tiny_skia::PixmapPaint::default(),
+            xf,
+            Some(clip),
+        );
+    }
+}
+
 fn chip_rects(files: &[String]) -> Vec<Rect> {
     let (mut x, mut y) = (PAD + 8.0, BODY_Y + 8.0);
     let right = CARD_W as f64 - PAD - 8.0;
@@ -554,7 +583,8 @@ pub fn draw(state: &mut ShellState) {
     let tab = state.island_tab;
     let hover = state.island_hover;
     let rows = rows(state);
-    let clips: Vec<String> = state.clip_history.iter().take(MAX_CLIPS).cloned().collect();
+    let clips: Vec<crate::clipwatch::Clip> =
+        state.clip_history.iter().take(MAX_CLIPS).cloned().collect();
     let files = state.staged_files.clone();
     let chips = chip_rects(&files);
     let dnd = state.dnd_on_island;
@@ -851,9 +881,9 @@ pub fn draw(state: &mut ShellState) {
         }
         Tab::Clipboard => {
             if clips.is_empty() {
-                empty(&mut pm, "Copied text appears here");
+                empty(&mut pm, "Copied text and images appear here");
             }
-            for (i, t) in clips.iter().enumerate() {
+            for (i, clip) in clips.iter().enumerate() {
                 let r = clip_rect(i);
                 let bg = if hover == Some(Hit::Clip(i)) {
                     Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x2A)
@@ -863,6 +893,13 @@ pub fn draw(state: &mut ShellState) {
                 draw::fill_round_rect(
                     &mut pm, r.0 as f32, r.1 as f32, r.2 as f32, r.3 as f32, 10.0, bg,
                 );
+                let t = match clip {
+                    crate::clipwatch::Clip::Text(t) => t,
+                    crate::clipwatch::Clip::Image { thumb, .. } => {
+                        paint_thumb(&mut pm, thumb, r);
+                        continue;
+                    }
+                };
                 // Up to three lines of the snippet, word-agnostic wrap.
                 let flat: String = t.replace('\n', " ").trim().chars().take(120).collect();
                 let max_w = r.2 - 16.0;
