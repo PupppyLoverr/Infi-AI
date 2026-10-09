@@ -236,7 +236,10 @@ pub fn write_message<T: serde::Serialize, W: std::io::Write>(
 /// `Request::SnapToZone`. Each entry is (zone name, fractional rect of
 /// the work area) so both the compositor's geometry table and the
 /// shell's thumbnail renderer share one source of truth.
-pub const SNAP_LAYOUTS: &[(&str, &[(&str, f32, f32, f32, f32)])] = &[
+/// One zone: (name, x, y, w, h) as fractions of the work area.
+pub type SnapZone = (&'static str, f32, f32, f32, f32);
+
+pub const SNAP_LAYOUTS: &[(&str, &[SnapZone])] = &[
     (
         "Halves",
         &[("left", 0.0, 0.0, 0.5, 1.0), ("right", 0.5, 0.0, 0.5, 1.0)],

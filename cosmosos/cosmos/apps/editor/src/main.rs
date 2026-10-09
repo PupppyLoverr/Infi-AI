@@ -252,13 +252,13 @@ fn draw(ui: &mut egui::Ui, ed: &mut Editor) {
     let kit = Kit::get(ui.ctx());
     if ui
         .ctx()
-        .input(|i| i.key_pressed(egui::Key::S) && i.modifiers.command)
+        .input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S))
     {
         ed.save();
     }
     if ui
         .ctx()
-        .input(|i| i.key_pressed(egui::Key::O) && i.modifiers.command)
+        .input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::O))
     {
         ed.open_field = ed
             .path
