@@ -294,6 +294,50 @@ pub fn text(
     );
 }
 
+/// Width in px of `content` laid out on one line at `font_size`.
+pub fn text_width(font_size: f32, content: &str) -> f32 {
+    FONT_SYSTEM.with(|fs| {
+        let mut fs = fs.borrow_mut();
+        let mut buf = Buffer::new(&mut fs, Metrics::new(font_size, font_size * 1.3));
+        buf.set_size(&mut fs, None, None);
+        buf.set_text(
+            &mut fs,
+            content,
+            &Attrs::new().family(UI_FAMILY),
+            Shaping::Advanced,
+        );
+        buf.shape_until_scroll(&mut fs, false);
+        buf.layout_runs().map(|r| r.line_w).fold(0.0, f32::max)
+    })
+}
+
+/// [`text`] centred horizontally in `[x, x + max_w]`; truncates like [`text`]
+/// when wider than the box.
+#[allow(clippy::too_many_arguments)]
+pub fn text_centered(
+    pixmap: &mut PixmapMut<'_>,
+    x: f32,
+    y: f32,
+    max_w: f32,
+    line_h: f32,
+    font_size: f32,
+    content: &str,
+    color: CtColor,
+) {
+    let tw = text_width(font_size, content).min(max_w);
+    let cx = x + ((max_w - tw) / 2.0).max(0.0).floor();
+    text(
+        pixmap,
+        cx,
+        y,
+        max_w - (cx - x),
+        line_h,
+        font_size,
+        content,
+        color,
+    );
+}
+
 /// [`text`] with an optional semibold weight — the macOS menubar's
 /// focused-app name look.
 pub fn text_bold(
