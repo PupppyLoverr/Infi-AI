@@ -6,6 +6,15 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+use cosmos_kit::controls::{button, search_field, segmented_with, text_field, ButtonKind};
+use cosmos_kit::layout::{
+    grid_tile, menu_item, menu_separator, sheet, sidebar_item, sidebar_section, status_text,
+    toolbar_button, toolbar_spacer, toolbar_title, AppWindow, ColAlign, Column, Table,
+};
+use cosmos_kit::{icons, Icon, Kit};
+use cosmos_theme::space;
+use cosmos_uitk::icons::FileKind;
+
 struct Entry {
     name: String,
     path: PathBuf,
@@ -22,6 +31,13 @@ struct Files {
     rename: Option<(PathBuf, String)>,
     confirm_delete: Option<PathBuf>,
     path_edit: Option<String>,
+    back: Vec<PathBuf>,
+    fwd: Vec<PathBuf>,
+    selected: Option<PathBuf>,
+    /// 0 = list, 1 = grid.
+    view: usize,
+    /// Toolbar search: filters the current folder by name.
+    query: String,
     /// Portal file-chooser mode: rows select instead of opening, and a
     /// bottom bar offers Cancel/Choose (or Save). Selected paths are
     /// printed to stdout on confirm — cosmos-portal reads them.
@@ -99,6 +115,11 @@ impl Files {
             rename: None,
             confirm_delete: None,
             path_edit: None,
+            back: Vec::new(),
+            fwd: Vec::new(),
+            selected: None,
+            view: 0,
+            query: String::new(),
             chooser: None,
             show_hidden: false,
             logged_listing: None,
@@ -110,6 +131,7 @@ impl Files {
     /// Whether `e` gets a row — the footer count and the list share it.
     fn shows(&self, e: &Entry) -> bool {
         (self.show_hidden || !e.name.starts_with('.'))
+            && (self.query.is_empty() || e.name.to_lowercase().contains(&self.query.to_lowercase()))
             && self.chooser.as_ref().map(|c| c.matches(e)).unwrap_or(true)
     }
 
@@ -151,10 +173,66 @@ impl Files {
         }
     }
 
+    fn nav(&mut self, dir: PathBuf) {
+        if dir != self.dir {
+            self.back.push(std::mem::replace(&mut self.dir, dir));
+            self.fwd.clear();
+        }
+        self.selected = None;
+        self.refresh();
+    }
+
+    fn go_back(&mut self) {
+        if let Some(d) = self.back.pop() {
+            self.fwd.push(std::mem::replace(&mut self.dir, d));
+            self.selected = None;
+            self.refresh();
+        }
+    }
+
+    fn go_forward(&mut self) {
+        if let Some(d) = self.fwd.pop() {
+            self.back.push(std::mem::replace(&mut self.dir, d));
+            self.selected = None;
+            self.refresh();
+        }
+    }
+
+    /// Freedesktop trash: move into ~/.local/share/Trash/files and write
+    /// the matching .trashinfo so the item can be restored.
+    fn trash(&mut self, path: &std::path::Path) -> std::io::Result<()> {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
+        let root = PathBuf::from(home).join(".local/share/Trash");
+        fs::create_dir_all(root.join("files"))?;
+        fs::create_dir_all(root.join("info"))?;
+        let base = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "item".into());
+        let mut name = base.clone();
+        let mut n = 2;
+        while root.join("files").join(&name).exists()
+            || root.join("info").join(format!("{name}.trashinfo")).exists()
+        {
+            name = format!("{base} {n}");
+            n += 1;
+        }
+        let info = format!(
+            "[Trash Info]\nPath={}\nDeletionDate={}\n",
+            path.display(),
+            fmt_datetime(SystemTime::now())
+        );
+        fs::write(root.join("info").join(format!("{name}.trashinfo")), info)?;
+        if let Err(e) = fs::rename(path, root.join("files").join(&name)) {
+            let _ = fs::remove_file(root.join("info").join(format!("{name}.trashinfo")));
+            return Err(e);
+        }
+        Ok(())
+    }
+
     fn open(&mut self, e: &Entry) {
         if e.is_dir {
-            self.dir = e.path.clone();
-            self.refresh();
+            self.nav(e.path.clone());
         } else {
             // Open with the file's registered handler (xdg-open resolves to a
             // Cosmos app or whatever the image provides).
@@ -183,6 +261,22 @@ fn fmt_time(t: SystemTime) -> String {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// `YYYY-MM-DDThh:mm:ss` (UTC) for .trashinfo.
+fn fmt_datetime(t: SystemTime) -> String {
+    let secs = t
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let day = secs % 86400;
+    format!(
+        "{}T{:02}:{:02}:{:02}",
+        fmt_time(t),
+        day / 3600,
+        day / 60 % 60,
+        day % 60
+    )
 }
 
 fn fmt_size(n: u64) -> String {
@@ -246,7 +340,7 @@ fn main() {
             "Open File"
         };
     }
-    if let Err(e) = cosmos_uitk::run(title, "cosmos.files", (560, 400), move |ui| {
+    if let Err(e) = cosmos_uitk::run(title, "cosmos.files", (640, 420), move |ui| {
         draw(ui, &mut files)
     }) {
         tracing::error!("cosmos-files fatal: {e}");
@@ -254,68 +348,273 @@ fn main() {
     }
 }
 
-fn draw(ui: &mut egui::Ui, f: &mut Files) {
-    // Path-bar text field contents kept in state for editing.
-    egui::Panel::top("bar").show(ui, |ui| {
-        ui.horizontal(|ui| {
-            if ui.button("Up").clicked() {
-                if let Some(p) = f.dir.parent().map(|p| p.to_path_buf()) {
-                    f.dir = p;
-                    f.refresh();
-                }
-            }
-            if ui.button("Home").clicked() {
-                if let Ok(h) = std::env::var("HOME") {
-                    f.dir = PathBuf::from(h);
-                    f.refresh();
-                }
-            }
-            ui.separator();
-            // Buttons laid out right-to-left first so the path field takes
-            // only what's left; a fixed reserve clipped "New folder" at 640px.
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("New folder").clicked() {
-                    f.new_folder = Some("untitled".into());
-                }
-                if ui.button("Refresh").clicked() {
-                    f.refresh();
-                }
-                let path_str = f
-                    .path_edit
-                    .get_or_insert_with(|| f.dir.display().to_string());
-                let resp = ui
-                    .add(egui::TextEdit::singleline(path_str).desired_width(ui.available_width()));
-                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    let p = PathBuf::from(path_str.trim());
-                    if p.is_dir() {
-                        f.dir = p;
-                    } else {
-                        f.status = format!("not a directory: {}", p.display());
+/// Sidebar places that exist on this machine.
+fn places() -> (
+    Vec<(Icon, &'static str, PathBuf)>,
+    Vec<(Icon, &'static str, PathBuf)>,
+) {
+    let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into()));
+    let mut fav = vec![(Icon::Home, "Home", home.clone())];
+    for (icon, label, sub) in [
+        (Icon::Desktop, "Desktop", "Desktop"),
+        (Icon::Document, "Documents", "Documents"),
+        (Icon::Download, "Downloads", "Downloads"),
+        (Icon::Image, "Pictures", "Pictures"),
+        (Icon::Music, "Music", "Music"),
+        (Icon::Sparkle, "Agents", "Agents"),
+    ] {
+        let p = home.join(sub);
+        if p.is_dir() {
+            fav.push((icon, label, p));
+        }
+    }
+    let mut loc = vec![
+        (Icon::Disk, "CosmosOS", PathBuf::from("/")),
+        (Icon::Folder, "Temporary", PathBuf::from("/tmp")),
+    ];
+    let trash = home.join(".local/share/Trash/files");
+    if trash.is_dir() {
+        loc.push((Icon::Trash, "Trash", trash));
+    }
+    (fav, loc)
+}
+
+#[derive(Default)]
+struct RowEvents {
+    select: Option<PathBuf>,
+    toggle: Option<PathBuf>,
+    open: Option<usize>,
+    rename: Option<(PathBuf, String)>,
+    trash: Option<PathBuf>,
+    copy: Option<String>,
+}
+
+fn entry_menu(ui: &mut egui::Ui, e: &Entry, idx: usize, ev: &mut RowEvents) {
+    if menu_item(ui, Some(Icon::FolderOpen), "Open", Some("Enter")).clicked() {
+        ev.open = Some(idx);
+        ui.close();
+    }
+    if menu_item(ui, Some(Icon::Pencil), "Rename", Some("F2")).clicked() {
+        ev.rename = Some((e.path.clone(), e.name.clone()));
+        ui.close();
+    }
+    if menu_item(ui, Some(Icon::Clipboard), "Copy Path", None).clicked() {
+        ev.copy = Some(e.path.display().to_string());
+        ui.close();
+    }
+    menu_separator(ui);
+    if menu_item(ui, Some(Icon::Trash), "Move to Trash", Some("Del")).clicked() {
+        ev.trash = Some(e.path.clone());
+        ui.close();
+    }
+}
+
+fn row_click(f: &Files, e: &Entry, idx: usize, resp: &egui::Response, ev: &mut RowEvents) {
+    if resp.double_clicked() {
+        ev.open = Some(idx);
+    } else if resp.clicked() {
+        if f.chooser.is_some() && !e.is_dir {
+            ev.toggle = Some(e.path.clone());
+        } else {
+            ev.select = Some(e.path.clone());
+        }
+    }
+}
+
+fn apply(f: &mut Files, ev: RowEvents) {
+    if let Some(p) = ev.toggle {
+        if let Some(c) = &mut f.chooser {
+            if !c.directory {
+                if c.multiple {
+                    if !c.selected.remove(&p) {
+                        c.selected.insert(p);
                     }
-                    f.path_edit = None;
-                    f.refresh();
+                } else {
+                    c.selected.clear();
+                    c.selected.insert(p);
+                }
+            }
+        }
+    }
+    if let Some(p) = ev.select {
+        f.selected = Some(p);
+    }
+    if let Some(p) = ev.trash {
+        move_to_trash(f, p);
+    }
+    if let Some(r) = ev.rename {
+        f.rename = Some(r);
+    }
+    if let Some(p) = ev.copy {
+        f.status = format!("path: {p}");
+    }
+    if let Some(i) = ev.open {
+        let e = &f.entries[i];
+        let e = Entry {
+            name: e.name.clone(),
+            path: e.path.clone(),
+            is_dir: e.is_dir,
+            size: e.size,
+            modified: e.modified.clone(),
+        };
+        f.open(&e);
+    }
+}
+
+/// Trash, or offer permanent deletion when the item can't be moved
+/// (another filesystem, or already inside the Trash).
+fn move_to_trash(f: &mut Files, p: PathBuf) {
+    let in_trash = p.to_string_lossy().contains("/.local/share/Trash/");
+    if in_trash {
+        f.confirm_delete = Some(p);
+        return;
+    }
+    match f.trash(&p) {
+        Ok(()) => {
+            f.status = format!(
+                "moved {} to Trash",
+                p.file_name()
+                    .map(|n| n.to_string_lossy())
+                    .unwrap_or_default()
+            );
+            f.selected = None;
+            f.refresh();
+        }
+        Err(e) => {
+            f.status = format!("can't move to Trash: {e}");
+            f.confirm_delete = Some(p);
+        }
+    }
+}
+
+fn keyboard(ui: &egui::Ui, f: &mut Files) {
+    let typing = ui.ctx().memory(|m| m.focused().is_some());
+    let modal = f.new_folder.is_some()
+        || f.rename.is_some()
+        || f.confirm_delete.is_some()
+        || f.path_edit.is_some();
+    if modal {
+        return;
+    }
+    let (ctrl, alt, shift) =
+        ui.input(|i| (i.modifiers.command, i.modifiers.alt, i.modifiers.shift));
+    let key = |k| ui.input(|i| i.key_pressed(k));
+    if ctrl && key(egui::Key::H) {
+        f.show_hidden = !f.show_hidden;
+    }
+    if ctrl && key(egui::Key::L) {
+        f.path_edit = Some(f.dir.display().to_string());
+    }
+    if ctrl && shift && key(egui::Key::N) {
+        f.new_folder = Some("untitled folder".into());
+    }
+    if alt && key(egui::Key::ArrowLeft) {
+        f.go_back();
+    }
+    if alt && key(egui::Key::ArrowRight) {
+        f.go_forward();
+    }
+    if alt && key(egui::Key::ArrowUp) {
+        if let Some(p) = f.dir.parent().map(|p| p.to_path_buf()) {
+            f.nav(p);
+        }
+    }
+    if typing {
+        return;
+    }
+    let sel = f
+        .selected
+        .as_ref()
+        .and_then(|p| f.entries.iter().position(|e| &e.path == p));
+    if let Some(i) = sel {
+        if key(egui::Key::Enter) {
+            apply(
+                f,
+                RowEvents {
+                    open: Some(i),
+                    ..Default::default()
+                },
+            );
+        } else if key(egui::Key::Delete) {
+            let p = f.entries[i].path.clone();
+            move_to_trash(f, p);
+        } else if key(egui::Key::F2) {
+            f.rename = Some((f.entries[i].path.clone(), f.entries[i].name.clone()));
+        }
+    }
+}
+
+fn draw(ui: &mut egui::Ui, f: &mut Files) {
+    let kit = Kit::get(ui.ctx());
+    keyboard(ui, f);
+    let (fav, loc) = places();
+    let title = f
+        .dir
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "CosmosOS".into());
+    let cell = std::cell::RefCell::new(&mut *f);
+    AppWindow::new()
+        .toolbar(|ui| {
+            let mut f = cell.borrow_mut();
+            let f = &mut **f;
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.add_enabled_ui(!f.back.is_empty(), |ui| {
+                if toolbar_button(ui, Icon::Back, "Back", false).clicked() {
+                    f.go_back();
                 }
             });
-        });
-    });
-
-    egui::Panel::bottom("status").show(ui, |ui| {
-        ui.horizontal(|ui| {
+            ui.add_enabled_ui(!f.fwd.is_empty(), |ui| {
+                if toolbar_button(ui, Icon::Forward, "Forward", false).clicked() {
+                    f.go_forward();
+                }
+            });
+            toolbar_title(ui, &title);
+            let fixed = 2.0 * 32.0 + 28.0 + 3.0 * space::S12;
+            let search_w = (ui.available_width() - fixed - space::S8).clamp(96.0, 200.0);
+            toolbar_spacer(ui, fixed + search_w);
+            segmented_with(ui, &mut f.view, 2, 32.0, |ui, i, r, c| {
+                let icon = [Icon::List, Icon::Grid][i];
+                icons::paint(
+                    ui,
+                    icon,
+                    egui::Rect::from_center_size(r.center(), egui::vec2(16.0, 16.0)),
+                    c,
+                );
+            });
+            ui.add_space(space::S12);
+            search_field(ui, &mut f.query, "Search", search_w);
+            ui.add_space(space::S12);
+            if toolbar_button(ui, Icon::FolderPlus, "New Folder", false).clicked() {
+                f.new_folder = Some("untitled folder".into());
+            }
+        })
+        .sidebar(|ui| {
+            let mut f = cell.borrow_mut();
+            for (head, list) in [("Favourites", &fav), ("Locations", &loc)] {
+                sidebar_section(ui, head);
+                for (icon, label, path) in list {
+                    if sidebar_item(ui, *icon, label, &f.dir == path).clicked() {
+                        f.nav(path.clone());
+                    }
+                }
+            }
+        })
+        .status(|ui| {
+            let mut f = cell.borrow_mut();
+            let f = &mut **f;
             if f.chooser.is_some() {
                 let dir = f.dir.clone();
+                let status = f.status.clone();
                 let c = f.chooser.as_mut().unwrap();
-                if ui.button("Cancel").clicked() {
-                    chooser_cancel();
-                }
-                ui.separator();
                 if c.mode == "save" {
-                    ui.label("Name:");
-                    ui.add(egui::TextEdit::singleline(&mut c.save_name).desired_width(160.0));
+                    status_text(ui, "Save as:");
+                    text_field(ui, &mut c.save_name, "Name", 180.0, false);
                 }
-                ui.label(&f.status);
+                status_text(ui, &status);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let label = if c.mode == "save" { "Save" } else { "Open" };
-                    if ui.button(label).clicked() {
+                    if button(ui, ButtonKind::Primary, label).clicked() {
                         let paths: Vec<PathBuf> = if c.mode == "save" {
                             vec![dir.join(c.save_name.trim())]
                         } else if c.directory {
@@ -325,258 +624,253 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
                         };
                         chooser_finish(&paths);
                     }
+                    if button(ui, ButtonKind::Plain, "Cancel").clicked() {
+                        chooser_cancel();
+                    }
                 });
             } else {
                 let shown = f.shown_count();
-                let hidden = f.entries.len() - shown;
+                let hidden = f
+                    .entries
+                    .iter()
+                    .filter(|e| !f.show_hidden && e.name.starts_with('.'))
+                    .count();
                 let mut text = match shown {
                     1 => "1 item".to_string(),
                     n => format!("{n} items"),
                 };
-                if hidden > 0 && !f.show_hidden {
+                if hidden > 0 {
                     text.push_str(&format!(", {hidden} hidden"));
                 }
-                ui.label(text);
-                ui.separator();
+                status_text(ui, &text);
                 if !f.status.is_empty() {
-                    ui.label(&f.status);
+                    status_text(ui, "·");
+                    status_text(ui, &f.status);
                 }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    status_text(ui, &f.dir.display().to_string());
+                });
             }
-        });
-    });
-
-    egui::Panel::left("places")
-        .resizable(false)
-        .exact_size(120.0)
+        })
         .show(ui, |ui| {
-            ui.heading("Places");
-            ui.separator();
-            for (label, path) in [
-                ("Home", std::env::var("HOME").unwrap_or_else(|_| "/".into())),
-                ("Root", "/".into()),
-                ("Etc", "/etc".into()),
-                ("Tmp", "/tmp".into()),
-                ("Var", "/var".into()),
-            ] {
-                if ui.selectable_label(false, label).clicked() {
-                    f.dir = PathBuf::from(path);
-                    f.refresh();
-                }
-            }
-        });
-
-    egui::CentralPanel::default().show(ui, |ui| {
-        if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::H)) {
-            f.show_hidden = !f.show_hidden;
-        }
-        let mut rows = 0usize;
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::Grid::new("list")
-                .num_columns(4)
-                .striped(false)
-                .min_col_width(80.0)
-                .show(ui, |ui| {
-                    ui.strong("Name");
-                    ui.strong("Type");
-                    ui.strong("Size");
-                    ui.strong("Modified");
-                    ui.end_row();
-                    let mut open_target: Option<Entry> = None;
-                    let mut toggle_target: Option<PathBuf> = None;
-                    let mut delete_target: Option<PathBuf> = None;
-                    let mut rename_target: Option<(PathBuf, String)> = None;
-                    let mut copy_path: Option<String> = None;
-                    for e in f.entries.iter().filter(|e| f.shows(e)) {
-                        rows += 1;
-                        let kind = cosmos_uitk::icons::FileKind::of(&e.name, e.is_dir);
-                        let picked = f
-                            .chooser
-                            .as_ref()
-                            .map(|c| c.selected.contains(&e.path))
-                            .unwrap_or(false);
-                        let resp = ui
-                            .horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 8.0;
-                                cosmos_uitk::icons::show(ui, kind, 18.0);
-                                ui.selectable_label(picked, &e.name)
-                            })
-                            .inner;
-                        if resp.clicked() {
-                            if f.chooser.is_some() {
-                                if e.is_dir {
-                                    open_target = Some(Entry {
-                                        name: e.name.clone(),
-                                        path: e.path.clone(),
-                                        is_dir: e.is_dir,
-                                        size: e.size,
-                                        modified: e.modified.clone(),
-                                    });
-                                } else {
-                                    toggle_target = Some(e.path.clone());
-                                }
+            let mut f = cell.borrow_mut();
+            let f = &mut **f;
+            let mut rows = 0usize;
+            let mut ev = RowEvents::default();
+            let picked = |f: &Files, e: &Entry| {
+                f.chooser
+                    .as_ref()
+                    .map(|c| c.selected.contains(&e.path))
+                    .unwrap_or(false)
+                    || f.selected.as_ref() == Some(&e.path)
+            };
+            if f.view == 0 {
+                let cols = [
+                    Column {
+                        title: "Name",
+                        width: 0.0,
+                        align: ColAlign::Left,
+                    },
+                    Column {
+                        title: "Size",
+                        width: 84.0,
+                        align: ColAlign::Right,
+                    },
+                    Column {
+                        title: "Kind",
+                        width: 124.0,
+                        align: ColAlign::Left,
+                    },
+                    Column {
+                        title: "Date Modified",
+                        width: 112.0,
+                        align: ColAlign::Left,
+                    },
+                ];
+                let table = Table { cols: &cols };
+                ui.add_space(4.0);
+                table.header(ui);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        ui.add_space(4.0);
+                        for (i, e) in f.entries.iter().enumerate() {
+                            if !f.shows(e) {
+                                continue;
+                            }
+                            rows += 1;
+                            let kind = FileKind::of(&e.name, e.is_dir);
+                            let size = if e.is_dir {
+                                "—".to_string()
                             } else {
-                                open_target = Some(Entry {
-                                    name: e.name.clone(),
-                                    path: e.path.clone(),
-                                    is_dir: e.is_dir,
-                                    size: e.size,
-                                    modified: e.modified.clone(),
-                                });
-                            }
+                                fmt_size(e.size)
+                            };
+                            let lead = move |ui: &egui::Ui, r: egui::Rect| {
+                                cosmos_uitk::icons::paint(ui.painter(), r.expand(1.0), kind)
+                            };
+                            let resp = table.row(
+                                ui,
+                                picked(f, e),
+                                Some(&lead),
+                                &[&e.name, &size, kind.label(), &e.modified],
+                            );
+                            row_click(f, e, i, &resp, &mut ev);
+                            resp.context_menu(|ui| entry_menu(ui, e, i, &mut ev));
                         }
-                        resp.context_menu(|ui| {
-                            if ui.button("Copy path").clicked() {
-                                copy_path = Some(e.path.display().to_string());
-                                ui.close();
-                            }
-                            if ui.button("Rename").clicked() {
-                                rename_target = Some((e.path.clone(), e.name.clone()));
-                                ui.close();
-                            }
-                            if ui.button("Delete").clicked() {
-                                delete_target = Some(e.path.clone());
-                                ui.close();
-                            }
-                        });
-                        ui.weak(kind.label());
-                        ui.label(if e.is_dir {
-                            String::new()
-                        } else {
-                            fmt_size(e.size)
-                        });
-                        ui.label(&e.modified);
-                        ui.end_row();
-                    }
-                    if let Some(p) = toggle_target {
-                        if let Some(c) = &mut f.chooser {
-                            if !c.directory {
-                                if c.multiple {
-                                    if !c.selected.remove(&p) {
-                                        c.selected.insert(p);
+                    });
+            } else {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        egui::Frame::new().inner_margin(space::S12).show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.spacing_mut().item_spacing = egui::vec2(space::S8, space::S12);
+                            ui.horizontal_wrapped(|ui| {
+                                for (i, e) in f.entries.iter().enumerate() {
+                                    if !f.shows(e) {
+                                        continue;
                                     }
-                                } else {
-                                    c.selected.clear();
-                                    c.selected.insert(p);
+                                    rows += 1;
+                                    let kind = FileKind::of(&e.name, e.is_dir);
+                                    let resp = grid_tile(ui, picked(f, e), &e.name, |ui, r| {
+                                        cosmos_uitk::icons::paint(ui.painter(), r.shrink(6.0), kind)
+                                    });
+                                    row_click(f, e, i, &resp, &mut ev);
+                                    resp.context_menu(|ui| entry_menu(ui, e, i, &mut ev));
                                 }
-                            }
-                        }
-                    }
-                    if let Some(e) = open_target {
-                        f.open(&e);
-                    }
-                    if let Some(p) = delete_target {
-                        f.confirm_delete = Some(p);
-                    }
-                    if let Some((p, n)) = rename_target {
-                        f.rename = Some((p, n));
-                    }
-                    if let Some(p) = copy_path {
-                        // Wayland clipboard comes later; the status bar shows
-                        // the full path so nothing is silently dropped.
-                        f.status = format!("path: {p}");
-                    }
-                });
-            if rows == 0 {
-                let hidden = f.entries.len();
-                ui.add_space(48.0);
-                ui.vertical_centered(|ui| {
-                    cosmos_uitk::icons::show(ui, cosmos_uitk::icons::FileKind::of("", true), 48.0);
-                    ui.add_space(8.0);
-                    if hidden > 0 && !f.show_hidden {
-                        ui.weak(format!(
-                            "Only hidden items here ({hidden}). Ctrl+H shows them."
-                        ));
-                    } else {
-                        ui.weak("This folder is empty");
-                    }
-                });
+                            });
+                        });
+                    });
             }
+            if rows == 0 {
+                let r = ui.max_rect();
+                let c = egui::pos2(r.center().x, r.top() + r.height() * 0.4);
+                let only_hidden = !f.entries.is_empty() && !f.show_hidden && f.query.is_empty();
+                icons::paint(
+                    ui,
+                    if f.query.is_empty() {
+                        Icon::Folder
+                    } else {
+                        Icon::Search
+                    },
+                    egui::Rect::from_center_size(c, egui::vec2(40.0, 40.0)),
+                    kit.text3(),
+                );
+                let msg = if !f.query.is_empty() {
+                    format!("No items match “{}”", f.query)
+                } else if only_hidden {
+                    format!(
+                        "Only hidden items ({}). Ctrl+H shows them.",
+                        f.entries.len()
+                    )
+                } else {
+                    "This folder is empty".to_string()
+                };
+                ui.painter().text(
+                    c + egui::vec2(0.0, 36.0),
+                    egui::Align2::CENTER_CENTER,
+                    msg,
+                    egui::FontId::proportional(13.0),
+                    kit.text2(),
+                );
+            }
+            let footer = f.shown_count();
+            let listing = (f.dir.clone(), rows, footer);
+            if f.logged_listing.as_ref() != Some(&listing) {
+                tracing::info!(dir = %f.dir.display(), rows, footer, "files: listing");
+                f.logged_listing = Some(listing);
+            }
+            apply(f, ev);
         });
-        let footer = f.shown_count();
-        let listing = (f.dir.clone(), rows, footer);
-        if f.logged_listing.as_ref() != Some(&listing) {
-            tracing::info!(dir = %f.dir.display(), rows, footer, "files: listing");
-            f.logged_listing = Some(listing);
-        }
-    });
+    let ctx = ui.ctx().clone();
+    let enter = ctx.input(|i| i.key_pressed(egui::Key::Enter));
 
-    // New-folder modal
-    if let Some(name) = f.new_folder.clone() {
-        let mut keep = true;
-        egui::Window::new("New folder")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ui.ctx(), |ui| {
-                let mut name = name;
-                ui.add(egui::TextEdit::singleline(&mut name).desired_width(240.0));
-                ui.horizontal(|ui| {
-                    if ui.button("Create").clicked() && !name.trim().is_empty() {
-                        let p = f.dir.join(name.trim());
-                        match fs::create_dir(&p) {
-                            Ok(()) => {
-                                f.status = format!("created {}", p.display());
-                                f.refresh();
+    if let Some(mut name) = f.new_folder.take() {
+        let mut done = false;
+        let open = sheet(
+            &ctx,
+            egui::Id::new("files-new-folder"),
+            "New Folder",
+            |ui| {
+                text_field(ui, &mut name, "Name", 360.0, false).request_focus();
+                ui.add_space(space::S16);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if button(ui, ButtonKind::Primary, "Create").clicked() || enter {
+                        if !name.trim().is_empty() {
+                            let p = f.dir.join(name.trim());
+                            match fs::create_dir(&p) {
+                                Ok(()) => {
+                                    f.status = format!("created {}", name.trim());
+                                    f.refresh();
+                                    f.selected = Some(p);
+                                }
+                                Err(e) => f.status = format!("create failed: {e}"),
                             }
-                            Err(e) => f.status = format!("create failed: {e}"),
+                            done = true;
                         }
-                        keep = false;
                     }
-                    if ui.button("Cancel").clicked() {
-                        keep = false;
+                    if button(ui, ButtonKind::Secondary, "Cancel").clicked() {
+                        done = true;
                     }
                 });
-                f.new_folder = Some(name);
-            });
-        if !keep {
-            f.new_folder = None;
+            },
+        );
+        if open && !done {
+            f.new_folder = Some(name);
         }
     }
 
-    // Rename modal
-    if let Some((path, name)) = f.rename.clone() {
-        let mut keep = true;
-        egui::Window::new("Rename")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ui.ctx(), |ui| {
-                let mut name = name;
-                ui.add(egui::TextEdit::singleline(&mut name).desired_width(240.0));
-                ui.horizontal(|ui| {
-                    if ui.button("Rename").clicked() && !name.trim().is_empty() {
-                        let to = path.with_file_name(name.trim());
-                        match fs::rename(&path, &to) {
-                            Ok(()) => {
-                                f.status = format!("renamed to {}", to.display());
-                                f.refresh();
-                            }
-                            Err(e) => f.status = format!("rename failed: {e}"),
+    if let Some((path, mut name)) = f.rename.take() {
+        let mut done = false;
+        let open = sheet(&ctx, egui::Id::new("files-rename"), "Rename", |ui| {
+            text_field(ui, &mut name, "Name", 360.0, false).request_focus();
+            ui.add_space(space::S16);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if (button(ui, ButtonKind::Primary, "Rename").clicked() || enter)
+                    && !name.trim().is_empty()
+                {
+                    let to = path.with_file_name(name.trim());
+                    match fs::rename(&path, &to) {
+                        Ok(()) => {
+                            f.status = format!("renamed to {}", name.trim());
+                            f.refresh();
+                            f.selected = Some(to);
                         }
-                        keep = false;
+                        Err(e) => f.status = format!("rename failed: {e}"),
                     }
-                    if ui.button("Cancel").clicked() {
-                        keep = false;
-                    }
-                });
-                f.rename = Some((path.clone(), name));
+                    done = true;
+                }
+                if button(ui, ButtonKind::Secondary, "Cancel").clicked() {
+                    done = true;
+                }
             });
-        if !keep {
-            f.rename = None;
+        });
+        if open && !done {
+            f.rename = Some((path, name));
         }
     }
 
-    // Delete confirmation
-    if let Some(path) = f.confirm_delete.clone() {
-        let mut keep = true;
-        egui::Window::new("Delete")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ui.ctx(), |ui| {
-                ui.label(format!("Delete {}?", path.display()));
-                ui.horizontal(|ui| {
-                    if ui.button("Delete").clicked() {
+    if let Some(path) = f.confirm_delete.take() {
+        let mut done = false;
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let open = sheet(
+            &ctx,
+            egui::Id::new("files-delete"),
+            "Delete Permanently?",
+            |ui| {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "“{name}” will be deleted immediately. This can't be undone."
+                    ))
+                    .color(kit.text2()),
+                );
+                ui.add_space(space::S16);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if button(ui, ButtonKind::Destructive, "Delete").clicked() {
                         let r = if path.is_dir() {
                             fs::remove_dir_all(&path)
                         } else {
@@ -584,20 +878,47 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
                         };
                         match r {
                             Ok(()) => {
-                                f.status = format!("deleted {}", path.display());
+                                f.status = format!("deleted {name}");
+                                f.selected = None;
                                 f.refresh();
                             }
                             Err(e) => f.status = format!("delete failed: {e}"),
                         }
-                        keep = false;
+                        done = true;
                     }
-                    if ui.button("Cancel").clicked() {
-                        keep = false;
+                    if button(ui, ButtonKind::Secondary, "Cancel").clicked() {
+                        done = true;
                     }
                 });
+            },
+        );
+        if open && !done {
+            f.confirm_delete = Some(path);
+        }
+    }
+
+    if let Some(mut text) = f.path_edit.take() {
+        let mut done = false;
+        let open = sheet(&ctx, egui::Id::new("files-goto"), "Go to Folder", |ui| {
+            text_field(ui, &mut text, "/path/to/folder", 360.0, false).request_focus();
+            ui.add_space(space::S16);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if button(ui, ButtonKind::Primary, "Go").clicked() || enter {
+                    let p = PathBuf::from(text.trim());
+                    if p.is_dir() {
+                        f.nav(p);
+                    } else {
+                        f.status = format!("not a folder: {}", p.display());
+                    }
+                    done = true;
+                }
+                if button(ui, ButtonKind::Secondary, "Cancel").clicked() {
+                    done = true;
+                }
             });
-        if !keep {
-            f.confirm_delete = None;
+        });
+        if open && !done {
+            f.path_edit = Some(text);
         }
     }
 }
