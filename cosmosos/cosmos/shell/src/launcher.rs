@@ -914,13 +914,23 @@ fn draw_search(
             ht - PILL_H as f32 - 16.0,
             sel_bg,
             fg,
-            fg_dim,
+            preview_dim(dark),
         );
     }
     height
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Secondary text on the preview pane: the pane sits on the accent wash,
+/// so the card's `fg_dim` drops under 4.5:1 at 11px there.
+fn preview_dim(dark: bool) -> CtColor {
+    if dark {
+        CtColor::rgba(0xC8, 0xC8, 0xCE, 0xFF)
+    } else {
+        CtColor::rgba(0x3A, 0x3A, 0x3E, 0xFF)
+    }
+}
+
 fn draw_preview(
     pixmap: &mut PixmapMut<'_>,
     p: &preview::FilePreview,
