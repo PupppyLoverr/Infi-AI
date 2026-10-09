@@ -702,6 +702,8 @@ dependencies = [
 name = "cosmos-editor"
 version = "0.1.0"
 dependencies = [
+ "cosmos-kit",
+ "cosmos-theme",
  "cosmos-uitk",
  "egui",
  "tracing",
