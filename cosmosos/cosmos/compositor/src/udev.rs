@@ -43,7 +43,9 @@ use smithay::{
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{
             damage::Error as OutputDamageTrackerError,
-            element::{memory::MemoryRenderBuffer, AsRenderElements, RenderElementStates},
+            element::{
+                memory::MemoryRenderBuffer, AsRenderElements, Element, Id, RenderElementStates,
+            },
             gles::GlesRenderer,
             multigpu::{gbm::GbmGlesBackend, GpuManager, MultiRenderer},
             DebugFlags, ImportDma, ImportMemWl,
@@ -85,7 +87,9 @@ use smithay::{
         },
         wayland_server::{backend::GlobalId, protocol::wl_surface, Display, DisplayHandle},
     },
-    utils::{DeviceFd, IsAlive, Logical, Monotonic, Point, Rectangle, Scale, Time, Transform},
+    utils::{
+        DeviceFd, IsAlive, Logical, Monotonic, Physical, Point, Rectangle, Scale, Time, Transform,
+    },
     wayland::{
         compositor,
         dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
@@ -741,6 +745,34 @@ struct SurfaceData {
     dmabuf_feedback: Option<SurfaceDmabufFeedback>,
     last_presentation_time: Option<Time<Monotonic>>,
     vblank_throttle_timer: Option<RegistrationToken>,
+    /// What the last presented frame showed; an identical scene skips the composite.
+    last_scene: Option<(Vec<SceneKey>, smithay::backend::renderer::Color32F)>,
+    last_states: RenderElementStates,
+}
+
+type SceneKey = (
+    Id,
+    smithay::backend::renderer::utils::CommitCounter,
+    Rectangle<i32, Physical>,
+    Rectangle<f64, smithay::utils::Buffer>,
+    f32,
+);
+
+/// Every element's content is keyed by (id, commit): new pixels mean a new
+/// commit or a new texture id. So an unchanged key list is an unchanged frame.
+fn scene_keys<E: Element>(elements: &[E], scale: Scale<f64>) -> Vec<SceneKey> {
+    elements
+        .iter()
+        .map(|e| {
+            (
+                e.id().clone(),
+                e.current_commit(),
+                e.geometry(scale),
+                e.src(),
+                e.alpha(),
+            )
+        })
+        .collect()
 }
 
 impl Drop for SurfaceData {
@@ -1187,6 +1219,8 @@ impl AnvilState<UdevData> {
                 dmabuf_feedback,
                 last_presentation_time: None,
                 vblank_throttle_timer: None,
+                last_scene: None,
+                last_states: RenderElementStates::default(),
             };
 
             device.surfaces.insert(crtc, surface);
@@ -1827,6 +1861,19 @@ fn render_surface<'a>(
     // and an under-damaged frame leaves stale bands of older frames on
     // screen). Discarding buffer ages makes every frame a full redraw;
     // at our resolutions that repaint is cheap on every GPU.
+    // Full redraws (below) mean damage tracking can't tell us an idle
+    // frame is empty, so skip the composite here when nothing changed;
+    // the caller re-checks next frame and still sends frame callbacks.
+    let scene = scene_keys(&elements, scale);
+    if surface
+        .last_scene
+        .as_ref()
+        .is_some_and(|(keys, clear)| *keys == scene && *clear == clear_color)
+    {
+        return Ok((false, surface.last_states.clone()));
+    }
+    surface.last_scene = None;
+
     surface
         .drm_output
         .with_compositor(|c| c.reset_buffer_ages());
@@ -1862,6 +1909,11 @@ fn render_surface<'a>(
 
     update_primary_scanout_output(space, output, dnd_icon, cursor_status, &states);
 
+    if rendered {
+        surface.last_scene = Some((scene, clear_color));
+        surface.last_states = states.clone();
+    }
+
     // Per-element visibility diagnostics — COSMOS_DEBUG_ELEMENTS=1 dumps
     // each element's damaged/presented state so drive tests can tell a
     // missing element from an occlusion-culled one.
@@ -1885,4 +1937,51 @@ fn render_surface<'a>(
     }
 
     Ok((rendered, states))
+}
+
+#[cfg(test)]
+mod scene_tests {
+    use super::*;
+    use smithay::backend::renderer::{
+        element::{solid::SolidColorRenderElement, Kind},
+        utils::CommitCounter,
+        Color32F,
+    };
+
+    fn solid(id: &Id, commit: CommitCounter, x: i32) -> SolidColorRenderElement {
+        SolidColorRenderElement::new(
+            id.clone(),
+            Rectangle::new((x, 0).into(), (10, 10).into()),
+            commit,
+            Color32F::new(1.0, 0.0, 0.0, 1.0),
+            Kind::Unspecified,
+        )
+    }
+
+    #[test]
+    fn identical_scene_has_equal_keys() {
+        let id = Id::new();
+        let s = Scale::from(1.25);
+        let a = scene_keys(&[solid(&id, CommitCounter::default(), 0)], s);
+        let b = scene_keys(&[solid(&id, CommitCounter::default(), 0)], s);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn new_commit_or_move_changes_keys() {
+        let id = Id::new();
+        let s = Scale::from(1.0);
+        let base = scene_keys(&[solid(&id, CommitCounter::default(), 0)], s);
+        let mut bumped = CommitCounter::default();
+        bumped.increment();
+        assert_ne!(base, scene_keys(&[solid(&id, bumped, 0)], s));
+        assert_ne!(
+            base,
+            scene_keys(&[solid(&id, CommitCounter::default(), 5)], s)
+        );
+        assert_ne!(
+            base,
+            scene_keys(&[solid(&Id::new(), CommitCounter::default(), 0)], s)
+        );
+    }
 }
