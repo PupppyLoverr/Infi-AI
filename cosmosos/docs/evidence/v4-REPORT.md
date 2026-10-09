@@ -58,19 +58,19 @@ boot. Raw logs: `v4-blockers.txt` (first A round) and `v4-retest.txt` (final rou
 | Zero markers | PASS | `grep -rnE "TODO\|FIXME\|todo!\|unimplemented!\|placeholder\|mock" cosmosos/{cosmos,image,tests,provision}` = 0 outside `target/` (#158, 36b37d4) |
 | Self-review top 5 | PASS | #159/#160/#161: Files name column, disabled buttons, Monitor stacked cards, Agents Time/Detail, dark control fills; all re-shot |
 
-## Late captures (compositor IPC screenshots, main 36b37d4 @1920×1080)
+## Late captures (compositor IPC screenshots, re-shot at main 95b36f5 @1920×1080)
 
 | Shot | Verdict | Proof |
 |---|---|---|
-| v4-01-desktop-dark | PASS | Dark menubar+dock+wallpaper; Files window open showing "0 items, 7 hidden" footer |
-| v4-02-desktop-light | PASS | Shell + Files window fully light after live `set_config appearance=light`; "Light" selected in CC |
-| v4-10-start-glass | PASS | Start open via `toggle_launcher`: glass panel over wallpaper — search bar, PINNED apps, widgets, Log out |
-| v4-11-control-centre | PASS | CC open from menubar clock: Network/Volume/Theme/Focus card + Settings/Lock/Log out row, glass over wallpaper |
+| v4-01-desktop-dark | PASS | Files open in /home/cosmos; disabled Back/Forward chevrons and Search outline now visible on dark (#166) |
+| v4-02-desktop-light | PASS | Single light Files window, light shell; toolbar chrome legible for comparison with the dark row (#166) |
+| v4-10-start-glass | PASS | PINNED labels centred under tiles — Terminal/Files/Editor/System/Settings all verified at 200% (#165) |
+| v4-11-control-centre | PASS | Header is one clock line "Fri 9 Oct 06:08", no overlap with the Network card (#164) |
 
-All captured with the compositor IPC `{"op":"screenshot"}` op (not monitor
-screendump). Note: on the first light flip, Files repainted its title bar
-immediately but the body took ~3-5 s to re-render light — cosmetic lag only,
-verified light on the next frame.
+Re-shot on main 95b36f5 (#164+#165+#166 merged) with the compositor IPC
+`{"op":"screenshot"}` op; each PNG inspected at 100% and the fixed region
+cropped/zoomed before PASS. Residual: on a live dark→light flip the Files
+body re-renders a few seconds after the titlebar — cosmetic repaint lag only.
 
 ## Open
 
