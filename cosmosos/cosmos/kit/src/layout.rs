@@ -19,6 +19,8 @@ pub const TILE_W: f32 = 96.0;
 pub const THUMB: f32 = 64.0;
 
 type Section<'a> = Box<dyn FnOnce(&mut Ui) + 'a>;
+/// Paints a table row's leading icon into the given rect.
+pub type LeadingPaint<'a> = &'a dyn Fn(&Ui, Rect);
 
 /// The window frame every app draws inside: translucent window material,
 /// optional unified toolbar, sidebar and status bar around a body.
@@ -291,7 +293,7 @@ impl Table<'_> {
         &self,
         ui: &mut Ui,
         selected: bool,
-        leading: Option<&dyn Fn(&Ui, Rect)>,
+        leading: Option<LeadingPaint<'_>>,
         cells: &[&str],
     ) -> Response {
         let kit = Kit::get(ui.ctx());
