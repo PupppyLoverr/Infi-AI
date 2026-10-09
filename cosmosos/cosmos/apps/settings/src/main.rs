@@ -177,6 +177,9 @@ struct App {
     pane: Pane,
     /// Set when automatic scale is switched on; re-read config.json then.
     scale_refresh: Option<std::time::Instant>,
+    /// config.json mtime last overlaid; Control Centre and the shell
+    /// write it while Settings stays open.
+    cfg_mtime: Option<std::time::SystemTime>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -244,6 +247,7 @@ fn main() {
         status: String::new(),
         pane: pane_arg(std::env::args()).unwrap_or(Pane::Appearance),
         scale_refresh: None,
+        cfg_mtime: cosmos_uitk::theme::config_mtime(),
     };
     if let Err(e) = cosmos_uitk::run("Settings", "cosmos.settings", (760, 520), move |ui| {
         draw(ui, &mut app)
@@ -400,6 +404,11 @@ fn appearance(ui: &mut egui::Ui, kit: &Kit, app: &mut App) {
             },
         );
     });
+    let mtime = cosmos_uitk::theme::config_mtime();
+    if mtime != app.cfg_mtime {
+        app.cfg_mtime = mtime;
+        overlay_compositor_config(&mut app.cfg);
+    }
     // The compositor resolves the automatic scale; read it back shortly
     // after so the slider and % label show the applied value.
     if let Some(t) = app.scale_refresh {
