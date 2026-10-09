@@ -292,16 +292,19 @@ fn draw(ui: &mut egui::Ui, ed: &mut Editor) {
         .and_then(|p| p.file_name())
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Untitled".into());
-    let title = if ed.dirty {
-        format!("{name} — Edited")
-    } else {
-        name
-    };
+    let title = name;
     let cell = std::cell::RefCell::new(&mut *ed);
     AppWindow::new()
         .toolbar(|ui| {
             let mut ed = cell.borrow_mut();
             toolbar_title(ui, &title);
+            if ed.dirty {
+                let (r, resp) =
+                    ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+                ui.painter()
+                    .circle_filled(r.center(), 3.5, cosmos_kit::Kit::get(ui.ctx()).text2());
+                resp.on_hover_text("Unsaved changes");
+            }
             toolbar_spacer(ui, 2.0 * 28.0 + 4.0);
             ui.spacing_mut().item_spacing.x = 4.0;
             if toolbar_button(ui, Icon::FolderOpen, "Open… (Ctrl+O)", false).clicked() {
