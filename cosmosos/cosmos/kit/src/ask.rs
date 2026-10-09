@@ -287,10 +287,20 @@ fn strip_ansi(s: &str) -> String {
     out
 }
 
-/// The result sheet for `job`; returns false once the user closes it.
-pub fn result_sheet(ctx: &egui::Context, job: &Job) -> bool {
+#[derive(Debug, PartialEq, Eq)]
+pub enum SheetResult {
+    Open,
+    Closed,
+    /// The user chose Replace on a finished Rewrite.
+    Replace(String),
+}
+
+/// The result sheet for `job`. A finished Rewrite offers Replace when
+/// `replaceable` (the caller still has the selection to swap).
+pub fn result_sheet(ctx: &egui::Context, job: &Job, replaceable: bool) -> SheetResult {
     let kit = Kit::get(ctx);
     let mut close = false;
+    let mut replace = None;
     let open = sheet(
         ctx,
         egui::Id::new(("ask-cosmos", &job.title)),
@@ -327,17 +337,30 @@ pub fn result_sheet(ctx: &egui::Context, job: &Job) -> bool {
                 });
             ui.add_space(space::S16);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if button(ui, ButtonKind::Primary, "Done").clicked() {
+                let finished = matches!(done, Some(Ok(())));
+                let can_replace = finished && replaceable && job.action == Action::Rewrite;
+                if can_replace && button(ui, ButtonKind::Primary, "Replace").clicked() {
+                    replace = Some(text.trim().to_string());
+                }
+                let done_kind = if can_replace {
+                    ButtonKind::Secondary
+                } else {
+                    ButtonKind::Primary
+                };
+                if button(ui, done_kind, "Done").clicked() {
                     close = true;
                 }
-                let finished = matches!(done, Some(Ok(())));
                 if finished && button(ui, ButtonKind::Secondary, "Copy").clicked() {
                     ui.ctx().copy_text(text.trim().to_string());
                 }
             });
         },
     );
-    open && !close
+    match replace {
+        Some(t) => SheetResult::Replace(t),
+        None if open && !close => SheetResult::Open,
+        None => SheetResult::Closed,
+    }
 }
 
 #[cfg(test)]
