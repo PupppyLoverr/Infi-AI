@@ -349,10 +349,9 @@ fn main() {
 }
 
 /// Sidebar places that exist on this machine.
-fn places() -> (
-    Vec<(Icon, &'static str, PathBuf)>,
-    Vec<(Icon, &'static str, PathBuf)>,
-) {
+type Places = Vec<(Icon, &'static str, PathBuf)>;
+
+fn places() -> (Places, Places) {
     let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into()));
     let mut fav = vec![(Icon::Home, "Home", home.clone())];
     for (icon, label, sub) in [
@@ -496,25 +495,27 @@ fn keyboard(ui: &egui::Ui, f: &mut Files) {
     if modal {
         return;
     }
-    let (ctrl, alt, shift) =
-        ui.input(|i| (i.modifiers.command, i.modifiers.alt, i.modifiers.shift));
+    // Match shortcuts against each key event's own modifiers: a quick
+    // Ctrl+L can release Ctrl before the frame that sees the L press.
+    use egui::Modifiers as M;
     let key = |k| ui.input(|i| i.key_pressed(k));
-    if ctrl && key(egui::Key::H) {
-        f.show_hidden = !f.show_hidden;
-    }
-    if ctrl && key(egui::Key::L) {
-        f.path_edit = Some(f.dir.display().to_string());
-    }
-    if ctrl && shift && key(egui::Key::N) {
+    let chord = |m, k| ui.ctx().input_mut(|i| i.consume_key(m, k));
+    if chord(M::COMMAND | M::SHIFT, egui::Key::N) {
         f.new_folder = Some("untitled folder".into());
     }
-    if alt && key(egui::Key::ArrowLeft) {
+    if chord(M::COMMAND, egui::Key::H) {
+        f.show_hidden = !f.show_hidden;
+    }
+    if chord(M::COMMAND, egui::Key::L) {
+        f.path_edit = Some(f.dir.display().to_string());
+    }
+    if chord(M::ALT, egui::Key::ArrowLeft) {
         f.go_back();
     }
-    if alt && key(egui::Key::ArrowRight) {
+    if chord(M::ALT, egui::Key::ArrowRight) {
         f.go_forward();
     }
-    if alt && key(egui::Key::ArrowUp) {
+    if chord(M::ALT, egui::Key::ArrowUp) {
         if let Some(p) = f.dir.parent().map(|p| p.to_path_buf()) {
             f.nav(p);
         }
@@ -603,10 +604,9 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
         .status(|ui| {
             let mut f = cell.borrow_mut();
             let f = &mut **f;
-            if f.chooser.is_some() {
-                let dir = f.dir.clone();
-                let status = f.status.clone();
-                let c = f.chooser.as_mut().unwrap();
+            let dir = f.dir.clone();
+            let status = f.status.clone();
+            if let Some(c) = f.chooser.as_mut() {
                 if c.mode == "save" {
                     status_text(ui, "Save as:");
                     text_field(ui, &mut c.save_name, "Name", 180.0, false);
@@ -796,19 +796,19 @@ fn draw(ui: &mut egui::Ui, f: &mut Files) {
                 text_field(ui, &mut name, "Name", 360.0, false).request_focus();
                 ui.add_space(space::S16);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if button(ui, ButtonKind::Primary, "Create").clicked() || enter {
-                        if !name.trim().is_empty() {
-                            let p = f.dir.join(name.trim());
-                            match fs::create_dir(&p) {
-                                Ok(()) => {
-                                    f.status = format!("created {}", name.trim());
-                                    f.refresh();
-                                    f.selected = Some(p);
-                                }
-                                Err(e) => f.status = format!("create failed: {e}"),
+                    if (button(ui, ButtonKind::Primary, "Create").clicked() || enter)
+                        && !name.trim().is_empty()
+                    {
+                        let p = f.dir.join(name.trim());
+                        match fs::create_dir(&p) {
+                            Ok(()) => {
+                                f.status = format!("created {}", name.trim());
+                                f.refresh();
+                                f.selected = Some(p);
                             }
-                            done = true;
+                            Err(e) => f.status = format!("create failed: {e}"),
                         }
+                        done = true;
                     }
                     if button(ui, ButtonKind::Secondary, "Cancel").clicked() {
                         done = true;
