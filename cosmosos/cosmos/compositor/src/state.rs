@@ -325,6 +325,9 @@ impl<BackendData: Backend> SeatHandler for AnvilState<BackendData> {
         let focus = wl_surface.and_then(|s| dh.get_client(s.id()).ok());
         set_data_device_focus(dh, seat, focus.clone());
         set_primary_focus(dh, seat, focus);
+        // Click-to-focus sets keyboard focus directly; the shell's menubar
+        // app name follows `focused` in the next Windows broadcast.
+        self.cosmos.dirty = true;
     }
     fn cursor_image(&mut self, _seat: &Seat<Self>, image: CursorImageStatus) {
         self.cursor_status = image;
