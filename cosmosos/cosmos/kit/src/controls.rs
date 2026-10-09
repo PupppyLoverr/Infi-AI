@@ -74,9 +74,17 @@ pub fn button(ui: &mut Ui, kind: ButtonKind, label: &str) -> Response {
             kit.accent(),
         ),
     };
+    // Disabled buttons drop their kind colour for a neutral bordered
+    // chip, so they stay legible on dark glass instead of fading out.
+    let enabled = ui.is_enabled();
+    let (fill, fg) = if enabled {
+        (fill, fg)
+    } else {
+        (kit.fill(State::Rest), kit.text2().gamma_multiply(0.7))
+    };
     let p = ui.painter();
-    p.rect_filled(rect, radius::CONTROL, dim(ui, fill));
-    if kind == ButtonKind::Secondary {
+    p.rect_filled(rect, radius::CONTROL, fill);
+    if kind == ButtonKind::Secondary || !enabled {
         p.rect_stroke(
             rect,
             radius::CONTROL,
@@ -84,13 +92,7 @@ pub fn button(ui: &mut Ui, kind: ButtonKind, label: &str) -> Response {
             StrokeKind::Inside,
         );
     }
-    p.text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        label,
-        body_font(),
-        dim(ui, fg),
-    );
+    p.text(rect.center(), Align2::CENTER_CENTER, label, body_font(), fg);
     if resp.has_focus() {
         focus_ring(ui, &kit, rect, radius::CONTROL);
     }

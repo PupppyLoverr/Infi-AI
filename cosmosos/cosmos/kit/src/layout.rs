@@ -251,17 +251,29 @@ pub struct Table<'a> {
 }
 
 impl Table<'_> {
-    fn spans(&self, rect: Rect) -> Vec<(f32, f32)> {
-        let fixed: f32 = self.cols.iter().map(|c| c.width).sum();
-        let flex = (rect.width() - fixed - 2.0 * space::S12).max(40.0);
+    /// Column spans; `None` for columns dropped because the window is too
+    /// narrow. Trailing fixed columns go first so the flexible (name)
+    /// column keeps at least `MIN_FLEX` — like Finder narrowing a list.
+    fn spans(&self, rect: Rect) -> Vec<Option<(f32, f32)>> {
+        const MIN_FLEX: f32 = 160.0;
+        let avail = rect.width() - 2.0 * space::S12;
+        let mut shown = self.cols.len();
+        let fixed = |n: usize| -> f32 { self.cols[..n].iter().map(|c| c.width).sum() };
+        while shown > 1 && avail - fixed(shown) < MIN_FLEX && self.cols[shown - 1].width > 0.0 {
+            shown -= 1;
+        }
+        let flex = (avail - fixed(shown)).max(40.0);
         let mut x = rect.left() + space::S12;
         self.cols
             .iter()
-            .map(|c| {
-                let w = if c.width == 0.0 { flex } else { c.width };
-                let span = (x, w);
-                x += w;
-                span
+            .enumerate()
+            .map(|(i, c)| {
+                (i < shown).then(|| {
+                    let w = if c.width == 0.0 { flex } else { c.width };
+                    let span = (x, w);
+                    x += w;
+                    span
+                })
             })
             .collect()
     }
@@ -270,7 +282,8 @@ impl Table<'_> {
         let kit = Kit::get(ui.ctx());
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
         let font = FontId::proportional(text::CAPTION.size);
-        for (c, (x, w)) in self.cols.iter().zip(self.spans(rect)) {
+        for (c, span) in self.cols.iter().zip(self.spans(rect)) {
+            let Some((x, w)) = span else { continue };
             let g = ellipsized(ui, c.title, font.clone(), kit.text2(), w - space::S8);
             let gx = match c.align {
                 ColAlign::Left => x,
@@ -309,7 +322,8 @@ impl Table<'_> {
                 kit.fill(State::Rest),
             );
         }
-        for (i, ((x, w), cell)) in self.spans(rect).into_iter().zip(cells).enumerate() {
+        for (i, (span, cell)) in self.spans(rect).into_iter().zip(cells).enumerate() {
+            let Some((x, w)) = span else { continue };
             let mut x0 = x;
             if i == 0 {
                 if let Some(paint) = leading {
