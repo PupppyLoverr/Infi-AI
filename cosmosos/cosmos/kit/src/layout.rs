@@ -165,8 +165,10 @@ pub fn toolbar_button(ui: &mut Ui, icon: Icon, tooltip: &str, active: bool) -> R
         };
         ui.painter().rect_filled(rect, radius::ROW, fill);
     }
+    // A disabled Ui already fades by `disabled_alpha`; text3 on top of that
+    // vanishes on dark glass.
     let color = if !ui.is_enabled() {
-        kit.text3()
+        kit.text2()
     } else if active {
         kit.accent()
     } else {
