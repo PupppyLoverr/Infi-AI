@@ -6,6 +6,7 @@ members = [
     "theme",
     "shell",
     "uitk",
+    "kit",
     "portal",
     "lock",
     "greeter",

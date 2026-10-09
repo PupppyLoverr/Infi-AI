@@ -734,6 +734,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cosmos-kit"
+version = "0.1.0"
+dependencies = [
+ "cosmos-theme",
+ "cosmos-uitk",
+ "egui",
+]
+
+[[package]]
 name = "cosmos-lock"
 version = "0.1.0"
 dependencies = [
