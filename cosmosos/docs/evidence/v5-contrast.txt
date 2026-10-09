@@ -82,3 +82,13 @@ v5-cc-light.png              GLASS-L: menubar app name          primary    (26, 
 v5-cc-light.png              GLASS-L: menubar clock             primary       (0, 0, 0) (230, 225, 232) 16.30  7.0  PASS
 
 73/81 pass
+
+== rerun @2ea3e29 (segment fix) ==
+v5-settings-dark2.png     Light segment unselected   secondary (244,241,250) (73,67,89)   8.43  4.5  PASS
+v5-settings-dark2.png     Scale label                primary   (244,241,250) (52,46,71)  11.55  7.0  PASS
+v5-settings-dark2.png     125 percent                secondary (171,167,182) (52,46,70)   5.50  4.5  PASS
+v5-07-files-light2.png    Dark segment unselected    secondary (55,51,65) (250,249,253)  11.70  4.5  PASS
+v5-07-files-light2.png    sidebar CosmosOS           primary   (25,22,37) (210,206,220)   11.50  7.0  PASS
+v5-07-files-light2.png    header Favourites          tertiary  (130,126,140) (237,233,246) 3.31  3.0  PASS
+row-name n/a: fresh boot, Home empty (only hidden) — unchanged, not a regression.
+app-surface: ALL PASS @2ea3e29. Glass rows recorded for §1.3.
