@@ -243,6 +243,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         island_surface: None,
         island_open: false,
         island_hover: None,
+        island_tab: island::Tab::Activities,
         island_dirty: false,
         island_dismissed_at: None,
         clip_history: std::collections::VecDeque::new(),
@@ -379,6 +380,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     })?;
 
+    // Island capsule pulse: ~12 fps only while an approval waits or an
+    // agent works (never in Lite Mode); otherwise a cheap 1s re-check.
+    handle.insert_source(
+        Timer::from_duration(Duration::from_millis(80)),
+        |_, _, state| {
+            if island::pulsing(state) {
+                state.panel_dirty = true;
+                calloop::timer::TimeoutAction::ToDuration(Duration::from_millis(80))
+            } else {
+                calloop::timer::TimeoutAction::ToDuration(Duration::from_secs(1))
+            }
+        },
+    )?;
+
     // 1s tick: repaint clock + expire notifications + IPC reconnect.
     handle.insert_source(
         Timer::from_duration(Duration::from_secs(1)),
@@ -489,6 +504,7 @@ pub struct ShellState {
     pub island_surface: Option<LayerSurface>,
     pub island_open: bool,
     pub island_hover: Option<island::Hit>,
+    pub island_tab: island::Tab,
     pub island_dirty: bool,
     /// Set when the island card just closed from a focus-loss `leave` —
     /// the pill click inside the window is the same physical click and
@@ -763,6 +779,13 @@ impl ShellState {
         }
         self.island_open = open;
         if open {
+            self.island_tab = if matches!(island::pill(self), island::Pill::Idle)
+                && !self.clip_history.is_empty()
+            {
+                island::Tab::Clipboard
+            } else {
+                island::Tab::Activities
+            };
             let surface = self.compositor_state.create_surface(&self.qh);
             let layer = self.layer_shell.create_layer_surface(
                 &self.qh,
@@ -772,7 +795,7 @@ impl ShellState {
                 None,
             );
             layer.set_anchor(Anchor::TOP);
-            layer.set_size(380, island::card_height(self));
+            layer.set_size(island::CARD_W, island::card_height(self));
             layer.set_exclusive_zone(0);
             layer.set_margin((PANEL_HEIGHT + 4) as i32, 0, 0, 0);
             layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
@@ -794,7 +817,7 @@ impl ShellState {
     /// Re-size and repaint an open island card (its live rows change).
     pub fn refresh_island(&mut self) {
         if let Some(layer) = &self.island_surface {
-            layer.set_size(380, island::card_height(self));
+            layer.set_size(island::CARD_W, island::card_height(self));
             self.island_dirty = true;
         }
     }
@@ -802,20 +825,26 @@ impl ShellState {
     /// Click inside the island card.
     pub fn island_click(&mut self, x: f64, y: f64) {
         match island::hit_test(self, x, y) {
-            island::Hit::ClipRow(i) => {
-                if let Some(text) = self.clip_history.get(i).cloned() {
-                    clipwatch::set_clipboard(self, text);
-                }
+            island::Hit::Tab(t) => {
+                self.island_tab = t;
+                self.island_dirty = true;
             }
-            island::Hit::FileRow(i) => {
-                // Clicking a staged file copies its path back to the
-                // clipboard — the droppy "drag out" gesture is the next
-                // iteration.
-                if let Some(path) = self.staged_files.get(i).cloned() {
-                    clipwatch::set_clipboard(self, path);
+            island::Hit::Approve(i, k) => {
+                let picked = activity::pending_approvals(&self.notifications)
+                    .get(i)
+                    .and_then(|n| n.actions.get(k).map(|(key, _)| (n.id, key.clone())));
+                if let Some((id, key)) = picked {
+                    if let Some(conn) = &self.notify_conn {
+                        notify::emit_action(conn, id, &key);
+                    }
+                    self.notifications.retain(|n| n.id != id);
+                    self.notify_dirty = true;
+                    self.sync_notify_height();
                 }
+                self.panel_dirty = true;
+                self.refresh_island();
             }
-            island::Hit::AgentRow(i) => {
+            island::Hit::AgentPause(i) => {
                 if let Some(a) = self.agents.get(i) {
                     activity::set_paused(&a.agent, !a.paused);
                 }
@@ -823,7 +852,15 @@ impl ShellState {
                 self.panel_dirty = true;
                 self.refresh_island();
             }
-            island::Hit::MediaRow => {
+            island::Hit::AgentStop(i) => {
+                if let Some(a) = self.agents.get(i) {
+                    activity::set_stopped(&a.agent);
+                }
+                self.agents = activity::scan_agents();
+                self.panel_dirty = true;
+                self.refresh_island();
+            }
+            island::Hit::Media => {
                 if let Some(m) = self.media.as_mut() {
                     activity::play_pause(m.bus.clone());
                     m.playing = !m.playing;
@@ -831,7 +868,19 @@ impl ShellState {
                 self.panel_dirty = true;
                 self.refresh_island();
             }
-            island::Hit::ApprovalRow(_) | island::Hit::Backdrop => {}
+            island::Hit::Clip(i) => {
+                if let Some(text) = self.clip_history.get(i).cloned() {
+                    clipwatch::set_clipboard(self, text);
+                    self.close_island();
+                }
+            }
+            island::Hit::Chip(i) => {
+                // A staged file's path goes back on the clipboard.
+                if let Some(path) = self.staged_files.get(i).cloned() {
+                    clipwatch::set_clipboard(self, path);
+                }
+            }
+            island::Hit::Backdrop => {}
         }
     }
 
@@ -1502,6 +1551,9 @@ impl ShellState {
                 const BTN_RIGHT: u32 = 0x111;
                 self.set_menu(None, 0);
                 self.set_quick_open(false);
+                // The desktop takes no keyboard focus, so the island's
+                // focus-loss dismissal never fires for a desktop press.
+                self.close_island();
                 if button == BTN_RIGHT {
                     self.open_desktop_menu(x, y);
                 }
