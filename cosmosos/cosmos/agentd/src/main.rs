@@ -178,6 +178,34 @@ fn canonicalize_lenient(path: &Path) -> PathBuf {
 /// Minimal TOML subset for the policy file: `key = ["a", "b"]` or
 /// `key = "v"` lines. Keeps agentd dependency-light (no toml crate);
 /// policy files are written by Settings/onboarding in a later slice.
+/// `~` / `~/x` in policy roots resolve against $HOME, so one policy file
+/// in /etc/skel works for every user.
+fn expand_home(s: &str) -> PathBuf {
+    match s.strip_prefix('~') {
+        Some("") => home(),
+        Some(rest) if rest.starts_with('/') => home().join(&rest[1..]),
+        _ => PathBuf::from(s),
+    }
+}
+
+/// Snapshot the home volume before an agent's first change of a session,
+/// so Agents → Rollback can undo it. Best effort: no snapper, no snapshot.
+fn pre_change_snapshot(agent: &str, tool: &str) {
+    let desc = format!("Before {agent}: {tool}");
+    match std::process::Command::new("snapper")
+        .args(["-c", "home", "create", "--cleanup-algorithm", "number"])
+        .args(["--description", &desc])
+        .output()
+    {
+        Ok(o) if o.status.success() => tracing::info!("snapshot taken: {desc}"),
+        Ok(o) => tracing::warn!(
+            "snapper create failed: {}",
+            String::from_utf8_lossy(&o.stderr).trim()
+        ),
+        Err(e) => tracing::debug!("snapper unavailable: {e}"),
+    }
+}
+
 fn toml_like_parse(text: &str) -> Result<Policy> {
     let mut policy = Policy::default();
     for line in text.lines() {
@@ -201,8 +229,8 @@ fn toml_like_parse(text: &str) -> Result<Policy> {
             vec![val.trim_matches('"').to_string()]
         };
         match key {
-            "read_roots" => policy.read_roots = list.iter().map(PathBuf::from).collect(),
-            "write_roots" => policy.write_roots = list.iter().map(PathBuf::from).collect(),
+            "read_roots" => policy.read_roots = list.iter().map(|s| expand_home(s)).collect(),
+            "write_roots" => policy.write_roots = list.iter().map(|s| expand_home(s)).collect(),
             "tools" => policy.tools = list,
             "sensitive" => policy.sensitive = list,
             _ => {}
@@ -241,6 +269,8 @@ fn tool_defs() -> Value {
 struct Agentd {
     agent: String,
     policy: Policy,
+    /// A pre-change home snapshot was taken this session.
+    snapped: bool,
 }
 
 impl Agentd {
@@ -430,6 +460,13 @@ impl Agentd {
                 Ok(Decision::Denied) => bail!("tool `{name}` denied by user"),
                 Err(e) => bail!("tool `{name}` needs approval but no decision arrived: {e:#}"),
             }
+        }
+        if matches!(name, "files.write" | "files.move")
+            && !self.snapped
+            && self.precheck_scope(name, args).is_ok()
+        {
+            self.snapped = true;
+            pre_change_snapshot(&self.agent, name);
         }
         let get = |key: &str| -> Result<&Value> {
             args.get(key)
@@ -807,17 +844,24 @@ where
         let id = rpc.id.clone();
         let reply = match rpc.method.as_str() {
             "initialize" => {
-                let name = rpc
-                    .params
-                    .get("clientInfo")
-                    .and_then(|c| c.get("name"))
-                    .and_then(|n| n.as_str())
-                    .or_else(|| rpc.params.get("agent").and_then(|a| a.as_str()))
-                    .unwrap_or("default")
-                    .to_string();
+                // COSMOS_AGENT (set by the spawning agent's MCP config in
+                // --stdio mode) names the agent when its client id is generic.
+                let name = std::env::var("COSMOS_AGENT")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| {
+                        rpc.params
+                            .get("clientInfo")
+                            .and_then(|c| c.get("name"))
+                            .and_then(|n| n.as_str())
+                            .or_else(|| rpc.params.get("agent").and_then(|a| a.as_str()))
+                            .unwrap_or("default")
+                            .to_string()
+                    });
                 agent = Some(Agentd {
                     policy: Policy::load(&name),
                     agent: name.clone(),
+                    snapped: false,
                 });
                 live = Some(Live::new(&name));
                 json!({"jsonrpc": "2.0", "id": id, "result": {
