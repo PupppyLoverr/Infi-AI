@@ -77,6 +77,8 @@ pub enum Hit {
     Recent(usize),
     /// Footer action: 0 = Settings, 1 = Log out.
     Action(u8),
+    /// Press on the widget board, relative to its top-left.
+    Widget(i32, i32),
     Input,
     List,
     Backdrop,
@@ -205,14 +207,6 @@ fn user_name() -> String {
     }
 }
 
-fn initials(name: &str) -> String {
-    name.split_whitespace()
-        .take(2)
-        .filter_map(|w| w.chars().next())
-        .flat_map(char::to_uppercase)
-        .collect()
-}
-
 /// Start's card origin. With the dock at the bottom it sits just above
 /// the dock, centred; with a side dock it hugs that edge under the
 /// menubar. It never covers the menubar.
@@ -260,7 +254,10 @@ fn box_height(n_items: usize, n_pinned: usize, n_rec: usize, searching: bool) ->
         // +SEC_H+4 with height WIDGET_H-10, then a 16px gap above the
         // footer — the old sum came up 24px short and the footer cut
         // the cards (v3-04-start).
-        h += 2.0 * SEC_H + WIDGET_H + 10.0;
+        h += SEC_H + crate::startw::HEIGHT as f64 + 12.0;
+        if !custom_widgets().is_empty() {
+            h += WIDGET_H + 8.0;
+        }
     }
     h + FOOTER_H
 }
@@ -293,55 +290,9 @@ pub struct Widget {
 /// Build the Start-panel widgets: the three system widgets plus any
 /// agent-generated custom widgets under
 /// `~/.local/share/cosmos/widgets/<name>/` (widget.toml + data.sh).
-pub fn widgets(state: &ShellState) -> Vec<Widget> {
-    let mut out = Vec::new();
-    out.push(Widget {
-        icon: "widget-clock",
-        big: state.sysinfo.clock.clone(),
-        small: state.sysinfo.date.clone(),
-        bar: None,
-    });
-
-    // Memory + load: /proc/meminfo + /proc/loadavg.
-    let (total_kb, avail_kb) = meminfo();
-    let mem_used = if total_kb > 0 {
-        (total_kb - avail_kb) as f32 / total_kb as f32
-    } else {
-        0.0
-    };
-    let free_gb = avail_kb as f64 / 1_048_576.0;
-    let load = std::fs::read_to_string("/proc/loadavg")
-        .ok()
-        .and_then(|t| t.split_whitespace().next().map(str::to_string))
-        .unwrap_or_else(|| "0".into());
-    out.push(Widget {
-        icon: "widget-cpu",
-        big: format!("{:.0}%", mem_used * 100.0),
-        small: format!("load {load} · {free_gb:.1}G free"),
-        bar: Some(mem_used.clamp(0.0, 1.0)),
-    });
-
-    // Root filesystem fill: statvfs("/").
-    if let Some((used_b, total_b)) = fs_usage("/") {
-        let frac = if total_b > 0 {
-            used_b as f32 / total_b as f32
-        } else {
-            0.0
-        };
-        let gb = 1_073_741_824.0;
-        out.push(Widget {
-            icon: "widget-disk",
-            big: format!("{:.0}%", frac * 100.0),
-            small: format!(
-                "{:.1} of {:.1} GB used",
-                used_b as f64 / gb,
-                total_b as f64 / gb
-            ),
-            bar: Some(frac.clamp(0.0, 1.0)),
-        });
-    }
-    out.extend(custom_widgets());
-    out
+/// Agent-made widgets (the built-in clock/RAM/disk moved into the board).
+pub fn widgets() -> Vec<Widget> {
+    custom_widgets()
 }
 
 // ---------------- Agent-generated custom widgets ----------------
@@ -489,7 +440,7 @@ fn run_widget_script(script: &std::path::Path, icon: &'static str) -> Option<Wid
     (!w.big.is_empty() || !w.small.is_empty()).then_some(w)
 }
 
-fn meminfo() -> (u64, u64) {
+pub(crate) fn meminfo() -> (u64, u64) {
     let Ok(text) = std::fs::read_to_string("/proc/meminfo") else {
         return (0, 0);
     };
@@ -508,18 +459,6 @@ fn meminfo() -> (u64, u64) {
         }
     }
     (total, avail)
-}
-
-/// (used bytes, total bytes) for the filesystem containing `path`.
-fn fs_usage(path: &str) -> Option<(u64, u64)> {
-    use std::os::unix::ffi::OsStrExt;
-    let c = std::ffi::CString::new(std::ffi::OsStr::new(path).as_bytes()).ok()?;
-    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
-    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
-        return None;
-    }
-    let bs = st.f_frsize;
-    Some(((st.f_blocks - st.f_bfree) * bs, st.f_blocks * bs))
 }
 
 /// Y offset where RECOMMENDED rows start (0 when hidden).
@@ -591,6 +530,12 @@ pub fn hit_test(
         let idx = ((ry - rtop) / ROW_H) as usize;
         if ry >= rtop && idx < n_rec {
             return Hit::Recent(idx);
+        }
+    }
+    if !searching && n_pinned > 0 {
+        let wy = widgets_top(n_pinned, n_rec) + SEC_H;
+        if ry >= wy && ry < wy + crate::startw::HEIGHT as f64 {
+            return Hit::Widget((x - left - 16.0) as i32, (ry - wy) as i32);
         }
     }
     let rtop = rows_top(n_pinned, n_rec, searching);
@@ -1091,6 +1036,9 @@ fn draw_answer(
 }
 
 pub fn draw(state: &mut ShellState) {
+    if state.start_todos.is_none() {
+        state.start_todos = Some(crate::startw::load_todos(&crate::startw::todo_path()));
+    }
     if state.launcher_search {
         update_preview(state);
     }
@@ -1115,7 +1063,7 @@ pub fn draw(state: &mut ShellState) {
     let (box_bg, sel_bg, sep, input_bg, fg, fg_dim) = theme(state.dark);
     let glyph = Color::from_rgba8(fg.r(), fg.g(), fg.b(), fg.a());
     // Hoisted before the pool's mutable borrow below.
-    let wigs = widgets(state);
+    let wigs = widgets();
 
     let (pw, ph) = draw::phys(w, h);
     let stride = pw as i32 * 4;
@@ -1344,6 +1292,25 @@ pub fn draw(state: &mut ShellState) {
     if !show_rows {
         let wtop = top + widgets_top(pinned_apps.len(), rec_apps.len()) as f32;
         section(&mut pixmap, left + 16.0, wtop, "WIDGETS", fg_dim);
+        let pal = crate::startw::Palette {
+            card: input_bg,
+            fg,
+            dim: fg_dim,
+            track: sep,
+            accent: draw::accent(state.dark),
+        };
+        crate::startw::draw_board(
+            &mut pixmap,
+            left + 16.0,
+            wtop + SEC_H as f32,
+            LAUNCHER_WIDTH as f32 - 32.0,
+            state.start_todos.as_deref().unwrap_or(&[]),
+            state.start_todo_edit.as_deref(),
+            state.sysinfo.volume.as_ref(),
+            &mut state.start_photo,
+            &pal,
+        );
+        let wtop = wtop + crate::startw::HEIGHT + 8.0;
         if !wigs.is_empty() {
             let gap = 8.0f32;
             let card_w = (LAUNCHER_WIDTH as f32 - 32.0 - gap * (wigs.len() as f32 - 1.0))
@@ -1491,7 +1458,7 @@ pub fn draw(state: &mut ShellState) {
         sep,
     );
     let by = fy + (FOOTER_H as f32 - 28.0) / 2.0;
-    // User avatar (initials on accent) + name — opens Settings.
+    // User glyph + name — opens Settings.
     if hover == Some(Hit::Action(0)) {
         draw::fill_round_rect(
             &mut pixmap,
@@ -1504,25 +1471,8 @@ pub fn draw(state: &mut ShellState) {
         );
     }
     let name = user_name();
-    draw::fill_round_rect(
-        &mut pixmap,
-        left + 14.0,
-        by,
-        28.0,
-        28.0,
-        14.0,
-        draw::accent(state.dark),
-    );
-    draw::text(
-        &mut pixmap,
-        left + 14.0 + (28.0 - initials(&name).chars().count() as f32 * 7.5) / 2.0,
-        by + 7.0,
-        28.0,
-        14.0,
-        11.0,
-        &initials(&name),
-        CtColor::rgba(0xFF, 0xFF, 0xFF, 0xFF),
-    );
+    draw::fill_round_rect(&mut pixmap, left + 14.0, by, 28.0, 28.0, 14.0, sep);
+    icons::icon(&mut pixmap, "user", left + 18.0, by + 4.0, 20.0, glyph);
     draw::text(
         &mut pixmap,
         left + 52.0,
@@ -1649,6 +1599,31 @@ pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {
 }
 
 pub fn key_press(state: &mut ShellState, event: KeyEvent) {
+    if state.start_todo_edit.is_some() {
+        use crate::startw::EditKey;
+        let key = match event.keysym {
+            Keysym::Escape => Some(EditKey::Cancel),
+            Keysym::Return | Keysym::KP_Enter => Some(EditKey::Enter),
+            Keysym::BackSpace => Some(EditKey::Back),
+            _ => None,
+        };
+        let keys: Vec<EditKey> = match key {
+            Some(k) => vec![k],
+            None => event
+                .utf8
+                .as_deref()
+                .unwrap_or("")
+                .chars()
+                .filter(|c| !c.is_control())
+                .map(EditKey::Char)
+                .collect(),
+        };
+        for key in keys {
+            crate::startw::edit_key(state, key);
+        }
+        state.launcher_dirty = true;
+        return;
+    }
     match event.keysym {
         Keysym::Escape => {
             state.ipc.send(&cosmos_ipc::Request::ToggleLauncher);

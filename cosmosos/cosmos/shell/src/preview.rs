@@ -118,7 +118,7 @@ fn local_time(secs: i64) -> String {
 }
 
 /// The image fitted into THUMB_W×THUMB_H, premultiplied for tiny-skia.
-fn thumbnail(p: &Path) -> Option<Pixmap> {
+pub(crate) fn thumbnail(p: &Path) -> Option<Pixmap> {
     let img = image::open(p).ok()?.to_rgba8();
     let (w, h) = img.dimensions();
     if w == 0 || h == 0 {

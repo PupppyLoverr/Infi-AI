@@ -24,8 +24,8 @@ mod popups;
 mod preview;
 mod quick;
 mod search;
-mod switcher;
 mod startw;
+mod switcher;
 mod sysinfo;
 mod weather;
 mod widgets;
@@ -200,6 +200,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         launcher_search: false,
         launcher_preview: None,
         launcher_card_h: 0.0,
+        start_todos: None,
+        start_todo_edit: None,
+        start_photo: None,
         ask_tx: None,
         ask_id: 0,
         ask_pid: None,
@@ -543,6 +546,9 @@ pub struct ShellState {
     pub launcher_preview: Option<preview::FilePreview>,
     /// Painted Search or Ask card height (pill + results/answer).
     pub launcher_card_h: f64,
+    pub start_todos: Option<Vec<startw::Todo>>,
+    pub start_todo_edit: Option<String>,
+    pub start_photo: Option<(std::path::PathBuf, tiny_skia::Pixmap)>,
     pub ask_tx: Option<calloop::channel::Sender<(u64, ask::Event)>>,
     pub ask_id: u64,
     pub ask_pid: Option<u32>,
@@ -870,6 +876,7 @@ impl ShellState {
             return;
         }
         self.launcher_open = open;
+        self.start_todo_edit = None;
         if open {
             self.set_quick_open(false);
             self.launcher_query = self.launcher_preset.take().unwrap_or_default();
@@ -953,6 +960,7 @@ impl ShellState {
     }
 
     fn close_launcher(&mut self) {
+        self.start_todo_edit = None;
         if self.launcher_open {
             self.set_launcher_open(false);
             self.ipc.send(&cosmos_ipc::Request::ToggleLauncher);
@@ -1034,6 +1042,13 @@ impl ShellState {
                     let _ = desktop::launch(&app);
                 }
                 self.close_launcher();
+            }
+            launcher::Hit::Widget(dx, dy) => {
+                let w = LAUNCHER_WIDTH as f32 - 32.0;
+                if startw::press(self, w, dx as f32, dy as f32) {
+                    self.close_launcher();
+                }
+                self.launcher_dirty = true;
             }
             launcher::Hit::Action(_) | launcher::Hit::Input | launcher::Hit::List => {}
             launcher::Hit::Backdrop => self.close_launcher(),
