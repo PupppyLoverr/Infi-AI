@@ -75,7 +75,10 @@ fn material(px: [f32; 3], dark: bool) -> [f32; 3] {
 /// Decode + downscale + blur the named wallpaper into the per-mode glass
 /// backdrop.
 fn load(name: &str, dark: bool) -> Option<Glass> {
-    let d = dir();
+    load_from(&dir(), name, dark)
+}
+
+fn load_from(d: &std::path::Path, name: &str, dark: bool) -> Option<Glass> {
     let img = ["-1920x1080.png", "-3840x2160.png"]
         .iter()
         .find_map(|s| image::open(d.join(format!("{name}{s}"))).ok())?
@@ -237,6 +240,25 @@ pub fn fill_glass(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shipped_wallpapers_load_as_tinted_glass_in_both_modes() {
+        let d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../wallpapers");
+        for name in ["aurora", "coral", "indigo", "ocean", "peach", "violet"] {
+            for dark in [true, false] {
+                let wall = cosmos_ipc::wallpaper_for(name, dark);
+                let g = load_from(&d, &wall, dark).unwrap_or_else(|| panic!("{wall} dark={dark}"));
+                let px = g.blur.pixel(GW / 2, GH / 2).unwrap().demultiply();
+                let (r, gg, b) = (px.red(), px.green(), px.blue());
+                let chroma = r.max(gg).max(b) - r.min(gg).min(b);
+                eprintln!("{wall} dark={dark} centre=({r},{gg},{b}) chroma={chroma}");
+                assert!(
+                    chroma >= 12,
+                    "{wall} dark={dark} glass is grey: ({r},{gg},{b})"
+                );
+            }
+        }
+    }
 
     fn lum(c: [f32; 3]) -> f32 {
         let l = c.map(lin);

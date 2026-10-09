@@ -26,10 +26,14 @@ mod switcher;
 mod sysinfo;
 mod zoomflyout;
 
+const DEFAULT_WALLPAPER: &str = "violet";
+
 thread_local! {
     /// Mirror of ShellState::wallpaper so static helpers can reach it.
+    /// Starts at the same default: apply_config only writes it on a change,
+    /// so an empty start left glass with no wallpaper on a fresh account.
     static WALLPAPER: std::cell::RefCell<String> =
-        const { std::cell::RefCell::new(String::new()) };
+        std::cell::RefCell::new(DEFAULT_WALLPAPER.to_string());
     /// Mirror of ShellState::dark — picks the `-light` wallpaper variant.
     static DARK: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
 }
@@ -199,7 +203,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         quick_dismissed_at: None,
         vol_drag: false,
         accent_name: cosmos_ipc::DEFAULT_ACCENT.to_string(),
-        wallpaper: "violet".to_string(),
+        wallpaper: DEFAULT_WALLPAPER.to_string(),
         help_surface: None,
         help_size: (0, 0),
         help_open: false,
@@ -2174,3 +2178,14 @@ impl Dispatch2<WpViewport, ShellState> for ScaleData {
     }
 }
 smithay_client_toolkit::delegate_registry!(ShellState);
+
+#[cfg(test)]
+mod wallpaper_mirror_tests {
+    #[test]
+    fn glass_wallpaper_defaults_to_the_shipped_default_before_any_config() {
+        assert_eq!(
+            super::ShellState::wallpaper_name(),
+            super::DEFAULT_WALLPAPER
+        );
+    }
+}

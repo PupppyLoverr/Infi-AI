@@ -1,0 +1,178 @@
+[
+ {
+  "shot": "v5-25-menubar-dark.png",
+  "name": "mb-dark-appname",
+  "box": [
+   75,
+   10,
+   100,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-25-menubar-dark.png",
+  "name": "mb-dark-filemenu",
+  "box": [
+   215,
+   10,
+   45,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-25-menubar-dark.png",
+  "name": "mb-dark-window",
+  "box": [
+   290,
+   10,
+   75,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-25-menubar-dark.png",
+  "name": "mb-dark-clock",
+  "box": [
+   1730,
+   10,
+   120,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-24-menubar-light.png",
+  "name": "mb-light-appname",
+  "box": [
+   75,
+   10,
+   100,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-24-menubar-light.png",
+  "name": "mb-light-filemenu",
+  "box": [
+   215,
+   10,
+   45,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-24-menubar-light.png",
+  "name": "mb-light-window",
+  "box": [
+   290,
+   10,
+   75,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-24-menubar-light.png",
+  "name": "mb-light-clock",
+  "box": [
+   1730,
+   10,
+   120,
+   26
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-21-cc-violet-dark.png",
+  "name": "cc-dark-wired",
+  "box": [
+   1585,
+   146,
+   200,
+   20
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-21-cc-violet-dark.png",
+  "name": "cc-dark-vol0",
+  "box": [
+   1820,
+   196,
+   60,
+   20
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-23-cc-violet-light.png",
+  "name": "cc-light-wired",
+  "box": [
+   1585,
+   146,
+   200,
+   20
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-23-cc-violet-light.png",
+  "name": "cc-light-vol0",
+  "box": [
+   1820,
+   196,
+   60,
+   20
+  ],
+  "role": "secondary"
+ },
+ {
+  "shot": "v5-20-start-violet-dark.png",
+  "name": "start-dark-cosmos",
+  "box": [
+   655,
+   552,
+   95,
+   30
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-20-start-violet-dark.png",
+  "name": "start-dark-logout",
+  "box": [
+   1230,
+   553,
+   150,
+   34
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-22-start-violet-light.png",
+  "name": "start-light-cosmos",
+  "box": [
+   655,
+   552,
+   95,
+   30
+  ],
+  "role": "primary"
+ },
+ {
+  "shot": "v5-22-start-violet-light.png",
+  "name": "start-light-logout",
+  "box": [
+   1230,
+   552,
+   160,
+   36
+  ],
+  "role": "primary"
+ }
+]
