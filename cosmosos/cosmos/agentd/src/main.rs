@@ -602,6 +602,88 @@ struct Rpc {
     params: Map<String, Value>,
 }
 
+/// Live-activity record the shell's Dynamic Island reads: one JSON file per
+/// connected agent under `~/.local/state/cosmos/agent-live/`. A sibling
+/// `<agent>.paused` file (written by the island's Pause button) holds the
+/// agent's next tool call until it is removed. Both files go away when the
+/// connection ends.
+struct Live {
+    path: PathBuf,
+    paused: PathBuf,
+    agent: String,
+    started: u64,
+    calls: u64,
+}
+
+fn live_dir() -> PathBuf {
+    home().join(".local/state/cosmos/agent-live")
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+impl Live {
+    fn new(agent: &str) -> Self {
+        let dir = live_dir();
+        let _ = fs::create_dir_all(&dir);
+        let safe: String = agent
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+            .collect();
+        let live = Live {
+            path: dir.join(format!("{safe}.json")),
+            paused: dir.join(format!("{safe}.paused")),
+            agent: agent.into(),
+            started: now_secs(),
+            calls: 0,
+        };
+        live.write("", false);
+        live
+    }
+
+    fn write(&self, tool: &str, busy: bool) {
+        let v = json!({
+            "agent": self.agent,
+            "pid": std::process::id(),
+            "started": self.started,
+            "tool": tool,
+            "busy": busy,
+            "calls": self.calls,
+        });
+        let tmp = self.path.with_extension("tmp");
+        if fs::write(&tmp, v.to_string()).is_ok() {
+            let _ = fs::rename(&tmp, &self.path);
+        }
+    }
+
+    /// Blocks while the user has the agent paused, then marks it busy.
+    fn begin(&mut self, tool: &str) {
+        if self.paused.exists() {
+            tracing::info!(agent = %self.agent, "paused — holding tool call `{tool}`");
+            while self.paused.exists() {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+        }
+        self.calls += 1;
+        self.write(tool, true);
+    }
+
+    fn end(&self, tool: &str) {
+        self.write(tool, false);
+    }
+}
+
+impl Drop for Live {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+        let _ = fs::remove_file(&self.paused);
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct AuditEntry {
     ts: u64,
@@ -650,6 +732,7 @@ where
     W: std::io::Write,
 {
     let mut agent: Option<Agentd> = None;
+    let mut live: Option<Live> = None;
     for line in reader.lines() {
         let line = line?;
         if line.trim().is_empty() {
@@ -681,6 +764,7 @@ where
                     policy: Policy::load(&name),
                     agent: name.clone(),
                 });
+                live = Some(Live::new(&name));
                 json!({"jsonrpc": "2.0", "id": id, "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
@@ -712,7 +796,13 @@ where
                     )?;
                     continue;
                 };
+                if let Some(l) = live.as_mut() {
+                    l.begin(&tool);
+                }
                 let outcome = state.call(&tool, &args);
+                if let Some(l) = live.as_ref() {
+                    l.end(&tool);
+                }
                 audit(&state.agent, &tool, &outcome);
                 match outcome {
                     Ok(content) => json!({"jsonrpc": "2.0", "id": id,

@@ -102,6 +102,7 @@ pub fn draw(state: &mut ShellState) {
     let dark = state.dark;
     let tray_x = w as f64 - status_w - 12.0;
     let pill = crate::island::pill_rect(state);
+    let pill_act = crate::island::pill_activity(state);
 
     let stride = w as i32 * 4;
     let Ok((buffer, canvas)) = state.pool.create_buffer(
@@ -246,30 +247,57 @@ pub fn draw(state: &mut ShellState) {
                 (ph / 2.0) as f32,
                 pill_bg,
             );
-            let mut tx = px + 10.0;
-            icons::icon(
-                &mut pixmap,
-                "clipboard",
-                tx as f32,
-                (py + (ph - 13.0) / 2.0) as f32,
-                13.0,
-                glyph,
-            );
-            tx += 18.0;
-            if let Some(snip) = state.clip_history.front() {
-                let snippet: String = snip.chars().take(22).collect();
+            if let Some(act) = &pill_act {
+                // Live activity: status dot + label (approval, agent, media).
+                draw::fill_round_rect(
+                    &mut pixmap,
+                    (px + 11.0) as f32,
+                    (py + ph / 2.0 - 3.5) as f32,
+                    7.0,
+                    7.0,
+                    3.5,
+                    if act.live {
+                        draw::accent(dark)
+                    } else {
+                        Color::from_rgba8(fg_dim.r(), fg_dim.g(), fg_dim.b(), 0xB0)
+                    },
+                );
                 draw::text(
                     &mut pixmap,
-                    tx as f32,
+                    (px + 24.0) as f32,
                     (py + ph / 2.0 - 7.0) as f32,
-                    (pw - (tx - px) - 10.0) as f32,
+                    (pw - 32.0) as f32,
                     14.0,
                     11.5,
-                    &snippet.replace('\n', " "),
-                    fg_dim,
+                    &act.label,
+                    fg,
                 );
+            } else {
+                let mut tx = px + 10.0;
+                icons::icon(
+                    &mut pixmap,
+                    "clipboard",
+                    tx as f32,
+                    (py + (ph - 13.0) / 2.0) as f32,
+                    13.0,
+                    glyph,
+                );
+                tx += 18.0;
+                if let Some(snip) = state.clip_history.front() {
+                    let snippet: String = snip.chars().take(22).collect();
+                    draw::text(
+                        &mut pixmap,
+                        tx as f32,
+                        (py + ph / 2.0 - 7.0) as f32,
+                        (pw - (tx - px) - 10.0) as f32,
+                        14.0,
+                        11.5,
+                        &snippet.replace('\n', " "),
+                        fg_dim,
+                    );
+                }
             }
-            if !state.staged_files.is_empty() {
+            if pill_act.is_none() && !state.staged_files.is_empty() {
                 let n = state.staged_files.len().to_string();
                 draw::fill_round_rect(
                     &mut pixmap,
