@@ -306,6 +306,18 @@ fn main() {
     // name=…;filters=*.png,*.jpg") and optional COSMOS_CHOOSER_FOLDER.
     let mut title = "Files";
     let args: Vec<String> = std::env::args().collect();
+    // `cosmos-files <folder>` opens there (the desktop's New Folder).
+    if let Some(p) = args
+        .iter()
+        .skip(1)
+        .find(|a| !a.starts_with("--"))
+        .map(PathBuf::from)
+    {
+        if p.is_dir() {
+            files.dir = p;
+            files.refresh();
+        }
+    }
     if args.iter().any(|a| a == "--chooser") {
         let opts = std::env::var("COSMOS_CHOOSER_OPTS").unwrap_or_default();
         let get = |k: &str| {

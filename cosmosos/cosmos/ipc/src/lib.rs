@@ -191,6 +191,14 @@ pub enum Event {
         x: i32,
         y: i32,
     },
+    /// A press on the bare desktop (no window or layer under it), with
+    /// its evdev `button` and logical screen position. The shell closes
+    /// its flyouts and, on BTN_RIGHT, opens the desktop menu there.
+    DesktopPress {
+        button: u32,
+        x: i32,
+        y: i32,
+    },
     /// Reply to a `Screenshot` request — `path` was written as a PNG.
     Screenshot {
         path: String,
