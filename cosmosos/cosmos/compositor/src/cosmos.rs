@@ -576,6 +576,17 @@ pub struct CosmosState {
     /// ext-session-lock surfaces handed to the lock client, one per
     /// output — `(surface, output it was created for)`.
     pub lock_surfaces: Vec<(smithay::wayland::session_lock::LockSurface, Output)>,
+    /// The `ext_session_lock_v1` currently holding the lock. A second
+    /// locker is refused while it is alive; once it dies the session
+    /// stays locked and a replacement may take over.
+    pub lock_owner: Option<
+        smithay::reexports::wayland_protocols::ext::session_lock::v1::server::ext_session_lock_v1::ExtSessionLockV1,
+    >,
+    /// Last compositor spawn of `cosmos-lock` — respawns are rate-limited
+    /// so a crash-looping locker can't fork-storm the session.
+    pub locker_spawned_at: Option<std::time::Instant>,
+    /// The locked-session watchdog timer is armed.
+    pub lock_watchdog: bool,
     /// If set, broadcast a `Windows`+`Workspaces` update at the next idle point.
     pub dirty: bool,
 }

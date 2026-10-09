@@ -257,7 +257,9 @@ pub fn press(state: &mut ShellState, x: f64, y: f64) -> bool {
             false
         }
         Hit::Lock => {
-            let _ = std::process::Command::new("cosmos-lock").spawn();
+            if let Err(err) = crate::logind::request_lock() {
+                tracing::warn!("quick: lock failed: {err}");
+            }
             state.set_quick_open(false);
             false
         }
@@ -325,7 +327,19 @@ pub fn draw(state: &mut ShellState) {
 
     // The drop shadow comes from the compositor (layer decal) — the
     // card itself only needs the rounded fill + hairline.
-    glass::fill_glass(&mut pixmap, &crate::ShellState::wallpaper_name(), 0.0, 0.0, w as f32, h as f32, cosmos_theme::radius::PANEL, (state.panel_size.0 as f32 - w as f32 - 8.0).max(0.0), crate::PANEL_HEIGHT as f32 + 4.0, state.dark, card);
+    glass::fill_glass(
+        &mut pixmap,
+        &crate::ShellState::wallpaper_name(),
+        0.0,
+        0.0,
+        w as f32,
+        h as f32,
+        cosmos_theme::radius::PANEL,
+        (state.panel_size.0 as f32 - w as f32 - 8.0).max(0.0),
+        crate::PANEL_HEIGHT as f32 + 4.0,
+        state.dark,
+        card,
+    );
     draw::stroke_round_rect(
         &mut pixmap,
         0.5,

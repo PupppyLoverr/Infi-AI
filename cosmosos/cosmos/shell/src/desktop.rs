@@ -186,7 +186,7 @@ fn run_action(action: SystemAction) -> Result<(), String> {
         }
         SystemAction::Reboot => dbus_power("Reboot"),
         SystemAction::Shutdown => dbus_power("PowerOff"),
-        SystemAction::Lock => dbus_power("Lock").or_else(|_| dbus_lock_session()),
+        SystemAction::Lock => crate::logind::request_lock(),
     }
 }
 
@@ -198,19 +198,6 @@ fn dbus_power(method: &str) -> Result<(), String> {
         "/org/freedesktop/login1",
         Some("org.freedesktop.login1.Manager"),
         method,
-        &(),
-    )
-    .map(|_| ())
-    .map_err(|e| e.to_string())
-}
-
-fn dbus_lock_session() -> Result<(), String> {
-    let conn = zbus::blocking::Connection::session().map_err(|e| e.to_string())?;
-    conn.call_method(
-        Some("org.freedesktop.login1"),
-        "/org/freedesktop/login1/session/auto",
-        Some("org.freedesktop.login1.Session"),
-        "Lock",
         &(),
     )
     .map(|_| ())

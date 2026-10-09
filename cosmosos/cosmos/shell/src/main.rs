@@ -14,6 +14,7 @@ mod icons;
 mod ipc_client;
 mod island;
 mod launcher;
+mod logind;
 mod menubar;
 mod notify;
 mod panel;
@@ -87,6 +88,7 @@ fn main() {
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
+    logind::spawn_listener();
 
     if let Err(err) = run() {
         tracing::error!("cosmos-shell fatal: {err}");
@@ -1051,11 +1053,9 @@ impl ShellState {
             Action::Settings => {
                 let _ = std::process::Command::new("cosmos-settings").spawn();
             }
-            // Same path as super+L: logind's Lock never reaches this session
-            // (greetd+cage doesn't register it with logind).
             Action::Lock => {
-                if let Err(err) = std::process::Command::new("cosmos-lock").spawn() {
-                    tracing::warn!("menu: cosmos-lock failed: {err}");
+                if let Err(err) = logind::request_lock() {
+                    tracing::warn!("menu: lock failed: {err}");
                 }
             }
             Action::Logout | Action::Restart | Action::Shutdown => {

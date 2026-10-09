@@ -8,11 +8,11 @@
 //! PAM does its auth-delay dance.
 
 use std::os::unix::net::UnixStream;
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{Receiver, channel};
 
 use anyhow::{Context as _, Result};
 use egui::{Align2, Color32, FontId, Key, RichText, Vec2};
-use greetd_ipc::{codec::SyncCodec, AuthMessageType, Request, Response};
+use greetd_ipc::{AuthMessageType, Request, Response, codec::SyncCodec};
 
 /// Result of one sign-in attempt on the IPC worker thread.
 enum AuthOutcome {
@@ -49,10 +49,8 @@ fn load_wallpaper(ctx: &egui::Context) -> Option<egui::TextureHandle> {
         if let Ok(img) = image::open(&p) {
             let rgba = image::imageops::blur(&img.to_rgba8(), 20.0);
             let (w, h) = rgba.dimensions();
-            let ci = egui::ColorImage::from_rgba_unmultiplied(
-                [w as usize, h as usize],
-                rgba.as_raw(),
-            );
+            let ci =
+                egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], rgba.as_raw());
             return Some(ctx.load_texture("wallpaper", ci, Default::default()));
         }
     }
@@ -64,7 +62,10 @@ fn serde_json_lenient(text: &str, key: &str) -> Option<String> {
     let pat = format!("\"{key}\"");
     let i = text.find(&pat)? + pat.len();
     let rest = text[i..].trim_start_matches([' ', ':', '\t']);
-    rest.strip_prefix('"')?.split('"').next().map(str::to_string)
+    rest.strip_prefix('"')?
+        .split('"')
+        .next()
+        .map(str::to_string)
 }
 
 fn session_cmd() -> Vec<String> {
@@ -77,7 +78,8 @@ fn session_cmd() -> Vec<String> {
 /// UI thread; returns the outcome to post back.
 fn authenticate(user: String, password: String) -> AuthOutcome {
     let inner = || -> Result<AuthOutcome> {
-        let sock = std::env::var("GREETD_SOCK").context("GREETD_SOCK not set — not under greetd")?;
+        let sock =
+            std::env::var("GREETD_SOCK").context("GREETD_SOCK not set — not under greetd")?;
         let mut stream = UnixStream::connect(sock).context("greetd socket")?;
         Request::CreateSession {
             username: user.clone(),
@@ -120,7 +122,16 @@ fn authenticate(user: String, password: String) -> AuthOutcome {
                     // Authenticated — launch the session.
                     Request::StartSession {
                         cmd: session_cmd(),
-                        env: vec![],
+                        // pam_systemd reads these when greetd opens the
+                        // session, so logind registers a graphical
+                        // wayland user session (loginctl lock-session
+                        // then reaches it).
+                        env: vec![
+                            "XDG_SESSION_TYPE=wayland".into(),
+                            "XDG_SESSION_CLASS=user".into(),
+                            "XDG_SESSION_DESKTOP=cosmos".into(),
+                            "XDG_CURRENT_DESKTOP=cosmos".into(),
+                        ],
                     }
                     .write_to(&mut stream)
                     .context("StartSession")?;
@@ -146,7 +157,11 @@ fn draw_greeter(ui: &mut egui::Ui, greeter: &mut Greeter) {
             AuthOutcome::Started => std::process::exit(0),
             AuthOutcome::Rejected(msg) => {
                 greeter.password.clear();
-                greeter.error = Some(if msg.is_empty() { "Sign in failed".into() } else { msg });
+                greeter.error = Some(if msg.is_empty() {
+                    "Sign in failed".into()
+                } else {
+                    msg
+                });
             }
             AuthOutcome::Failed(msg) => {
                 greeter.error = Some(msg);
@@ -167,12 +182,14 @@ fn draw_greeter(ui: &mut egui::Ui, greeter: &mut Greeter) {
         );
     }
     // Legibility scrim over the blurred wallpaper.
-    ui.painter()
-        .rect_filled(rect, egui::CornerRadius::ZERO, Color32::from_black_alpha(140));
+    ui.painter().rect_filled(
+        rect,
+        egui::CornerRadius::ZERO,
+        Color32::from_black_alpha(140),
+    );
 
     // Large clock above the card.
-    let now = time::OffsetDateTime::now_local()
-        .unwrap_or_else(|_| time::OffsetDateTime::now_utc());
+    let now = time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc());
     let (hh, mm) = (now.hour(), now.minute());
     let date = format!("{}, {} {}", now.weekday(), now.month(), now.day());
     ui.painter().text(
@@ -258,7 +275,11 @@ fn draw_greeter(ui: &mut egui::Ui, greeter: &mut Greeter) {
                             ui.add_space(6.0);
                         }
 
-                        let label = if greeter.working { "Signing in…" } else { "Sign in" };
+                        let label = if greeter.working {
+                            "Signing in…"
+                        } else {
+                            "Sign in"
+                        };
                         let btn = ui.add_enabled(
                             !greeter.working,
                             egui::Button::new(RichText::new(label).size(15.0))
