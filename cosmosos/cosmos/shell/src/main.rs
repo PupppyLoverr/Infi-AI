@@ -25,6 +25,7 @@ mod preview;
 mod quick;
 mod search;
 mod switcher;
+mod startw;
 mod sysinfo;
 mod weather;
 mod widgets;
