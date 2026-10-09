@@ -1312,6 +1312,10 @@ impl<BackendData: Backend> SessionLockHandler for AnvilState<BackendData> {
         }
         let takeover = self.cosmos.session_locked;
         tracing::info!(takeover, "cosmos: session locked");
+        if takeover {
+            // Plain-text marker (no structured field) for journal greps.
+            tracing::info!("cosmos: lock taken over by respawned locker");
+        }
         self.cosmos.lock_owner = Some(confirmation.ext_session_lock().clone());
         self.cosmos.session_locked = true;
         self.cosmos.lock_surfaces.clear();
