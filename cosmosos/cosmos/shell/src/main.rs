@@ -134,7 +134,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Clipboard channel — `clipwatch` readers push copied text here;
     // drop channel delivers decoded uri-lists onto `staged_files`.
     // Index channel — the file-index thread ships its scan back here.
-    let (clip_tx, clip_rx) = channel::channel::<String>();
+    let (clip_tx, clip_rx) = channel::channel::<clipwatch::Clip>();
     let (drop_tx, drop_rx) = channel::channel::<Vec<String>>();
     let (index_tx, index_rx) = channel::channel::<Vec<(String, String)>>();
 
@@ -254,7 +254,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         clip_device: None,
         clip_offers: std::collections::HashMap::new(),
         clip_tx,
-        clip_pending_text: String::new(),
+        clip_pending: None,
         clip_source: None,
         data_device_manager: None,
         data_devices: Vec::new(),
@@ -335,8 +335,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     handle.insert_source(clip_rx, |event, _, state| {
-        if let ChannelEvent::Msg(text) = event {
-            clipwatch::note_clip(state, text);
+        if let ChannelEvent::Msg(clip) = event {
+            clipwatch::note_clip(state, clip);
         }
     })?;
     handle.insert_source(index_rx, |event, _, state| {
@@ -517,7 +517,7 @@ pub struct ShellState {
     /// must not reopen it (same guard as `quick_dismissed_at`).
     pub island_dismissed_at: Option<std::time::Instant>,
     /// Clipboard history ring (newest first) — fed by `clipwatch`.
-    pub clip_history: std::collections::VecDeque<String>,
+    pub clip_history: std::collections::VecDeque<clipwatch::Clip>,
     /// Files dropped onto the island card, staged for later use.
     pub staged_files: Vec<String>,
     /// wlr-data-control clipboard watcher objects.
@@ -531,9 +531,9 @@ pub struct ShellState {
     pub clip_offers:
         std::collections::HashMap<wayland_client::backend::ObjectId, Vec<String>>,
     /// Channel `clipwatch` readers push decoded clipboard text into.
-    pub clip_tx: calloop::channel::Sender<String>,
+    pub clip_tx: calloop::channel::Sender<clipwatch::Clip>,
     /// Text staged for `clipwatch::set_clipboard` sources.
-    pub clip_pending_text: String,
+    pub clip_pending: Option<clipwatch::Clip>,
     pub clip_source: Option<
         wayland_protocols_wlr::data_control::v1::client::zwlr_data_control_source_v1::ZwlrDataControlSourceV1,
     >,
@@ -927,15 +927,15 @@ impl ShellState {
                 self.refresh_island();
             }
             island::Hit::Clip(i) => {
-                if let Some(text) = self.clip_history.get(i).cloned() {
-                    clipwatch::set_clipboard(self, text);
+                if let Some(clip) = self.clip_history.get(i).cloned() {
+                    clipwatch::set_clipboard(self, clip);
                     self.close_island();
                 }
             }
             island::Hit::Chip(i) => {
                 // A staged file's path goes back on the clipboard.
                 if let Some(path) = self.staged_files.get(i).cloned() {
-                    clipwatch::set_clipboard(self, path);
+                    clipwatch::set_clipboard(self, clipwatch::Clip::Text(path));
                 }
             }
             island::Hit::Backdrop => {}
@@ -1207,7 +1207,7 @@ impl ShellState {
                 }
             }
             search::Kind::Calc(v) => {
-                clipwatch::set_clipboard(self, v);
+                clipwatch::set_clipboard(self, clipwatch::Clip::Text(v));
             }
             search::Kind::Cmd(cmd) => {
                 spawn_quiet("cosmos-terminal", &["-e", &cmd]);
