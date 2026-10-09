@@ -70,7 +70,7 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
         w.corner_radius = CornerRadius::same(radius::CONTROL as u8);
         w.expansion = 0.0;
     }
-    v.menu_corner_radius = CornerRadius::same(radius::PANEL as u8);
+    v.menu_corner_radius = CornerRadius::same(10);
     v.window_corner_radius = CornerRadius::same(radius::WINDOW as u8);
     v.window_shadow = egui::Shadow::NONE;
     v.popup_shadow = egui::Shadow::NONE;
