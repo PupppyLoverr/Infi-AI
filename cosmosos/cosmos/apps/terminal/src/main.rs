@@ -8,6 +8,12 @@
 use std::io::{Read, Write};
 use std::sync::mpsc;
 
+use cosmos_kit::controls::{button, ButtonKind};
+use cosmos_kit::layout::{
+    status_text, toolbar_button, toolbar_spacer, toolbar_title, AppWindow, STATUS_H,
+};
+use cosmos_kit::{c32, Icon, Kit};
+
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
 const FONT: f32 = 14.0;
@@ -318,7 +324,30 @@ fn draw(ui: &mut egui::Ui, term: &mut Term) {
         }
     }
 
-    egui::CentralPanel::default().show(ui, |ui| {
+    let shell = std::env::var("SHELL")
+        .ok()
+        .and_then(|s| s.rsplit('/').next().map(str::to_string))
+        .unwrap_or_else(|| "sh".into());
+    let title = format!("{shell} — {}×{}", term.cols, term.rows);
+    let full = ui.max_rect();
+    let cell = std::cell::RefCell::new(&mut *term);
+    let win = AppWindow::new().toolbar(|ui| {
+        toolbar_title(ui, &title);
+        toolbar_spacer(ui, 28.0);
+        if toolbar_button(ui, Icon::Plus, "New Window", false).clicked() {
+            match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).spawn()) {
+                Ok(mut child) => {
+                    std::thread::spawn(move || {
+                        let _ = child.wait();
+                    });
+                }
+                Err(e) => tracing::warn!("new terminal window: {e}"),
+            }
+        }
+    });
+    win.show(ui, |ui| {
+        let mut term = cell.borrow_mut();
+        let term: &mut Term = &mut term;
         let avail = ui.available_size();
         // ~0.6 width factor for egui's monospace advance.
         let cell_w = FONT * 0.60;
@@ -385,6 +414,31 @@ fn draw(ui: &mut egui::Ui, term: &mut Term) {
             );
         }
     });
+    // The scrollback bar floats over the bottom rows instead of shrinking
+    // the grid, so entering scrollback never resizes the pty under it.
+    let back = cell.borrow().parser.screen().scrollback();
+    if back > 0 {
+        let kit = Kit::get(ui.ctx());
+        let r =
+            egui::Rect::from_min_max(egui::pos2(full.left(), full.bottom() - STATUS_H), full.max);
+        ui.painter().rect_filled(r, 0.0, c32(kit.p.window));
+        ui.painter().hline(
+            r.x_range(),
+            r.top() + 0.5,
+            egui::Stroke::new(1.0, kit.hairline()),
+        );
+        let bar = egui::UiBuilder::new()
+            .max_rect(r.shrink2(egui::vec2(12.0, 0.0)))
+            .layout(egui::Layout::left_to_right(egui::Align::Center));
+        ui.scope_builder(bar, |ui| {
+            status_text(ui, &format!("Viewing scrollback — {back} lines up"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if button(ui, ButtonKind::Plain, "Jump to Bottom").clicked() {
+                    cell.borrow_mut().parser.screen_mut().set_scrollback(0);
+                }
+            });
+        });
+    }
 }
 
 /// Cosmos dark palette — the v3 semantic hues, tuned for the violet base.
