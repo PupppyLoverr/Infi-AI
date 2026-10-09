@@ -17,6 +17,8 @@ use cosmos_kit::{c32, Icon, Kit};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
 const FONT: f32 = 14.0;
+/// The grid is the dark palette in both themes, 92% opaque.
+const TERM_ALPHA: u8 = 235;
 const PAD: f32 = 6.0;
 
 struct Term {
@@ -331,7 +333,10 @@ fn draw(ui: &mut egui::Ui, term: &mut Term) {
     let title = format!("{shell} — {}×{}", term.cols, term.rows);
     let full = ui.max_rect();
     let cell = std::cell::RefCell::new(&mut *term);
-    let win = AppWindow::new().toolbar(|ui| {
+    let dark_bg = c32(cosmos_theme::DARK.window).to_opaque();
+    let glass =
+        egui::Color32::from_rgba_unmultiplied(dark_bg.r(), dark_bg.g(), dark_bg.b(), TERM_ALPHA);
+    let win = AppWindow::new().body_fill(glass).toolbar(|ui| {
         toolbar_title(ui, &title);
         toolbar_spacer(ui, 28.0);
         if toolbar_button(ui, Icon::Plus, "New Window", false).clicked() {
@@ -360,7 +365,7 @@ fn draw(ui: &mut egui::Ui, term: &mut Term) {
 
         let painter = ui.painter();
         let origin = ui.cursor().min + egui::vec2(PAD, PAD);
-        let fg = ui.visuals().text_color();
+        let fg = c32(cosmos_theme::DARK.text);
         let font = egui::FontId::monospace(FONT);
 
         let screen = term.parser.screen();
@@ -380,7 +385,7 @@ fn draw(ui: &mut egui::Ui, term: &mut Term) {
                 );
             }
         } else {
-            let default_bg = ui.visuals().window_fill();
+            let default_bg = dark_bg;
             draw_grid(
                 painter,
                 screen,
