@@ -321,8 +321,13 @@ fn stat_card(
     detail: &str,
     hist: Option<&VecDeque<f64>>,
 ) {
-    ui.allocate_ui(egui::vec2(w, 132.0), |ui| {
+    // Called inside a horizontal row: force a top-down layout so the
+    // title, value, detail and graph stack instead of running side by side.
+    let layout = egui::Layout::top_down(egui::Align::Min);
+    ui.allocate_ui_with_layout(egui::vec2(w, 132.0), layout, |ui| {
+        ui.set_width(w);
         card(ui, |ui| {
+            ui.set_width(ui.available_width());
             ui.set_height(108.0);
             ui.label(egui::RichText::new(title).size(12.0).color(kit.text2()));
             ui.label(
