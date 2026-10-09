@@ -244,6 +244,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         island_hover: None,
         island_tab: island::Tab::Activities,
         island_anim: None,
+        search_anim: None,
         island_anim_timer: false,
         island_dirty: false,
         island_dismissed_at: None,
@@ -510,6 +511,8 @@ pub struct ShellState {
     /// its surface until the reverse morph ends.
     pub island_anim: Option<(std::time::Instant, bool)>,
     pub island_anim_timer: bool,
+    /// Start of Search or Ask's grow-out-of-the-island morph (super+Space).
+    pub search_anim: Option<std::time::Instant>,
     pub island_dirty: bool,
     /// Set when the island card just closed from a focus-loss `leave` —
     /// the pill click inside the window is the same physical click and
@@ -825,6 +828,27 @@ impl ShellState {
         }
     }
 
+    /// Grow Search or Ask out of the island: repaint at ~60fps for one
+    /// island::MORPH, then the normal query UI takes over.
+    fn start_search_anim(&mut self) {
+        let t0 = std::time::Instant::now();
+        self.search_anim = Some(t0);
+        let _ = self.loop_handle.insert_source(
+            Timer::from_duration(Duration::from_millis(16)),
+            move |_, _, state| {
+                if state.search_anim != Some(t0) {
+                    return calloop::timer::TimeoutAction::Drop;
+                }
+                state.launcher_dirty = true;
+                if t0.elapsed() < island::MORPH {
+                    return calloop::timer::TimeoutAction::ToDuration(Duration::from_millis(16));
+                }
+                state.search_anim = None;
+                calloop::timer::TimeoutAction::Drop
+            },
+        );
+    }
+
     /// Start (or reverse) the 280ms capsule↔card morph; a ~60fps timer
     /// repaints the card until it ends, then drops a closed card's surface.
     fn start_island_anim(&mut self, opening: bool) {
@@ -1032,7 +1056,11 @@ impl ShellState {
             layer.wl_surface().commit();
             self.launcher_surface = Some(layer);
             self.launcher_dirty = true;
+            if self.launcher_search && !LITE.with(|l| l.get()) {
+                self.start_search_anim();
+            }
         } else {
+            self.search_anim = None;
             self.launcher_surface = None;
             self.launcher_search = false;
             self.launcher_preview = None;

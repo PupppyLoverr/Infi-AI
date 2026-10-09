@@ -569,6 +569,57 @@ fn theme(dark: bool) -> (Color, Color, Color, Color, CtColor, CtColor) {
     }
 }
 
+/// Search pill outline at morph progress `m`: grows out of the island
+/// capsule at the menubar's centre (0) into the 680×56 pill (1).
+/// Returns (x, y, w, h, radius).
+fn search_morph_rect(size: (u32, u32), m: f32) -> (f32, f32, f32, f32, f32) {
+    let lerp = |a: f32, b: f32| a + (b - a) * m;
+    let (left, top) = search_origin(size);
+    let cap_w = crate::island::PILL_W as f32;
+    let cap_h = crate::PANEL_HEIGHT as f32;
+    let cap_x = (size.0 as f32 - cap_w) / 2.0;
+    (
+        lerp(cap_x, left as f32),
+        lerp(0.0, top as f32),
+        lerp(cap_w, SEARCH_W as f32),
+        lerp(cap_h, PILL_H as f32),
+        lerp(cap_h / 2.0, PILL_H as f32 / 2.0),
+    )
+}
+
+/// Mid-morph frame: the island's black capsule sliding down and widening
+/// into the Search pill's glass; the query UI appears once it lands.
+fn draw_search_morph(pixmap: &mut PixmapMut<'_>, size: (u32, u32), m: f32, dark: bool) {
+    let (x, y, w, h, r) = search_morph_rect(size, m);
+    let (box_bg, _, sep, ..) = theme(dark);
+    draw::shadow(pixmap, x, y, w, h, r);
+    glass::fill_glass(
+        pixmap,
+        &crate::ShellState::wallpaper_name(),
+        x,
+        y,
+        w,
+        h,
+        r,
+        x,
+        y,
+        dark,
+        box_bg,
+    );
+    let black = ((1.0 - m) * 235.0) as u8;
+    draw::fill_round_rect(pixmap, x, y, w, h, r, Color::from_rgba8(0, 0, 0, black));
+    draw::stroke_round_rect(
+        pixmap,
+        x + 0.5,
+        y + 0.5,
+        w - 1.0,
+        h - 1.0,
+        r - 0.5,
+        1.0,
+        sep,
+    );
+}
+
 fn search_origin(size: (u32, u32)) -> (f64, f64) {
     (
         ((size.0 as f64 - SEARCH_W) / 2.0).max(8.0),
@@ -1084,16 +1135,22 @@ pub fn draw(state: &mut ShellState) {
     pixmap.fill(Color::TRANSPARENT);
     if state.launcher_search {
         draw::scrim(&mut pixmap, w, h, state.dark);
-        let card_h = draw_search(
-            &mut pixmap,
-            (w, h),
-            &rows,
-            &state.launcher_query,
-            state.launcher_sel,
-            state.dark,
-            state.launcher_preview.as_ref(),
-            answer,
-        );
+        let morph = state.search_anim.map(crate::island::eased).unwrap_or(1.0);
+        let card_h = if morph < 1.0 {
+            draw_search_morph(&mut pixmap, (w, h), morph, state.dark);
+            PILL_H
+        } else {
+            draw_search(
+                &mut pixmap,
+                (w, h),
+                &rows,
+                &state.launcher_query,
+                state.launcher_sel,
+                state.dark,
+                state.launcher_preview.as_ref(),
+                answer,
+            )
+        };
         state.launcher_card_h = card_h;
         let wl_surface = layer.wl_surface().clone();
         state.set_viewport(&wl_surface, w, h);
@@ -1717,6 +1774,23 @@ mod search_layout_tests {
     #[test]
     fn pill_alone_until_typing_then_grouped() {
         assert_eq!(search_layout(&[], true).height, PILL_H);
+        let size = (1536, 864);
+        let (x, y, w, h, _) = search_morph_rect(size, 0.0);
+        assert_eq!(
+            (w, h, y),
+            (
+                crate::island::PILL_W as f32,
+                crate::PANEL_HEIGHT as f32,
+                0.0
+            )
+        );
+        assert_eq!(x + w / 2.0, 768.0);
+        let (left, top) = search_origin(size);
+        let end = search_morph_rect(size, 1.0);
+        assert_eq!(
+            (end.0, end.1, end.2, end.3),
+            (left as f32, top as f32, SEARCH_W as f32, PILL_H as f32)
+        );
         let rows = [
             row(Kind::Setting("dock")),
             row(Kind::File("/a".into())),
