@@ -73,6 +73,39 @@ const TEXT_MIMES: [&str; 4] = [
 /// Wake the event loop when another thread calls `ctx.request_repaint()`
 /// (e.g. a pty reader), so apps never need to poll for background work.
 /// Delayed requests are already scheduled through `repaint_delay`.
+/// Let the window show through: frames start from `fill` (premultiplied)
+/// instead of the opaque window colour. Call every frame it should apply.
+pub fn set_clear_color(ctx: &egui::Context, fill: egui::Color32) {
+    ctx.data_mut(|d| d.insert_temp(clear_id(), fill));
+}
+
+fn clear_id() -> egui::Id {
+    egui::Id::new("cosmos-uitk-clear")
+}
+
+fn clear_color(ctx: &egui::Context) -> egui::Color32 {
+    ctx.data(|d| d.get_temp(clear_id()))
+        .unwrap_or_else(|| ctx.global_style().visuals.window_fill())
+}
+
+/// Poll config.json's mtime so an idle window repaints as soon as the
+/// theme or accent changes, not at its next input or 30 s wake-up.
+fn watch_config(handle: &LoopHandle<'static, UiState>) -> Result<()> {
+    const EVERY: Duration = Duration::from_millis(500);
+    handle
+        .insert_source(
+            calloop::timer::Timer::from_duration(EVERY),
+            |_, _, state: &mut UiState| {
+                if theme::config_mtime() != state.cfg_mtime {
+                    state.dirty = true;
+                }
+                calloop::timer::TimeoutAction::ToDuration(EVERY)
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("config watch: {e}"))?;
+    Ok(())
+}
+
 fn install_waker<S: 'static>(
     handle: &LoopHandle<'static, S>,
     ctx: &egui::Context,
@@ -148,6 +181,7 @@ pub fn run(
             }
         })
         .map_err(|e| anyhow::anyhow!("paste channel: {e}"))?;
+    watch_config(&handle)?;
 
     let mut state = UiState {
         registry_state: RegistryState::new(&globals),
@@ -294,7 +328,7 @@ impl UiState {
             }
         }
         let prims = self.ctx.tessellate(out.shapes, out.pixels_per_point);
-        let bg = self.ctx.global_style().visuals.window_fill();
+        let bg = clear_color(&self.ctx);
         self.paint(&prims, [bg.r(), bg.g(), bg.b(), bg.a()], qh);
         for id in &out.textures_delta.free {
             self.painter.free_texture(*id);
@@ -987,6 +1021,15 @@ mod waker_tests {
             .dispatch(Duration::from_secs(2), &mut woken)
             .unwrap();
         assert!(woken);
+    }
+
+    #[test]
+    fn clear_defaults_to_window_fill_until_overridden() {
+        let ctx = egui::Context::default();
+        assert_eq!(clear_color(&ctx), ctx.global_style().visuals.window_fill());
+        let glass = egui::Color32::from_rgba_unmultiplied(28, 23, 48, 235);
+        set_clear_color(&ctx, glass);
+        assert_eq!(clear_color(&ctx), glass);
     }
 
     #[test]

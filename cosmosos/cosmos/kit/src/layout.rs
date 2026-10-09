@@ -29,6 +29,7 @@ pub struct AppWindow<'a> {
     toolbar: Option<Section<'a>>,
     sidebar: Option<Section<'a>>,
     status: Option<Section<'a>>,
+    body_fill: Option<Color32>,
 }
 
 impl<'a> AppWindow<'a> {
@@ -45,6 +46,12 @@ impl<'a> AppWindow<'a> {
     }
     pub fn status(mut self, f: impl FnOnce(&mut Ui) + 'a) -> Self {
         self.status = Some(Box::new(f));
+        self
+    }
+    /// Paint the body (between toolbar and status bar) with `fill`
+    /// instead of the opaque window colour; sidebar-less windows only.
+    pub fn body_fill(mut self, fill: Color32) -> Self {
+        self.body_fill = Some(fill);
         self
     }
 
@@ -79,6 +86,27 @@ impl<'a> AppWindow<'a> {
                 0.0,
                 opaque,
             );
+        } else if let Some(fill) = self.body_fill {
+            let tb_h = if self.toolbar.is_some() {
+                TOOLBAR_H
+            } else {
+                0.0
+            };
+            let st_h = if self.status.is_some() { STATUS_H } else { 0.0 };
+            let (t, b) = (full.top() + tb_h, full.bottom() - st_h);
+            p.rect_filled(
+                Rect::from_min_max(full.min, pos2(full.right(), t)),
+                0.0,
+                opaque,
+            );
+            p.rect_filled(
+                Rect::from_min_max(pos2(full.left(), b), full.max),
+                0.0,
+                opaque,
+            );
+            // Painting `fill` over uitk's opaque base would flatten it, so
+            // the frame starts from `fill` instead.
+            cosmos_uitk::set_clear_color(ui.ctx(), fill);
         } else {
             p.rect_filled(full, 0.0, opaque);
         }

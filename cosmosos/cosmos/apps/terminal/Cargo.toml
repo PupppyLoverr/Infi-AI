@@ -7,6 +7,7 @@ version = "0.1.0"
 
 [dependencies]
 cosmos-kit = { path = "../../kit" }
+cosmos-theme = { path = "../../theme" }
 cosmos-uitk = { path = "../../uitk" }
 egui = { workspace = true }
 portable-pty = "0.9"
