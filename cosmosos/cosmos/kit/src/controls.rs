@@ -112,6 +112,13 @@ pub fn toggle(ui: &mut Ui, on: &mut bool) -> Response {
     let track = lerp_color(off, kit.accent(), t);
     let p = ui.painter();
     p.rect_filled(rect, rect.height() / 2.0, dim(ui, track));
+    // The off track is a faint fill; a hairline keeps its shape on glass.
+    p.rect_stroke(
+        rect,
+        rect.height() / 2.0,
+        Stroke::new(1.0, kit.hairline().gamma_multiply(1.0 - t)),
+        StrokeKind::Inside,
+    );
     let x = egui::lerp(rect.left() + 11.0..=rect.right() - 11.0, t);
     let c = pos2(x, rect.center().y);
     p.circle_filled(c + vec2(0.0, 0.5), 9.5, Color32::from_black_alpha(40));

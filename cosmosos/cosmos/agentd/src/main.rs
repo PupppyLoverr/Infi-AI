@@ -693,6 +693,24 @@ struct AuditEntry {
     detail: String,
 }
 
+/// Tool results are MCP content arrays (`[{"type":"text","text":..}]`);
+/// audit the text itself so the Agents table reads as prose, not JSON.
+fn audit_text(v: &Value) -> String {
+    let items = v
+        .as_array()
+        .or_else(|| v.get("content").and_then(|c| c.as_array()));
+    let text: Vec<&str> = items
+        .into_iter()
+        .flatten()
+        .filter_map(|i| i.get("text").and_then(|t| t.as_str()))
+        .collect();
+    if text.is_empty() {
+        v.to_string()
+    } else {
+        text.join(" ")
+    }
+}
+
 fn audit(agent: &str, tool: &str, result: &Result<Value>) {
     let dir = home().join(".local/share/cosmos/agent-audit");
     let _ = fs::create_dir_all(&dir);
@@ -706,7 +724,7 @@ fn audit(agent: &str, tool: &str, result: &Result<Value>) {
         tool: tool.into(),
         ok: result.is_ok(),
         detail: match result {
-            Ok(v) => v.to_string().chars().take(400).collect(),
+            Ok(v) => audit_text(v).chars().take(400).collect(),
             Err(e) => format!("{e:#}").chars().take(400).collect(),
         },
     };
