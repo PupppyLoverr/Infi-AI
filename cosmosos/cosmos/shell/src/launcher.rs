@@ -250,10 +250,7 @@ fn box_height(n_items: usize, n_pinned: usize, n_rec: usize, searching: bool) ->
         // Win11 Start: PINNED grid + RECOMMENDED + WIDGETS + footer.
         h += SEC_H + grid_rows(n_pinned) as f64 * CELL_H;
         h += rec_height(n_rec, searching);
-        // WIDGETS header (already in widgets_top) + cards drawn at
-        // +SEC_H+4 with height WIDGET_H-10, then a 16px gap above the
-        // footer — the old sum came up 24px short and the footer cut
-        // the cards (v3-04-start).
+        // WIDGETS header, the board, then a 12px gap above the footer.
         h += SEC_H + crate::startw::HEIGHT as f64 + 12.0;
         if !custom_widgets().is_empty() {
             h += WIDGET_H + 8.0;
@@ -271,9 +268,10 @@ fn rows_top(n_pinned: usize, n_rec: usize, searching: bool) -> f64 {
     }
 }
 
-/// Y offset where the widget strip starts (non-searching layout).
+/// Y offset of the WIDGETS header (non-searching layout); the board
+/// starts one `SEC_H` below it.
 fn widgets_top(n_pinned: usize, n_rec: usize) -> f64 {
-    INPUT_H + SEC_H + grid_rows(n_pinned) as f64 * CELL_H + rec_height(n_rec, false) + SEC_H
+    INPUT_H + SEC_H + grid_rows(n_pinned) as f64 * CELL_H + rec_height(n_rec, false)
 }
 
 // ---------------- Start widgets — all data read live ----------------
@@ -1829,5 +1827,19 @@ mod search_layout_tests {
             hit_test_search(l + 600.0, t + 280.0, size, &rows, false, 330.0),
             Hit::List
         );
+    }
+
+    #[test]
+    fn start_widget_board_clears_the_footer() {
+        for n_pinned in 1..=12 {
+            for n_rec in 0..=MAX_REC {
+                let board_end = widgets_top(n_pinned, n_rec) + SEC_H + crate::startw::HEIGHT as f64;
+                let footer = box_height(0, n_pinned, n_rec, false) - FOOTER_H;
+                assert!(
+                    board_end + 12.0 <= footer,
+                    "{n_pinned}/{n_rec}: {board_end} vs {footer}"
+                );
+            }
+        }
     }
 }

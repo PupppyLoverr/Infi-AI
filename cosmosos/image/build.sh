@@ -657,7 +657,7 @@ locales systemd-zram-generator \
 grub-efi-amd64 btrfs-progs snapper efibootmgr \
 xwayland x11-apps \
 wl-clipboard pcmanfm \
-greetd cage \
+greetd cage grim \
 libxcb-cursor0 libxcb-image0 libxcb-render-util0 libxcb-util1 libxcb1 libxcb-render0 libxcb-shm0"
 
 # in-chroot setup. NOTE: mmdebstrap hooks run on the HOST with $1=rootfs —
