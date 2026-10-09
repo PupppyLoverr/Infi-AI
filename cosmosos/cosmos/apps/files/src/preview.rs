@@ -1,13 +1,17 @@
 //! Preview pane and Quick Look content: images decoded and downscaled
 //! off the UI thread, text files read as a bounded UTF-8 head.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
+use std::time::SystemTime;
 
 const IMAGE_EXT: &[&str] = &["png", "jpg", "jpeg", "webp", "gif", "bmp"];
 /// Longest edge of the decoded preview texture.
 const MAX_PX: u32 = 1024;
 pub const TEXT_BYTES: usize = 16 * 1024;
+/// Longest edge of a grid-view thumbnail texture (64pt tile at up to 2x).
+const THUMB_PX: u32 = 128;
 
 pub enum Content {
     Loading,
@@ -64,6 +68,105 @@ impl Preview {
             Loaded::Folder(n) => Content::Folder(n),
             Loaded::None => Content::None,
         };
+    }
+}
+
+type ThumbDone = (PathBuf, Option<SystemTime>, Option<egui::ColorImage>);
+
+enum Thumb {
+    Pending,
+    Ready(Option<SystemTime>, Option<egui::TextureHandle>),
+}
+
+/// Grid-view image thumbnails, decoded one at a time on a worker thread
+/// and cached per path until the file's mtime changes or it leaves the
+/// listing.
+#[derive(Default)]
+pub struct Thumbs {
+    worker: Option<(mpsc::Sender<PathBuf>, mpsc::Receiver<ThumbDone>)>,
+    cache: HashMap<PathBuf, Thumb>,
+}
+
+impl Thumbs {
+    /// The thumbnail for `path` if it's decoded; otherwise queues it.
+    pub fn get(&mut self, ctx: &egui::Context, path: &Path) -> Option<egui::TextureHandle> {
+        match self.cache.get(path) {
+            Some(Thumb::Ready(_, tex)) => return tex.clone(),
+            Some(Thumb::Pending) => return None,
+            None => {}
+        }
+        let (tx, _) = self.worker.get_or_insert_with(|| spawn_thumb_worker(ctx));
+        if tx.send(path.to_path_buf()).is_ok() {
+            self.cache.insert(path.to_path_buf(), Thumb::Pending);
+        }
+        None
+    }
+
+    /// Upload whatever the worker finished since the last frame.
+    pub fn poll(&mut self, ctx: &egui::Context) {
+        let Some((_, rx)) = self.worker.as_ref() else {
+            return;
+        };
+        for (path, mtime, img) in rx.try_iter() {
+            let tex = img.map(|ci| {
+                ctx.load_texture(
+                    format!("files-thumb:{}", path.display()),
+                    ci,
+                    egui::TextureOptions::LINEAR,
+                )
+            });
+            self.cache.insert(path, Thumb::Ready(mtime, tex));
+        }
+    }
+
+    /// Drop thumbnails for files no longer listed or changed on disk.
+    pub fn prune<'a>(&mut self, listed: impl IntoIterator<Item = &'a Path>) {
+        let listed: std::collections::HashSet<&Path> = listed.into_iter().collect();
+        self.cache.retain(|p, t| {
+            listed.contains(p.as_path())
+                && match t {
+                    Thumb::Pending => true,
+                    Thumb::Ready(m, _) => *m == mtime(p),
+                }
+        });
+    }
+}
+
+fn mtime(p: &Path) -> Option<SystemTime> {
+    std::fs::metadata(p).and_then(|m| m.modified()).ok()
+}
+
+fn spawn_thumb_worker(ctx: &egui::Context) -> (mpsc::Sender<PathBuf>, mpsc::Receiver<ThumbDone>) {
+    let (req_tx, req_rx) = mpsc::channel::<PathBuf>();
+    let (done_tx, done_rx) = mpsc::channel();
+    let ctx = ctx.clone();
+    std::thread::spawn(move || {
+        for path in req_rx {
+            let m = mtime(&path);
+            let img = thumb_image(&path);
+            if done_tx.send((path, m, img)).is_err() {
+                break;
+            }
+            ctx.request_repaint();
+        }
+    });
+    (req_tx, done_rx)
+}
+
+fn thumb_image(path: &Path) -> Option<egui::ColorImage> {
+    match image::open(path) {
+        Ok(img) => {
+            let rgba = img.thumbnail(THUMB_PX, THUMB_PX).to_rgba8();
+            let size = [rgba.width() as usize, rgba.height() as usize];
+            Some(egui::ColorImage::from_rgba_unmultiplied(
+                size,
+                rgba.as_raw(),
+            ))
+        }
+        Err(e) => {
+            tracing::warn!(path = %path.display(), "files: thumbnail decode failed: {e}");
+            None
+        }
     }
 }
 
@@ -149,6 +252,37 @@ mod tests {
         long.extend_from_slice("é".as_bytes());
         let head = text_head(&tmp("c.txt", &long)).unwrap();
         assert_eq!(head.len(), TEXT_BYTES - 1);
+    }
+
+    #[test]
+    fn thumbs_decode_off_thread_and_prune() {
+        let p = std::env::temp_dir().join(format!("cosmos-files-{}-t.png", std::process::id()));
+        image::RgbaImage::from_pixel(400, 200, image::Rgba([10, 20, 30, 255]))
+            .save(&p)
+            .unwrap();
+        let ctx = egui::Context::default();
+        let mut t = Thumbs::default();
+        assert!(t.get(&ctx, &p).is_none());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let tex = loop {
+            t.poll(&ctx);
+            if let Some(tex) = t.get(&ctx, &p) {
+                break tex;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "thumbnail never decoded"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        assert_eq!(tex.size(), [THUMB_PX as usize, THUMB_PX as usize / 2]);
+        t.prune([p.as_path()]);
+        assert!(
+            t.get(&ctx, &p).is_some(),
+            "unchanged file keeps its thumbnail"
+        );
+        t.prune(std::iter::empty());
+        assert!(t.cache.is_empty());
     }
 
     #[test]
