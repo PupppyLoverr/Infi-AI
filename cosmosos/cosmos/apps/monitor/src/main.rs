@@ -165,7 +165,7 @@ impl Stats {
     }
 
     fn read_procs(&mut self) {
-        let uptime_ticks = (self.uptime_s as u64) * self.uptime_hz;
+        let uptime_ticks = self.uptime_s * self.uptime_hz;
         let delta_uptime = uptime_ticks.saturating_sub(self.prev_uptime_jiffies).max(1);
         self.prev_uptime_jiffies = uptime_ticks;
 
@@ -224,7 +224,6 @@ impl Stats {
                 .partial_cmp(&a.cpu)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        out.truncate(64);
         self.procs = out;
     }
 }
@@ -506,7 +505,7 @@ fn draw(ui: &mut egui::Ui, st: &Stats, v: &mut View) {
                                 .then(b.rss_kib.cmp(&a.rss_kib))
                         });
                     } else {
-                        rows.sort_by(|a, b| b.rss_kib.cmp(&a.rss_kib));
+                        rows.sort_by_key(|p| std::cmp::Reverse(p.rss_kib));
                     }
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
