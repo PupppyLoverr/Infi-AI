@@ -252,8 +252,14 @@ pub fn paint_pill(
             busy,
         } => {
             draw::fill_round_rect(pm, x + 8.0, cy - 9.0, 18.0, 18.0, 6.0, agent_colour(name));
-            let initial: String = name.chars().take(1).collect::<String>().to_uppercase();
-            draw::text_centered(pm, x + 8.0, cy - 7.5, 18.0, 15.0, 10.5, &initial, WHITE);
+            crate::icons::icon(
+                pm,
+                "sparkle",
+                x + 10.0,
+                cy - 7.0,
+                14.0,
+                Color::from_rgba8(0xF4, 0xF4, 0xF6, 0xFF),
+            );
             let label: String = name.chars().take(14).collect();
             draw::text(pm, x + 32.0, cy - 8.0, w - 96.0, 16.0, 12.0, &label, WHITE);
             let right = if *paused {
@@ -773,16 +779,13 @@ pub fn draw(state: &mut ShellState) {
                             7.0,
                             agent_colour(name),
                         );
-                        let initial = name.chars().take(1).collect::<String>().to_uppercase();
-                        draw::text_centered(
+                        crate::icons::icon(
                             &mut pm,
-                            PAD as f32,
+                            "sparkle",
+                            PAD as f32 + 3.0,
                             cy - 8.0,
-                            22.0,
                             16.0,
-                            11.5,
-                            &initial,
-                            WHITE,
+                            Color::from_rgba8(0xF4, 0xF4, 0xF6, 0xFF),
                         );
                         let btns = if *stopped { 0.0 } else { 2.0 * (TAB + 6.0) };
                         let right_w = draw::text_width(11.5, right) as f64 + 12.0;

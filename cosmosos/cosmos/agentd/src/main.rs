@@ -348,7 +348,11 @@ impl Agentd {
             summary.truncate(77);
             summary.push('…');
         }
-        let mut body = serde_json::to_string_pretty(args).unwrap_or_default();
+        let mut body = if args.is_empty() {
+            String::new()
+        } else {
+            serde_json::to_string_pretty(args).unwrap_or_default()
+        };
         if body.len() > 400 {
             body.truncate(397);
             body.push('…');

@@ -633,6 +633,23 @@ pub fn icon(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32, co
             );
             stroke(pixmap, pb, s, w, color);
         }
+        "sparkle" => {
+            // Agent avatar glyph: four-point star with a small plus.
+            mv!(pb, 12.0, 3.5);
+            ln!(pb, 13.8, 8.7);
+            ln!(pb, 19.0, 10.5);
+            ln!(pb, 13.8, 12.3);
+            ln!(pb, 12.0, 17.5);
+            ln!(pb, 10.2, 12.3);
+            ln!(pb, 5.0, 10.5);
+            ln!(pb, 10.2, 8.7);
+            pb.close();
+            mv!(pb, 18.0, 16.0);
+            ln!(pb, 18.0, 20.0);
+            mv!(pb, 16.0, 18.0);
+            ln!(pb, 20.0, 18.0);
+            stroke(pixmap, pb, s, w, color);
+        }
         "cosmos-agents" => {
             // Bot head: rounded face, two eyes, antenna stub.
             rr!(pb, 5.0, 6.0, 14.0, 12.0, 3.0);
