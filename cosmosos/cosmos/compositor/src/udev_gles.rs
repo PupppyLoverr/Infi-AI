@@ -2,7 +2,11 @@
 
 use smithay::{
     backend::{
-        allocator::{format::FormatSet, gbm::GbmDevice},
+        allocator::{
+            format::FormatSet,
+            gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
+        },
+        drm::exporter::gbm::GbmFramebufferExporter,
         drm::{DrmDeviceFd, DrmNode},
         egl::{context::ContextPriority, EGLDevice, EGLDisplay},
         renderer::{
@@ -20,6 +24,28 @@ pub use imp::*;
 
 pub type Api = GbmGlesBackend<GlesRenderer, DrmDeviceFd>;
 pub type OffscreenTarget = GlesTexture;
+pub type Alloc = GbmAllocator<DrmDeviceFd>;
+pub type Exporter = GbmFramebufferExporter<DrmDeviceFd>;
+type Device = GbmDevice<DrmDeviceFd>;
+
+fn open_device(fd: &DrmDeviceFd) -> Result<Device, DeviceAddError> {
+    GbmDevice::new(fd.clone()).map_err(DeviceAddError::GbmDevice)
+}
+
+fn new_allocator(gbm: &Device, _fd: &DrmDeviceFd) -> Alloc {
+    GbmAllocator::new(
+        gbm.clone(),
+        GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
+    )
+}
+
+fn new_exporter(gbm: &Device, _fd: &DrmDeviceFd, render_node: Option<DrmNode>) -> Exporter {
+    GbmFramebufferExporter::new(gbm.clone(), render_node)
+}
+
+fn cursor_gbm(gbm: Device) -> Option<GbmDevice<DrmDeviceFd>> {
+    Some(gbm)
+}
 
 fn new_api() -> Api {
     GbmGlesBackend::with_context_priority(ContextPriority::High)
@@ -29,7 +55,7 @@ fn init_gpu(
     gpus: &mut GpuManager<Api>,
     node: DrmNode,
     primary_gpu: DrmNode,
-    gbm: &GbmDevice<DrmDeviceFd>,
+    gbm: &Device,
     _fd: &DrmDeviceFd,
 ) -> Result<DrmNode, DeviceAddError> {
     // SAFETY: the GBM device is kept alive by the backend for the display's lifetime.

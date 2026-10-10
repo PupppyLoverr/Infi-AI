@@ -23,15 +23,9 @@ use smithay::backend::drm::compositor::PrimaryPlaneElement;
 use smithay::backend::renderer::{multigpu::MultiTexture, ImportMem};
 use smithay::{
     backend::{
-        allocator::{
-            dmabuf::Dmabuf,
-            format::FormatSet,
-            gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
-            Fourcc, Modifier,
-        },
+        allocator::{dmabuf::Dmabuf, format::FormatSet, Fourcc, Modifier},
         drm::{
             compositor::FrameFlags,
-            exporter::gbm::GbmFramebufferExporter,
             output::{DrmOutput, DrmOutputManager, DrmOutputRenderElements},
             CreateDrmNodeError, DrmAccessError, DrmDevice, DrmDeviceFd, DrmError, DrmEvent,
             DrmEventMetadata, DrmEventTime, DrmNode, DrmSurface, NodeType,
@@ -726,12 +720,8 @@ struct SurfaceData {
     device_id: DrmNode,
     render_node: Option<DrmNode>,
     global: Option<GlobalId>,
-    drm_output: DrmOutput<
-        GbmAllocator<DrmDeviceFd>,
-        GbmFramebufferExporter<DrmDeviceFd>,
-        Option<OutputPresentationFeedback>,
-        DrmDeviceFd,
-    >,
+    drm_output:
+        DrmOutput<super::Alloc, super::Exporter, Option<OutputPresentationFeedback>, DrmDeviceFd>,
     #[cfg(feature = "debug")]
     fps: fps_ticker::Fps,
     #[cfg(feature = "debug")]
@@ -783,8 +773,8 @@ struct BackendData {
     leasing_global: Option<DrmLeaseState>,
     active_leases: Vec<DrmLease>,
     drm_output_manager: DrmOutputManager<
-        GbmAllocator<DrmDeviceFd>,
-        GbmFramebufferExporter<DrmDeviceFd>,
+        super::Alloc,
+        super::Exporter,
         Option<OutputPresentationFeedback>,
         DrmDeviceFd,
     >,
@@ -794,6 +784,7 @@ struct BackendData {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[allow(dead_code, reason = "each renderer flavour builds only some variants")]
 pub enum DeviceAddError {
     #[error("Failed to open device using libseat: {0}")]
     DeviceOpen(libseat::Error),
@@ -804,10 +795,6 @@ pub enum DeviceAddError {
     #[error("Failed to access drm node: {0}")]
     DrmNode(CreateDrmNodeError),
     #[error("Failed to add device to GpuManager: {0}")]
-    #[cfg_attr(
-        not(feature = "egl"),
-        allow(dead_code, reason = "only the GLES flavour adds EGL nodes")
-    )]
     AddNode(egl::Error),
     #[error("Primary GPU is missing")]
     PrimaryGpuMissing,
@@ -892,7 +879,7 @@ impl AnvilState<UdevData> {
 
         let (drm, notifier) =
             DrmDevice::new(fd.clone(), true).map_err(DeviceAddError::DrmDevice)?;
-        let gbm = GbmDevice::new(fd.clone()).map_err(DeviceAddError::GbmDevice)?;
+        let gbm = super::open_device(&fd)?;
 
         let registration_token = self
             .handle
@@ -920,12 +907,7 @@ impl AnvilState<UdevData> {
 
         let allocator = render_node
             .is_some()
-            .then(|| {
-                GbmAllocator::new(
-                    gbm.clone(),
-                    GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
-                )
-            })
+            .then(|| super::new_allocator(&gbm, &fd))
             .or_else(|| {
                 self.backend_data
                     .backends
@@ -939,7 +921,7 @@ impl AnvilState<UdevData> {
             })
             .ok_or(DeviceAddError::PrimaryGpuMissing)?;
 
-        let framebuffer_exporter = GbmFramebufferExporter::new(gbm.clone(), render_node);
+        let framebuffer_exporter = super::new_exporter(&gbm, &fd, render_node);
 
         let color_formats = if std::env::var("ANVIL_DISABLE_10BIT").is_ok() {
             SUPPORTED_FORMATS_8BIT_ONLY
@@ -961,7 +943,7 @@ impl AnvilState<UdevData> {
             drm,
             allocator,
             framebuffer_exporter,
-            Some(gbm),
+            super::cursor_gbm(gbm),
             color_formats.iter().copied(),
             render_formats,
         );
