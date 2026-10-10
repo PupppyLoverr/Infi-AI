@@ -24,6 +24,7 @@ exec qemu-system-x86_64 -enable-kvm -cpu host -m 2G -smp 2 \\
   -drive if=pflash,format=raw,file=$W/vars.fd \\
   -drive file=$RAW,format=raw,if=virtio \\
   -device virtio-vga,xres=1024,yres=768 -device virtio-tablet-pci \\
+  -device virtio-keyboard-pci \\
   -audiodev none,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0 \\
   -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \\
   -smbios type=1,product=CosmosOS \\
@@ -50,6 +51,7 @@ dump() {
 }
 qmp()  { QMP_SOCK=$QMP_SOCK "$ROOT/tests/drive/qmp.sh" "$@"; }
 hmp()  { printf '%s\n' "$1" | socat -t 8 - UNIX-CONNECT:"$MON_SOCK" >/dev/null 2>&1; }
+qkey() { "$ROOT/tests/drive/qkey.sh" "$@"; }
 
 # island card region check: centred card is x 322..702, y 36..~200.
 # Open card paints a dark rounded rect there; closed = wallpaper.
@@ -87,8 +89,8 @@ i=0; until grep -q 'greetd' "$SERIAL" 2>/dev/null || [ $i -ge 90 ]; do sleep 1; 
 sleep 12
 qmp click 512 465        # greeter password field
 sleep 0.5
-for c in c o s m o s; do hmp "sendkey $c"; sleep 0.06; done
-hmp 'sendkey ret'        # greeter Enter submits (b5a8cb1)
+qkey type cosmos
+qkey ret               # greeter Enter submits (b5a8cb1)
 sleep 2
 
 echo "== island drive: waiting for session + first clip =="
@@ -137,7 +139,7 @@ dump 08-file-row-click
 
 wait_marker '==IS-ESC==' 90 || echo "!! esc marker late"
 island_open_px "$W/08-file-row-click.png" || { qmp click 512 16; sleep 1.5; }
-hmp 'sendkey esc'
+qkey esc
 sleep 2
 dump 09-after-esc
 island_open_px "$W/09-after-esc.png" && echo "FAIL: card still open after Esc" || echo "PASS: Esc dismissed card"
@@ -174,9 +176,9 @@ island_open_px "$W/13-guard-lifted.png" && echo "PASS: pill reopens after guard 
 # uptime and asserts /usr/share/cosmos/skills; open the Start launcher and
 # dump the WIDGETS strip (refresh_secs=5 — card should appear within ~10s).
 wait_marker '==IS-WIDGET==' 60 || echo "!! widget marker late"
-hmp 'sendkey esc'        # close whatever is open (island was reopened above)
+qkey esc               # close whatever is open (island was reopened above)
 sleep 1
-hmp 'sendkey meta_l'     # Start launcher
+qkey meta_l            # Start launcher
 sleep 10
 dump 14-widgets
 echo "14-widgets dumped — WIDGETS strip verified by eye in the PNG"

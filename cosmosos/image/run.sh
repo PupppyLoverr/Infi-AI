@@ -6,6 +6,8 @@
 #   -device virtio-vga    virtio-gpu: guest gets /dev/dri/card0, compositor
 #                         uses DRM/KMS + GBM + EGL (llvmpipe software GL)
 #   -device virtio-tablet-pci   absolute-position pointer (better than PS/2)
+#   -device virtio-keyboard-pci  real keyboard for input-send-event qcode keys
+#                         (HMP sendkey is dropped by QEMU under -display none)
 #   -device intel-hda + hda-duplex  HDA sound card (snd_hda_intel in guest).
 #                               virtio-snd-pci would be nicer but needs
 #                               QEMU >= 7 — Ubuntu 22.04 ships 6.2, which
@@ -104,6 +106,7 @@ exec qemu-system-x86_64 \
   -drive file="$IMG",format=raw,if=virtio \
   -device virtio-vga,xres="$RES_W",yres="$RES_H" \
   -device virtio-tablet-pci \
+  -device virtio-keyboard-pci \
   -audiodev none,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0 \
   -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
   -smbios type=1,product=CosmosOS \

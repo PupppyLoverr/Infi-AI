@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # lock.sh — drive the greetd + session-lock verification end to end.
 # Sparse-copy -> inject -> OVMF headless boot -> greeter login via
-# sendkey typing -> session lock flows -> panic sweep -> verdict.
+# QMP-key typing -> session lock flows -> panic sweep -> verdict.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
@@ -25,6 +25,7 @@ exec qemu-system-x86_64 -enable-kvm -cpu host -m 2G -smp 2 \\
   -drive if=pflash,format=raw,file=$W/vars.fd \\
   -drive file=$RAW,format=raw,if=virtio \\
   -device virtio-vga,xres=1024,yres=768 -device virtio-tablet-pci \\
+  -device virtio-keyboard-pci \\
   -audiodev none,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0 \\
   -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \\
   -smbios type=1,product=CosmosOS \\
@@ -51,10 +52,11 @@ dump() {
 }
 qmp()  { QMP_SOCK=$QMP_SOCK "$ROOT/tests/drive/qmp.sh" "$@"; }
 hmp()  { printf '%s\n' "$1" | socat -t 8 - UNIX-CONNECT:"$MON_SOCK" >/dev/null 2>&1; }
+qkey() { "$ROOT/tests/drive/qkey.sh" "$@"; }
 type()     { MON_SOCK=$MON_SOCK RUN=1 "$ROOT/tests/drive/guest-type.sh" "$1"; }
 typeno()   { MON_SOCK=$MON_SOCK "$ROOT/tests/drive/guest-type.sh" "$1"; }
 gsubmit()  { qmp click 512 518; sleep 0.5; }   # greeter Sign in button
-lsubmit()  { hmp 'sendkey ret'; sleep 0.5; }   # lock handles Enter via typed_return
+lsubmit()  { qkey ret; sleep 0.5; }   # lock handles Enter via typed_return
 
 # Centered card presence: greeter/lock cards are dark-theme but dense
 # with bright text + the password field's accent border. Count
@@ -117,7 +119,7 @@ type 'cosmos'          # sends pw chars + Enter — tests the Enter-submit path
 if ! wait_marker '==LOCK-READY==' 60; then
   echo "!! Enter-submit did not reach session — falling back to Sign-in click"
   qmp click 512 465; sleep 0.5
-  for i in $(seq 1 16); do hmp 'sendkey backspace'; sleep 0.05; done  # clear any leftover pw text
+  for i in $(seq 1 16); do qkey backspace; sleep 0.05; done  # clear any leftover pw text
   typeno 'cosmos'; gsubmit
   wait_marker '==LOCK-READY==' 120 || echo "FAIL: session never came up"
 fi
@@ -126,7 +128,7 @@ dump 03-desktop
 card_px "$W/03-desktop.png" && echo "FAIL: still on greeter" || echo "PASS: greeter -> desktop"
 
 # 3. super+L -> lock card; wrong pw -> error; right pw -> desktop.
-hmp 'sendkey meta_l-l'
+qkey meta_l-l
 sleep 3
 dump 04-locked
 card_px "$W/04-locked.png" && echo "PASS: lock card rendered" || echo "FAIL: no lock card"
@@ -151,7 +153,7 @@ sleep 3
 
 # 5. sweep x3 — lock/unlock cycles, journal panic check is guest-side.
 for n in 1 2 3; do
-  hmp 'sendkey meta_l-l'; sleep 2.5
+  qkey meta_l-l; sleep 2.5
   typeno 'cosmos'; lsubmit; sleep 2.5
   echo "sweep $n done"
 done

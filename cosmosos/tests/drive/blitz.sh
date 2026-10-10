@@ -22,6 +22,7 @@ qemu-system-x86_64 -enable-kvm -m 2G -smp 2 \
   -drive if=pflash,format=raw,file="$W/vars.fd" \
   -drive file="$RAW",format=raw,if=virtio \
   -device virtio-tablet-pci \
+  -device virtio-keyboard-pci \
   -device virtio-vga,xres=1920,yres=1080 -display none \
   -chardev socket,id=ser0,path=$W/serial.sock,server=on,wait=off,logfile=$SERIAL \
   -serial chardev:ser0 \
