@@ -507,7 +507,7 @@ fn draw_lock_ui(ui: &mut egui::Ui, state: &mut LockState) {
     );
     y += 28.0 + 18.0;
 
-    // Glass pill field: centred placeholder/bullets, arrow inside on the right.
+    // Glass pill field: centred hint text or bullets, arrow inside on the right.
     let field = Rect::from_center_size(
         Pos2::new(card.center().x, y + FIELD_H / 2.0),
         Vec2::new(FIELD_W, FIELD_H),
