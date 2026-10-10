@@ -7,7 +7,6 @@ use crate::{
 };
 
 #[cfg(feature = "udev")]
-use crate::udev::UdevData;
 #[cfg(feature = "udev")]
 use smithay::backend::renderer::DebugFlags;
 
@@ -921,7 +920,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 }
 
 #[cfg(feature = "udev")]
-impl AnvilState<UdevData> {
+impl<D: Backend + crate::udev::TtyBackend + 'static> AnvilState<D> {
     pub fn process_input_event<B: InputBackend>(
         &mut self,
         dh: &DisplayHandle,
@@ -932,7 +931,7 @@ impl AnvilState<UdevData> {
                 #[cfg(feature = "udev")]
                 KeyAction::VtSwitch(vt) => {
                     info!(to = vt, "Trying to switch vt");
-                    if let Err(err) = self.backend_data.session.change_vt(vt) {
+                    if let Err(err) = self.backend_data.session().change_vt(vt) {
                         error!(vt, "Error switching vt: {}", err);
                     }
                 }

@@ -48,9 +48,11 @@ use smithay::{
 };
 use tracing::{error, info, warn};
 
+#[cfg(feature = "egl")]
 use crate::shell::WindowElement;
 use crate::state::{take_presentation_feedback, AnvilState, Backend};
 use crate::{drawing::*, render::*};
+#[cfg(feature = "egl")]
 use smithay::desktop::space::Space;
 
 pub const OUTPUT_NAME: &str = "winit";

@@ -42,7 +42,7 @@ optional = true
 version = "0.13.0"
 
 [features]
-default = ["egl", "winit", "udev", "xwayland"]
+default = ["winit", "udev", "xwayland"]
 debug = []
 xwayland = ["smithay/xwayland", "x11rb", "smithay/x11rb_event_source"]
 egl = ["smithay/use_system_lib", "smithay/backend_egl"]

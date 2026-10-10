@@ -20,6 +20,10 @@ pub mod shell;
 pub mod state;
 #[cfg(feature = "udev")]
 pub mod udev;
+#[cfg(feature = "udev")]
+mod udev_gles;
+#[cfg(feature = "udev")]
+mod udev_pixman;
 #[cfg(feature = "winit")]
 pub mod winit;
 
