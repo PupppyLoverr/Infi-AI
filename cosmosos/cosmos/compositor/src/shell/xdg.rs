@@ -86,6 +86,7 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+        super::element::forget_body(surface.wl_surface());
         // Drop the window's Cosmos registration.
         if let Some(window) = self
             .all_windows()
@@ -129,6 +130,7 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
             self.retile_workspace();
             self.cosmos.dirty = true;
         }
+        crate::render::trim_heap();
     }
 
     fn minimize_request(&mut self, surface: ToplevelSurface) {

@@ -441,6 +441,15 @@ thread_local! {
     > = RefCell::new(HashMap::new());
 }
 
+/// Drop a closed window's body texture; entries are keyed by surface id
+/// and would otherwise outlive the window.
+pub(crate) fn forget_body(
+    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+) {
+    use smithay::reexports::wayland_server::Resource;
+    BODY_TEX.with(|map| map.borrow_mut().remove(&surface.id()));
+}
+
 /// Render a window body by importing its attached shm buffer through the
 /// decal `TextureBuffer` pipeline (`COSMOS_SHM_ELEMENTS=1`). Returns `None`
 /// for anything this path doesn't cover — subsurface trees, non-shm

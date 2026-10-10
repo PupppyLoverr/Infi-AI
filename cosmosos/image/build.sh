@@ -138,8 +138,9 @@ chmod 755 "$OVERLAY/usr/local/bin/opencode"
   { echo "opencode --version failed on staged binary" >&2; exit 1; }
 
 # xwayland-satellite — no Debian package (trixie) and not on crates.io;
-# build from upstream git on the host and ship the binary. It owns :0 and
-# lazily spawns the real Xwayland server when the first X11 client connects.
+# build from upstream git on the host and ship the binary. It starts
+# Xwayland as soon as it runs, so the session socket-activates it (see
+# cosmos-x11.socket): nothing X11 runs until the first X11 client connects.
 # Host needs: libxcb-cursor-dev libxcb-keysyms1-dev libxcb-icccm4-dev
 # libxcb-ewmh-dev libxcb-render-util0-dev libxcb-util-dev (pkg-config).
 XWS_BIN="$WORK/xwayland-sat/bin/xwayland-satellite"
@@ -256,13 +257,13 @@ done
 
 if [ -n "$SOCKET" ]; then
   export WAYLAND_DISPLAY="${SOCKET##*/}"
-  # XWayland via xwayland-satellite: satellite owns :0 and spawns the real
-  # Xwayland server ONLY when the first X11 client connects (lazy). Export
-  # DISPLAY so terminal-spawned X11 apps find it.
+  # X11 apps: cosmos-x11.socket listens on :0 and starts xwayland-satellite
+  # (and Xwayland) only when the first X11 client connects.
   export DISPLAY=":0"
   if command -v xwayland-satellite >/dev/null 2>&1; then
-    xwayland-satellite :0 &
-    echo "cosmos-session: xwayland-satellite :0 started (XWayland stays off until first X11 client)"
+    systemctl --user import-environment WAYLAND_DISPLAY DISPLAY
+    systemctl --user start cosmos-x11.socket &&
+      echo "cosmos-session: :0 listening (Xwayland starts on first X11 client)"
   fi
   echo "cosmos-session: wayland socket $WAYLAND_DISPLAY up, starting cosmos-shell"
   cosmos-shell &
@@ -278,6 +279,7 @@ fi
 
 wait "$COMP_PID"
 rc=$?
+systemctl --user stop cosmos-x11.socket cosmos-x11.service 2>/dev/null
 # compositor exit -> log out. agetty's respawn then re-runs autologin and
 # restarts the session: a built-in crash-retry loop. (poweroff was tried
 # first; logind denies it for the unprivileged user without polkit.)
@@ -403,6 +405,26 @@ WantedBy=default.target
 EOF
 ln -sf /etc/systemd/user/cosmos-agentd.service \
   "$OVERLAY/etc/systemd/user/default.target.wants/cosmos-agentd.service"
+
+# Lazy X11: the session holds :0's sockets and systemd starts
+# xwayland-satellite (which starts Xwayland, ~85 MB) on the first X11
+# connection, handing it the listening sockets as fds 3 and 4.
+cat > "$OVERLAY/etc/systemd/user/cosmos-x11.socket" <<'EOF'
+[Unit]
+Description=CosmosOS X11 display :0 (starts Xwayland on first client)
+
+[Socket]
+ListenStream=/tmp/.X11-unix/X0
+ListenStream=@/tmp/.X11-unix/X0
+SocketMode=0777
+EOF
+cat > "$OVERLAY/etc/systemd/user/cosmos-x11.service" <<'EOF'
+[Unit]
+Description=CosmosOS X11 compatibility (xwayland-satellite)
+
+[Service]
+ExecStart=/usr/local/bin/xwayland-satellite :0 -listenfd 3 -listenfd 4
+EOF
 
 # NetworkManager owns every en*/eth* link (auto-DHCP "Wired connection") —
 # the shell tray reads NM over D-Bus, so NM must hold the real interface.
@@ -818,7 +840,7 @@ insmod btrfs
 
 menuentry "CosmosOS" {
     search --no-floppy --fs-uuid --set=root $ROOT_UUID
-    linux /@/boot/$KERNEL root=UUID=$ROOT_UUID rootfstype=btrfs rootflags=subvol=@ rw console=tty0 console=ttyS0,115200 systemd.journald.forward_to_console=1
+    linux /@/boot/$KERNEL root=UUID=$ROOT_UUID rootfstype=btrfs rootflags=subvol=@ rw console=tty0 console=ttyS0,115200 systemd.journald.forward_to_console=1 transparent_hugepage=madvise
     initrd /@/boot/$INITRD
 }
 EOF
