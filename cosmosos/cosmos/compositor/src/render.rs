@@ -630,6 +630,8 @@ fn wallpaper_pixels(name: &str, w: u32, h: u32) -> Option<(std::sync::Arc<Vec<u8
     let mut cache = cache.lock().ok()?;
     cache.clear();
     cache.insert(key, entry.clone());
+    drop(cache);
+    trim_heap();
     Some(entry)
 }
 
@@ -943,4 +945,14 @@ where
         .ok_or_else(|| "pixel buffer size mismatch".to_string())?
         .save(path)
         .map_err(|e| format!("write {} failed: {e}", path.display()))
+}
+
+/// Hands freed heap pages back to the kernel. glibc keeps freed memory
+/// (decoded wallpapers, closed windows' textures) mapped otherwise.
+pub(crate) fn trim_heap() {
+    #[cfg(target_env = "gnu")]
+    // SAFETY: malloc_trim only walks glibc's own allocator state.
+    unsafe {
+        libc::malloc_trim(0);
+    }
 }
