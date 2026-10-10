@@ -937,4 +937,17 @@ mod shadow_tests {
         assert!(alpha(&s, m + w / 2, m + h + SHADOW_DY / 2) > 0);
         assert!(alpha(&s, m - 2, m + h / 2) > 0);
     }
+    #[test]
+    fn decal_cache_evicts_least_recent_under_budget() {
+        let mut c = DecalCache::default();
+        let mb = 1 << 20;
+        for (key, tick) in [(1u64, 1u64), (2, 2), (3, 3)] {
+            c.make_room(15 * mb);
+            c.map.insert(key, (Box::new(()), 15 * mb, tick));
+            c.bytes += 15 * mb;
+        }
+        assert!(c.bytes <= DECAL_BUDGET);
+        assert!(!c.map.contains_key(&1));
+        assert!(c.map.contains_key(&2) && c.map.contains_key(&3));
+    }
 }
