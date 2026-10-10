@@ -881,3 +881,61 @@ shell <90 MB:         20.1 MiB       PASS
   separate real quirk (click coordinates land at phys/1.22).
 - /proc/bus/input/devices: event0 AT keyboard; event1/event2 VMMouse;
   event3 Power Button; event4 PC Speaker; event5 QEMU Virtio Tablet.
+
+================================================================
+SECTION 9 — WHERE THE 138 MB GOES @3b2b0c1 (drill-down)
+================================================================
+Same after-image, idle 60 s, no apps, bypass session.
+Method: awk aggregation of /proc/PID/smaps by pathname.
+
+9.1 TOP MAPPINGS BY RSS (compositor pid 814, idle)
+   Rss    Pss   Anon  Private_Dirty   mapping
+ ------ ------ ------ --------------  -------
+  58896  38464   5564           5572   libLLVM.so.19.1      ← #1, JIT'd shaders
+  48156  48156  48156          48156   [heap]               ← all anonymous
+  35720  17860      0           5832   /memfd:smithay-client-toolkit (wl_shm pools, shared)
+  19868  19868  19868          19868   [anon]               ← no pathname
+  11712   7328   3460           5768   libgallium-25.0.7.so (llvmpipe driver)
+  11440  11440  11440          11440   cosmos-compositor binary (anon 11.4MB! likely in-binary Rust data/buffers)
+   1628   1628      0            824   libc.so.6
+   1336   1336      0            548   libstdc++.so.6
+   1024   1024      0            492   libz3.so.4.12 (LLVM dep)
+   1000   1000      0            240   libsystemd.so.0
+    468    468      0            468   Inter-Regular.otf
+    384    384      0            192   mesa_shader_cache_db/index
+    ...  (remaining mappings each <400 kB)
+  Totals: Rss 141720 / Pss 136366 / Anon 54388 / Private_Dirty 56220
+
+  Reading: ~86 MB of RSS is mesa+LLVM territory (libLLVM 58.9 +
+  libgallium 11.7 + shader-cache 0.4 + gallium heap share). The heap
+  (48 MB anon) is mostly mesa's too. libLLVM alone is 42% of RSS —
+  it's mapped read/exec but counted; the 5.6 MB anon inside it is the
+  JITted shader code. Font/file-backed shares are minor.
+
+9.2 THREADS
+  ls /proc/PID/task | wc -l  →  11
+    5 cosmos-composit   (main + smithay/drm workers)
+    4 llvmpipe-0..3     (rasterizer pool, one per vCPU)
+    1 Shm dropping th   (wl_shm buffer-drop thread)
+    1 cosmos-:disk$0    (disk cache worker)
+
+9.3 LP_NUM_THREADS=1 MALLOC_ARENA_MAX=2  (runtime env only)
+  threads: 4  (2 cosmos-composit, 1 cosmos-:disk$0, 1 llvmpipe-0)
+  RSS 136276 / Pss 131108 / Pss_Anon 52192 / Pss_File 76618 /
+  Private_Dirty 54024 / AnonHugePages 0 / Swap 0
+  idle CPU (top -b -n 3 -d 5, compositor): 0.0 / 4.0 / 3.4 %
+
+9.4 LP_NUM_THREADS=2 MALLOC_ARENA_MAX=2  (runtime env only)
+  threads: 6  (3 cosmos-composit, 1 cosmos-:disk$0, llvmpipe-0 + llvmpipe-1)
+  RSS 136796 / Pss 131605 / Pss_Anon 52264 / Pss_File 77042 /
+  Private_Dirty 54096 / AnonHugePages 0 / Swap 0
+  idle CPU (top -b -n 3 -d 5, compositor): 0.0 / 3.8 / 4.6 %
+
+  Reading: cutting llvmpipe 4→1 threads saves ~5.4 MB RSS (thread
+  stacks/arenas) and does NOT visibly cost CPU at idle (≈3-4 %, same
+  range as stock 9-11 % under apps-open sampling; idle-skip keeps all
+  variants near-zero between frames). The compositor stays ~136 MB
+  because libLLVM/gallium and the memfd shm pools don't shrink with
+  thread count. No regression observed; MALLOC_ARENA_MAX contributes
+  little on this workload (Private_Dirty 56.2→54.0 MB across both).
+  Session script reverted to stock after the runs (LP lines removed).
