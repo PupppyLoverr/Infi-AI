@@ -1,0 +1,729 @@
+CosmosOS v6 P0-A — RAM baseline (main @ 10d2458)
+================================================
+Host: Ubuntu 22.04 x86_64, QEMU + KVM, -m 2048 -smp 4, virtio-vga 1920x1080,
+      guest scale 125%, fresh account, Debian trixie guest, zram swap.
+Collected: 2026-10-10 (UTC). All numbers are the unwrapped (stock) session
+unless a section says otherwise.
+
+Method notes (honest):
+- The greeter dropped QMP-injected keys this boot, so the test session was
+  started by pointing greetd's default_session at cosmos-session (runtime
+  guest edit only; no repo files touched). Compositor/shell memory metrics
+  are unaffected.
+- heaptrack 1.5.0+dfsg1-5 installed in-guest via apt (apt-get update needed —
+  the image ships no package index).
+- Session script wrapped at runtime only (cosmos-session.orig restored after):
+  `heaptrack -o /tmp/heap-<name> <binary> ...`. Compositor finalized with
+  SIGINT; cosmos-shell ignores SIGINT — SIGTERM used instead.
+- Release profile has strip=true, so heaptrack's raw output is addresses.
+  Symbol names below were resolved host-side against an unstripped rebuild
+  (CARGO_PROFILE_RELEASE_STRIP=none CARGO_TARGET_DIR=target/release-dbg
+  cargo build --release; zero repo edits) using each process's live
+  /proc/pid/maps file-offset mapping + addr2line -f -C.
+- heaptrack_print -p sorts sites by allocation CALL COUNT; the lists here are
+  re-sorted by peak bytes. Frame lists are the merged sub-backtraces of a
+  site, so several distinct allocation paths share one entry. Optimized
+  (lto) code inlines a lot — a few addr2line attributions look suspicious;
+  reported as-is.
+
+
+1) IDLE — free -m (after 60 s, no apps open)
+===========================================
+               total        used        free      shared  buff/cache   available
+Mem:            1964         426        1186          27         520        1538
+Swap:            981           0         981
+
+
+2) IDLE — top-15 RSS (ps -eo rss,comm --sort=-rss | head -16, KiB)
+==================================================================
+  RSS COMMAND
+163984 cosmos-composit
+ 85396 Xwayland
+ 20556 cosmos-shell
+ 20008 NetworkManager
+ 17396 wireplumber
+ 14700 systemd
+ 14660 systemd-resolve
+ 12516 systemd
+ 12380 systemd-journal
+ 12364 pipewire
+ 11616 systemd-network
+ 10424 upowerd
+ 10012 systemd-udevd
+  9492 systemd-logind
+  8144 greetd
+
+
+3) IDLE — /proc/<cosmos-compositor>/smaps_rollup
+===============================================
+Rss:                163984 kB
+Pss:                131698 kB
+Pss_Anon:            79608 kB
+Pss_File:            49792 kB
+Private_Dirty:       81440 kB
+AnonHugePages:       65536 kB
+Swap:                    0 kB
+
+   IDLE — /proc/<cosmos-shell>/smaps_rollup
+   =======================================
+Rss:                 20560 kB
+Pss:                 17535 kB
+Pss_Anon:             8520 kB
+Pss_File:             8549 kB
+Private_Dirty:        8520 kB
+AnonHugePages:        4096 kB
+Swap:                    0 kB
+
+
+4) XWAYLAND AT IDLE
+===================
+ps -eo pid,ppid,etimes,rss,cmd | grep -i -E "xwayland|satellite":
+  1044    1       121   85396 /usr/bin/Xwayland :0 -wm 57 -displayfd 53 -rootless -wm 8
+   992  2291       121    7868 /usr/bin/xwayland-satellite :0
+(PIDs are representative; elapsed times show Xwayland and satellite started
+at the same second — the satellite spawns Xwayland EAGERLY at session start,
+despite the session script comment "XWayland stays off until first X11
+client". Parent chain: xwayland-satellite is a direct child of
+cosmos-session (sh), which is a child of systemd --user; Xwayland is
+re-parented to init.)
+
+X11 clients connected (DISPLAY=:0 xlsclients -l):  (no output — ZERO X11
+clients connected; x11-utils installed ad-hoc in guest).
+
+ss -xp | grep X11: only peer is the satellite itself (xwls-1 socket pair).
+/proc/$(pidof Xwayland)/fd shows its X socket fds, no client sockets.
+
+=> 85 MB RSS of Xwayland at idle is pure eager-spawn cost; no X11 app has
+   ever connected. Making the satellite start Xwayland lazily (or dropping
+   it) would reclaim ~82-85 MB.
+
+
+5) HEAPTRACK — cosmos-compositor, top-20 peak allocation sites (symbolized)
+===========================================================================
+Run: `heaptrack -o /tmp/heap-comp cosmos-compositor --tty-udev`, 60 s idle,
+SIGINT finalize (stats: ~1.4 M allocations traced). Report:
+`heaptrack_print -f /tmp/heap-comp.gz -p -n 20 -s 10`, re-sorted by peak.
+
+
+=== #1: peak 54.23 MB in 95262 calls ===
+  libgallium-25.0.7-2+deb13u1.so+0x84ba7d
+  libgallium-25.0.7-2+deb13u1.so+0x152336
+  libgallium-25.0.7-2+deb13u1.so+0x2cc104
+  libgallium-25.0.7-2+deb13u1.so+0x198503
+  libgallium-25.0.7-2+deb13u1.so+0x1ab215
+  libgallium-25.0.7-2+deb13u1.so+0x100551
+  libEGL_mesa.so.0.0.0+0x24009
+  libEGL_mesa.so.0.0.0+0x15f2c
+  <smithay::backend::renderer::pixman::PixmanFrame as smithay::backend::renderer::Frame>::render_texture_from_to  [cosmos-compositor+0x9a8ab6] ??:?
+  <smithay::input::touch::grab::TouchDownGrab<cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>> as smithay::input::touch::grab::TouchGrab<cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>>>::up  [cosmos-compositor+0x6c43cd] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <calloop::sources::generic::Generic<std::os::fd::owned::OwnedFd> as calloop::sources::EventSource>::register  [cosmos-compositor+0x7115f7] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <smithay::backend::renderer::multigpu::MultiFrame<smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>>>::finish_internal  [cosmos-compositor+0x50cfb5] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>>::insert  [cosmos-compositor+0x4f5ce8] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <cosmos_compositor::udev::UdevData as cosmos_compositor::state::Backend>::capture_output  [cosmos-compositor+0x574bcd] ??:?
+  <png::decoder::stream::StreamingDecoder>::update  [cosmos-compositor+0x7883fd] ??:?
+  <png::decoder::transform::transform_row_strip16 as core::ops::function::FnOnce<(&[u8], &mut [u8], &png::common::Info)>>::call_once::{shim:vtable#0}  [cosmos-compositor+0x7867f2] png.bca932c4c2a405f9-cgu.0:?
+  <png::text_metadata::ZTXtChunk>::get_text  [cosmos-compositor+0x787268] ??:?
+  tiny_skia::pipeline::highp::seed_shader  [cosmos-compositor+0xa89b26] tiny_skia.d13f98abc8a88bd4-cgu.0:?
+  <<png::chunk::ChunkType as core::fmt::Debug>::fmt::DebugType as core::fmt::Debug>::fmt  [cosmos-compositor+0x7906f4] ??:?
+  libc.so.6+0x29ca7
+  libgallium-25.0.7-2+deb13u1.so+0x3da2ee
+  libgallium-25.0.7-2+deb13u1.so+0x2cc2d0
+
+=== #2: peak 8.74 MB in 3769 calls ===
+  tiny_skia::pipeline::highp::mask_u8  [cosmos-compositor+0xa8e69b] tiny_skia.d13f98abc8a88bd4-cgu.0:?
+  <alloc::sync::Arc<std::sync::poison::mutex::Mutex<alloc::vec::Vec<smithay_client_toolkit::shm::slot::FreelistEntry>>>>::drop_slow  [cosmos-compositor+0x9c44d3] ??:?
+  <smithay::input::touch::grab::TouchDownGrab<cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>> as smithay::input::touch::grab::TouchGrab<cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>>>::down  [cosmos-compositor+0x6c4472] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <calloop::sources::generic::Generic<std::os::fd::owned::OwnedFd> as calloop::sources::EventSource>::register  [cosmos-compositor+0x7115f7] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <smithay::backend::renderer::multigpu::MultiFrame<smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>>>::finish_internal  [cosmos-compositor+0x50cfb5] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>>::insert  [cosmos-compositor+0x4f5ce8] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <cosmos_compositor::udev::UdevData as cosmos_compositor::state::Backend>::capture_output  [cosmos-compositor+0x574bcd] ??:?
+  <png::decoder::stream::StreamingDecoder>::update  [cosmos-compositor+0x7883fd] ??:?
+  <png::decoder::transform::transform_row_strip16 as core::ops::function::FnOnce<(&[u8], &mut [u8], &png::common::Info)>>::call_once::{shim:vtable#0}  [cosmos-compositor+0x7867f2] png.bca932c4c2a405f9-cgu.0:?
+  <png::text_metadata::ZTXtChunk>::get_text  [cosmos-compositor+0x787268] ??:?
+  tiny_skia::pipeline::highp::seed_shader  [cosmos-compositor+0xa89b26] tiny_skia.d13f98abc8a88bd4-cgu.0:?
+  <<png::chunk::ChunkType as core::fmt::Debug>::fmt::DebugType as core::fmt::Debug>::fmt  [cosmos-compositor+0x7906f4] ??:?
+  libc.so.6+0x29ca7
+  <smithay_client_toolkit::shm::slot::Slot as core::ops::drop::Drop>::drop  [cosmos-compositor+0x9c47ab] ??:?
+  <smithay::backend::drm::compositor::DrmCompositor<smithay::backend::allocator::gbm::GbmAllocator<smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::drm::exporter::gbm::GbmFramebufferExporter<smithay::backend::drm::device::fd::DrmDeviceFd>, core::option::Option<smithay::desktop::wayland::utils::OutputPresentationFeedback>, smithay::backend::drm::device::fd::DrmDeviceFd>>::try_assign_plane::<smithay::backend::renderer::multigpu::MultiRenderer<smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>>, cosmos_compositor::render::OutputRenderElements<smithay::backend::renderer::multigpu::MultiRenderer<smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>>, cosmos_compositor::shell::element::WindowRenderElement<smithay::backend::renderer::multigpu::MultiRenderer<smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>>>>>  [cosmos-compositor+0x3add12] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <smithay::input::keyboard::KeyboardHandle<cosmos_compositor::state::AnvilState<cosmos_compositor::winit::WinitData>>>::set_focus  [cosmos-compositor+0x4f508d] cosmos_compositor.32abc825600b911a-cgu.0:?
+
+=== #3: peak 0.54 MB in 2099 calls ===
+  libLLVM.so.19.1+0x14bfc24
+  libgallium-25.0.7-2+deb13u1.so+0x7bb207
+  libgallium-25.0.7-2+deb13u1.so+0x8a50c8
+  libgallium-25.0.7-2+deb13u1.so+0x8a578b
+  libgallium-25.0.7-2+deb13u1.so+0x88c6d7
+  libgallium-25.0.7-2+deb13u1.so+0x86f127
+  libgallium-25.0.7-2+deb13u1.so+0x32177b
+  <core::slice::iter::Iter<libc::unix::linux_like::linux_l4re_shared::Elf64_Phdr> as core::iter::traits::iterator::Iterator>::fold::<(), core::iter::adapters::map::map_fold<&libc::unix::linux_like::linux_l4re_shared::Elf64_Phdr, std::backtrace_rs::symbolize::gimli::LibrarySegment, (), std::backtrace_rs::symbolize::gimli::libs_dl_iterate_phdr::callback::{closure#0}, core::iter::traits::iterator::Iterator::for_each::call<std::backtrace_rs::symbolize::gimli::LibrarySegment, <alloc::vec::Vec<std::backtrace_rs::symbolize::gimli::LibrarySegment>>::extend_trusted<core::iter::adapters::map::Map<core::slice::iter::Iter<libc::unix::linux_like::linux_l4re_shared::Elf64_Phdr>, std::backtrace_rs::symbolize::gimli::libs_dl_iterate_phdr::callback::{closure#0}>>::{closure#0}>::{closure#0}>::{closure#0}>  [cosmos-compositor+0x9fb315] macros.rs:279
+  <swash::scale::ScalerBuilder>::build  [cosmos-compositor+0xa4e41c] ??:?
+  <&png::decoder::stream::FormatErrorInner as core::fmt::Debug>::fmt  [cosmos-compositor+0x7765c6] image.112edbad4abb3063-cgu.0:?
+  <smithay::backend::drm::surface::DrmSurface>::commit::<core::iter::adapters::map::Map<core::iter::adapters::filter::Filter<core::slice::iter::IterMut<(drm::control::plane::Handle, smithay::backend::drm::compositor::PlaneState<smithay::backend::allocator::gbm::GbmBuffer, smithay::backend::drm::gbm::GbmFramebuffer>)>, <smithay::backend::drm::compositor::FrameState<smithay::backend::allocator::gbm::GbmBuffer, smithay::backend::drm::gbm::GbmFramebuffer>>::build_planes::{closure#1}>, <smithay::backend::drm::compositor::FrameState<smithay::backend::allocator::gbm::GbmBuffer, smithay::backend::drm::gbm::GbmFramebuffer>>::build_planes::{closure#2}>>  [cosmos-compositor+0x37133c] cosmos_compositor.32abc825600b911a-cgu.0:?
+  core::ptr::drop_glue::<alloc::rc::RcInner<core::cell::RefCell<calloop::sources::DispatcherInner<smithay::wayland::security_context::listener_source::SecurityContextListenerSource, <cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData> as smithay::wayland::security_context::SecurityContextHandler>::context_created::{closure#0}>>>>  [cosmos-compositor+0x3c6ba2] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <smithay::backend::drm::compositor::DrmCompositor<smithay::backend::allocator::gbm::GbmAllocator<smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::drm::exporter::gbm::GbmFramebufferExporter<smithay::backend::drm::device::fd::DrmDeviceFd>, core::option::Option<smithay::desktop::wayland::utils::OutputPresentationFeedback>, smithay::backend::drm::device::fd::DrmDeviceFd>>::render_frame::<smithay::backend::renderer::multigpu::MultiRenderer<smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>>, cosmos_compositor::render::OutputRenderElements<smithay::backend::renderer::multigpu::MultiRenderer<smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>>, cosmos_compositor::shell::element::WindowRenderElement<smithay::backend::renderer::multigpu::MultiRenderer<smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>>>>, smithay::backend::renderer::color::Color32F>  [cosmos-compositor+0x3aa0c5] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <smithay::backend::renderer::damage::OutputDamageTracker>::render_output::<cosmos_compositor::shell::element::WindowRenderElement<smithay::backend::renderer::gles::GlesRenderer>, smithay::backend::renderer::gles::GlesRenderer, smithay::backend::renderer::color::Color32F>  [cosmos-compositor+0x34cb22] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <cosmos_compositor::state::AnvilState<cosmos_compositor::winit::WinitData>>::init  [cosmos-compositor+0x5037ef] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>>::init  [cosmos-compositor+0x4fba64] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>>::init  [cosmos-compositor+0x4f6e92] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <cosmos_compositor::udev::UdevData as cosmos_compositor::state::Backend>::capture_output  [cosmos-compositor+0x574bcd] ??:?
+  <png::decoder::stream::StreamingDecoder>::update  [cosmos-compositor+0x7883fd] ??:?
+  <png::decoder::transform::transform_row_strip16 as core::ops::function::FnOnce<(&[u8], &mut [u8], &png::common::Info)>>::call_once::{shim:vtable#0}  [cosmos-compositor+0x7867f2] png.bca932c4c2a405f9-cgu.0:?
+  <png::text_metadata::ZTXtChunk>::get_text  [cosmos-compositor+0x787268] ??:?
+  tiny_skia::pipeline::highp::seed_shader  [cosmos-compositor+0xa89b26] tiny_skia.d13f98abc8a88bd4-cgu.0:?
+  <<png::chunk::ChunkType as core::fmt::Debug>::fmt::DebugType as core::fmt::Debug>::fmt  [cosmos-compositor+0x7906f4] ??:?
+  libc.so.6+0x29ca7
+  libLLVM.so.19.1+0x3f4c663
+  libLLVM.so.19.1+0x3da5fbd
+  libLLVM.so.19.1+0x3da56e0
+
+=== #4: peak 0.31 MB in 3462 calls ===
+  libLLVM.so.19.1+0xff68fd
+  libgallium-25.0.7-2+deb13u1.so+0x86e69b
+  libgallium-25.0.7-2+deb13u1.so+0x1ab1c3
+  libgallium-25.0.7-2+deb13u1.so+0x100551
+  libEGL_mesa.so.0.0.0+0x24009
+  libEGL_mesa.so.0.0.0+0x15f2c
+  <smithay::backend::renderer::pixman::PixmanFrame as smithay::backend::renderer::Frame>::render_texture_from_to  [cosmos-compositor+0x9a8ab6] ??:?
+  <smithay::input::touch::grab::TouchDownGrab<cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>> as smithay::input::touch::grab::TouchGrab<cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>>>::up  [cosmos-compositor+0x6c43cd] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <calloop::sources::generic::Generic<std::os::fd::owned::OwnedFd> as calloop::sources::EventSource>::register  [cosmos-compositor+0x7115f7] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <smithay::backend::renderer::multigpu::MultiFrame<smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>>>::finish_internal  [cosmos-compositor+0x50cfb5] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>>::insert  [cosmos-compositor+0x4f5ce8] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <cosmos_compositor::udev::UdevData as cosmos_compositor::state::Backend>::capture_output  [cosmos-compositor+0x574bcd] ??:?
+  <png::decoder::stream::StreamingDecoder>::update  [cosmos-compositor+0x7883fd] ??:?
+  <png::decoder::transform::transform_row_strip16 as core::ops::function::FnOnce<(&[u8], &mut [u8], &png::common::Info)>>::call_once::{shim:vtable#0}  [cosmos-compositor+0x7867f2] png.bca932c4c2a405f9-cgu.0:?
+  <png::text_metadata::ZTXtChunk>::get_text  [cosmos-compositor+0x787268] ??:?
+  tiny_skia::pipeline::highp::seed_shader  [cosmos-compositor+0xa89b26] tiny_skia.d13f98abc8a88bd4-cgu.0:?
+  <<png::chunk::ChunkType as core::fmt::Debug>::fmt::DebugType as core::fmt::Debug>::fmt  [cosmos-compositor+0x7906f4] ??:?
+  libc.so.6+0x29ca7
+  libgallium-25.0.7-2+deb13u1.so+0x8a92a4
+  libgallium-25.0.7-2+deb13u1.so+0x8a9380
+  libgallium-25.0.7-2+deb13u1.so+0x8aa5f8
+  libgallium-25.0.7-2+deb13u1.so+0x89379f
+  libgallium-25.0.7-2+deb13u1.so+0x7770af
+  libgallium-25.0.7-2+deb13u1.so+0x77b7ca
+  libgallium-25.0.7-2+deb13u1.so+0xe63619
+  libgallium-25.0.7-2+deb13u1.so+0xe6456b
+  libgallium-25.0.7-2+deb13u1.so+0x86e79b
+
+=== #5: peak 0.28 MB in 2267 calls ===
+  libinput.so.10.13.0+0x12b29
+  libinput.so.10.13.0+0x4463f
+  libinput.so.10.13.0+0x45b72
+  libinput.so.10.13.0+0x45cda
+  libinput.so.10.13.0+0x12c55
+  <alloc::vec::Vec<u8> as core::fmt::Debug>::fmt  [cosmos-compositor+0x80a3f3] roxmltree.2be01b0b660b91a6-cgu.0:?
+  <cosmos_compositor::udev::UdevData as cosmos_compositor::state::Backend>::capture_output  [cosmos-compositor+0x573711] ??:?
+  <png::decoder::stream::StreamingDecoder>::update  [cosmos-compositor+0x7883fd] ??:?
+  <png::decoder::transform::transform_row_strip16 as core::ops::function::FnOnce<(&[u8], &mut [u8], &png::common::Info)>>::call_once::{shim:vtable#0}  [cosmos-compositor+0x7867f2] png.bca932c4c2a405f9-cgu.0:?
+  <png::text_metadata::ZTXtChunk>::get_text  [cosmos-compositor+0x787268] ??:?
+  tiny_skia::pipeline::highp::seed_shader  [cosmos-compositor+0xa89b26] tiny_skia.d13f98abc8a88bd4-cgu.0:?
+  <<png::chunk::ChunkType as core::fmt::Debug>::fmt::DebugType as core::fmt::Debug>::fmt  [cosmos-compositor+0x7906f4] ??:?
+  libc.so.6+0x29ca7
+  libinput.so.10.13.0+0x45199
+
+=== #6: peak 0.26 MB in 342 calls ===
+  libsystemd.so.0.40.0+0xadd87
+  libsystemd.so.0.40.0+0xc0bad
+  libsystemd.so.0.40.0+0xc0d6e
+  libseat.so.1+0x5be3
+  core::slice::sort::shared::smallsort::insert_tail::<addr2line::unit::UnitRange, <[addr2line::unit::UnitRange]>::sort_by_key<u64, <addr2line::unit::ResUnits<gimli::read::endian_slice::EndianSlice<gimli::endianity::LittleEndian>>>::parse::{closure#4}>::{closure#0}>  [cosmos-compositor+0x9d710b] smallsort.rs:560
+  <smithay::wayland::shell::xdg::XdgShellState as wayland_server::dispatch::Dispatch<wayland_protocols::xdg::shell::generated::server::xdg_toplevel::XdgToplevel, smithay::wayland::shell::xdg::handlers::surface::XdgShellSurfaceUserData, cosmos_compositor::state::AnvilState<cosmos_compositor::winit::WinitData>>>::request  [cosmos-compositor+0x56ffb9] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <png::decoder::stream::StreamingDecoder>::update  [cosmos-compositor+0x7883fd] ??:?
+  <png::decoder::transform::transform_row_strip16 as core::ops::function::FnOnce<(&[u8], &mut [u8], &png::common::Info)>>::call_once::{shim:vtable#0}  [cosmos-compositor+0x7867f2] png.bca932c4c2a405f9-cgu.0:?
+  <png::text_metadata::ZTXtChunk>::get_text  [cosmos-compositor+0x787268] ??:?
+  tiny_skia::pipeline::highp::seed_shader  [cosmos-compositor+0xa89b26] tiny_skia.d13f98abc8a88bd4-cgu.0:?
+  <<png::chunk::ChunkType as core::fmt::Debug>::fmt::DebugType as core::fmt::Debug>::fmt  [cosmos-compositor+0x7906f4] ??:?
+  libc.so.6+0x29ca7
+  libsystemd.so.0.40.0+0x7c68e
+  libseat.so.1+0x5c0f
+  libseat.so.1+0x56d7
+  <read_fonts::ps::cs::Evaluator<skrifa::outline::cff::hint::HintingSink<read_fonts::ps::cs::NopFilterSink<skrifa::outline::cff::PenSink<swash::scale::outline::OutlineWriter>>>>>::emit_curves::<6>  [cosmos-compositor+0xa141d6] swash.89e2c99d61c65c63-cgu.0:?
+  smithay::backend::renderer::multigpu::mem_copy::<smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>>  [cosmos-compositor+0x410889] cosmos_compositor.32abc825600b911a-cgu.0:?
+  libinput.so.10.13.0+0x1b957
+  libinput.so.10.13.0+0x3f192
+  libinput.so.10.13.0+0x3f3bc
+  <alloc::vec::Vec<u8> as core::fmt::Debug>::fmt  [cosmos-compositor+0x80a3f3] roxmltree.2be01b0b660b91a6-cgu.0:?
+  <cosmos_compositor::udev::UdevData as cosmos_compositor::state::Backend>::capture_output  [cosmos-compositor+0x573711] ??:?
+  libsystemd.so.0.40.0+0x4f6ad
+
+=== #7: peak 0.15 MB in 2936 calls ===
+  libz3.so.4+0x2552f1
+  libgallium-25.0.7-2+deb13u1.so+0xfe4ef
+  ld-linux-x86-64.so.2+0x5dcd
+  ld-linux-x86-64.so.2+0x5e9b
+  ld-linux-x86-64.so.2+0xc8a7
+  ld-linux-x86-64.so.2+0xcc2a
+  libc.so.6+0x8ef77
+  ld-linux-x86-64.so.2+0x24be
+  libc.so.6+0x8ea86
+  libgbm.so.1.0.0+0x2e1d
+  libgbm.so.1.0.0+0x22eb
+  <smithay::input::keyboard::KeyboardHandle<cosmos_compositor::state::AnvilState<cosmos_compositor::winit::WinitData>>>::input_forward  [cosmos-compositor+0x4f4689] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <cosmos_compositor::udev::UdevData as cosmos_compositor::state::Backend>::capture_output  [cosmos-compositor+0x574bcd] ??:?
+  <png::decoder::stream::StreamingDecoder>::update  [cosmos-compositor+0x7883fd] ??:?
+  <png::decoder::transform::transform_row_strip16 as core::ops::function::FnOnce<(&[u8], &mut [u8], &png::common::Info)>>::call_once::{shim:vtable#0}  [cosmos-compositor+0x7867f2] png.bca932c4c2a405f9-cgu.0:?
+  <png::text_metadata::ZTXtChunk>::get_text  [cosmos-compositor+0x787268] ??:?
+  tiny_skia::pipeline::highp::seed_shader  [cosmos-compositor+0xa89b26] tiny_skia.d13f98abc8a88bd4-cgu.0:?
+  <<png::chunk::ChunkType as core::fmt::Debug>::fmt::DebugType as core::fmt::Debug>::fmt  [cosmos-compositor+0x7906f4] ??:?
+  libc.so.6+0x29ca7
+  libgallium-25.0.7-2+deb13u1.so+0xfe555
+
+=== #8: peak 0.12 MB in 8894 calls ===
+  libxkbcommon.so.0.0.0+0x1d613
+  libxkbcommon.so.0.0.0+0x5fc1
+  libxkbcommon.so.0.0.0+0x7151
+  libxkbcommon.so.0.0.0+0x178dc
+  libxkbcommon.so.0.0.0+0x17a60
+  libxkbcommon.so.0.0.0+0x106d7
+  libxkbcommon.so.0.0.0+0x1cc40
+  libxkbcommon.so.0.0.0+0x1beaa
+  libxkbcommon.so.0.0.0+0x1ccaa
+  libxkbcommon.so.0.0.0+0x1cf8e
+  libxkbcommon.so.0.0.0+0x11c98
+  libxkbcommon.so.0.0.0+0x1d387
+  libxkbcommon.so.0.0.0+0x1d489
+  <&[f32; 9] as core::fmt::Debug>::fmt  [cosmos-compositor+0x98e3d8] smithay.a4cf9669df074a26-cgu.0:?
+  cosmos_compositor::winit::run_winit  [cosmos-compositor+0x54269a] ??:?
+  <x11rb::xcb_ffi::XCBConnection as x11rb::connection::RequestConnection>::extension_information  [cosmos-compositor+0x5718f7] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <png::decoder::stream::StreamingDecoder>::update  [cosmos-compositor+0x7883fd] ??:?
+  <png::decoder::transform::transform_row_strip16 as core::ops::function::FnOnce<(&[u8], &mut [u8], &png::common::Info)>>::call_once::{shim:vtable#0}  [cosmos-compositor+0x7867f2] png.bca932c4c2a405f9-cgu.0:?
+  <png::text_metadata::ZTXtChunk>::get_text  [cosmos-compositor+0x787268] ??:?
+  tiny_skia::pipeline::highp::seed_shader  [cosmos-compositor+0xa89b26] tiny_skia.d13f98abc8a88bd4-cgu.0:?
+  <<png::chunk::ChunkType as core::fmt::Debug>::fmt::DebugType as core::fmt::Debug>::fmt  [cosmos-compositor+0x7906f4] ??:?
+  libc.so.6+0x29ca7
+  libxkbcommon.so.0.0.0+0x66f9
+  libxkbcommon.so.0.0.0+0x112b1
+  libxkbcommon.so.0.0.0+0x115fa
+  libxkbcommon.so.0.0.0+0x117cb
+
+=== #9: peak 0.10 MB in 1745 calls ===
+  libc.so.6+0x7e5ca
+  libinput.so.10.13.0+0x43da6
+  libinput.so.10.13.0+0x4459a
+  libinput.so.10.13.0+0x45b72
+  libinput.so.10.13.0+0x45cda
+  libinput.so.10.13.0+0x12c55
+  <alloc::vec::Vec<u8> as core::fmt::Debug>::fmt  [cosmos-compositor+0x80a3f3] roxmltree.2be01b0b660b91a6-cgu.0:?
+  <cosmos_compositor::udev::UdevData as cosmos_compositor::state::Backend>::capture_output  [cosmos-compositor+0x573711] ??:?
+  <png::decoder::stream::StreamingDecoder>::update  [cosmos-compositor+0x7883fd] ??:?
+  <png::decoder::transform::transform_row_strip16 as core::ops::function::FnOnce<(&[u8], &mut [u8], &png::common::Info)>>::call_once::{shim:vtable#0}  [cosmos-compositor+0x7867f2] png.bca932c4c2a405f9-cgu.0:?
+  <png::text_metadata::ZTXtChunk>::get_text  [cosmos-compositor+0x787268] ??:?
+  tiny_skia::pipeline::highp::seed_shader  [cosmos-compositor+0xa89b26] tiny_skia.d13f98abc8a88bd4-cgu.0:?
+  <<png::chunk::ChunkType as core::fmt::Debug>::fmt::DebugType as core::fmt::Debug>::fmt  [cosmos-compositor+0x7906f4] ??:?
+  libc.so.6+0x29ca7
+  libinput.so.10.13.0+0x45b0b
+  libinput.so.10.13.0+0x44380
+  libc.so.6+0xf666d
+  libgallium-25.0.7-2+deb13u1.so+0x84b070
+  libexpat.so.1.12.3+0xebb2
+
+=== #10: peak 0.07 MB in 185 calls ===
+  ld-linux-x86-64.so.2+0x25d1a
+  ld-linux-x86-64.so.2+0xd134
+  ld-linux-x86-64.so.2+0xc827
+  ld-linux-x86-64.so.2+0xcc2a
+  libc.so.6+0x8ef77
+  ld-linux-x86-64.so.2+0x24be
+  libc.so.6+0x8ea86
+  libgbm.so.1.0.0+0x2e1d
+  libgbm.so.1.0.0+0x22eb
+  <smithay::input::keyboard::KeyboardHandle<cosmos_compositor::state::AnvilState<cosmos_compositor::winit::WinitData>>>::input_forward  [cosmos-compositor+0x4f4689] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <cosmos_compositor::udev::UdevData as cosmos_compositor::state::Backend>::capture_output  [cosmos-compositor+0x574bcd] ??:?
+  <png::decoder::stream::StreamingDecoder>::update  [cosmos-compositor+0x7883fd] ??:?
+  <png::decoder::transform::transform_row_strip16 as core::ops::function::FnOnce<(&[u8], &mut [u8], &png::common::Info)>>::call_once::{shim:vtable#0}  [cosmos-compositor+0x7867f2] png.bca932c4c2a405f9-cgu.0:?
+  <png::text_metadata::ZTXtChunk>::get_text  [cosmos-compositor+0x787268] ??:?
+  tiny_skia::pipeline::highp::seed_shader  [cosmos-compositor+0xa89b26] tiny_skia.d13f98abc8a88bd4-cgu.0:?
+  <<png::chunk::ChunkType as core::fmt::Debug>::fmt::DebugType as core::fmt::Debug>::fmt  [cosmos-compositor+0x7906f4] ??:?
+  libc.so.6+0x29ca7
+  ld-linux-x86-64.so.2+0xd0c6
+  ld-linux-x86-64.so.2+0x7d59
+  ld-linux-x86-64.so.2+0x95da
+  ld-linux-x86-64.so.2+0x3670
+  ld-linux-x86-64.so.2+0x39d3
+
+=== #11: peak 0.04 MB in 432 calls ===
+  <smithay::backend::session::libseat::LibSeatSession as smithay::backend::session::Session>::change_vt  [cosmos-compositor+0x9828ec] ??:?
+  <yazi::decode::InflateContext>::inflate::<yazi::decode::VecSink>  [cosmos-compositor+0xa0aacd] swash.89e2c99d61c65c63-cgu.0:?
+  <smithay::backend::drm::device::DrmDevice>::activate  [cosmos-compositor+0x9604e2] ??:?
+  <smithay_client_toolkit::shm::raw::RawPool>::create_shm_fd  [cosmos-compositor+0x9c289c] ??:?
+  <alloc::sync::Arc<std::sync::poison::mutex::Mutex<alloc::vec::Vec<smithay_client_toolkit::shm::slot::FreelistEntry>>>>::drop_slow  [cosmos-compositor+0x9c44d3] ??:?
+  <smithay::input::touch::grab::TouchDownGrab<cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>> as smithay::input::touch::grab::TouchGrab<cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>>>::down  [cosmos-compositor+0x6c4472] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <calloop::sources::generic::Generic<std::os::fd::owned::OwnedFd> as calloop::sources::EventSource>::register  [cosmos-compositor+0x7115f7] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <smithay::backend::renderer::multigpu::MultiFrame<smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>>>::finish_internal  [cosmos-compositor+0x50cfb5] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>>::insert  [cosmos-compositor+0x4f5ce8] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <cosmos_compositor::udev::UdevData as cosmos_compositor::state::Backend>::capture_output  [cosmos-compositor+0x574bcd] ??:?
+  <png::decoder::stream::StreamingDecoder>::update  [cosmos-compositor+0x7883fd] ??:?
+  <png::decoder::transform::transform_row_strip16 as core::ops::function::FnOnce<(&[u8], &mut [u8], &png::common::Info)>>::call_once::{shim:vtable#0}  [cosmos-compositor+0x7867f2] png.bca932c4c2a405f9-cgu.0:?
+  <png::text_metadata::ZTXtChunk>::get_text  [cosmos-compositor+0x787268] ??:?
+  tiny_skia::pipeline::highp::seed_shader  [cosmos-compositor+0xa89b26] tiny_skia.d13f98abc8a88bd4-cgu.0:?
+  <<png::chunk::ChunkType as core::fmt::Debug>::fmt::DebugType as core::fmt::Debug>::fmt  [cosmos-compositor+0x7906f4] ??:?
+  libc.so.6+0x29ca7
+  <smithay::backend::drm::device::DrmDevice>::activate  [cosmos-compositor+0x9606d0] ??:?
+  <smithay::backend::drm::device::DrmDevice>::activate  [cosmos-compositor+0x9606aa] ??:?
+
+=== #12: peak 0.04 MB in 2233 calls ===
+  libudev.so.1.7.10+0x18488
+  libudev.so.1.7.10+0x23198
+  libudev.so.1.7.10+0x25e12
+  libudev.so.1.7.10+0x11ed1
+  libudev.so.1.7.10+0x290d7
+  libudev.so.1.7.10+0x1eaa3
+  libudev.so.1.7.10+0xb84a
+  libudev.so.1.7.10+0xba9d
+  libinput.so.10.13.0+0x3f38f
+  <alloc::vec::Vec<u8> as core::fmt::Debug>::fmt  [cosmos-compositor+0x80a3f3] roxmltree.2be01b0b660b91a6-cgu.0:?
+  <cosmos_compositor::udev::UdevData as cosmos_compositor::state::Backend>::capture_output  [cosmos-compositor+0x573711] ??:?
+  <png::decoder::stream::StreamingDecoder>::update  [cosmos-compositor+0x7883fd] ??:?
+  <png::decoder::transform::transform_row_strip16 as core::ops::function::FnOnce<(&[u8], &mut [u8], &png::common::Info)>>::call_once::{shim:vtable#0}  [cosmos-compositor+0x7867f2] png.bca932c4c2a405f9-cgu.0:?
+  <png::text_metadata::ZTXtChunk>::get_text  [cosmos-compositor+0x787268] ??:?
+  tiny_skia::pipeline::highp::seed_shader  [cosmos-compositor+0xa89b26] tiny_skia.d13f98abc8a88bd4-cgu.0:?
+  <<png::chunk::ChunkType as core::fmt::Debug>::fmt::DebugType as core::fmt::Debug>::fmt  [cosmos-compositor+0x7906f4] ??:?
+  libc.so.6+0x29ca7
+  libudev.so.1.7.10+0xb753
+  libinput.so.10.13.0+0x3f3eb
+
+=== #13: peak 0.02 MB in 6146 calls ===
+  libxkbcommon.so.0.0.0+0x175b1
+  libxkbcommon.so.0.0.0+0x5cce
+  libxkbcommon.so.0.0.0+0x7151
+  libxkbcommon.so.0.0.0+0x178dc
+  libxkbcommon.so.0.0.0+0x17a60
+  libxkbcommon.so.0.0.0+0x106d7
+  libxkbcommon.so.0.0.0+0x1cc40
+  libxkbcommon.so.0.0.0+0x1beaa
+  libxkbcommon.so.0.0.0+0x1ccaa
+  libxkbcommon.so.0.0.0+0x1cf8e
+  libxkbcommon.so.0.0.0+0x11c98
+  libxkbcommon.so.0.0.0+0x1d387
+  libxkbcommon.so.0.0.0+0x1d489
+  <&[f32; 9] as core::fmt::Debug>::fmt  [cosmos-compositor+0x98e3d8] smithay.a4cf9669df074a26-cgu.0:?
+  cosmos_compositor::winit::run_winit  [cosmos-compositor+0x54269a] ??:?
+  <x11rb::xcb_ffi::XCBConnection as x11rb::connection::RequestConnection>::extension_information  [cosmos-compositor+0x5718f7] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <png::decoder::stream::StreamingDecoder>::update  [cosmos-compositor+0x7883fd] ??:?
+  <png::decoder::transform::transform_row_strip16 as core::ops::function::FnOnce<(&[u8], &mut [u8], &png::common::Info)>>::call_once::{shim:vtable#0}  [cosmos-compositor+0x7867f2] png.bca932c4c2a405f9-cgu.0:?
+  <png::text_metadata::ZTXtChunk>::get_text  [cosmos-compositor+0x787268] ??:?
+  tiny_skia::pipeline::highp::seed_shader  [cosmos-compositor+0xa89b26] tiny_skia.d13f98abc8a88bd4-cgu.0:?
+  <<png::chunk::ChunkType as core::fmt::Debug>::fmt::DebugType as core::fmt::Debug>::fmt  [cosmos-compositor+0x7906f4] ??:?
+  libc.so.6+0x29ca7
+  libxkbcommon.so.0.0.0+0xe849
+  libxkbcommon.so.0.0.0+0xe4ea
+  libxkbcommon.so.0.0.0+0xe920
+  libxkbcommon.so.0.0.0+0xea55
+
+=== #14: peak 0.01 MB in 233 calls ===
+  libLLVM.so.19.1+0xf35e3f
+  libLLVM.so.19.1+0xf4ec2a
+  libLLVM.so.19.1+0x1153a64
+  libLLVM.so.19.1+0x1cf89aa
+  libLLVM.so.19.1+0x1d0213a
+  libLLVM.so.19.1+0x1d04153
+  libLLVM.so.19.1+0x421b240
+  libLLVM.so.19.1+0x30f78a0
+  libLLVM.so.19.1+0x30f76b0
+  libgallium-25.0.7-2+deb13u1.so+0x805ecb
+  libgallium-25.0.7-2+deb13u1.so+0x7bb09a
+  libgallium-25.0.7-2+deb13u1.so+0x8a50b2
+  libgallium-25.0.7-2+deb13u1.so+0x8a578b
+  libgallium-25.0.7-2+deb13u1.so+0x88c6d7
+  libgallium-25.0.7-2+deb13u1.so+0x86f127
+  libgallium-25.0.7-2+deb13u1.so+0x32177b
+  <core::iter::adapters::flatten::FlatMap<core::iter::adapters::filter::Filter<core::slice::iter::Iter<smithay::desktop::wayland::popup::manager::PopupNode>, <smithay::desktop::wayland::popup::manager::PopupNode>::iter_popups_relative_to<smithay::utils::geometry::Point<i32, smithay::utils::geometry::Logical>>::{closure#0}>, alloc::boxed::Box<dyn core::iter::traits::iterator::Iterator<Item = (&smithay::desktop::wayland::popup::PopupKind, smithay::utils::geometry::Point<i32, smithay::utils::geometry::Logical>)>>, <smithay::desktop::wayland::popup::manager::PopupNode>::iter_popups_relative_to<smithay::utils::geometry::Point<i32, smithay::utils::geometry::Logical>>::{closure#1}> as core::iter::traits::iterator::Iterator>::next  [cosmos-compositor+0x98910a] smithay.a4cf9669df074a26-cgu.0:?
+  <alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<alloc::collections::btree::node::marker::Mut, usize, std::sys::pal::unix::stack_overflow::thread_info::ThreadInfo, alloc::collections::btree::node::marker::Internal>, alloc::collections::btree::node::marker::Edge>>::insert_fit  [cosmos-compositor+0x9fc939] node.rs:1009
+  <swash::scale::ScalerBuilder>::build  [cosmos-compositor+0xa4de80] ??:?
+  <&png::chunk::ChunkType as core::fmt::Debug>::fmt  [cosmos-compositor+0x775827] image.112edbad4abb3063-cgu.0:?
+  core::ptr::drop_glue::<tracing_subscriber::filter::env::field::ValueMatch>  [cosmos-compositor+0x733791] cosmos_compositor.2d8a20f7360538d6-cgu.0:?
+  <wayland_backend::sys::server_impl::State<cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>> as wayland_backend::sys::server_impl::ErasedState>::get_object_data_any  [cosmos-compositor+0x7261d4] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <smithay::backend::drm::surface::DrmSurface>::commit::<core::iter::adapters::map::Map<core::iter::adapters::filter::Filter<core::slice::iter::IterMut<(drm::control::plane::Handle, smithay::backend::drm::compositor::PlaneState<smithay::backend::allocator::gbm::GbmBuffer, smithay::backend::drm::gbm::GbmFramebuffer>)>, <smithay::backend::drm::compositor::FrameState<smithay::backend::allocator::gbm::GbmBuffer, smithay::backend::drm::gbm::GbmFramebuffer>>::build_planes::{closure#1}>, <smithay::backend::drm::compositor::FrameState<smithay::backend::allocator::gbm::GbmBuffer, smithay::backend::drm::gbm::GbmFramebuffer>>::build_planes::{closure#2}>>  [cosmos-compositor+0x371f66] cosmos_compositor.32abc825600b911a-cgu.0:?
+  core::ptr::drop_glue::<alloc::rc::RcInner<core::cell::RefCell<calloop::sources::DispatcherInner<smithay::wayland::security_context::listener_source::SecurityContextListenerSource, <cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData> as smithay::wayland::security_context::SecurityContextHandler>::context_created::{closure#0}>>>>  [cosmos-compositor+0x3c6ba2] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <smithay::wayland::shell::xdg::XdgShellState as wayland_server::dispatch::Dispatch<wayland_protocols::xdg::shell::generated::server::xdg_toplevel::XdgToplevel, smithay::wayland::shell::xdg::handlers::surface::XdgShellSurfaceUserData, cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>>>::request  [cosmos-compositor+0x56b002] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>>::init  [cosmos-compositor+0x4fdfe2] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <hashbrown::map::HashMap<std::path::PathBuf, (), std::hash::random::RandomState>>::insert  [cosmos-compositor+0x764854] fontdb.783eb39277b249f6-cgu.0:?
+  <wayland_server::global::GlobalData<wayland_server::protocol::wl_data_device_manager::WlDataDeviceManager, (), cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>> as wayland_backend::sys::server::GlobalHandler<cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>>>::bind  [cosmos-compositor+0x578841] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <png::decoder::stream::StreamingDecoder>::update  [cosmos-compositor+0x7883fd] ??:?
+  <png::decoder::transform::transform_row_strip16 as core::ops::function::FnOnce<(&[u8], &mut [u8], &png::common::Info)>>::call_once::{shim:vtable#0}  [cosmos-compositor+0x7867f2] png.bca932c4c2a405f9-cgu.0:?
+  <png::text_metadata::ZTXtChunk>::get_text  [cosmos-compositor+0x787268] ??:?
+  tiny_skia::pipeline::highp::seed_shader  [cosmos-compositor+0xa89b26] tiny_skia.d13f98abc8a88bd4-cgu.0:?
+  <<png::chunk::ChunkType as core::fmt::Debug>::fmt::DebugType as core::fmt::Debug>::fmt  [cosmos-compositor+0x7906f4] ??:?
+  libc.so.6+0x29ca7
+  libLLVM.so.19.1+0x1cf897a
+
+=== #15: peak 0.01 MB in 399 calls ===
+  libLLVM.so.19.1+0x3f9686d
+  libgallium-25.0.7-2+deb13u1.so+0x7bb207
+  libgallium-25.0.7-2+deb13u1.so+0x8a50c8
+  libgallium-25.0.7-2+deb13u1.so+0x8a578b
+  libgallium-25.0.7-2+deb13u1.so+0x88c6d7
+  libgallium-25.0.7-2+deb13u1.so+0x86f127
+  libgallium-25.0.7-2+deb13u1.so+0x32177b
+  <core::iter::adapters::flatten::FlatMap<core::iter::adapters::filter::Filter<core::slice::iter::Iter<smithay::desktop::wayland::popup::manager::PopupNode>, <smithay::desktop::wayland::popup::manager::PopupNode>::iter_popups_relative_to<smithay::utils::geometry::Point<i32, smithay::utils::geometry::Logical>>::{closure#0}>, alloc::boxed::Box<dyn core::iter::traits::iterator::Iterator<Item = (&smithay::desktop::wayland::popup::PopupKind, smithay::utils::geometry::Point<i32, smithay::utils::geometry::Logical>)>>, <smithay::desktop::wayland::popup::manager::PopupNode>::iter_popups_relative_to<smithay::utils::geometry::Point<i32, smithay::utils::geometry::Logical>>::{closure#1}> as core::iter::traits::iterator::Iterator>::next  [cosmos-compositor+0x98910a] smithay.a4cf9669df074a26-cgu.0:?
+  <alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<alloc::collections::btree::node::marker::Mut, usize, std::sys::pal::unix::stack_overflow::thread_info::ThreadInfo, alloc::collections::btree::node::marker::Internal>, alloc::collections::btree::node::marker::Edge>>::insert_fit  [cosmos-compositor+0x9fc939] node.rs:1009
+  <swash::scale::ScalerBuilder>::build  [cosmos-compositor+0xa4de80] ??:?
+  <&png::chunk::ChunkType as core::fmt::Debug>::fmt  [cosmos-compositor+0x775827] image.112edbad4abb3063-cgu.0:?
+  core::ptr::drop_glue::<tracing_subscriber::filter::env::field::ValueMatch>  [cosmos-compositor+0x733791] cosmos_compositor.2d8a20f7360538d6-cgu.0:?
+  <wayland_backend::sys::server_impl::State<cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>> as wayland_backend::sys::server_impl::ErasedState>::get_object_data_any  [cosmos-compositor+0x7261d4] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <smithay::backend::drm::surface::DrmSurface>::commit::<core::iter::adapters::map::Map<core::iter::adapters::filter::Filter<core::slice::iter::IterMut<(drm::control::plane::Handle, smithay::backend::drm::compositor::PlaneState<smithay::backend::allocator::gbm::GbmBuffer, smithay::backend::drm::gbm::GbmFramebuffer>)>, <smithay::backend::drm::compositor::FrameState<smithay::backend::allocator::gbm::GbmBuffer, smithay::backend::drm::gbm::GbmFramebuffer>>::build_planes::{closure#1}>, <smithay::backend::drm::compositor::FrameState<smithay::backend::allocator::gbm::GbmBuffer, smithay::backend::drm::gbm::GbmFramebuffer>>::build_planes::{closure#2}>>  [cosmos-compositor+0x371f66] cosmos_compositor.32abc825600b911a-cgu.0:?
+  core::ptr::drop_glue::<alloc::rc::RcInner<core::cell::RefCell<calloop::sources::DispatcherInner<smithay::wayland::security_context::listener_source::SecurityContextListenerSource, <cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData> as smithay::wayland::security_context::SecurityContextHandler>::context_created::{closure#0}>>>>  [cosmos-compositor+0x3c6ba2] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <smithay::wayland::shell::xdg::XdgShellState as wayland_server::dispatch::Dispatch<wayland_protocols::xdg::shell::generated::server::xdg_toplevel::XdgToplevel, smithay::wayland::shell::xdg::handlers::surface::XdgShellSurfaceUserData, cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>>>::request  [cosmos-compositor+0x56b002] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>>::init  [cosmos-compositor+0x4fdfe2] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <hashbrown::map::HashMap<std::path::PathBuf, (), std::hash::random::RandomState>>::insert  [cosmos-compositor+0x764854] fontdb.783eb39277b249f6-cgu.0:?
+  <wayland_server::global::GlobalData<wayland_server::protocol::wl_data_device_manager::WlDataDeviceManager, (), cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>> as wayland_backend::sys::server::GlobalHandler<cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>>>::bind  [cosmos-compositor+0x578841] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <png::decoder::stream::StreamingDecoder>::update  [cosmos-compositor+0x7883fd] ??:?
+  <png::decoder::transform::transform_row_strip16 as core::ops::function::FnOnce<(&[u8], &mut [u8], &png::common::Info)>>::call_once::{shim:vtable#0}  [cosmos-compositor+0x7867f2] png.bca932c4c2a405f9-cgu.0:?
+  <png::text_metadata::ZTXtChunk>::get_text  [cosmos-compositor+0x787268] ??:?
+  tiny_skia::pipeline::highp::seed_shader  [cosmos-compositor+0xa89b26] tiny_skia.d13f98abc8a88bd4-cgu.0:?
+  <<png::chunk::ChunkType as core::fmt::Debug>::fmt::DebugType as core::fmt::Debug>::fmt  [cosmos-compositor+0x7906f4] ??:?
+  libc.so.6+0x29ca7
+  <core::slice::iter::Iter<libc::unix::linux_like::linux_l4re_shared::Elf64_Phdr> as core::iter::traits::iterator::Iterator>::fold::<(), core::iter::adapters::map::map_fold<&libc::unix::linux_like::linux_l4re_shared::Elf64_Phdr, std::backtrace_rs::symbolize::gimli::LibrarySegment, (), std::backtrace_rs::symbolize::gimli::libs_dl_iterate_phdr::callback::{closure#0}, core::iter::traits::iterator::Iterator::for_each::call<std::backtrace_rs::symbolize::gimli::LibrarySegment, <alloc::vec::Vec<std::backtrace_rs::symbolize::gimli::LibrarySegment>>::extend_trusted<core::iter::adapters::map::Map<core::slice::iter::Iter<libc::unix::linux_like::linux_l4re_shared::Elf64_Phdr>, std::backtrace_rs::symbolize::gimli::libs_dl_iterate_phdr::callback::{closure#0}>>::{closure#0}>::{closure#0}>::{closure#0}>  [cosmos-compositor+0x9fb315] macros.rs:279
+  <swash::scale::ScalerBuilder>::build  [cosmos-compositor+0xa4e41c] ??:?
+  <&png::decoder::stream::FormatErrorInner as core::fmt::Debug>::fmt  [cosmos-compositor+0x7765c6] image.112edbad4abb3063-cgu.0:?
+  <smithay::backend::drm::surface::DrmSurface>::commit::<core::iter::adapters::map::Map<core::iter::adapters::filter::Filter<core::slice::iter::IterMut<(drm::control::plane::Handle, smithay::backend::drm::compositor::PlaneState<smithay::backend::allocator::gbm::GbmBuffer, smithay::backend::drm::gbm::GbmFramebuffer>)>, <smithay::backend::drm::compositor::FrameState<smithay::backend::allocator::gbm::GbmBuffer, smithay::backend::drm::gbm::GbmFramebuffer>>::build_planes::{closure#1}>, <smithay::backend::drm::compositor::FrameState<smithay::backend::allocator::gbm::GbmBuffer, smithay::backend::drm::gbm::GbmFramebuffer>>::build_planes::{closure#2}>>  [cosmos-compositor+0x37133c] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <smithay::backend::drm::compositor::DrmCompositor<smithay::backend::allocator::gbm::GbmAllocator<smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::drm::exporter::gbm::GbmFramebufferExporter<smithay::backend::drm::device::fd::DrmDeviceFd>, core::option::Option<smithay::desktop::wayland::utils::OutputPresentationFeedback>, smithay::backend::drm::device::fd::DrmDeviceFd>>::render_frame::<smithay::backend::renderer::multigpu::MultiRenderer<smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>>, cosmos_compositor::render::OutputRenderElements<smithay::backend::renderer::multigpu::MultiRenderer<smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>>, cosmos_compositor::shell::element::WindowRenderElement<smithay::backend::renderer::multigpu::MultiRenderer<smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>>>>, smithay::backend::renderer::color::Color32F>  [cosmos-compositor+0x3aa0c5] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <smithay::backend::renderer::damage::OutputDamageTracker>::render_output::<cosmos_compositor::shell::element::WindowRenderElement<smithay::backend::renderer::gles::GlesRenderer>, smithay::backend::renderer::gles::GlesRenderer, smithay::backend::renderer::color::Color32F>  [cosmos-compositor+0x34cb22] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <cosmos_compositor::state::AnvilState<cosmos_compositor::winit::WinitData>>::init  [cosmos-compositor+0x5037ef] cosmos_compositor.32abc825600b911a-cgu.0:?
+
+=== #16: peak 0.00 MB in 4723 calls ===
+  libinput.so.10.13.0+0x437be
+  libinput.so.10.13.0+0x4463f
+  libinput.so.10.13.0+0x45b72
+  libinput.so.10.13.0+0x45cda
+  libinput.so.10.13.0+0x12c55
+  <alloc::vec::Vec<u8> as core::fmt::Debug>::fmt  [cosmos-compositor+0x80a3f3] roxmltree.2be01b0b660b91a6-cgu.0:?
+  <cosmos_compositor::udev::UdevData as cosmos_compositor::state::Backend>::capture_output  [cosmos-compositor+0x573711] ??:?
+  <png::decoder::stream::StreamingDecoder>::update  [cosmos-compositor+0x7883fd] ??:?
+  <png::decoder::transform::transform_row_strip16 as core::ops::function::FnOnce<(&[u8], &mut [u8], &png::common::Info)>>::call_once::{shim:vtable#0}  [cosmos-compositor+0x7867f2] png.bca932c4c2a405f9-cgu.0:?
+  <png::text_metadata::ZTXtChunk>::get_text  [cosmos-compositor+0x787268] ??:?
+  tiny_skia::pipeline::highp::seed_shader  [cosmos-compositor+0xa89b26] tiny_skia.d13f98abc8a88bd4-cgu.0:?
+  <<png::chunk::ChunkType as core::fmt::Debug>::fmt::DebugType as core::fmt::Debug>::fmt  [cosmos-compositor+0x7906f4] ??:?
+  libc.so.6+0x29ca7
+  libxkbcommon.so.0.0.0+0x1d8d5
+  libxkbcommon.so.0.0.0+0x17334
+  libxkbcommon.so.0.0.0+0x5cce
+  libxkbcommon.so.0.0.0+0x7151
+  libxkbcommon.so.0.0.0+0x178dc
+  libxkbcommon.so.0.0.0+0x17a60
+  libxkbcommon.so.0.0.0+0x106d7
+  libxkbcommon.so.0.0.0+0x112b1
+  libxkbcommon.so.0.0.0+0x115fa
+  libxkbcommon.so.0.0.0+0x117cb
+  libxkbcommon.so.0.0.0+0x11c98
+  libxkbcommon.so.0.0.0+0x1d387
+  libxkbcommon.so.0.0.0+0x1d489
+  <&[f32; 9] as core::fmt::Debug>::fmt  [cosmos-compositor+0x98e3d8] smithay.a4cf9669df074a26-cgu.0:?
+  cosmos_compositor::winit::run_winit  [cosmos-compositor+0x54269a] ??:?
+  <x11rb::xcb_ffi::XCBConnection as x11rb::connection::RequestConnection>::extension_information  [cosmos-compositor+0x5718f7] cosmos_compositor.32abc825600b911a-cgu.0:?
+  libudev.so.1.7.10+0x22a01
+  libudev.so.1.7.10+0x25e12
+  libudev.so.1.7.10+0x11ed1
+  libudev.so.1.7.10+0x290d7
+  libudev.so.1.7.10+0x1eaa3
+
+=== #17: peak 0.00 MB in 735 calls ===
+  libLLVM.so.19.1+0x103b421
+  libLLVM.so.19.1+0x3f9686d
+  libgallium-25.0.7-2+deb13u1.so+0x7bb207
+  libgallium-25.0.7-2+deb13u1.so+0x8a50c8
+  libgallium-25.0.7-2+deb13u1.so+0x8a578b
+  libgallium-25.0.7-2+deb13u1.so+0x88c6d7
+  libgallium-25.0.7-2+deb13u1.so+0x86f127
+  libgallium-25.0.7-2+deb13u1.so+0x32177b
+  <core::slice::iter::Iter<libc::unix::linux_like::linux_l4re_shared::Elf64_Phdr> as core::iter::traits::iterator::Iterator>::fold::<(), core::iter::adapters::map::map_fold<&libc::unix::linux_like::linux_l4re_shared::Elf64_Phdr, std::backtrace_rs::symbolize::gimli::LibrarySegment, (), std::backtrace_rs::symbolize::gimli::libs_dl_iterate_phdr::callback::{closure#0}, core::iter::traits::iterator::Iterator::for_each::call<std::backtrace_rs::symbolize::gimli::LibrarySegment, <alloc::vec::Vec<std::backtrace_rs::symbolize::gimli::LibrarySegment>>::extend_trusted<core::iter::adapters::map::Map<core::slice::iter::Iter<libc::unix::linux_like::linux_l4re_shared::Elf64_Phdr>, std::backtrace_rs::symbolize::gimli::libs_dl_iterate_phdr::callback::{closure#0}>>::{closure#0}>::{closure#0}>::{closure#0}>  [cosmos-compositor+0x9fb315] macros.rs:279
+  <swash::scale::ScalerBuilder>::build  [cosmos-compositor+0xa4e41c] ??:?
+  <&png::decoder::stream::FormatErrorInner as core::fmt::Debug>::fmt  [cosmos-compositor+0x7765c6] image.112edbad4abb3063-cgu.0:?
+  <smithay::backend::drm::surface::DrmSurface>::commit::<core::iter::adapters::map::Map<core::iter::adapters::filter::Filter<core::slice::iter::IterMut<(drm::control::plane::Handle, smithay::backend::drm::compositor::PlaneState<smithay::backend::allocator::gbm::GbmBuffer, smithay::backend::drm::gbm::GbmFramebuffer>)>, <smithay::backend::drm::compositor::FrameState<smithay::backend::allocator::gbm::GbmBuffer, smithay::backend::drm::gbm::GbmFramebuffer>>::build_planes::{closure#1}>, <smithay::backend::drm::compositor::FrameState<smithay::backend::allocator::gbm::GbmBuffer, smithay::backend::drm::gbm::GbmFramebuffer>>::build_planes::{closure#2}>>  [cosmos-compositor+0x37133c] cosmos_compositor.32abc825600b911a-cgu.0:?
+  core::ptr::drop_glue::<alloc::rc::RcInner<core::cell::RefCell<calloop::sources::DispatcherInner<smithay::wayland::security_context::listener_source::SecurityContextListenerSource, <cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData> as smithay::wayland::security_context::SecurityContextHandler>::context_created::{closure#0}>>>>  [cosmos-compositor+0x3c6ba2] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <smithay::backend::drm::compositor::DrmCompositor<smithay::backend::allocator::gbm::GbmAllocator<smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::drm::exporter::gbm::GbmFramebufferExporter<smithay::backend::drm::device::fd::DrmDeviceFd>, core::option::Option<smithay::desktop::wayland::utils::OutputPresentationFeedback>, smithay::backend::drm::device::fd::DrmDeviceFd>>::render_frame::<smithay::backend::renderer::multigpu::MultiRenderer<smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>>, cosmos_compositor::render::OutputRenderElements<smithay::backend::renderer::multigpu::MultiRenderer<smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>>, cosmos_compositor::shell::element::WindowRenderElement<smithay::backend::renderer::multigpu::MultiRenderer<smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>, smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<smithay::backend::renderer::gles::GlesRenderer, smithay::backend::drm::device::fd::DrmDeviceFd>>>>, smithay::backend::renderer::color::Color32F>  [cosmos-compositor+0x3aa0c5] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <smithay::backend::renderer::damage::OutputDamageTracker>::render_output::<cosmos_compositor::shell::element::WindowRenderElement<smithay::backend::renderer::gles::GlesRenderer>, smithay::backend::renderer::gles::GlesRenderer, smithay::backend::renderer::color::Color32F>  [cosmos-compositor+0x34cb22] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <cosmos_compositor::state::AnvilState<cosmos_compositor::winit::WinitData>>::init  [cosmos-compositor+0x5037ef] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>>::init  [cosmos-compositor+0x4fba64] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>>::init  [cosmos-compositor+0x4f6e92] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <cosmos_compositor::udev::UdevData as cosmos_compositor::state::Backend>::capture_output  [cosmos-compositor+0x574bcd] ??:?
+  <png::decoder::stream::StreamingDecoder>::update  [cosmos-compositor+0x7883fd] ??:?
+  <png::decoder::transform::transform_row_strip16 as core::ops::function::FnOnce<(&[u8], &mut [u8], &png::common::Info)>>::call_once::{shim:vtable#0}  [cosmos-compositor+0x7867f2] png.bca932c4c2a405f9-cgu.0:?
+  <png::text_metadata::ZTXtChunk>::get_text  [cosmos-compositor+0x787268] ??:?
+  tiny_skia::pipeline::highp::seed_shader  [cosmos-compositor+0xa89b26] tiny_skia.d13f98abc8a88bd4-cgu.0:?
+  <<png::chunk::ChunkType as core::fmt::Debug>::fmt::DebugType as core::fmt::Debug>::fmt  [cosmos-compositor+0x7906f4] ??:?
+  libc.so.6+0x29ca7
+  <core::iter::adapters::flatten::FlatMap<core::iter::adapters::filter::Filter<core::slice::iter::Iter<smithay::desktop::wayland::popup::manager::PopupNode>, <smithay::desktop::wayland::popup::manager::PopupNode>::iter_popups_relative_to<smithay::utils::geometry::Point<i32, smithay::utils::geometry::Logical>>::{closure#0}>, alloc::boxed::Box<dyn core::iter::traits::iterator::Iterator<Item = (&smithay::desktop::wayland::popup::PopupKind, smithay::utils::geometry::Point<i32, smithay::utils::geometry::Logical>)>>, <smithay::desktop::wayland::popup::manager::PopupNode>::iter_popups_relative_to<smithay::utils::geometry::Point<i32, smithay::utils::geometry::Logical>>::{closure#1}> as core::iter::traits::iterator::Iterator>::next  [cosmos-compositor+0x98910a] smithay.a4cf9669df074a26-cgu.0:?
+  <alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<alloc::collections::btree::node::marker::Mut, usize, std::sys::pal::unix::stack_overflow::thread_info::ThreadInfo, alloc::collections::btree::node::marker::Internal>, alloc::collections::btree::node::marker::Edge>>::insert_fit  [cosmos-compositor+0x9fc939] node.rs:1009
+  <swash::scale::ScalerBuilder>::build  [cosmos-compositor+0xa4de80] ??:?
+  <&png::chunk::ChunkType as core::fmt::Debug>::fmt  [cosmos-compositor+0x775827] image.112edbad4abb3063-cgu.0:?
+  core::ptr::drop_glue::<tracing_subscriber::filter::env::field::ValueMatch>  [cosmos-compositor+0x733791] cosmos_compositor.2d8a20f7360538d6-cgu.0:?
+  <wayland_backend::sys::server_impl::State<cosmos_compositor::state::AnvilState<cosmos_compositor::udev::UdevData>> as wayland_backend::sys::server_impl::ErasedState>::get_object_data_any  [cosmos-compositor+0x7261d4] cosmos_compositor.32abc825600b911a-cgu.0:?
+  <smithay::backend::drm::surface::DrmSurface>::commit::<core::iter::adapters::map::Map<core::iter::adapters::filter::Filter<core::slice::iter::IterMut<(drm::control::plane::Handle, smithay::backend::drm::compositor::PlaneState<smithay::backend::allocator::gbm::GbmBuffer, smithay::backend::drm::gbm::GbmFramebuffer>)>, <smithay::backend::drm::compositor::FrameState<smithay::backend::allocator::gbm::GbmBuffer, smithay::backend::drm::gbm::GbmFramebuffer>>::build_planes::{closure#1}>, <smithay::backend::drm::compositor::FrameState<smithay::backend::allocator::gbm::GbmBuffer, smithay::backend::drm::gbm::GbmFramebuffer>>::build_planes::{closure#2}>>  [cosmos-compositor+0x371f66] cosmos_compositor.32abc825600b911a-cgu.0:?
+
+
+6) HEAPTRACK — cosmos-shell, top-20 peak allocation sites (symbolized)
+======================================================================
+Run: `heaptrack -o /tmp/heap-shell cosmos-shell`, 60 s idle, SIGTERM
+finalize (87377 allocations; SIGINT is ignored by the shell).
+
+
+=== #1: peak 17.37 MB in 73313 calls ===
+  <ttf_parser::tables::cmap::format4::Subtable4>::glyph_index  [cosmos-shell+0x5f244b]
+  <std::backtrace_rs::symbolize::gimli::Context>::new  [cosmos-shell+0x520ae9]
+  <gimli::read::rnglists::RngListIter<gimli::read::endian_slice::EndianSlice<gimli::endianity::LittleEndian>>>::convert_raw  [cosmos-shell+0x52352e]
+  core::slice::memchr::memchr_naive  [cosmos-shell+0x51cd18]
+  core::ptr::drop_glue::<std::sync::mpsc::Receiver<core::option::Option<cosmos_shell::activity::Media>>>  [cosmos-shell+0x20877b]
+  <hashbrown::raw::RawTable<(std::path::PathBuf, cosmos_shell::launcher::custom_widgets::Cached)>>::reserve_rehash::<hashbrown::map::make_hasher<std::path::PathBuf, cosmos_shell::launcher::custom_widgets::Cached, std::hash::random::RandomState>::{closure#0}>  [cosmos-shell+0x1f4866]
+  <hashbrown::raw::RawTable<((u32, u32, u32), alloc::rc::Rc<tiny_skia::pixmap::Pixmap>)>>::reserve_rehash::<hashbrown::map::make_hasher<(u32, u32, u32), alloc::rc::Rc<tiny_skia::pixmap::Pixmap>, std::hash::random::RandomState>::{closure#0}>  [cosmos-shell+0x1f8d13]
+  <wayland_client::protocol::wl_registry::WlRegistry>::bind::<wayland_client::protocol::wl_seat::WlSeat, smithay_client_toolkit::seat::SeatData, cosmos_shell::ShellState>  [cosmos-shell+0x1fa8a4]
+  core::ptr::drop_glue::<core::result::Result<zbus::proxy::Proxy, zbus::error::Error>>  [cosmos-shell+0x201f88]
+  <zvariant::dbus::ser::StructSerializer<zvariant::ser::NullWriteSeek>>::serialize_struct_element::<i16>  [cosmos-shell+0x1f3930]
+  core::ptr::drop_glue::<alloc::vec::Vec<cosmos_ipc::WindowInfo>>  [cosmos-shell+0x2033e5]
+  <wayland_client::event_queue::QueueProxyData<wayland_client::protocol::wl_seat::WlSeat, smithay_client_toolkit::seat::SeatData, cosmos_shell::ShellState> as wayland_backend::sys::client::ObjectData>::event  [cosmos-shell+0x37d618]
+  cosmos_shell::sysinfo::poll  [cosmos-shell+0x32e495]
+  cosmos_shell::logind::session_path  [cosmos-shell+0x315785]
+  cosmos_shell::notify::emit_action  [cosmos-shell+0x31abcf]
+  <core::marker::PhantomData<alloc::string::String> as serde_core::de::DeserializeSeed>::deserialize::<&mut serde_json::de::Deserializer<serde_json::read::StrRead>>  [cosmos-shell+0x26a352]
+  <calloop::sources::channel::Sender<cosmos_shell::notify::NotifyEvent>>::send  [cosmos-shell+0x2df648]
+  <tracing_subscriber::filter::env::directive::Directive as core::clone::Clone>::clone  [cosmos-shell+0x5eb29d]
+  <regex_syntax::hir::Hir>::alternation  [cosmos-shell+0x419c14]
+  libc.so.6+0x29ca7
+  <wayland_client::protocol::wl_registry::WlRegistry>::bind::<wayland_client::protocol::wl_output::WlOutput, smithay_client_toolkit::output::OutputData, cosmos_shell::ShellState>  [cosmos-shell+0x1fab5b]
+  <zbus::message::header::PrimaryHeader as serde_core::ser::Serialize>::serialize::<&mut zvariant::dbus::ser::Serializer<zvariant::ser::NullWriteSeek>>  [cosmos-shell+0x672f42]
+
+=== #2: peak 0.14 MB in 8043 calls ===
+  libxkbcommon.so.0.0.0+0x1d613
+  libxkbcommon.so.0.0.0+0x5fc1
+  libxkbcommon.so.0.0.0+0x7151
+  libxkbcommon.so.0.0.0+0x178dc
+  libxkbcommon.so.0.0.0+0x1d52e
+  <zbus::connection::pending_method_calls::PendingMethodCall as ordered_stream::OrderedFuture>::poll_before  [cosmos-shell+0x71e9c9]
+  <cosmos_ipc::Event as serde_core::de::Deserialize>::deserialize::<&mut serde_json::de::Deserializer<serde_json::read::StrRead>>  [cosmos-shell+0x258b30]
+  core::ptr::drop_glue::<alloc::collections::btree::map::BTreeMap<regex_automata::util::primitives::StateID, alloc::vec::Vec<regex_automata::util::primitives::PatternID>>>  [cosmos-shell+0x3e6321]
+  wayland_client::event_queue::queue_callback::<wayland_protocols_wlr::layer_shell::v1::generated::client::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, smithay_client_toolkit::shell::wlr_layer::LayerSurfaceData, cosmos_shell::ShellState>  [cosmos-shell+0x22cfb6]
+  cosmos_shell::logind::session_path  [cosmos-shell+0x315773]
+  cosmos_shell::notify::emit_action  [cosmos-shell+0x31abcf]
+  <core::marker::PhantomData<alloc::string::String> as serde_core::de::DeserializeSeed>::deserialize::<&mut serde_json::de::Deserializer<serde_json::read::StrRead>>  [cosmos-shell+0x26a352]
+  <calloop::sources::channel::Sender<cosmos_shell::notify::NotifyEvent>>::send  [cosmos-shell+0x2df648]
+  <tracing_subscriber::filter::env::directive::Directive as core::clone::Clone>::clone  [cosmos-shell+0x5eb29d]
+  <regex_syntax::hir::Hir>::alternation  [cosmos-shell+0x419c14]
+  libc.so.6+0x29ca7
+  libxkbcommon.so.0.0.0+0x66f9
+  libxkbcommon.so.0.0.0+0x6753
+
+=== #3: peak 0.07 MB in 1 calls ===
+  libstdc++.so.6.0.33+0xafb8d
+  ld-linux-x86-64.so.2+0x5dcd
+  ld-linux-x86-64.so.2+0x5e9b
+  ld-linux-x86-64.so.2+0x1d2ef
+
+=== #4: peak 0.02 MB in 2416 calls ===
+  libwayland-client.so.0.23.1+0x91bb
+  libwayland-client.so.0.23.1+0xa4e1
+  <alloc::sync::Arc<async_io::Async<std::net::tcp::TcpStream>> as zbus::connection::socket::WriteHalf>::send_message::{closure#0}  [cosmos-shell+0x6ea326]
+  core::ptr::drop_glue::<regex_syntax::ast::Group>  [cosmos-shell+0x3e6a24]
+  wayland_client::event_queue::queue_callback::<wayland_protocols_wlr::layer_shell::v1::generated::client::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, smithay_client_toolkit::shell::wlr_layer::LayerSurfaceData, cosmos_shell::ShellState>  [cosmos-shell+0x22c816]
+  cosmos_shell::logind::session_path  [cosmos-shell+0x315773]
+  cosmos_shell::notify::emit_action  [cosmos-shell+0x31abcf]
+  <core::marker::PhantomData<alloc::string::String> as serde_core::de::DeserializeSeed>::deserialize::<&mut serde_json::de::Deserializer<serde_json::read::StrRead>>  [cosmos-shell+0x26a352]
+  <calloop::sources::channel::Sender<cosmos_shell::notify::NotifyEvent>>::send  [cosmos-shell+0x2df648]
+  <tracing_subscriber::filter::env::directive::Directive as core::clone::Clone>::clone  [cosmos-shell+0x5eb29d]
+  <regex_syntax::hir::Hir>::alternation  [cosmos-shell+0x419c14]
+  libc.so.6+0x29ca7
+  <alloc::sync::Arc<async_io::Async<std::net::tcp::TcpStream>> as zbus::connection::socket::WriteHalf>::peer_credentials::{closure#0}  [cosmos-shell+0x6e7de2]
+  tiny_skia::pipeline::lowp::repeat_x1  [cosmos-shell+0x5b8a35]
+  <alloc::sync::Arc<async_io::Async<std::os::unix::net::stream::UnixStream>> as zbus::connection::socket::WriteHalf>::send_message::{closure#0}  [cosmos-shell+0x6ec53e]
+  libwayland-client.so.0.23.1+0xadcd
+  libwayland-client.so.0.23.1+0x6bc9
+  <alloc::sync::Arc<async_io::Async<std::net::tcp::TcpStream>> as zbus::connection::socket::ReadHalf>::receive_message::{closure#0}  [cosmos-shell+0x6ea01d]
+  <alloc::sync::Arc<async_io::Async<std::net::tcp::TcpStream>> as zbus::connection::socket::WriteHalf>::send_message::{closure#0}  [cosmos-shell+0x6ea45b]
+  libwayland-client.so.0.23.1+0xa282
+
+=== #5: peak 0.01 MB in 22 calls ===
+  ld-linux-x86-64.so.2+0x11f62
+  _RINvMNtNtNtCscGBqRgU7lAk_18tracing_subscriber6filter3env7builderNtB3_7Builder5parseNtNtCscdodAO9FK5_5alloc6string6StringEB9_.llvm.8286811903154611975  [cosmos-shell+0x5d84a7]
+  <zbus::connection::handshake::client::Client>::authenticate::{closure#0}::{closure#0}  [cosmos-shell+0x6a6a15]
+  <zbus::object_server::ObjectServer>::dispatch_call::{closure#0}::{closure#0}  [cosmos-shell+0x6a1c1a]
+  ??  [cosmos-shell+0x7884dc]
+  _RINvMNtNtNtCscGBqRgU7lAk_18tracing_subscriber6filter3env7builderNtB3_7Builder5parseNtNtCscdodAO9FK5_5alloc6string6StringEB9_.llvm.8286811903154611975  [cosmos-shell+0x5d87f8]
+  <zbus::fdo::error::Error as core::convert::From<zbus::error::Error>>::from  [cosmos-shell+0x722713]
+  ??  [cosmos-shell+0x7f6cfa]
+  <zvariant::value::Value as serde_core::ser::Serialize>::serialize::<&mut zvariant::dbus::ser::Serializer<zvariant::ser::NullWriteSeek>>  [cosmos-shell+0x26bd5c]
+  cosmos_shell::quick::press  [cosmos-shell+0x3064b0]
+  <ttf_parser::tables::cmap::Subtables>::get  [cosmos-shell+0x5f4023]
+  libc.so.6+0x928ba
+  libc.so.6+0x110537
+  ld-linux-x86-64.so.2+0xd134
+  ld-linux-x86-64.so.2+0xc827
+  ld-linux-x86-64.so.2+0xcc2a
+  libc.so.6+0x8ef77
+  ld-linux-x86-64.so.2+0x24be
+  libc.so.6+0x8ea86
+  <zbus::fdo::properties::Properties as zbus::object_server::interface::Interface>::introspect_to_writer  [cosmos-shell+0x714f2c]
+  <&core::option::Option<std::process::ChildStdin> as core::fmt::Debug>::fmt  [cosmos-shell+0x7179ec]
+  <zbus::fdo::properties::Properties as zbus::object_server::interface::Interface>::introspect_to_writer  [cosmos-shell+0x714d25]
+  rustybuzz::hb::tag_table::tags_from_complex_language  [cosmos-shell+0x484b54]
+  <zbus::message::Message as core::fmt::Display>::fmt  [cosmos-shell+0x714abb]
+  <zbus::message_stream::MessageStream as zbus::abstractions::async_drop::AsyncDrop>::async_drop::{closure#0}  [cosmos-shell+0x6e8c06]
+  <zbus::connection::pending_method_calls::PendingMethodCalls>::fail_all  [cosmos-shell+0x6f31d5]
+  cosmos_shell::quick::press  [cosmos-shell+0x309604]
+  cosmos_shell::notify::emit_action  [cosmos-shell+0x31abcf]
+  <core::marker::PhantomData<alloc::string::String> as serde_core::de::DeserializeSeed>::deserialize::<&mut serde_json::de::Deserializer<serde_json::read::StrRead>>  [cosmos-shell+0x26a352]
+  <calloop::sources::channel::Sender<cosmos_shell::notify::NotifyEvent>>::send  [cosmos-shell+0x2df648]
+  <tracing_subscriber::filter::env::directive::Directive as core::clone::Clone>::clone  [cosmos-shell+0x5eb29d]
+  <regex_syntax::hir::Hir>::alternation  [cosmos-shell+0x419c14]
+  libc.so.6+0x29ca7
+  _RINvMs2_NtNtCs1tsP8wbKENz_5image8metadata4cicpNtB6_7CicpRgb21cast_pixels_by_layouthhEBa_.llvm.6140723212085730883  [cosmos-shell+0x3b7d3d]
+  cosmos_shell::logind::session_path  [cosmos-shell+0x315238]
+
+=== #6: peak 0.00 MB in 68 calls ===
+  <tracing_subscriber::filter::env::field::Match>::parse  [cosmos-shell+0x5e1cd7]
+  <zbus::connection::Connection>::request_name_with_flags::<zbus_names::well_known_name::WellKnownName>::{closure#0}  [cosmos-shell+0x69c4cc]
+  <zbus::connection::Connection>::request_name_with_flags::<zbus_names::well_known_name::WellKnownName>::{closure#0}  [cosmos-shell+0x69e3b0]
+  <ttf_parser::tables::cmap::Subtables>::get  [cosmos-shell+0x5f4023]
+  libc.so.6+0x928ba
+  libc.so.6+0x110537
+  <zbus::connection::Connection>::request_name_with_flags::<zbus_names::well_known_name::WellKnownName>::{closure#0}  [cosmos-shell+0x69c566]
+  <zbus::connection::Connection>::request_name_with_flags::<zbus_names::well_known_name::WellKnownName>::{closure#0}  [cosmos-shell+0x69e3bb]
+  rustybuzz::hb::tag_table::tags_from_complex_language  [cosmos-shell+0x4856b9]
+  <ttf_parser::ggg::layout_table::LayoutTable as rustybuzz::hb::ot_layout::LayoutTableExt>::select_script  [cosmos-shell+0x4885ae]
+  <zbus::connection::Connection>::request_name_with_flags::<zbus_names::well_known_name::WellKnownName>::{closure#0}  [cosmos-shell+0x69c759]
+  <zbus::connection::handshake::client::Client>::send_secondary_commands::{closure#0}::{closure#0}  [cosmos-shell+0x6a807d]
+  <zbus::connection::handshake::client::Client as zbus::connection::handshake::Handshake>::perform::{closure#0}::{closure#0}  [cosmos-shell+0x6abf42]
+  <zbus::connection::Connection>::request_name_with_flags::<zbus_names::well_known_name::WellKnownName>::{closure#0}  [cosmos-shell+0x69d5d3]
+  <zbus::connection::Connection>::request_name_with_flags::<zbus_names::well_known_name::WellKnownName>::{closure#0}  [cosmos-shell+0x69c6c3]
+  <zbus::connection::handshake::client::Client>::authenticate::{closure#0}::{closure#0}  [cosmos-shell+0x6a728d]
+  ??  [cosmos-shell+0x7f94e1]
+  <&mut zvariant::dbus::de::Deserializer<zvariant::fd::Fd> as serde_core::de::Deserializer>::deserialize_seq::<zvariant::value::ValueVisitor>  [cosmos-shell+0x2763d6]
+  cosmos_shell::quick::press  [cosmos-shell+0x306aff]
+  core::ptr::drop_glue::<std::sync::mpmc::waker::SyncWaker>  [cosmos-shell+0x219521]
+  <read_fonts::CollectionRef>::get  [cosmos-shell+0x3d8e69]
+  <zbus::address::Address>::connect::{closure#0}  [cosmos-shell+0x6af5d8]
+
+
+7) APPS OPEN — free -m + top-15 RSS (Files + Terminal + Start panel open,
+   ~60 s after sign-in)
+============================================================================
+               total        used        free      shared  buff/cache   available
+Mem:            1964         527         806          67         842        1437
+Swap:            981           0         981
+
+  RSS COMMAND
+210304 cosmos-composit
+ 81856 Xwayland
+ 38564 cosmos-shell
+ 24760 cosmos-terminal
+ 20016 NetworkManager
+ 17404 wireplumber
+ 15368 cosmos-files
+ 14700 systemd
+ 14676 systemd-resolve
+ 13184 systemd-journal
+ 12516 systemd
+ 12372 pipewire
+ 11616 systemd-network
+ 10432 upowerd
+ 10012 systemd-udevd
+
+(top -b -d 5 -n 2 during the apps-open capture: compositor 80% on the first
+sample while windows were animating in; second sample settled — report only.)
+
+
+8) vs the v5 8 GB reference (same apps absent, 7939 MiB total)
+==============================================================
+                  v5 (8 GB)      v6 (2 GB)
+used               770           426        MiB
+cosmos-compositor  323720        163984     KiB RSS
+cosmos-shell        95608         20556     KiB RSS
+Xwayland            86908         85396     KiB RSS
