@@ -727,3 +727,157 @@ used               770           426        MiB
 cosmos-compositor  323720        163984     KiB RSS
 cosmos-shell        95608         20556     KiB RSS
 Xwayland            86908         85396     KiB RSS
+
+
+AFTER @3b2b0c1 (devin/1791610409-v6-p0a-ram)
+==========================================
+Same host/QEMU/method as the baseline: -m 2048, virtio-vga 1920x1080, guest
+scale 125%, fresh account. Image built from branch tip 3b2b0c1 (decal LRU +
+single decoded wallpaper + freed closed-window textures + socket-activated
+Xwayland + transparent_hugepage=madvise).
+
+GREETER NOTE: sign-in through the real greeter was again NOT possible —
+QMP `send-key` delivers ZERO bytes to /dev/input/event0 (the PS/2 keyboard)
+under `-display none` (verified: `sudo timeout 6 od -An -tx1 -v
+/dev/input/event0` while injecting keys 'a' and 'b' — empty). Pointer clicks
+DO land via virtio-tablet (event5) but land ~1/1.22 scaled under cage
+(click at 785,513 rendered at ~643,425). With corrected coordinates the
+password field DOES take focus; the typed keys just never reach the kernel.
+So this is a QEMU input-frontend problem, not cage/greeter — used the same
+runtime bypass (greetd default_session -> cosmos-session) as the baseline.
+Greeter debug (see bottom): journalctl -t cosmos-greeter has only EGL/font
+lines, cage logs zero keyboard/focus messages; libinput/evtest absent.
+
+1) THP + cmdline
+----------------
+cat /sys/kernel/mm/transparent_hugepage/enabled -> always [madvise] never
+/proc/cmdline: BOOT_IMAGE=/@/boot/vmlinuz-6.12.107+deb13-amd64
+  root=UUID=cfbddcce-... rootfstype=btrfs rootflags=subvol=@ rw
+  console=tty0 console=ttyS0,115200 systemd.journald.forward_to_console=1
+  transparent_hugepage=madvise
+
+2) IDLE (60 s, no apps)
+-----------------------
+free -m:
+               total        used        free      shared  buff/cache   available
+Mem:            1964         357        1286          27         489        1607
+Swap:            981           0         981
+
+top-15 RSS (KiB):
+  RSS COMMAND
+141720 cosmos-composit
+ 20520 cosmos-shell
+ 19992 NetworkManager
+ 17420 wireplumber
+ 14796 systemd
+ 14676 systemd-resolve
+ 12740 systemd
+ 12196 systemd-journal
+ 12084 pipewire
+ 11464 systemd-network
+ 10436 upowerd
+ 10116 systemd-udevd
+  9420 systemd-logind
+  8336 snapperd
+  8144 greetd
+(>> no Xwayland, no satellite — socket-activated, not started <<)
+
+smaps_rollup — cosmos-compositor:
+Rss: 141720 kB | Pss: 136366 | Pss_Anon: 54388 | Pss_File: 79680 |
+Private_Dirty: 56220 | AnonHugePages: 0 | Swap: 0
+smaps_rollup — cosmos-shell:
+Rss: 20532 kB | Pss: 17546 | Pss_Anon: 8560 | Pss_File: 8524 |
+Private_Dirty: 8556 | AnonHugePages: 0 | Swap: 0
+(AnonHugePages 0 in both — was 65536/4096 on main; madvise is in effect.
+Compositor anon Pss dropped 79608->54388 (-25 MB); file-backed Pss grew
+49792->79680 (+30 MB).)
+
+3) X11 SOCKET ACTIVATION
+------------------------
+Idle: `pgrep -a -f "Xwayland|satellite"` -> rc=1, NOTHING running.
+`systemctl --user status cosmos-x11.socket` -> active (listening) since
+session start; Listen: /tmp/.X11-unix/X0 + abstract socket; triggers
+cosmos-x11.service.
+
+X11 client test: `DISPLAY=:0 xeyes` ->
+- systemd started cosmos-x11.service (TriggeredBy: cosmos-x11.socket),
+  Main PID xwayland-satellite :0 -listenfd 3 -listenfd 4, service Memory
+  34.5M (peak 40.6M) — vs 85 MB of always-on Xwayland before.
+- Xwayland spawned with -listenfd 3 -listenfd 4 -rootless.
+- compositor log: "cosmos: new window id=1" + "initial geometry
+  app_id=XEyes" -> window MAPPED (screenshot verified: XEyes window
+  with SSD chrome rendered).
+- `DISPLAY=:0 xlsclients -l` -> real reply listing 'xeyes' (Window
+  0x40000a, Machine cosmosos).
+- satellite note in journal: "No last focused toplevel, cannot focus
+  window Window { res_id: 4194314 }" — cosmetic, window still mapped.
+Killing xeyes closed the window; satellite+Xwayland stay resident
+(socket keeps :0 open for the next client) — by design.
+
+4) APPS OPEN (Files + Terminal + Start panel, ~60 s)
+----------------------------------------------------
+free -m:
+               total        used        free      shared  buff/cache   available
+Mem:            1964         484         908          70         786        1480
+Swap:            981           0         981
+
+top-15 RSS (KiB):
+  RSS COMMAND
+209044 cosmos-composit
+ 82600 Xwayland            (still resident from the xeyes test)
+ 54848 cosmos-shell
+ 24672 cosmos-terminal
+ 21324 cosmos-files
+ 19992 NetworkManager
+ 17420 wireplumber
+ 14796 systemd
+ 14696 systemd-resolve
+ 12816 systemd
+ 12352 systemd-journal
+ 12084 pipewire
+ 11464 systemd-network
+ 10436 upowerd
+ 10116 systemd-udevd
+
+5) COMPOSITOR CPU + PANICS
+--------------------------
+`top -b -n 3 -d 5` with the three apps idle: samples 0.0% / 9.0% / 11.0%
+compositor (~9-11% while desktop clock/notifications tick; idle-skip
+holding — vs 150-190% pre-#207 baseline and ~80% transient while apps
+animated in on main).
+Panics: `journalctl -b | grep -i panic` -> 0.
+
+6) FILES OPEN/CLOSE x5 -> compositor RSS
+----------------------------------------
+Cycle: dock-click Files, wait 3 s, pkill cosmos-files, wait 2 s (x5),
+with Terminal + Start still open.
+Before cycle (all 3 open):          209044 KiB
+After 5 cycles (Files closed):      199424 KiB
+=> closed-window body textures appear freed: RSS went DOWN ~9.6 MB after
+   the final close, no growth across 5 open/close rounds (would have
+   grown ~5-10 MB/cycle on main if textures leaked).
+
+7) TARGETS — PASS/FAIL
+----------------------
+idle used <500 MiB:   357 MiB        PASS
+compositor <120 MB:   138.4 MiB      FAIL  (141720 KiB; down from 160.1 MiB
+                                           on main but short of target)
+shell <90 MB:         20.1 MiB       PASS
+
+8) GREETER-DEBUG DATA (separate, per ask)
+------------------------------------------
+- journalctl -t cosmos-greeter -b (this boot, before bypass): only
+  libEGL "failed to create dri2 screen" + "falling back to kms_swrast"
+  + uitk font-registration lines. On bypass restart: "Io error: Broken
+  pipe (os error 32)" dispatch error as cage tore down. ZERO keyboard,
+  focus or input lines — cage logs nothing at this level.
+- libinput/evtest not installed in the image; used
+  `sudo od -An -tx1 -v /dev/input/event0` instead: ZERO bytes emitted
+  during QMP send-key injection (event0 = AT Translated Set 2 keyboard).
+  Pointer events DO flow (virtio-tablet event5). Conclusion: send-key
+  never reaches the guest kernel in this -display none setup; the
+  "greeter drops keys" behaviour is host-side input plumbing, not a
+  cage/cosmos-greeter bug. The ~1/1.22 pointer scale under cage is a
+  separate real quirk (click coordinates land at phys/1.22).
+- /proc/bus/input/devices: event0 AT keyboard; event1/event2 VMMouse;
+  event3 Power Button; event4 PC Speaker; event5 QEMU Virtio Tablet.
