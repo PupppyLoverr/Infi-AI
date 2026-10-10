@@ -255,7 +255,7 @@ fn run(q: &str, sh: &Mutex<Shared>, ctx: &egui::Context) {
         Some(Ok(st)) if st.success() => finish(Ok(())),
         _ => {
             let msg = strip_ansi(stderr.trim());
-            let msg = msg.lines().take(3).collect::<Vec<_>>().join("\n");
+            let msg = error_lines(&msg);
             finish(Err(if msg.is_empty() {
                 "opencode exited without an answer".into()
             } else {
@@ -263,6 +263,18 @@ fn run(q: &str, sh: &Mutex<Shared>, ctx: &egui::Context) {
             }))
         }
     }
+}
+
+/// The first lines of opencode's stderr that explain the failure. Its
+/// "> agent · model" run banner is status, not an error, so it's skipped.
+fn error_lines(stderr: &str) -> String {
+    stderr
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with("> "))
+        .take(3)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn strip_ansi(s: &str) -> String {
@@ -366,6 +378,13 @@ pub fn result_sheet(ctx: &egui::Context, job: &Job, replaceable: bool) -> SheetR
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_lines_skip_run_banner() {
+        let e = "\n> build \u{b7} big-pickle\n\nError: no provider configured\n";
+        assert_eq!(error_lines(e), "Error: no provider configured");
+        assert_eq!(error_lines("> build \u{b7} big-pickle"), "");
+    }
 
     #[test]
     fn provider_detection() {
