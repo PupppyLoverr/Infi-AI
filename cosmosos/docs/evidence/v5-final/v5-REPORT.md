@@ -2,8 +2,8 @@
 
 Image: `devin/1791586600-v5-evidence` @ `d20ce7c` (main `c16af8c` + #209 + #210 + #211), fresh
 account, QEMU 1920×1080 @125%, `-cpu host`. Every screenshot is a real QMP screendump of that
-boot, inspected at 100% by me. Reshoots marked † come from the island-glyph fix branch
-(`948ac0b`, see §6).
+boot, inspected at 100% by me. Shots marked † were retaken on an image of `948ac0b` (#213, now main `318e9fc`) +
+main `b932b5a`, fresh account, same settings (evidence commit `f8be871`).
 
 ## 1 — Foundations
 
@@ -62,7 +62,7 @@ Side-by-sides: `cmp-*.png`. Three honest differences each; the top one per round
 
 | Ref | Shot | Differences |
 |---|---|---|
-| ref-1 owner sketch | v5-01 | (1) sketch's dock is a left rail; ours is bottom-centred, as you chose later. (2) sketch wants a Dropover-style shelf from the notch; ours is the island's Shelf tab, invisible until opened. (3) v5-01's menubar lost its date text (it shows in every later shot) → reshot† |
+| ref-1 owner sketch | v5-01 | (1) sketch's dock is a left rail; ours is bottom-centred, as you chose later. (2) sketch wants a Dropover-style shelf from the notch; ours is the island's Shelf tab, invisible until opened. (3) v5-01's menubar had no date text: it first paints ≈40 s after sign-in, so the shot was early. Reshot† shows "Sat 10 Oct 00:40" (next fix: draw the clock on the first frame; the menubar also reads 00:40 while the desktop card reads 00:41) |
 | ref-2 Win11 snap layouts | v5-15 | (1) Win11's flyout is small and sits under the maximise button; ours is larger and covers the Files toolbar. (2) Win11 zones are light with clear gaps; ours are low-contrast blue-grey. (3) no hovered zone in the shot |
 | ref-3 macOS Search | v5-04 | (1) ref pill is short with a mic icon; ours is 680px with "Tab to Ask", no mic. (2) ref glass is neutral; ours takes the violet wallpaper. (3) our file rows use one grey glyph, not file-type icons |
 | ref-4 macOS menu | v5-13 | (1) macOS opens the submenu to the right; ours drops below and covers "Move to Trash". (2) macOS rows ≈22px; ours are taller. (3) Summarize/Explain have no icons, Open in Agent does |
@@ -73,7 +73,13 @@ Side-by-sides: `cmp-*.png`. Three honest differences each; the top one per round
 
 Also fixed in round 1: the Ask result sheet showed opencode's "> build · big-pickle" banner (`5f02289`, v5-14†).
 
+### Round-1 reshoot (checked at 100%)
+- v5-08†, v5-09†: both agent rows (Cosmos Helper, default) and the capsule show the sparkle glyph. No letters. The toast and the island row read "default wants a screenshot of the desktop", with no "{}".
+- v5-14†: Summarize gave a real ≈60-word summary of the Welcome guide, with no "> build" line.
+- v5-01†: menubar date and clock present. 0 panics on the reshoot boot.
+
 ### Not fixed (known)
+- Menubar clock: first paint ≈40 s after sign-in, and up to a minute behind the desktop clock card.
 - Ask Cosmos submenu placement (ref-4 #1), snap-zone contrast (ref-2 #2), weather without network, Files sidebar showing Terminal text behind it (v5-11), Files grid names wrapping mid-word (v5-12), clipboard text wrapping mid-word (v5-10), a second glass edge peeking out of Control Centre (v5-07).
 - Login screen black blocks: a QEMU virtio-gpu display artefact (in-session capture is clean), not CosmosOS.
 - Not tested: Wi-Fi join, audio output, Now Playing (QEMU has no Wi-Fi/audio/media player).
