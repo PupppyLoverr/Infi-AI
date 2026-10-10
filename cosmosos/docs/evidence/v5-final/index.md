@@ -1,11 +1,13 @@
 # v5 §5 evidence set
 
 Fresh image from `devin/1791586600-v5-evidence` @ `d20ce7c` (origin/main `c16af8c` + #209 clock-theme + #210 files-grid-thumbs + #211 start-volume-drag; #212 lock-comment landed on main `b932b5a` during the run — comment-only, not in this image).
+
+**Reshoot round:** v5-01, v5-08, v5-09, v5-14 re-taken on `devin/tmp-glyph-build` @ `807eb0c` (= `devin/1791591166-island-agent-glyph` @ `948ac0b` + main `b932b5a`), fresh account, same display settings. Fixes under test: sparkle glyph replaces letter avatars in island agent rows/compact capsule (5f02289), Ask/Summarize sheet skips opencode `> ` run-banner lines (5f02289), approval notifications drop empty `{}` body for argument-less tools (948ac0b). All other shots unchanged from the first round.
 Fresh account, 1920×1080 @125%, default settings, default bottom-centred dock, default `run.sh` (`-cpu host`). Every shot is a real QMP screendump.
 
 | Shot | What's in it | Honest gap |
 |------|--------------|------------|
-| v5-01.png | Desktop, dark, violet wallpaper: menubar, island idle, dock, weather + clock cards | — |
+| v5-01.png | Desktop, dark, violet wallpaper: menubar, island idle, dock, clock card | Reshot: menubar date/clock text ("Sat 10 Oct 00:40") now renders — original capture predated the clock's first tick. Weather card absent (same as before) |
 | v5-02.png | Desktop, light, ocean wallpaper | Weather card is absent on the light desktop (same as dark set — card region shows clock only) |
 | v5-03.png | Search/Ask idle pill (Super+Space) | — |
 | v5-04.png | Search results for "doc" | — |
@@ -13,13 +15,13 @@ Fresh account, 1920×1080 @125%, default settings, default bottom-centred dock, 
 | v5-06.png | Start widgets: 3 todo items added via UI, calendar, CPU/RAM rings, volume, Photos card | — |
 | v5-07.png | Control Centre tiles | — |
 | v5-07b.png | CC Wi-Fi detail (empty list — QEMU has no Wi-Fi) | Empty network list is expected in QEMU |
-| v5-08.png | Island compact with Cosmos Helper activity timer | — |
-| v5-09.png | Island expanded, Activities + real pending approval (agent file write into ~/Documents) | — |
+| v5-08.png | Island compact with Cosmos Helper activity timer | Reshot: avatar is a white sparkle glyph on the colour square — no letter. Verified at 100% |
+| v5-09.png | Island expanded, Activities + real pending approval (agent `desktop.screenshot`), two agents (Cosmos Helper + default) | Reshot: both agent rows show sparkle glyphs — no letters. Island row + toast both show the summary line "…wants a screenshot of the desktop" — no `{}` body |
 | v5-10.png | Island Clipboard: one text clip + one image clip (real wl-copy on wayland-1) | — |
 | v5-11.png | Files dark, list view, preview pane on a file | — |
 | v5-12.png | Files light, grid view ~/Pictures — 4 real photo thumbnails (#210) | Filenames wrap ("…g"/"png" split) — cosmetic, reported |
 | v5-13.png | Right-click a file → Ask Cosmos submenu open | — |
-| v5-14.png | Summarize result sheet | Sheet streams via Cosmos Helper but resolves to "Couldn't answer — set up a model provider" — no LLM provider on a fresh account. Sheet + provider-wall state captured honestly |
+| v5-14.png | Summarize result sheet | Reshot: this run produced a REAL summary (~60 words on the Welcome doc) — no "Couldn't answer" and no `> build · big-pickle` banner line. Verified at 100% |
 | v5-15.png | Snap flyout on the green button (zone groups rendered; Files maximized behind) | — |
 | v5-16.png | Files snapped left + Snap Assist card on free right half with live Editor tile | — |
 | v5-16b.png | Settled state: Files left half, Editor right half | Extra shot (not in spec) |
