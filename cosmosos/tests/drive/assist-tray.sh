@@ -12,7 +12,7 @@
 #      flyout's Theme row
 #
 # It copies the image, injects the guest checker (assist-tray-check.sh),
-# boots headless, sends inputs on a schedule via HMP sendkey + QMP clicks,
+# boots headless, sends inputs on a schedule via QMP input-send-event + clicks,
 # then prints PASS/FAIL from the guest's evidence file.
 #
 # Usage: tests/drive/assist-tray.sh [IMAGE]
@@ -27,6 +27,7 @@ export MON_SOCK="$W/monitor.sock" QMP_SOCK="$W/qmp.sock"
 
 log() { echo "[assist-tray] $*"; }
 hmp() { printf '%s\n' "$1" | socat -t 2 - UNIX-CONNECT:"$MON_SOCK" >/dev/null 2>&1; }
+qkey() { "$ROOT/tests/drive/qkey.sh" "$@"; }
 wait_marker() { # wait_marker PATTERN SECONDS
   local i=0
   while [ $i -lt "$2" ]; do
@@ -53,6 +54,7 @@ exec qemu-system-x86_64 -enable-kvm -cpu host -m 2G -smp 2 \\
   -drive if=pflash,format=raw,file=$W/vars.fd \\
   -drive file=$W/test.raw,format=raw,if=virtio \\
   -device virtio-vga,xres=1024,yres=768 -device virtio-tablet-pci \\
+  -device virtio-keyboard-pci \\
   -audiodev none,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0 \\
   -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \\
   -smbios type=1,product=CosmosOS \\
@@ -93,8 +95,8 @@ sleep 4
 # depends on window spawn positions or timing luck.
 # two windows on ws0 so the assist has a candidate
 log "opening terminal + files"
-hmp 'sendkey meta_l-ret';  sleep 3
-hmp 'sendkey meta_l-e';    sleep 2
+qkey meta_l-ret;  sleep 3
+qkey meta_l-e;    sleep 2
 
 # guest focuses the newest window itself via ipc (spawn positions vary)
 wait_marker '==AT-FOCUSED==' 90 || log "WARN: no AT-FOCUSED — snapping anyway"
@@ -102,7 +104,7 @@ sleep 1
 
 # snap the focused window right -> picker should open on the left half
 log "super+Right snap (assist should open)"
-hmp 'sendkey meta_l-right'
+qkey meta_l-right
 sleep 2
 "$ROOT/tests/drive/shot.sh" assist-1-snapped 2>/dev/null || true
 

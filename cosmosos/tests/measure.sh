@@ -33,6 +33,7 @@ sg kvm -c "qemu-system-x86_64 -enable-kvm -cpu host -m 2G -smp 2 \
   -drive if=pflash,format=raw,file=$WORK/OVMF_VARS.fd \
   -drive file=$IMG,format=raw,if=virtio \
   -device virtio-vga,xres=1024,yres=768 -device virtio-tablet-pci \
+  -device virtio-keyboard-pci \
   -audiodev none,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0 \
   -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
   -smbios type=1,product=CosmosOS \
