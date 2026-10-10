@@ -61,3 +61,5 @@ case "${1:-}" in
   type) type_text "$2" ;;
   *)    key "$1" ;;
 esac
+# explicit success — `type` without RUN ends on a false && test otherwise
+exit 0
