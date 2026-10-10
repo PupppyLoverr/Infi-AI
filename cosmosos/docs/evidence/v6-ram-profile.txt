@@ -939,3 +939,42 @@ Method: awk aggregation of /proc/PID/smaps by pathname.
   thread count. No regression observed; MALLOC_ARENA_MAX contributes
   little on this workload (Private_Dirty 56.2→54.0 MB across both).
   Session script reverted to stock after the runs (LP lines removed).
+
+================================================================
+SECTION 10 — MALLOC MMAP/TRIM THRESHOLDS @3b2b0c1 (runtime-only)
+================================================================
+Same after-image, bypass session, idle 60 s, no apps.
+Baseline for deltas: stock idle RSS 141720 / Pss 136366 / heap 48156 /
+anon 19868 (section 9).
+
+10.A MALLOC_MMAP_THRESHOLD_=131072 MALLOC_TRIM_THRESHOLD_=131072
+  (exported before cosmos-compositor in cosmos-session; runtime only)
+  RSS 136224 / Pss 130966 / Pss_Anon 52060 / Pss_File 76554 /
+  Private_Dirty 53892 / AnonHugePages 0 / Swap 0
+  per-mapping: [heap] 21552  [anon] 22084
+  idle CPU: 0.0 / 4.2 / 4.0 %
+
+10.B A + LP_NUM_THREADS=2
+  RSS 136104 / Pss 130958 / Pss_Anon 51928 / Pss_File 76732 /
+  Private_Dirty 53760 / AnonHugePages 0 / Swap 0
+  per-mapping: [heap] 21488  [anon] 22020
+  idle CPU: 4.2 / 4.4 %
+  threads: 2 llvmpipe (same as 9.4)
+
+  Apps-open cycle: Files + Terminal + Start open ~60 s
+    → compositor RSS 194860
+  Then closed Files + Terminal (windows destroyed), waited 30 s
+    → compositor RSS 170296   (Pss 153896, Anon 64004, File 78518)
+    free -m: used 442 / avail 1521
+
+  Reading: the 131072-byte mmap threshold DOES shrink the malloc heap
+  ([heap] 48.2 → 21.5 MB; the displaced allocations land in [anon]
+  19.9 → 22.0 MB) and frees DO go back to the OS — closing the apps
+  dropped RSS 194.9 → 170.3 MB (−24.5) within 30 s. But the floor is
+  unchanged: idle RSS still ~136 MB because the freed space lived in
+  transient window buffers, while libLLVM (56.4), libgallium (11.3),
+  shm memfds and the retained ~12 MB anon growth post-close don't
+  move. Closing windows still leaves ~34 MB above the fresh-idle
+  floor (170 vs 136) — part transient churn still freeing, part
+  genuinely retained (Pss_Anon stayed +12 MB over idle).
+  Session script reverted to stock after both runs.
