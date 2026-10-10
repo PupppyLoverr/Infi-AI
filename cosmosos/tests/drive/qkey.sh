@@ -54,7 +54,7 @@ type_text() { # US layout: punct needing shift goes through a shift hold
       tap "${K[$c]:-$c}"
     fi
   done
-  [ -n "${RUN:-}" ] && tap ret
+  if [ -n "${RUN:-}" ]; then tap ret; fi
 }
 
 case "${1:-}" in
