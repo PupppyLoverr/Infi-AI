@@ -243,7 +243,13 @@ impl Backend for UdevData {
             .gpus
             .single_renderer(&render_node)
             .map_err(|e| format!("no renderer for {render_node}: {e}"))?;
-        crate::render::capture_output_to_png(&mut renderer, space, cosmos, output, path)
+        crate::render::capture_output_to_png::<_, smithay::backend::renderer::gles::GlesTexture>(
+            &mut renderer,
+            space,
+            cosmos,
+            output,
+            path,
+        )
     }
 
     fn capture_window(
@@ -257,7 +263,12 @@ impl Backend for UdevData {
             .gpus
             .single_renderer(&node)
             .map_err(|e| format!("no renderer for {node}: {e}"))?;
-        crate::render::capture_window_to_png(&mut renderer, window, max_w, path)
+        crate::render::capture_window_to_png::<_, smithay::backend::renderer::gles::GlesTexture>(
+            &mut renderer,
+            window,
+            max_w,
+            path,
+        )
     }
 }
 

@@ -108,7 +108,13 @@ impl Backend for WinitData {
         output: &Output,
         path: &std::path::Path,
     ) -> Result<(), String> {
-        crate::render::capture_output_to_png(self.backend.renderer(), space, cosmos, output, path)
+        crate::render::capture_output_to_png::<_, smithay::backend::renderer::gles::GlesTexture>(
+            self.backend.renderer(),
+            space,
+            cosmos,
+            output,
+            path,
+        )
     }
 
     #[cfg(feature = "egl")]
@@ -118,7 +124,12 @@ impl Backend for WinitData {
         max_w: u32,
         path: &std::path::Path,
     ) -> Result<(), String> {
-        crate::render::capture_window_to_png(self.backend.renderer(), window, max_w, path)
+        crate::render::capture_window_to_png::<_, smithay::backend::renderer::gles::GlesTexture>(
+            self.backend.renderer(),
+            window,
+            max_w,
+            path,
+        )
     }
 }
 

@@ -14,6 +14,7 @@ pub mod drawing;
 pub mod focus;
 pub mod input_handler;
 pub mod ipc;
+pub mod pixman_backend;
 pub mod render;
 pub mod shell;
 pub mod state;
