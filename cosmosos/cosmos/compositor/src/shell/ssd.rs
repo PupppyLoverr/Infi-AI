@@ -36,8 +36,33 @@ thread_local! {
     /// change, but were being re-uploaded to the renderer on EVERY frame;
     /// on llvmpipe the alloc storm starved client shm imports and window
     /// bodies composited as transparent for seconds at a time.
-    static DECAL_TEX: RefCell<HashMap<u64, Box<dyn std::any::Any>>> =
-        RefCell::new(HashMap::new());
+    static DECAL_TEX: RefCell<DecalCache> = RefCell::new(DecalCache::default());
+}
+
+/// Texture bytes the decal cache may hold. On llvmpipe textures live in
+/// system RAM, so the cache is bounded by size, not entry count.
+const DECAL_BUDGET: usize = 40 << 20;
+
+/// Least-recently-used texture cache under [`DECAL_BUDGET`].
+#[derive(Default)]
+struct DecalCache {
+    map: HashMap<u64, (Box<dyn std::any::Any>, usize, u64)>,
+    bytes: usize,
+    tick: u64,
+}
+
+impl DecalCache {
+    /// Evict least-recently-used entries until `incoming` more bytes fit.
+    fn make_room(&mut self, incoming: usize) {
+        while self.bytes + incoming > DECAL_BUDGET {
+            let Some((&oldest, _)) = self.map.iter().min_by_key(|(_, (_, _, t))| *t) else {
+                break;
+            };
+            if let Some((_, b, _)) = self.map.remove(&oldest) {
+                self.bytes -= b;
+            }
+        }
+    }
 }
 
 /// Hash a decal's content identity: `site` namespaces the call site so
@@ -66,14 +91,13 @@ where
     R: Renderer + ImportMem,
     R::TextureId: Texture + Clone + 'static,
 {
-    DECAL_TEX.with(|map| {
-        let mut map = map.borrow_mut();
-        if !map.contains_key(&key) {
-            // Cap the cache: on overflow drop everything — next frame's
-            // misses re-upload once each.
-            if map.len() >= 64 {
-                map.clear();
-            }
+    DECAL_TEX.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache.tick += 1;
+        let tick = cache.tick;
+        if !cache.map.contains_key(&key) {
+            let bytes = (w.max(0) as usize) * (h.max(0) as usize) * 4;
+            cache.make_room(bytes);
             let Ok(buffer) = TextureBuffer::<R::TextureId>::from_memory(
                 renderer,
                 pixels,
@@ -86,11 +110,12 @@ where
             ) else {
                 return None;
             };
-            map.insert(key, Box::new(buffer));
+            cache.map.insert(key, (Box::new(buffer), bytes, tick));
+            cache.bytes += bytes;
         }
-        let buffer = map
-            .get(&key)?
-            .downcast_ref::<TextureBuffer<R::TextureId>>()?;
+        let entry = cache.map.get_mut(&key)?;
+        entry.2 = tick;
+        let buffer = entry.0.downcast_ref::<TextureBuffer<R::TextureId>>()?;
         Some(TextureRenderElement::from_texture_buffer(
             location.to_f64(),
             buffer,

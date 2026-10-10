@@ -1,0 +1,93 @@
+COSMOSOS v6 — SHELL REBUILD + POLISH. Continue from main 10d2458 (or later). Same hard rules: real code only (no stubs/mocks/fake data), commit plus boot-verify per item, revert on regression, works on llvmpipe, original assets only (no Apple/Microsoft icons, fonts or wallpapers). Re-read docs/reference/NOTES.md and the ref images before starting. Owner's verdict on v5: about 7/10. The dock and the top bar are "totally broken and very bad". Everything below is mandatory.
+
+========================================
+P0-A. RAM REGRESSION (do first, it gates everything)
+========================================
+v5 idle is 770 MiB with cosmos-compositor at 318 MB RSS (v4 was ~400 MiB total). Target: idle < 500 MiB used on a 2 GB VM, compositor < 120 MB, shell < 90 MB.
+- Profile with heaptrack (or a dhat build) on an idle session; commit the top-20 allocation sites to docs/evidence/v6-ram-profile.txt.
+- Likely culprits: a full-res blurred wallpaper copy per surface or per output, glass offscreen buffers per window never freed, uncapped texture/glyph caches, and window thumbnails (Snap Assist/island) kept alive. Fix by: ONE pre-blurred wallpaper texture per output at 1/4 res (upscaled bilinear on sample), shared by every glass surface; free offscreen buffers when a surface is hidden; cap caches (LRU); thumbnails only while Snap Assist is open.
+- Also run the test on a real 2 GB QEMU VM (-m 2048) and report `free -m` after 60 s idle plus with Files, Terminal and Start open.
+
+========================================
+P0-B. DOCK — FULL REBUILD
+========================================
+Current dock: flush against the screen edge with no margin, icons crowd the pill edges, the launcher is a bare purple 2x2 grid, no labels, maximised windows slide UNDER it (v5-15, v5-18, v5-19), and the tooltip clips under Start. Rebuild it as a first-class component:
+- Position setting: bottom (default), left, right. All three must look perfect, not just work.
+- Geometry at 125%: 8px gap from the screen edge (floating), 56px icons, 6px between icons, 10px pill padding, pill radius 22, a hairline 1px inner highlight plus a soft 24px shadow, glass sampling the wallpaper (same material as Start).
+- Launcher icon: a proper colour squircle like the other apps (original design, e.g. a 3x3 dot grid on an accent gradient), not a bare glyph.
+- Separator between pinned apps and running-unpinned apps, plus Trash at the end.
+- Running indicator: a 4px dot below the icon (on the dock side facing the screen centre), accent for focused, white 60% for running.
+- Hover: a glass label pill above the icon (never clipped, always on top of Start/CC), 250ms delay. Optional magnification (Settings toggle, default OFF) with smooth falloff over 3 neighbours, 120 to 160%.
+- Click: launch (icon bounces once, 400ms) / focus / minimise if already focused. Middle-click: new window. Right-click: glass menu with the open windows list, New Window, Keep in Dock / Remove from Dock, Quit.
+- Drag to reorder pinned apps, drag out to remove (poof), drag a file onto Files/Editor to open it.
+- Exclusive zone: maximised windows and snap layouts must end ABOVE the dock (or beside it when docked left/right). Setting "Automatically hide the dock" (default OFF): slides out after 1 s, reveals on edge hover with a 300ms delay.
+- Minimise animation into its dock icon (scale plus fade, 250ms).
+- Agents app gets a permanent dock pin; when any agent is running its icon shows a small pulsing accent ring.
+
+========================================
+P0-C. TOP BAR — FULL REBUILD
+========================================
+Current bar: a generic grid glyph as the logo, File/Window/Help only, 9 workspace dots, no Control Centre glyph, a clock that paints ~40 s late and disagrees with the desktop card, a hard bright line under the bar, and the island's notch with sharp shoulders.
+- Height 32 logical, glass sampling the wallpaper (tint ~0.35, not opaque), no bottom line (or a 1px 8% white hairline), text 13pt medium, all items vertically centred to the pixel.
+- LEFT: the Cosmos logo (original mark, a monochrome 16px glyph, opens the Cosmos menu: About CosmosOS, System Settings, Sleep, Restart, Shut Down, Lock, Log Out) | the bold app name | full app menus: File, Edit, View, Window, Help for every kit app (real actions: Edit has Undo/Redo/Cut/Copy/Paste/Select All wired to the focused widget; View has the app's view options). Menus are glass, 6px item padding, shortcuts right-aligned. Hovering across menus while one is open switches menus (macOS behaviour). Desktop focused = "Finder-equivalent": app name "Desktop" with File/Edit/View/Go/Window/Help.
+- CENTRE: the island (see P1-4). Its shape must flow out of the bar: concave 8px fillets where it meets the bar (no sharp shoulders).
+- RIGHT, in order: workspace indicator (show ONLY occupied workspaces plus the current one, max 5 dots; current = accent pill), agent status (sparkle glyph only when agents run), Wi-Fi/Ethernet glyph that matches the actual connection (ethernet glyph on wired!), volume, battery (if present, with %), the Control Centre glyph (two toggles), then the clock "Sat 10 Oct  4:15 pm" (respect the 12/24h setting, default from the locale). Clicking the clock opens a notification + calendar glass panel.
+- The clock must render on the FIRST frame and tick on the minute boundary from a single shared time source (the same one as the desktop clock card). No 40 s delay, no disagreement.
+- Every tray item has a hover highlight (rounded 6px rect, 10% white) and opens its own glass popover (Wi-Fi list, volume slider plus output, battery details).
+- Light theme: dark text on light glass, auto-switching with the theme in <1 s.
+
+========================================
+P0-D. DESKTOP + WALLPAPER (ref-6 energy)
+========================================
+- Replace the plain two-stop gradients with 6 rich ORIGINAL wallpapers: layered soft blobs, light glow, subtle grain, depth (aurora violet default, ocean, sunset, peach, forest, graphite-dark). 1920x1080 plus 3840x2160. Each must look good behind both light and dark glass.
+- Desktop widgets: keep the clock card but restyle it (larger light 64pt time, translucent, no heavy border). Weather: show it when the network works; when offline, show the last cached weather with a "Updated 2 h ago" caption; with no cache and no network, hide it. Make the QEMU guest have DNS (fix the network config in the image/run script) so the weather card is proven in evidence.
+- Desktop icons: the ~/Desktop folder shown as icons with labels (grid snapped, drag to move, double-click to open). Seed it with "Welcome to CosmosOS.md" and a "Projects" folder alias.
+
+========================================
+P1. MAKE THE GOOD PARTS EXCELLENT
+========================================
+1. Search or Ask: shrink the default pill to 600x52 when empty; mic-style "Ask" button on the right (it switches to Ask mode, no fake voice); real file-type icons (pdf/csv/md/image/folder); a Quick Look preview of the selected file on the right of the results; keyboard: arrows, Enter, Cmd/Ctrl+Enter = reveal in Files; Ask-mode edge glow visible in the screenshot.
+2. Start (ref-7): ALL widget cards become translucent glass (light acrylic in light theme, tinted glass in dark; never opaque #23 grey). Larger cards (min 180px tall), 16 radius, 16px padding. Weather widget added. Volume widget shows real per-app streams plus master at its actual level (not 0%). Replace the hint with "Search apps, files, or ask anything". Footer: avatar plus name, plus a power button menu (Lock, Log Out, Restart, Shut Down). Recommended rows use real file icons and open the file.
+3. Control Centre: add a Display tile (brightness if a backlight exists, else Night Light toggle), a Screen Recording/Screenshot tile (real: grim/slurp-equivalent via the compositor), Now Playing when MPRIS exists; tiles with hover/pressed states; the active tile icon fills with the accent; the sound slider shows the real level; fix the second glass edge peeking out (v5-07).
+4. Dynamic island: idle = a pill with concave fillets into the bar. Compact = agent sparkle avatar plus a ring progress or elapsed time, never truncated text. Expanded = a 480 wide card that sizes to its content (no dead space), approval text wraps to 2 lines max with full text in a tooltip, smooth spring morph (overshoot 4%). Notifications that need an action (approvals) appear ONLY in the island, not as a duplicate toast.
+5. Lock: add a subtle 2px glass inner highlight, a "Press Enter to unlock" caption under the field only after typing, Caps Lock warning, avatar 80px with a ring in the accent; remove the empty band under the field (card fits its content).
+6. Files: grid labels wrap on word boundaries and ellipsize to 2 lines (no "pn / g"); Desktop, Downloads and Projects in the sidebar; a path bar at the bottom with clickable crumbs; tags column optional.
+7. Context menus (ref-4): max width 260 logical, 22px rows, an icon on EVERY item, submenus open to the SIDE (flip left near the screen edge), never covering the parent. Ask Cosmos items get icons (Summarize, Explain, Rewrite, Open in Agent).
+8. Snap flyout (ref-2): a small light-glass card (about 300x150) anchored directly UNDER the green button, never off-screen, never over the toolbar; layouts as mini-screens with 4px gaps; hovered zone fills with the accent; opens after a 300ms hover.
+9. Monitor: rename the window and app consistently to "Activity Monitor" (or "System Monitor", pick one everywhere). Charts 140px tall with gradient area fills (accent 40% to 0%), smoothed lines, gridlines at 10% opacity, the current value labelled; a CPU per-core mini-bars row; process icons in the table.
+10. Agents: seed a REAL successful history. On first boot, Cosmos Helper runs a real task ("Summarize ~/Documents/Welcome to CosmosOS.md" and "List files in Documents") through agentd, so Activity shows Success rows plus one approved screenshot. Rename the "default" agent to something human ("Quick Ask"), remove the "evidence" test agent from the image.
+11. Terminal: when opened fresh it shows a clean prompt (no opencode splash); window title = cwd.
+
+========================================
+P2. CONSISTENCY SWEEP
+========================================
+- One spacing scale (4/8/12/16/24), one radius scale (6/10/14/22), one shadow set; grep for hard-coded values in shell and apps and replace them with cosmos-theme tokens; commit a short diff summary.
+- Contrast: primary text >= 7:1 and secondary >= 4.5:1 measured on EVERY v6 screenshot (script output in v6-contrast.txt).
+- Every glass surface uses the one shared material (prove it by listing the call sites).
+
+========================================
+EVIDENCE (docs/evidence/v6-final/, real 1920x1080 QEMU at 125%, 2 GB RAM VM)
+========================================
+Rules: each shot has at most 2 intentional windows, none overlapping the dock or off-screen, no leftover test windows, fresh login per shot set.
+ v6-01 hero desktop dark (new wallpaper, weather plus clock, desktop icons, dock, full menubar)
+ v6-02 hero desktop light
+ v6-03 dock close-up (bottom) with hover label plus running dots; v6-03b dock left; v6-03c dock right; v6-03d dock right-click menu; v6-03e maximised window above the dock
+ v6-04 menubar close-up dark plus light; v6-04b an open app menu (Edit); v6-04c Cosmos logo menu; v6-04d Wi-Fi popover; v6-04e clock calendar panel
+ v6-05 Search or Ask results with icons plus preview; v6-06 Ask mode glow plus answer
+ v6-07 Start dark plus v6-07b Start light (translucent cards, weather)
+ v6-08 Control Centre dark plus light
+ v6-09 island idle close-up, v6-10 compact, v6-11 expanded approval, v6-12 morph frame mid-animation
+ v6-13 Files list dark with preview, v6-14 Files grid light
+ v6-15 context menu with the side submenu
+ v6-16 snap flyout, v6-17 two snapped windows
+ v6-18 Monitor, v6-19 Agents with success history
+ v6-20 lock, v6-21 wrong password
+ Side-by-sides v6-cmp-ref1..7 (put ref-5 in the repo first; if it is missing, say so).
+REPORT: v6-REPORT.md with a PASS/FAIL table for every item above (SHA, screenshot, one-line proof), RAM before/after (2 GB VM) plus the top-10 RSS, image size, idle compositor CPU, zero panics, zero TODO/FIXME/todo!/unimplemented!/placeholder/mock/dummy, and an honest "still worse than macOS" list of 5 items.
+
+========================================
+SELF-REVIEW LOOP (mandatory)
+========================================
+For v6-01, v6-03, v6-04, v6-07 and v6-13 at 100% zoom: list everything misaligned, clipped, low-contrast, opaque where it should be glass, or reading as "Linux demo". Fix the top 3 per shot, then reshoot. Do two rounds. Only then deliver: merged PRs plus evidence plus report.
+
+Order: P0-A RAM → P0-B dock → P0-C top bar → P0-D desktop → P1 (1-11 in order) → P2 → evidence → self-review. Commit and boot-verify after each item. Start now with P0-A.
