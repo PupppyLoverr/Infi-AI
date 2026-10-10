@@ -7,9 +7,13 @@ use smithay::{
         allocator::{
             dmabuf::Dmabuf,
             dumb::{DumbAllocator, DumbBuffer},
-            format::FormatSet,
+            format::{get_opaque, FormatSet},
             gbm::GbmDevice,
-            Allocator, Fourcc, Modifier,
+            Allocator, Format as DrmFormat, Fourcc, Modifier,
+        },
+        drm::{
+            exporter::{ExportBuffer, ExportFramebuffer},
+            Framebuffer,
         },
         drm::{DrmDeviceFd, DrmNode, NodeType},
         renderer::{
@@ -18,7 +22,13 @@ use smithay::{
             Bind,
         },
     },
-    reexports::wayland_server::DisplayHandle,
+    reexports::{
+        drm::{
+            buffer::PlanarBuffer,
+            control::{dumbbuffer, framebuffer, Device as _, FbCmd2Flags},
+        },
+        wayland_server::DisplayHandle,
+    },
 };
 
 use crate::pixman_backend::PixmanBackend;
@@ -31,7 +41,7 @@ pub use imp::*;
 pub type Api = PixmanBackend;
 pub type OffscreenTarget = smithay::reexports::pixman::Image<'static, 'static>;
 pub type Alloc = DumbAlloc;
-pub type Exporter = DrmDeviceFd;
+pub type Exporter = DumbExporter;
 /// No GBM device: creating one loads Mesa's `dri_gbm.so`, and with it llvmpipe.
 type Device = ();
 
@@ -79,7 +89,136 @@ fn new_allocator(_dev: &Device, fd: &DrmDeviceFd) -> Alloc {
 }
 
 fn new_exporter(_dev: &Device, fd: &DrmDeviceFd, _render_node: Option<DrmNode>) -> Exporter {
-    fd.clone()
+    use smithay::reexports::drm::{Device as _, DriverCapability};
+
+    DumbExporter {
+        fd: fd.clone(),
+        modifiers: fd
+            .get_driver_capability(DriverCapability::AddFB2Modifiers)
+            .is_ok_and(|cap| cap == 1),
+    }
+}
+
+/// Adds dumb-buffer framebuffers with ADDFB2, passing the modifier only when
+/// the driver supports modifiers. smithay's dumb exporter always passes it,
+/// and on drivers without them (virtio-gpu) falls back to a legacy ARGB
+/// framebuffer that the opaque primary plane rejects.
+#[derive(Debug, Clone)]
+pub struct DumbExporter {
+    fd: DrmDeviceFd,
+    modifiers: bool,
+}
+
+#[derive(Debug)]
+pub struct DumbFramebuffer {
+    fd: DrmDeviceFd,
+    handle: framebuffer::Handle,
+    format: DrmFormat,
+}
+
+impl AsRef<framebuffer::Handle> for DumbFramebuffer {
+    fn as_ref(&self) -> &framebuffer::Handle {
+        &self.handle
+    }
+}
+
+impl Framebuffer for DumbFramebuffer {
+    fn format(&self) -> DrmFormat {
+        self.format
+    }
+}
+
+impl Drop for DumbFramebuffer {
+    fn drop(&mut self) {
+        let _ = self.fd.destroy_framebuffer(self.handle);
+    }
+}
+
+struct DumbPlanes<'a> {
+    buffer: &'a dumbbuffer::DumbBuffer,
+    code: Fourcc,
+    modifier: Option<Modifier>,
+}
+
+impl PlanarBuffer for DumbPlanes<'_> {
+    fn size(&self) -> (u32, u32) {
+        smithay::reexports::drm::buffer::Buffer::size(self.buffer)
+    }
+
+    fn format(&self) -> Fourcc {
+        self.code
+    }
+
+    fn modifier(&self) -> Option<Modifier> {
+        self.modifier
+    }
+
+    fn pitches(&self) -> [u32; 4] {
+        [
+            smithay::reexports::drm::buffer::Buffer::pitch(self.buffer),
+            0,
+            0,
+            0,
+        ]
+    }
+
+    fn handles(&self) -> [Option<smithay::reexports::drm::buffer::Handle>; 4] {
+        [
+            Some(smithay::reexports::drm::buffer::Buffer::handle(self.buffer)),
+            None,
+            None,
+            None,
+        ]
+    }
+
+    fn offsets(&self) -> [u32; 4] {
+        [0; 4]
+    }
+}
+
+impl ExportFramebuffer<DumbBuffer> for DumbExporter {
+    type Framebuffer = DumbFramebuffer;
+    type Error = std::io::Error;
+
+    fn add_framebuffer(
+        &self,
+        _drm: &DrmDeviceFd,
+        buffer: ExportBuffer<'_, DumbBuffer>,
+        use_opaque: bool,
+    ) -> Result<Option<DumbFramebuffer>, std::io::Error> {
+        let ExportBuffer::Allocator(buffer) = buffer else {
+            return Ok(None);
+        };
+        let format = smithay::backend::allocator::Buffer::format(buffer);
+        let code = if use_opaque {
+            get_opaque(format.code).unwrap_or(format.code)
+        } else {
+            format.code
+        };
+        let (modifier, flags) = if self.modifiers {
+            (Some(format.modifier), FbCmd2Flags::MODIFIERS)
+        } else {
+            (None, FbCmd2Flags::empty())
+        };
+        let planes = DumbPlanes {
+            buffer: buffer.handle(),
+            code,
+            modifier,
+        };
+        let handle = self.fd.add_planar_framebuffer(&planes, flags)?;
+        Ok(Some(DumbFramebuffer {
+            fd: self.fd.clone(),
+            handle,
+            format: DrmFormat {
+                code,
+                modifier: format.modifier,
+            },
+        }))
+    }
+
+    fn can_add_framebuffer(&self, buffer: &ExportBuffer<'_, DumbBuffer>) -> bool {
+        matches!(buffer, ExportBuffer::Allocator(_))
+    }
 }
 
 fn cursor_gbm(_dev: Device) -> Option<GbmDevice<DrmDeviceFd>> {
