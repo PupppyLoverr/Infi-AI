@@ -14,11 +14,16 @@ pub mod drawing;
 pub mod focus;
 pub mod input_handler;
 pub mod ipc;
+pub mod pixman_backend;
 pub mod render;
 pub mod shell;
 pub mod state;
 #[cfg(feature = "udev")]
 pub mod udev;
+#[cfg(feature = "udev")]
+mod udev_gles;
+#[cfg(feature = "udev")]
+mod udev_pixman;
 #[cfg(feature = "winit")]
 pub mod winit;
 

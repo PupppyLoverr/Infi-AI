@@ -805,7 +805,7 @@ where
 /// Render one window (its SSD chrome included) offscreen at 1× and
 /// write it as a PNG at most `max_w` wide. Backs the Snap Assist tiles.
 #[profiling::function]
-pub fn capture_window_to_png<R>(
+pub fn capture_window_to_png<R, T>(
     renderer: &mut R,
     window: &crate::shell::WindowElement,
     max_w: u32,
@@ -815,13 +815,13 @@ where
     R: Renderer
         + ImportAll
         + ImportMem
-        + smithay::backend::renderer::Offscreen<smithay::backend::renderer::gles::GlesTexture>
-        + smithay::backend::renderer::Bind<smithay::backend::renderer::gles::GlesTexture>
+        + smithay::backend::renderer::Offscreen<T>
+        + smithay::backend::renderer::Bind<T>
         + smithay::backend::renderer::ExportMem,
     R::TextureId: Clone + smithay::backend::renderer::Texture + 'static,
 {
     use smithay::backend::allocator::Fourcc;
-    use smithay::backend::renderer::{gles::GlesTexture, Offscreen};
+    use smithay::backend::renderer::Offscreen;
     use smithay::utils::Buffer as BufferCoord;
 
     let bbox = SpaceElement::bbox(window);
@@ -830,9 +830,8 @@ where
     }
     let size: Size<i32, Physical> = (bbox.size.w, bbox.size.h).into();
     let buf_size: Size<i32, BufferCoord> = Size::from((size.w, size.h));
-    let mut texture: GlesTexture =
-        Offscreen::<GlesTexture>::create_buffer(renderer, Fourcc::Argb8888, buf_size)
-            .map_err(|e| format!("offscreen texture alloc failed: {e}"))?;
+    let mut texture: T = Offscreen::<T>::create_buffer(renderer, Fourcc::Argb8888, buf_size)
+        .map_err(|e| format!("offscreen texture alloc failed: {e}"))?;
     let mut fb = renderer
         .bind(&mut texture)
         .map_err(|e| format!("bind offscreen target failed: {e}"))?;
@@ -878,11 +877,11 @@ where
 /// the freedesktop Screenshot interface, and the drive harness uses it
 /// for pixel-true guest evidence on any backend (udev or winit).
 ///
-/// Real GL readback: an offscreen `GlesTexture` is bound, the same
+/// Offscreen readback: an offscreen target `T` is bound, the same
 /// `output_elements` stack composites into it, and `copy_framebuffer`
 /// pulls the pixels back to CPU memory.
 #[profiling::function]
-pub fn capture_output_to_png<R>(
+pub fn capture_output_to_png<R, T>(
     renderer: &mut R,
     space: &Space<WindowElement>,
     cosmos: &crate::cosmos::CosmosState,
@@ -893,13 +892,13 @@ where
     R: Renderer
         + ImportAll
         + ImportMem
-        + smithay::backend::renderer::Offscreen<smithay::backend::renderer::gles::GlesTexture>
-        + smithay::backend::renderer::Bind<smithay::backend::renderer::gles::GlesTexture>
+        + smithay::backend::renderer::Offscreen<T>
+        + smithay::backend::renderer::Bind<T>
         + smithay::backend::renderer::ExportMem,
     R::TextureId: Clone + 'static,
 {
     use smithay::backend::allocator::Fourcc;
-    use smithay::backend::renderer::{gles::GlesTexture, Offscreen};
+    use smithay::backend::renderer::Offscreen;
     use smithay::utils::Buffer as BufferCoord;
 
     let size: Size<i32, Physical> = output
@@ -908,9 +907,8 @@ where
         .ok_or_else(|| "output has no current mode".to_string())?;
     let buf_size: Size<i32, BufferCoord> = Size::from((size.w, size.h));
 
-    let mut texture: GlesTexture =
-        Offscreen::<GlesTexture>::create_buffer(renderer, Fourcc::Argb8888, buf_size)
-            .map_err(|e| format!("offscreen texture alloc failed: {e}"))?;
+    let mut texture: T = Offscreen::<T>::create_buffer(renderer, Fourcc::Argb8888, buf_size)
+        .map_err(|e| format!("offscreen texture alloc failed: {e}"))?;
 
     let mut fb = renderer
         .bind(&mut texture)

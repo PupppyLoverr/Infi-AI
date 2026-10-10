@@ -735,6 +735,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cosmos-ipc",
+ "cosmos-kit",
  "cosmos-uitk",
  "egui",
  "greetd_ipc",

@@ -25,6 +25,8 @@ fn main() {
             cosmos_compositor::winit::run_winit();
         }
         #[cfg(feature = "udev")]
+        Some("--probe-gl") => std::process::exit(cosmos_compositor::udev::probe_gl()),
+        #[cfg(feature = "udev")]
         Some("--tty-udev") => {
             tracing::info!("Starting cosmos-compositor on a tty using udev");
             cosmos_compositor::udev::run_udev();
