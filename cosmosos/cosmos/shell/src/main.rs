@@ -177,6 +177,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         dock_hide_seq: 0,
         dock_reveal_at: None,
         dock_bounce: None,
+        dock_drag: None,
+        dock_poof: None,
+        dnd_on_dock: false,
+        dock_drop: None,
         dock_anim_timer: false,
         switcher_size: (0, 0),
         switcher_order: Vec::new(),
@@ -652,6 +656,13 @@ pub struct ShellState {
     /// Launch bounce in flight (app id, start) and whether the dock's
     /// animation timer (bounce / Agents ring) is armed.
     pub dock_bounce: Option<(String, std::time::Instant)>,
+    pub dock_drag: Option<dock::DockDrag>,
+    /// Surface point + start of the poof left by an unpinned drag.
+    pub dock_poof: Option<((f64, f64), std::time::Instant)>,
+    /// A file drag is over the dock; `dock_drop` is the Files/Editor cell
+    /// it would open in.
+    pub dnd_on_dock: bool,
+    pub dock_drop: Option<usize>,
     pub dock_anim_timer: bool,
     pub dock_dirty: bool,
     pub switcher_dirty: bool,
@@ -2477,7 +2488,11 @@ impl PointerHandler for ShellState {
                     if self.panel.as_ref() == Some(&layer) {
                         self.panel_dirty |= panel::hover(self, ev.position.0, ev.position.1);
                     } else if self.dock_surface.as_ref() == Some(&layer) {
-                        self.dock_dirty |= dock::hover(self, ev.position.0, ev.position.1);
+                        self.dock_dirty |= if self.dock_drag.is_some() {
+                            dock::drag_motion(self, ev.position.0, ev.position.1)
+                        } else {
+                            dock::hover(self, ev.position.0, ev.position.1)
+                        };
                     } else if self.launcher_surface.as_ref() == Some(&layer) {
                         if let Some(board_x) = self.start_vol_drag {
                             let w = LAUNCHER_WIDTH as f32 - 32.0;
@@ -2503,6 +2518,9 @@ impl PointerHandler for ShellState {
                 }
                 PointerEventKind::Release { .. } => {
                     self.start_vol_drag = None;
+                    if self.dock_surface.as_ref() == Some(&layer) {
+                        self.dock_dirty |= dock::release(self);
+                    }
                     if self.quick_surface.as_ref() == Some(&layer) {
                         quick::release(self);
                     }
@@ -2602,10 +2620,17 @@ impl DataDeviceHandler for ShellState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
         data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
-        _x: f64,
-        _y: f64,
+        x: f64,
+        y: f64,
         surface: &wl_surface::WlSurface,
     ) {
+        self.dnd_on_dock = self
+            .dock_surface
+            .as_ref()
+            .is_some_and(|l| l.wl_surface() == surface);
+        if self.dnd_on_dock {
+            self.dock_dnd_motion(data_device, x, y);
+        }
         let on_island = self
             .island_surface
             .as_ref()
@@ -2632,16 +2657,24 @@ impl DataDeviceHandler for ShellState {
         _data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
     ) {
         self.dnd_on_island = false;
+        if std::mem::take(&mut self.dnd_on_dock) {
+            self.dock_drop = None;
+            self.dock_dirty |= dock::leave(self);
+            self.dock_dirty = true;
+        }
     }
 
     fn motion(
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
-        _x: f64,
-        _y: f64,
+        data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
+        x: f64,
+        y: f64,
     ) {
+        if self.dnd_on_dock {
+            self.dock_dnd_motion(data_device, x, y);
+        }
     }
 
     fn selection(
@@ -2658,6 +2691,10 @@ impl DataDeviceHandler for ShellState {
         _qh: &QueueHandle<Self>,
         data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
     ) {
+        if self.dnd_on_dock {
+            self.dock_file_drop(data_device);
+            return;
+        }
         if !self.dnd_on_island {
             return;
         }
@@ -2676,19 +2713,79 @@ impl DataDeviceHandler for ShellState {
             use std::io::Read;
             let mut text = String::new();
             let _ = pipe.read_to_string(&mut text);
-            let paths: Vec<String> = text
-                .lines()
-                .filter_map(|l| {
-                    let l = l.trim();
-                    if l.starts_with('#') || l.is_empty() {
-                        return None;
-                    }
-                    Some(l.strip_prefix("file://").unwrap_or(l).to_string())
-                })
-                .collect();
+            let paths = uri_paths(&text);
             if !paths.is_empty() {
                 let _ = tx.send(paths);
             }
+        });
+    }
+}
+
+/// Local paths from a `text/uri-list` payload.
+fn uri_paths(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+        .map(|l| l.strip_prefix("file://").unwrap_or(l).to_string())
+        .collect()
+}
+
+impl ShellState {
+    /// A file drag moving over the dock: Files and Editor accept it.
+    fn dock_dnd_motion(
+        &mut self,
+        data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
+        x: f64,
+        y: f64,
+    ) {
+        self.dock_dirty |= dock::hover(self, x, y);
+        let target = dock::drop_target(self, x, y).map(|(i, _)| i);
+        if target != self.dock_drop {
+            self.dock_drop = target;
+            self.dock_dirty = true;
+        }
+        if let Some(offer) = data_device
+            .data::<smithay_client_toolkit::data_device_manager::data_device::DataDeviceData>()
+            .and_then(|d| d.drag_offer())
+        {
+            let uri = "text/uri-list".to_string();
+            let ok = target.is_some() && offer.with_mime_types(|m| m.contains(&uri));
+            offer.accept_mime_type(0, ok.then_some(uri));
+        }
+    }
+
+    /// Files dropped on the dock's Files or Editor cell open there.
+    fn dock_file_drop(
+        &mut self,
+        data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
+    ) {
+        self.dock_drop = None;
+        self.dock_dirty = true;
+        let Some((x, y)) = data_device
+            .data::<smithay_client_toolkit::data_device_manager::data_device::DataDeviceData>()
+            .and_then(|d| d.drag_offer())
+            .map(|o| (o.x, o.y))
+        else {
+            return;
+        };
+        let Some((_, app)) = dock::drop_target(self, x, y) else {
+            return;
+        };
+        let Some(offer) = data_device
+            .data::<smithay_client_toolkit::data_device_manager::data_device::DataDeviceData>()
+            .and_then(|d| d.drag_offer())
+        else {
+            return;
+        };
+        let Ok(mut pipe) = offer.receive("text/uri-list".to_string()) else {
+            return;
+        };
+        offer.finish();
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut text = String::new();
+            let _ = pipe.read_to_string(&mut text);
+            dock::open_dropped(&app, &uri_paths(&text));
         });
     }
 }

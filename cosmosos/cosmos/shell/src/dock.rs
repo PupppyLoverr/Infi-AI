@@ -42,6 +42,19 @@ const MAG_SPAN: f64 = CELL * 3.0;
 pub const HIDE_DELAY: std::time::Duration = std::time::Duration::from_millis(1000);
 pub const REVEAL_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
 const REVEAL_EDGE: i32 = 4;
+/// Press-and-drag on a pinned icon: reorders along the dock, or removes
+/// the pin when released REMOVE_DEPTH off the screen edge.
+pub struct DockDrag {
+    pub id: String,
+    pub start: (f64, f64),
+    pub at: (f64, f64),
+    pub active: bool,
+}
+const DRAG_SLOP: f64 = 6.0;
+const REMOVE_DEPTH: f64 = (STRIP + MARGIN) as f64 + 40.0;
+/// Puff of smoke where a pin was dragged off.
+const POOF: std::time::Duration = std::time::Duration::from_millis(300);
+
 /// Launch bounce: one hop of BOUNCE_PX off the edge over 400 ms.
 const BOUNCE: std::time::Duration = std::time::Duration::from_millis(400);
 const BOUNCE_PX: f64 = 14.0;
@@ -402,6 +415,11 @@ pub fn draw(state: &mut ShellState) {
     };
     let (bg, sep, fg) = theme(state.dark);
     let busy = agents_busy(state);
+    let ink = if state.dark {
+        Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xCC)
+    } else {
+        Color::from_rgba8(0x00, 0x00, 0x00, 0xB3)
+    };
     if busy {
         start_anim(state);
     }
@@ -516,7 +534,18 @@ pub fn draw(state: &mut ShellState) {
         };
         let (icx, icy) = axis_xy(pos, a + len / 2.0, INSET + size / 2.0 + lift);
         let (ix, iy) = ((icx - size / 2.0) as f32, (icy - size / 2.0) as f32);
+        let dragged = state.dock_drag.as_ref().is_some_and(|d| {
+            d.active && item.app.as_ref().is_some_and(|a| a.id == d.id) && !item.extra
+        });
+        if dragged {
+            continue;
+        }
         icons::app_tile(&mut pixmap, &item.icon, ix, iy, size as f32);
+        if state.dock_drop == Some(idx) {
+            let o = 3.0;
+            let s = size as f32 + o * 2.0;
+            draw::stroke_round_rect(&mut pixmap, ix - o, iy - o, s, s, s * 0.225, 2.0, ink);
+        }
         if item.minimized {
             // Minimised-only apps read dimmed under a veil of the glass.
             let veil = Color::from_rgba(bg.red(), bg.green(), bg.blue(), 0.45).unwrap_or(bg);
@@ -554,6 +583,51 @@ pub fn draw(state: &mut ShellState) {
                 dy,
                 if item.focused { accent } else { running },
             );
+        }
+    }
+
+    // The dragged pin follows the pointer; a removed pin leaves a poof.
+    if let Some(d) = state.dock_drag.as_ref().filter(|d| d.active) {
+        if let Some(item) = items
+            .iter()
+            .find(|i| !i.extra && i.app.as_ref().is_some_and(|a| a.id == d.id))
+        {
+            let half = ICON_SZ / 2.0;
+            icons::app_tile(
+                &mut pixmap,
+                &item.icon,
+                (d.at.0 - half) as f32,
+                (d.at.1 - half) as f32,
+                ICON_SZ as f32,
+            );
+        }
+    }
+    if let Some(((px, py), t0)) = state.dock_poof {
+        let e = (t0.elapsed().as_secs_f32() / POOF.as_secs_f32()).min(1.0);
+        let puff =
+            Color::from_rgba(ink.red(), ink.green(), ink.blue(), 0.55 * (1.0 - e)).unwrap_or(ink);
+        for k in 0..6 {
+            let ang = k as f32 * std::f32::consts::TAU / 6.0;
+            let r = 6.0 + 16.0 * e;
+            let mut pb = tiny_skia::PathBuilder::new();
+            pb.push_circle(
+                px as f32 + ang.cos() * r,
+                py as f32 + ang.sin() * r,
+                5.0 + 5.0 * e,
+            );
+            if let Some(path) = pb.finish() {
+                pixmap.fill_path(
+                    &path,
+                    &tiny_skia::Paint {
+                        shader: tiny_skia::Shader::SolidColor(puff),
+                        anti_alias: true,
+                        ..Default::default()
+                    },
+                    tiny_skia::FillRule::Winding,
+                    draw::xf(),
+                    None,
+                );
+            }
         }
     }
 
@@ -662,6 +736,26 @@ pub fn click(state: &mut ShellState, button: u32, x: f64, y: f64) -> bool {
         }
         return true;
     }
+    // Pinned apps act on release, so a press can turn into a drag.
+    if let Some(app) = item
+        .app
+        .as_ref()
+        .filter(|a| !item.extra && state.dock_pins.contains(&a.id))
+    {
+        state.dock_drag = Some(DockDrag {
+            id: app.id.clone(),
+            start: (x, y),
+            at: (x, y),
+            active: false,
+        });
+        return false;
+    }
+    activate(state, &items, idx)
+}
+
+/// Primary-click action for cell `idx`.
+fn activate(state: &mut ShellState, items: &[DockEntry], idx: usize) -> bool {
+    let item = &items[idx];
     if item.icon == "launcher" {
         state.ipc.send(&cosmos_ipc::Request::ToggleLauncher);
         return true;
@@ -783,8 +877,11 @@ pub fn start_anim(state: &mut ShellState) {
             {
                 state.dock_bounce = None;
             }
+            if state.dock_poof.is_some_and(|(_, t0)| t0.elapsed() >= POOF) {
+                state.dock_poof = None;
+            }
             state.dock_dirty = true;
-            let bouncing = state.dock_bounce.is_some();
+            let bouncing = state.dock_bounce.is_some() || state.dock_poof.is_some();
             if !bouncing && !agents_busy(state) {
                 state.dock_anim_timer = false;
                 return calloop::timer::TimeoutAction::Drop;
@@ -793,6 +890,132 @@ pub fn start_anim(state: &mut ShellState) {
             calloop::timer::TimeoutAction::ToDuration(std::time::Duration::from_millis(ms))
         },
     );
+}
+
+/// Distance of surface point (x, y) from the dock's screen edge.
+fn edge_depth(pos: DockPos, w: u32, h: u32, x: f64, y: f64) -> f64 {
+    match pos {
+        DockPos::Bottom => h as f64 - y,
+        DockPos::Left => x,
+        DockPos::Right => w as f64 - x,
+    }
+}
+
+/// Move pin `id` into the slot currently held by pin `over`.
+fn move_pin(pins: &mut Vec<String>, id: &str, over: &str) -> bool {
+    let (Some(from), Some(to)) = (
+        pins.iter().position(|p| p == id),
+        pins.iter().position(|p| p == over),
+    ) else {
+        return false;
+    };
+    if from == to {
+        return false;
+    }
+    let pin = pins.remove(from);
+    pins.insert(to, pin);
+    true
+}
+
+/// Pointer motion with a pinned icon pressed.
+pub fn drag_motion(state: &mut ShellState, x: f64, y: f64) -> bool {
+    let Some(drag) = state.dock_drag.as_mut() else {
+        return false;
+    };
+    drag.at = (x, y);
+    if !drag.active {
+        if (x - drag.start.0).hypot(y - drag.start.1) < DRAG_SLOP {
+            return hover(state, x, y);
+        }
+        drag.active = true;
+        state.dock_label = None;
+    }
+    let id = drag.id.clone();
+    let (pos, (w, h)) = (state.dock_position, state.dock_size);
+    if edge_depth(pos, w, h, x, y) <= REMOVE_DEPTH {
+        let items = entries(state);
+        let over = hit(state, axis_coord(pos, x, y), &items)
+            .and_then(|j| items[j].app.as_ref().filter(|_| !items[j].extra))
+            .map(|a| a.id.clone());
+        if let Some(over) = over {
+            move_pin(&mut state.dock_pins, &id, &over);
+        }
+    }
+    true
+}
+
+/// Button release: a press that never moved is a click; a drag either
+/// lands (pins saved in their new order) or, off the edge, unpins.
+pub fn release(state: &mut ShellState) -> bool {
+    let Some(drag) = state.dock_drag.take() else {
+        return false;
+    };
+    if !drag.active {
+        let items = entries(state);
+        let a = axis_coord(state.dock_position, drag.start.0, drag.start.1);
+        return match hit(state, a, &items) {
+            Some(idx) => activate(state, &items, idx),
+            None => false,
+        };
+    }
+    let (pos, (w, h)) = (state.dock_position, state.dock_size);
+    let (x, y) = drag.at;
+    if edge_depth(pos, w, h, x, y) > REMOVE_DEPTH && drag.id != AGENTS {
+        set_pinned(state, &drag.id, false);
+        let p = (
+            x.clamp(24.0, (w as f64 - 24.0).max(24.0)),
+            y.clamp(24.0, (h as f64 - 24.0).max(24.0)),
+        );
+        state.dock_poof = Some((p, std::time::Instant::now()));
+        start_anim(state);
+    } else {
+        save_pins(&state.dock_pins);
+    }
+    true
+}
+
+/// Files or Editor cell under a drag-and-drop at surface (x, y).
+pub fn drop_target(state: &ShellState, x: f64, y: f64) -> Option<(usize, AppEntry)> {
+    let items = entries(state);
+    let idx = hit(state, axis_coord(state.dock_position, x, y), &items)?;
+    let app = items[idx].app.clone()?;
+    let key = icons::key_for(&app.id);
+    (key == "cosmos-files" || key == "cosmos-editor").then_some((idx, app))
+}
+
+/// Open dropped `paths` in the Files or Editor app: Editor gets each
+/// file, Files opens each folder (a file's parent folder).
+pub fn open_dropped(app: &AppEntry, paths: &[String]) {
+    let editor = icons::key_for(&app.id) == "cosmos-editor";
+    let mut tokens = app
+        .exec
+        .split_whitespace()
+        .filter(|t| !t.starts_with('%'))
+        .map(str::to_string);
+    let Some(bin) = tokens.next() else {
+        return;
+    };
+    let base: Vec<String> = tokens.collect();
+    for path in paths {
+        let p = std::path::Path::new(path);
+        let arg = if editor || p.is_dir() {
+            p.to_path_buf()
+        } else {
+            p.parent()
+                .map(|d| d.to_path_buf())
+                .unwrap_or_else(|| p.to_path_buf())
+        };
+        if let Err(err) = std::process::Command::new(&bin)
+            .args(&base)
+            .arg(arg)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            tracing::warn!("dock: open {path} in {} failed: {err}", app.id);
+        }
+    }
 }
 
 /// Off-edge lift (logical px) of a bouncing icon at progress `t`.
@@ -896,6 +1119,9 @@ pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {
 
 /// Pointer left the dock — drop hover + magnification.
 pub fn leave(state: &mut ShellState) -> bool {
+    if state.dock_drag.is_some() {
+        release(state);
+    }
     state.dock_label = None;
     state.dock_reveal_at = None;
     if !state.dock_hidden {
@@ -946,6 +1172,25 @@ mod tests {
         assert_eq!(mag(Some(100.0), 100.0), ICON_SZ * 0.5);
         assert!(mag(Some(100.0 + CELL * 2.9), 100.0) > 0.0);
         assert_eq!(mag(Some(100.0 + CELL * 3.0), 100.0), 0.0);
+    }
+
+    #[test]
+    fn dragging_a_pin_takes_the_slot_it_is_over() {
+        let mut pins: Vec<String> = ["a", "b", "c"].iter().map(|s| s.to_string()).collect();
+        assert!(move_pin(&mut pins, "a", "c"));
+        assert_eq!(pins, ["b", "c", "a"]);
+        assert!(move_pin(&mut pins, "a", "b"));
+        assert_eq!(pins, ["a", "b", "c"]);
+        assert!(!move_pin(&mut pins, "a", "a"));
+        assert!(!move_pin(&mut pins, "zz", "a"));
+    }
+
+    #[test]
+    fn remove_depth_is_measured_from_the_screen_edge() {
+        assert_eq!(edge_depth(DockPos::Bottom, 800, 212, 10.0, 200.0), 12.0);
+        assert_eq!(edge_depth(DockPos::Left, 212, 600, 30.0, 5.0), 30.0);
+        assert_eq!(edge_depth(DockPos::Right, 212, 600, 200.0, 5.0), 12.0);
+        assert!(REMOVE_DEPTH > (STRIP + MARGIN) as f64);
     }
 
     #[test]
