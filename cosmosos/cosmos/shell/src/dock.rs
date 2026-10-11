@@ -42,6 +42,11 @@ const MAG_SPAN: f64 = CELL * 3.0;
 pub const HIDE_DELAY: std::time::Duration = std::time::Duration::from_millis(1000);
 pub const REVEAL_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
 const REVEAL_EDGE: i32 = 4;
+/// Launch bounce: one hop of BOUNCE_PX off the edge over 400 ms.
+const BOUNCE: std::time::Duration = std::time::Duration::from_millis(400);
+const BOUNCE_PX: f64 = 14.0;
+/// Agents ring pulse period while an agent is working.
+const PULSE_MS: u128 = 1400;
 pub const LABEL_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
 /// Default pinned apps, top→bottom on a vertical rail (desktop ids
 /// without ".desktop"). The user's order lives in `pins_path()`.
@@ -396,6 +401,21 @@ pub fn draw(state: &mut ShellState) {
         return;
     };
     let (bg, sep, fg) = theme(state.dark);
+    let busy = agents_busy(state);
+    if busy {
+        start_anim(state);
+    }
+    let pulse = std::time::UNIX_EPOCH
+        .elapsed()
+        .map(|d| (d.as_millis() % PULSE_MS) as f32 / PULSE_MS as f32)
+        .unwrap_or(0.0);
+    // (app id, off-edge lift) of the icon in its launch bounce.
+    let bounce = state.dock_bounce.as_ref().map(|(id, t0)| {
+        (
+            id.clone(),
+            hop(t0.elapsed().as_secs_f64() / BOUNCE.as_secs_f64()),
+        )
+    });
     let items = entries(state);
     let hover = state.dock_hover;
     let vertical = pos != DockPos::Bottom;
@@ -490,7 +510,11 @@ pub fn draw(state: &mut ShellState) {
         }
         // Icons grow outward from the pill's screen-edge padding.
         let size = len - (CELL - ICON_SZ);
-        let (icx, icy) = axis_xy(pos, a + len / 2.0, INSET + size / 2.0);
+        let lift = match (&bounce, &item.app) {
+            (Some((id, lift)), Some(ap)) if *id == ap.id => *lift,
+            _ => 0.0,
+        };
+        let (icx, icy) = axis_xy(pos, a + len / 2.0, INSET + size / 2.0 + lift);
         let (ix, iy) = ((icx - size / 2.0) as f32, (icy - size / 2.0) as f32);
         icons::app_tile(&mut pixmap, &item.icon, ix, iy, size as f32);
         if item.minimized {
@@ -505,6 +529,15 @@ pub fn draw(state: &mut ShellState) {
                 size as f32 * 0.225,
                 veil,
             );
+        }
+        if busy && item.icon == AGENTS {
+            let k = 0.5 - 0.5 * (pulse * std::f32::consts::TAU).cos();
+            let ring =
+                Color::from_rgba(accent.red(), accent.green(), accent.blue(), 0.25 + 0.6 * k)
+                    .unwrap_or(accent);
+            let o = 3.0;
+            let s = size as f32 + o * 2.0;
+            draw::stroke_round_rect(&mut pixmap, ix - o, iy - o, s, s, s * 0.225, 2.0, ring);
         }
         // Running dot: below the icon on a bottom dock; on the side
         // facing the screen centre on a left/right rail.
@@ -655,6 +688,8 @@ pub fn click(state: &mut ShellState, button: u32, x: f64, y: f64) -> bool {
             tracing::warn!("dock launch {} failed: {err}", app.id);
         } else {
             state.record_launch(&app.id);
+            state.dock_bounce = Some((app.id.clone(), std::time::Instant::now()));
+            start_anim(state);
         }
         return true;
     }
@@ -720,6 +755,49 @@ fn open_menu(state: &mut ShellState, items: &[DockEntry], idx: usize) {
         .cloned()
         .or(Some(app));
     state.open_dock_menu(rows, key_app, x.round() as i32, y.round() as i32);
+}
+
+/// An agent is actively working (not paused/stopped) — the Agents tile
+/// pulses its ring.
+pub fn agents_busy(state: &ShellState) -> bool {
+    state
+        .agents
+        .iter()
+        .any(|a| a.busy && !a.paused && !a.stopped)
+}
+
+/// Arm the dock animation timer: ~60 fps while a launch bounce runs,
+/// 20 fps for the Agents ring pulse; it drops itself when both end.
+pub fn start_anim(state: &mut ShellState) {
+    if state.dock_anim_timer {
+        return;
+    }
+    state.dock_anim_timer = true;
+    let _ = state.loop_handle.insert_source(
+        calloop::timer::Timer::from_duration(std::time::Duration::from_millis(16)),
+        |_, _, state| {
+            if state
+                .dock_bounce
+                .as_ref()
+                .is_some_and(|(_, t0)| t0.elapsed() >= BOUNCE)
+            {
+                state.dock_bounce = None;
+            }
+            state.dock_dirty = true;
+            let bouncing = state.dock_bounce.is_some();
+            if !bouncing && !agents_busy(state) {
+                state.dock_anim_timer = false;
+                return calloop::timer::TimeoutAction::Drop;
+            }
+            let ms = if bouncing { 16 } else { 50 };
+            calloop::timer::TimeoutAction::ToDuration(std::time::Duration::from_millis(ms))
+        },
+    );
+}
+
+/// Off-edge lift (logical px) of a bouncing icon at progress `t`.
+fn hop(t: f64) -> f64 {
+    BOUNCE_PX * (std::f64::consts::PI * t.clamp(0.0, 1.0)).sin()
 }
 
 /// The reveal strip of a hidden dock, flush with the screen edge.
@@ -868,6 +946,13 @@ mod tests {
         assert_eq!(mag(Some(100.0), 100.0), ICON_SZ * 0.5);
         assert!(mag(Some(100.0 + CELL * 2.9), 100.0) > 0.0);
         assert_eq!(mag(Some(100.0 + CELL * 3.0), 100.0), 0.0);
+    }
+
+    #[test]
+    fn launch_hop_rises_and_lands() {
+        assert_eq!(hop(0.0), 0.0);
+        assert!((hop(0.5) - BOUNCE_PX).abs() < 1e-9);
+        assert!(hop(1.0).abs() < 1e-9);
     }
 
     #[test]
