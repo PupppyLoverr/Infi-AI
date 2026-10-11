@@ -67,7 +67,7 @@ pub fn status_text_len(info: &crate::sysinfo::SysInfo, dnd: bool) -> f64 {
             .as_ref()
             .map(|b| if b.present { 1.0 } else { 0.0 })
             .unwrap_or(0.0);
-    8.0 + icons * 20.0 + 6.0 + info.clock.len() as f64 * 7.0
+    8.0 + icons * 20.0 + 6.0 + draw::text_width(13.0, &info.clock) as f64
 }
 
 /// Repaint the panel.
@@ -79,7 +79,7 @@ pub fn draw(state: &mut ShellState) {
     let Some(layer) = state.panel.clone() else {
         return;
     };
-    let (bg, hover_bg, sep, fg, fg_dim) = theme(state.dark);
+    let (bg, hover_bg, _sep, fg, fg_dim) = theme(state.dark);
     let (hx, hov) = state.panel_hover;
     let name = focused_app_name(state);
     let status_w = status_text_len(&state.sysinfo, state.dnd);
@@ -300,7 +300,7 @@ pub fn draw(state: &mut ShellState) {
         h as f32 / 2.0 - 8.0,
         status_w as f32,
         16.0,
-        12.0,
+        13.0,
         &clock,
         fg,
     );
@@ -333,8 +333,13 @@ pub fn draw(state: &mut ShellState) {
         rx += WS_CELL_W;
     }
 
-    // Bottom hairline separator.
-    draw::fill_rect(&mut pixmap, 0.0, h as f32 - 1.0, w as f32, 1.0, sep);
+    // Soft 8% hairline instead of a hard line under the bar.
+    let hairline = if dark {
+        Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x14)
+    } else {
+        Color::from_rgba8(0x00, 0x00, 0x00, 0x14)
+    };
+    draw::fill_rect(&mut pixmap, 0.0, h as f32 - 1.0, w as f32, 1.0, hairline);
 
     use smithay_client_toolkit::shell::WaylandSurface;
     let wl_surface = layer.wl_surface().clone();

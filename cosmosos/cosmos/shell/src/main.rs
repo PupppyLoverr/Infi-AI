@@ -94,7 +94,7 @@ use ipc_client::IpcClient;
 use notify::{Notification, NotifyEvent};
 use sysinfo::SysInfo;
 
-pub const PANEL_HEIGHT: u32 = 30;
+pub const PANEL_HEIGHT: u32 = 32;
 pub const NOTIFY_WIDTH: u32 = 340;
 pub const NOTIFY_TIMEOUT_MS: i64 = 5000;
 pub const LAUNCHER_WIDTH: u32 = 760;
