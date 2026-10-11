@@ -176,6 +176,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         dock_hidden: false,
         dock_hide_seq: 0,
         dock_reveal_at: None,
+        dock_bounce: None,
+        dock_anim_timer: false,
         switcher_size: (0, 0),
         switcher_order: Vec::new(),
         switcher_sel: 0,
@@ -647,6 +649,10 @@ pub struct ShellState {
     pub dock_hidden: bool,
     pub dock_hide_seq: u64,
     pub dock_reveal_at: Option<std::time::Instant>,
+    /// Launch bounce in flight (app id, start) and whether the dock's
+    /// animation timer (bounce / Agents ring) is armed.
+    pub dock_bounce: Option<(String, std::time::Instant)>,
+    pub dock_anim_timer: bool,
     pub dock_dirty: bool,
     pub switcher_dirty: bool,
     /// Quick-settings flyout state.
@@ -1926,6 +1932,9 @@ impl ShellState {
             }
         }
         self.agents = activity::scan_agents();
+        if dock::agents_busy(self) {
+            dock::start_anim(self);
+        }
         // Elapsed timers + approval/agent changes.
         self.refresh_island();
         let before = self.notifications.len();
