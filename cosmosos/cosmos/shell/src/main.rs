@@ -217,7 +217,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         launcher_sel: 0,
         recent: launcher::load_recent(),
         apps,
-        sysinfo: SysInfo::default(),
+        sysinfo: SysInfo {
+            clock: widgets::menubar_clock(),
+            ..SysInfo::default()
+        },
         notifications: Vec::new(),
         ipc: IpcClient::default(),
         ipc_retry_in: 5,
@@ -327,14 +330,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     sysinfo::start(sys_tx);
     handle.insert_source(sys_rx, |event, _, state| {
         if let ChannelEvent::Msg(info) = event {
+            let clock = std::mem::take(&mut state.sysinfo.clock);
             state.sysinfo = info;
+            state.sysinfo.clock = clock;
             state.panel_dirty = true;
             state.quick_dirty = state.quick_open;
-            let minute = widgets::clock_lines().0;
-            if minute != state.widgets_clock {
-                state.widgets_clock = minute;
-                state.widgets_dirty = true;
-            }
         }
     })?;
 
@@ -1820,7 +1820,14 @@ impl ShellState {
     }
 
     fn on_tick(&mut self) {
-        self.panel_dirty = true; // clock
+        self.panel_dirty = true;
+        // One time source for the menubar and the desktop clock card.
+        self.sysinfo.clock = widgets::menubar_clock();
+        let minute = widgets::clock_lines().0;
+        if minute != self.widgets_clock {
+            self.widgets_clock = minute;
+            self.widgets_dirty = true;
+        }
 
         // Start's Photos slideshow steps every 6 s; nothing else repaints it.
         let slide = std::time::SystemTime::now()

@@ -70,7 +70,7 @@ pub fn start(tx: Sender<SysInfo>) {
 
 fn poll() -> SysInfo {
     SysInfo {
-        clock: clock(),
+        clock: String::new(),
         date: date_str(),
         battery: battery(),
         network: network(),
@@ -177,35 +177,6 @@ pub fn set_brightness(name: &str, level: f32) -> bool {
     };
     let v = ((level.clamp(0.0, 1.0) * max as f32).round() as u32).max(1);
     crate::logind::set_brightness(name, v).is_ok()
-}
-
-// ---------------------------------------------------------------- clock
-
-fn clock() -> String {
-    // v3 menubar form: "Thu 8 Oct 22:14" — weekday, day, short month,
-    // then the time. Weekday comes from days since epoch (1970-01-01
-    // was a Thursday), so no extra libc call is needed.
-    libc_tm()
-        .map(|(h, m, d, mo, _)| {
-            const WDAYS: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
-            const MONTHS: [&str; 12] = [
-                "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-            ];
-            let days = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map(|d| d.as_secs() / 86_400)
-                .unwrap_or(0);
-            let wday = WDAYS[(days % 7) as usize];
-            format!(
-                "{} {} {} {:02}:{:02}",
-                wday,
-                d,
-                MONTHS[mo as usize % 12],
-                h,
-                m
-            )
-        })
-        .unwrap_or_default()
 }
 
 fn date_str() -> String {

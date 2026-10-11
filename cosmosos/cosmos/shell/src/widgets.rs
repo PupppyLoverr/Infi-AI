@@ -41,6 +41,45 @@ fn local_now() -> Option<(i32, i32, i32, i32, i32)> {
 }
 
 /// ("22:14", "Thursday, 8 October").
+/// 12-hour time when the locale prefers it (en_US and similar).
+pub fn twelve_hour() -> bool {
+    let loc = ["LC_ALL", "LC_TIME", "LANG"]
+        .iter()
+        .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))
+        .unwrap_or_default();
+    ["en_US", "en_CA", "en_AU", "en_PH", "en_IN"]
+        .iter()
+        .any(|p| loc.starts_with(p))
+}
+
+fn fmt_time(h: i32, m: i32, twelve: bool) -> String {
+    if twelve {
+        let h12 = if h % 12 == 0 { 12 } else { h % 12 };
+        format!("{h12}:{m:02} {}", if h < 12 { "am" } else { "pm" })
+    } else {
+        format!("{h:02}:{m:02}")
+    }
+}
+
+/// Menubar clock, "Sat 10 Oct  4:15 pm", from the same local time as the
+/// desktop clock card so the two never disagree.
+pub fn menubar_clock() -> String {
+    const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    local_now()
+        .map(|(h, m, wd, d, mo)| {
+            format!(
+                "{} {d} {}  {}",
+                DAYS[wd.rem_euclid(7) as usize],
+                MONTHS[mo.rem_euclid(12) as usize],
+                fmt_time(h, m, twelve_hour())
+            )
+        })
+        .unwrap_or_default()
+}
+
 pub fn clock_lines() -> (String, String) {
     const DAYS: [&str; 7] = [
         "Sunday",
@@ -68,7 +107,7 @@ pub fn clock_lines() -> (String, String) {
     local_now()
         .map(|(h, m, wd, d, mo)| {
             (
-                format!("{h:02}:{m:02}"),
+                fmt_time(h, m, twelve_hour()),
                 format!(
                     "{}, {d} {}",
                     DAYS[wd.rem_euclid(7) as usize],
@@ -200,6 +239,15 @@ pub fn draw(state: &mut ShellState) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn time_follows_the_hour_format() {
+        assert_eq!(super::fmt_time(0, 5, true), "12:05 am");
+        assert_eq!(super::fmt_time(12, 0, true), "12:00 pm");
+        assert_eq!(super::fmt_time(16, 15, true), "4:15 pm");
+        assert_eq!(super::fmt_time(16, 15, false), "16:15");
+        assert_eq!(super::fmt_time(7, 3, false), "07:03");
+    }
+
     #[test]
     fn heights_and_temps() {
         assert_eq!(super::height(false), super::CARD_H);
