@@ -38,15 +38,81 @@ const MAG_MAX: f64 = ICON_SZ * 0.5;
 const MAG_SPAN: f64 = CELL * 3.0;
 /// Hover time before an icon's name label appears.
 pub const LABEL_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
-/// Pinned apps, top→bottom on a vertical rail (desktop ids without
-/// ".desktop").
+/// Default pinned apps, top→bottom on a vertical rail (desktop ids
+/// without ".desktop"). The user's order lives in `pins_path()`.
 pub const PINNED: &[&str] = &[
     "cosmos-terminal",
     "cosmos-files",
     "cosmos-editor",
     "cosmos-monitor",
     "cosmos-settings",
+    AGENTS,
 ];
+/// Agents is pinned for good — it has no "Remove from Dock".
+pub const AGENTS: &str = "cosmos-agents";
+
+fn pins_path() -> std::path::PathBuf {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::Path::new(&h).join(".config")))
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+    base.join("cosmos/dock-pins")
+}
+
+/// Pins from one-id-per-line text; Agents is re-added if missing.
+fn parse_pins(text: &str) -> Vec<String> {
+    let mut pins: Vec<String> = Vec::new();
+    for id in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        if !pins.iter().any(|p| p == id) {
+            pins.push(id.to_string());
+        }
+    }
+    if !pins.iter().any(|p| p == AGENTS) {
+        pins.push(AGENTS.to_string());
+    }
+    pins
+}
+
+pub fn load_pins() -> Vec<String> {
+    match std::fs::read_to_string(pins_path()) {
+        Ok(text) => parse_pins(&text),
+        Err(_) => PINNED.iter().map(|s| s.to_string()).collect(),
+    }
+}
+
+fn save_pins(pins: &[String]) {
+    let path = pins_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Err(err) = std::fs::write(&path, pins.join("\n") + "\n") {
+        tracing::warn!("dock: saving pins failed: {err}");
+    }
+}
+
+/// Keep in Dock / Remove from Dock. Agents can't be removed.
+pub fn set_pinned(state: &mut ShellState, id: &str, keep: bool) {
+    let has = state.dock_pins.iter().any(|p| p == id);
+    if keep && !has {
+        state.dock_pins.push(id.to_string());
+    } else if !keep && has && id != AGENTS {
+        state.dock_pins.retain(|p| p != id);
+    } else {
+        return;
+    }
+    save_pins(&state.dock_pins);
+    state.dock_dirty = true;
+}
+
+/// Window ids of app `id`, oldest first.
+pub fn windows_of(state: &ShellState, id: &str) -> Vec<u64> {
+    state
+        .windows
+        .iter()
+        .filter(|w| normalize(&w.app_id) == id)
+        .map(|w| w.id)
+        .collect()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DockPos {
@@ -113,30 +179,31 @@ fn entries(state: &ShellState) -> Vec<DockEntry> {
         // Every running app not pinned gets a dock cell — taskbar
         // semantics: the dock mirrors all running windows, not just
         // unregistered binaries.
-        if !PINNED.contains(&key.as_str()) && !extras.contains(&key) {
+        if !state.dock_pins.contains(&key) && !extras.contains(&key) {
             extras.push(key);
         }
     }
 
-    for id in PINNED {
-        let Some(app) = state.apps.iter().find(|a| a.id == *id).cloned() else {
+    for id in &state.dock_pins {
+        let id = id.as_str();
+        let Some(app) = state.apps.iter().find(|a| a.id == id).cloned() else {
             continue;
         };
         let windows: Vec<u64> = state
             .windows
             .iter()
-            .filter(|w| normalize(&w.app_id) == *id)
+            .filter(|w| normalize(&w.app_id) == id)
             .map(|w| w.id)
             .collect();
         let focused = state
             .windows
             .iter()
-            .any(|w| normalize(&w.app_id) == *id && w.focused);
+            .any(|w| normalize(&w.app_id) == id && w.focused);
         let minimized = !windows.is_empty()
             && state
                 .windows
                 .iter()
-                .filter(|w| normalize(&w.app_id) == *id)
+                .filter(|w| normalize(&w.app_id) == id)
                 .all(|w| w.minimized);
         out.push(DockEntry {
             icon: id.to_string(),
@@ -522,12 +589,27 @@ fn trash_dir() -> std::path::PathBuf {
 
 /// Launcher toggles Start; Trash opens in Files; an app focuses its
 /// latest window, minimises it if it is already focused, or launches.
-pub fn click(state: &mut ShellState, x: f64, y: f64) -> bool {
+pub fn click(state: &mut ShellState, button: u32, x: f64, y: f64) -> bool {
+    const BTN_RIGHT: u32 = 0x111;
+    const BTN_MIDDLE: u32 = 0x112;
     let items = entries(state);
     let Some(idx) = hit(state, axis_coord(state.dock_position, x, y), &items) else {
         return false;
     };
+    state.set_menu(None, 0);
     let item = &items[idx];
+    if button == BTN_RIGHT {
+        open_menu(state, &items, idx);
+        return true;
+    }
+    if button == BTN_MIDDLE {
+        if let Some(app) = &item.app {
+            if let Err(err) = crate::desktop::launch(app) {
+                tracing::warn!("dock: new window {} failed: {err}", app.id);
+            }
+        }
+        return true;
+    }
     if item.icon == "launcher" {
         state.ipc.send(&cosmos_ipc::Request::ToggleLauncher);
         return true;
@@ -558,6 +640,67 @@ pub fn click(state: &mut ShellState, x: f64, y: f64) -> bool {
         return true;
     }
     false
+}
+
+/// Right-click: open windows, New Window, Keep/Remove, Quit — a glass
+/// card floating off the pill beside the icon.
+fn open_menu(state: &mut ShellState, items: &[DockEntry], idx: usize) {
+    use crate::menubar::Action;
+    let item = &items[idx];
+    let Some(app) = item.app.clone() else {
+        return;
+    };
+    let mut rows: Vec<(String, Action)> = item
+        .windows
+        .iter()
+        .filter_map(|id| state.windows.iter().find(|w| w.id == *id))
+        .map(|w| {
+            let title = if w.title.is_empty() {
+                &app.name
+            } else {
+                &w.title
+            };
+            let mut t: String = title.chars().take(30).collect();
+            if title.chars().count() > 30 {
+                t.push('…');
+            }
+            (t, Action::FocusWindow(w.id))
+        })
+        .collect();
+    rows.push(("New Window".into(), Action::DockNewWindow));
+    let key = icons::key_for(&app.id);
+    if key != AGENTS {
+        if state.dock_pins.contains(&key) {
+            rows.push(("Remove from Dock".into(), Action::DockRemove));
+        } else {
+            rows.push(("Keep in Dock".into(), Action::DockKeep));
+        }
+    }
+    if !item.windows.is_empty() {
+        rows.push(("Quit".into(), Action::DockQuit));
+    }
+    let (sw, sh) = crate::menubar::surface_size(rows.len());
+    let inset = crate::menubar::INSET as f64;
+    let (cw, ch) = (sw as f64 - inset * 2.0, sh as f64 - inset * 2.0);
+    let span = axis_span(state.dock_position, state.dock_size.0, state.dock_size.1);
+    let hover = state.dock_hover.filter(|_| state.dock_magnify);
+    let (a, len) = layout(items, span, hover).0[idx];
+    let mid = a + len / 2.0;
+    let (scr_w, scr_h) = glass::screen_size();
+    let off = (MARGIN + STRIP) as f64 + 8.0;
+    let (x, y) = match state.dock_position {
+        DockPos::Bottom => (mid - cw / 2.0, scr_h as f64 - off - ch),
+        DockPos::Left => (off, mid - ch / 2.0),
+        DockPos::Right => (scr_w as f64 - off - cw, mid - ch / 2.0),
+    };
+    state.dock_label = None;
+    let key_app = state
+        .apps
+        .iter()
+        .find(|a| a.id == key)
+        .cloned()
+        .or(Some(app));
+    state.open_dock_menu(rows, key_app, x.round() as i32, y.round() as i32);
 }
 
 /// Hover bookkeeping for labels + magnification; any move repaints.
@@ -639,6 +782,13 @@ mod tests {
         assert_eq!(mag(Some(100.0), 100.0), ICON_SZ * 0.5);
         assert!(mag(Some(100.0 + CELL * 2.9), 100.0) > 0.0);
         assert_eq!(mag(Some(100.0 + CELL * 3.0), 100.0), 0.0);
+    }
+
+    #[test]
+    fn pins_dedupe_and_always_keep_agents() {
+        let pins = parse_pins("cosmos-files\n\ncosmos-files\nfirefox\n");
+        assert_eq!(pins, vec!["cosmos-files", "firefox", AGENTS]);
+        assert!(PINNED.contains(&AGENTS));
     }
 
     #[test]

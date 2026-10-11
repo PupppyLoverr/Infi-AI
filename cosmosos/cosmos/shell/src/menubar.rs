@@ -14,6 +14,8 @@ pub const TITLES: &[&str] = &["File", "Window", "Help"];
 pub const SYSTEM: usize = 3;
 /// Menu index of the desktop context menu (right-click on the wallpaper).
 pub const DESKTOP: usize = 4;
+/// Menu index of a dock icon's context menu (rows built per open).
+pub const DOCK: usize = 5;
 const TITLE_PAD: f64 = 10.0;
 const CHAR_W: f64 = 7.5;
 /// Shadow inset around the card inside the surface.
@@ -43,6 +45,14 @@ pub enum Action {
     ViewOptions,
     AskCosmos,
     TerminalHere,
+    /// Dock menu: raise this window.
+    FocusWindow(u64),
+    /// Dock menu: launch another window of the menu's app.
+    DockNewWindow,
+    DockKeep,
+    DockRemove,
+    /// Dock menu: close every window of the menu's app.
+    DockQuit,
 }
 
 impl Action {
@@ -61,6 +71,11 @@ impl Action {
                 | Action::ViewOptions
                 | Action::AskCosmos
                 | Action::TerminalHere
+                | Action::FocusWindow(_)
+                | Action::DockNewWindow
+                | Action::DockKeep
+                | Action::DockRemove
+                | Action::DockQuit
         )
     }
 }
@@ -120,14 +135,27 @@ pub fn titles_end(start: f64) -> f64 {
         .unwrap_or(start)
 }
 
-pub fn surface_size(menu: usize) -> (u32, u32) {
-    let h = PAD * 2.0 + items(menu).len() as f64 * ROW_H;
+/// The open menu's rows: static for menubar/desktop menus, built at
+/// open time for the dock.
+pub fn rows(state: &ShellState, menu: usize) -> Vec<(String, Action)> {
+    if menu == DOCK {
+        return state.dock_menu.clone();
+    }
+    items(menu)
+        .iter()
+        .map(|(l, a)| (l.to_string(), *a))
+        .collect()
+}
+
+/// Surface size for a menu card of `n` rows.
+pub fn surface_size(n: usize) -> (u32, u32) {
+    let h = PAD * 2.0 + n as f64 * ROW_H;
     (CARD_W + INSET * 2, h as u32 + INSET * 2)
 }
 
-/// Row index under surface-local y.
-pub fn item_at(menu: usize, x: f64, y: f64) -> Option<usize> {
-    let (sw, _) = surface_size(menu);
+/// Row index under surface-local y in a menu of `n` rows.
+pub fn item_at(n: usize, x: f64, y: f64) -> Option<usize> {
+    let (sw, _) = surface_size(n);
     if x < INSET as f64 || x >= (sw - INSET) as f64 {
         return None;
     }
@@ -136,11 +164,13 @@ pub fn item_at(menu: usize, x: f64, y: f64) -> Option<usize> {
         return None;
     }
     let i = (ry / ROW_H) as usize;
-    (i < items(menu).len()).then_some(i)
+    (i < n).then_some(i)
 }
 
 pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {
-    let h = state.menu_open.and_then(|m| item_at(m, x, y));
+    let h = state
+        .menu_open
+        .and_then(|m| item_at(rows(state, m).len(), x, y));
     if h != state.menu_hover {
         state.menu_hover = h;
         true
@@ -154,7 +184,8 @@ pub fn draw(state: &mut ShellState) {
     let Some(layer) = state.menu_surface.clone() else {
         return;
     };
-    let (w, h) = surface_size(menu);
+    let rows = rows(state, menu);
+    let (w, h) = surface_size(rows.len());
     let dark = state.dark;
     let has_window = state.windows.iter().any(|w| w.focused);
     let pal = cosmos_theme::palette(dark);
@@ -194,7 +225,7 @@ pub fn draw(state: &mut ShellState) {
         dark,
         fallback,
     );
-    for (row, (label, action)) in items(menu).iter().enumerate() {
+    for (row, (label, action)) in rows.iter().enumerate() {
         let enabled = has_window || !action.needs_window();
         let ry = i + PAD as f32 + row as f32 * ROW_H as f32;
         let hot = enabled && state.menu_hover == Some(row);

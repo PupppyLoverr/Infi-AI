@@ -231,6 +231,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         panel_hover: (0.0, false),
         dock_hover: None,
         dock_label: None,
+        dock_pins: dock::load_pins(),
+        dock_menu: Vec::new(),
+        dock_menu_app: None,
         dock_dirty: true,
         switcher_dirty: false,
         quick_open: false,
@@ -624,6 +627,11 @@ pub struct ShellState {
     /// Hovered dock cell and when the pointer settled on it; its label
     /// shows after dock::LABEL_DELAY.
     pub dock_label: Option<(usize, std::time::Instant)>,
+    /// Pinned dock apps in order (persisted; Agents always present).
+    pub dock_pins: Vec<String>,
+    /// Rows of the open dock context menu and the app it targets.
+    pub dock_menu: Vec<(String, menubar::Action)>,
+    pub dock_menu_app: Option<AppEntry>,
     /// Which screen edge the dock rail sits on (config `dock_position`).
     pub dock_position: dock::DockPos,
     /// Config `dock_magnify` — icons grow under the pointer.
@@ -1419,6 +1427,22 @@ impl ShellState {
         self.set_menu_at(Some(menubar::DESKTOP), x, Some(y));
     }
 
+    /// Dock icon context menu with its card's top-left at screen (x, y).
+    pub fn open_dock_menu(
+        &mut self,
+        rows: Vec<(String, menubar::Action)>,
+        app: Option<AppEntry>,
+        x: i32,
+        y: i32,
+    ) {
+        self.close_launcher();
+        self.set_quick_open(false);
+        self.dock_menu = rows;
+        self.dock_menu_app = app;
+        let inset = menubar::INSET as i32;
+        self.set_menu_at(Some(menubar::DOCK), x + inset, Some(y + inset));
+    }
+
     /// `y: None` drops the card just under the menubar; `Some(y)` puts
     /// its top edge at screen `y`.
     fn set_menu_at(&mut self, menu: Option<usize>, x: i32, y: Option<i32>) {
@@ -1429,7 +1453,7 @@ impl ShellState {
             self.panel_dirty = true;
             return;
         };
-        let (w, h) = menubar::surface_size(m);
+        let (w, h) = menubar::surface_size(menubar::rows(self, m).len());
         let inset = menubar::INSET as i32;
         let left = (x - inset).clamp(0, (self.panel_size.0 as i32 - w as i32).max(0));
         let top = match y {
@@ -1461,10 +1485,12 @@ impl ShellState {
 
     pub fn menu_click(&mut self, x: f64, y: f64) {
         let Some(m) = self.menu_open else { return };
-        let Some(row) = menubar::item_at(m, x, y) else {
+        let rows = menubar::rows(self, m);
+        let Some(row) = menubar::item_at(rows.len(), x, y) else {
             return;
         };
-        let action = menubar::items(m)[row].1;
+        let action = rows[row].1;
+        let dock_app = self.dock_menu_app.clone();
         let focused = self.windows.iter().find(|w| w.focused).cloned();
         if action.needs_window() && focused.is_none() {
             return;
@@ -1536,6 +1562,26 @@ impl ShellState {
                     .spawn()
                 {
                     tracing::warn!("menu: terminal failed: {err}");
+                }
+            }
+            Action::FocusWindow(id) => self.ipc.send(&cosmos_ipc::Request::FocusWindow { id }),
+            Action::DockNewWindow => {
+                if let Some(app) = dock_app {
+                    if let Err(err) = desktop::launch(&app) {
+                        tracing::warn!("dock: new window {} failed: {err}", app.id);
+                    }
+                }
+            }
+            Action::DockKeep | Action::DockRemove => {
+                if let Some(app) = dock_app {
+                    dock::set_pinned(self, &app.id, action == Action::DockKeep);
+                }
+            }
+            Action::DockQuit => {
+                if let Some(app) = dock_app {
+                    for id in dock::windows_of(self, &app.id) {
+                        self.ipc.send(&cosmos_ipc::Request::CloseWindow { id });
+                    }
                 }
             }
             Action::Logout | Action::Restart | Action::Shutdown => {
@@ -2349,11 +2395,11 @@ impl PointerHandler for ShellState {
                 continue;
             };
             match ev.kind {
-                PointerEventKind::Press { .. } => {
+                PointerEventKind::Press { button, .. } => {
                     if self.panel.as_ref() == Some(&layer) {
                         self.panel_dirty = panel::click(self, ev.position.0, ev.position.1);
                     } else if self.dock_surface.as_ref() == Some(&layer) {
-                        self.dock_dirty = dock::click(self, ev.position.0, ev.position.1);
+                        self.dock_dirty = dock::click(self, button, ev.position.0, ev.position.1);
                     } else if self.launcher_surface.as_ref() == Some(&layer) {
                         self.launcher_click(ev.position.0, ev.position.1);
                     } else if self.notify_surface.as_ref() == Some(&layer) {
