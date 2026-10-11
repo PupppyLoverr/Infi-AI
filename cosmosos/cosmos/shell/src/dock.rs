@@ -37,6 +37,11 @@ const RADIUS: f32 = 22.0;
 const MAG_MAX: f64 = ICON_SZ * 0.5;
 const MAG_SPAN: f64 = CELL * 3.0;
 /// Hover time before an icon's name label appears.
+/// Auto-hide: hide this long after the pointer leaves; reveal after the
+/// pointer rests this long on the REVEAL_EDGE px strip at the edge.
+pub const HIDE_DELAY: std::time::Duration = std::time::Duration::from_millis(1000);
+pub const REVEAL_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
+const REVEAL_EDGE: i32 = 4;
 pub const LABEL_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
 /// Default pinned apps, top→bottom on a vertical rail (desktop ids
 /// without ".desktop"). The user's order lives in `pins_path()`.
@@ -411,6 +416,20 @@ pub fn draw(state: &mut ShellState) {
     // The overhang must be cleared or stale pool memory shows through.
     pixmap.fill(Color::TRANSPARENT);
 
+    if state.dock_hidden {
+        let wl_surface = layer.wl_surface().clone();
+        state.set_viewport(&wl_surface, w, h);
+        buffer.attach_to(&wl_surface).ok();
+        wl_surface.damage_buffer(0, 0, pw as i32, ph as i32);
+        if let Ok(region) = Region::new(&state.compositor_state) {
+            let (ex, ey, ew, eh) = edge_strip(pos, w as i32, h as i32);
+            region.add(ex, ey, ew, eh);
+            wl_surface.set_input_region(Some(region.wl_region()));
+        }
+        wl_surface.commit();
+        return;
+    }
+
     let span = axis_span(pos, w, h);
     let mag_hover = hover.filter(|_| state.dock_magnify);
     let (cells, start, content) = layout(&items, span, mag_hover);
@@ -703,9 +722,72 @@ fn open_menu(state: &mut ShellState, items: &[DockEntry], idx: usize) {
     state.open_dock_menu(rows, key_app, x.round() as i32, y.round() as i32);
 }
 
+/// The reveal strip of a hidden dock, flush with the screen edge.
+fn edge_strip(pos: DockPos, w: i32, h: i32) -> (i32, i32, i32, i32) {
+    match pos {
+        DockPos::Bottom => (0, h - REVEAL_EDGE, w, REVEAL_EDGE),
+        DockPos::Left => (0, 0, REVEAL_EDGE, h),
+        DockPos::Right => (w - REVEAL_EDGE, 0, REVEAL_EDGE, h),
+    }
+}
+
+/// Arm the auto-hide timer; a later arm or a reveal supersedes it. An
+/// open dock menu or a pointer on the dock defers the hide.
+pub fn schedule_hide(state: &mut ShellState) {
+    if !state.dock_autohide {
+        return;
+    }
+    state.dock_hide_seq += 1;
+    let seq = state.dock_hide_seq;
+    let _ = state.loop_handle.insert_source(
+        calloop::timer::Timer::from_duration(HIDE_DELAY),
+        move |_, _, state| {
+            if state.dock_autohide && state.dock_hide_seq == seq && !state.dock_hidden {
+                if state.dock_hover.is_some() || state.menu_open == Some(crate::menubar::DOCK) {
+                    schedule_hide(state);
+                } else {
+                    state.dock_hidden = true;
+                    state.dock_label = None;
+                    state.dock_dirty = true;
+                }
+            }
+            calloop::timer::TimeoutAction::Drop
+        },
+    );
+}
+
+/// Pointer on a hidden dock's edge strip: reveal after REVEAL_DELAY if
+/// it is still there.
+fn arm_reveal(state: &mut ShellState) {
+    if state.dock_reveal_at.is_some() {
+        return;
+    }
+    let t0 = std::time::Instant::now();
+    state.dock_reveal_at = Some(t0);
+    let _ = state.loop_handle.insert_source(
+        calloop::timer::Timer::from_duration(REVEAL_DELAY),
+        move |_, _, state| {
+            if state.dock_reveal_at == Some(t0) {
+                state.dock_reveal_at = None;
+                if state.dock_hidden && state.dock_hover.is_some() {
+                    state.dock_hidden = false;
+                    state.dock_hide_seq += 1;
+                    state.dock_dirty = true;
+                }
+            }
+            calloop::timer::TimeoutAction::Drop
+        },
+    );
+}
+
 /// Hover bookkeeping for labels + magnification; any move repaints.
 pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {
     let coord = axis_coord(state.dock_position, x, y);
+    if state.dock_hidden {
+        state.dock_hover = Some(coord);
+        arm_reveal(state);
+        return false;
+    }
     let items = entries(state);
     let cell = hit(state, coord, &items);
     let changed = state.dock_hover != Some(coord);
@@ -737,6 +819,10 @@ pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {
 /// Pointer left the dock — drop hover + magnification.
 pub fn leave(state: &mut ShellState) -> bool {
     state.dock_label = None;
+    state.dock_reveal_at = None;
+    if !state.dock_hidden {
+        schedule_hide(state);
+    }
     state.dock_hover.take().is_some()
 }
 
@@ -782,6 +868,13 @@ mod tests {
         assert_eq!(mag(Some(100.0), 100.0), ICON_SZ * 0.5);
         assert!(mag(Some(100.0 + CELL * 2.9), 100.0) > 0.0);
         assert_eq!(mag(Some(100.0 + CELL * 3.0), 100.0), 0.0);
+    }
+
+    #[test]
+    fn hidden_strip_hugs_the_screen_edge() {
+        assert_eq!(edge_strip(DockPos::Bottom, 1536, 212), (0, 208, 1536, 4));
+        assert_eq!(edge_strip(DockPos::Left, 212, 834), (0, 0, 4, 834));
+        assert_eq!(edge_strip(DockPos::Right, 212, 834), (208, 0, 4, 834));
     }
 
     #[test]
