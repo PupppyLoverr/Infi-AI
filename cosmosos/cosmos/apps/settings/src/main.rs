@@ -29,6 +29,7 @@ struct Cfg {
     dock_position: String, // "left" | "right" | "bottom"
     wallpaper: String,     // wallpaper stem under /usr/share/cosmos/wallpapers
     desktop_widgets: bool,
+    dock_magnify: bool,
     weather_city: String, // "" = time zone city
 }
 
@@ -46,6 +47,7 @@ impl Default for Cfg {
             dock_position: "bottom".into(),
             wallpaper: "violet".into(),
             desktop_widgets: true,
+            dock_magnify: false,
             weather_city: String::new(),
         }
     }
@@ -81,6 +83,9 @@ fn overlay_compositor_config(c: &mut Cfg) {
     }
     if let Some(on) = flag("desktop_widgets") {
         c.desktop_widgets = on;
+    }
+    if let Some(on) = flag("dock_magnify") {
+        c.dock_magnify = on;
     }
     if let Some(a) = text("appearance") {
         c.appearance = a;
@@ -119,6 +124,7 @@ fn load() -> Cfg {
             "dock_position" => c.dock_position = v.to_string(),
             "wallpaper" => c.wallpaper = v.to_string(),
             "desktop_widgets" => c.desktop_widgets = v != "false",
+            "dock_magnify" => c.dock_magnify = v == "true",
             "weather_city" => c.weather_city = v.to_string(),
             _ => {}
         }
@@ -133,9 +139,9 @@ fn save(c: &Cfg) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let text = format!(
-        "# CosmosOS configuration\nappearance = \"{}\"\nreduce_motion = {}\nlite_mode = {}\nscale = {}\nterminal = \"{}\"\nlauncher_rows = {}\naccent = \"{}\"\ndock_position = \"{}\"\nwallpaper = \"{}\"\ndesktop_widgets = {}\nweather_city = \"{}\"\n",
+        "# CosmosOS configuration\nappearance = \"{}\"\nreduce_motion = {}\nlite_mode = {}\nscale = {}\nterminal = \"{}\"\nlauncher_rows = {}\naccent = \"{}\"\ndock_position = \"{}\"\nwallpaper = \"{}\"\ndesktop_widgets = {}\ndock_magnify = {}\nweather_city = \"{}\"\n",
         c.appearance, c.reduce_motion, c.lite_mode, c.scale, c.terminal, c.launcher_rows, c.accent, c.dock_position, c.wallpaper,
-        c.desktop_widgets, c.weather_city.replace('"', "")
+        c.desktop_widgets, c.dock_magnify, c.weather_city.replace('"', "")
     );
     std::fs::write(path, text)
 }
@@ -537,6 +543,15 @@ fn dock(ui: &mut egui::Ui, app: &mut App) {
                 set(app, "dock_position", app.cfg.dock_position.clone().into());
             }
         });
+        g.row_detail(
+            "Magnification",
+            Some("Icons grow under the pointer"),
+            |ui| {
+                if toggle(ui, &mut app.cfg.dock_magnify).changed() {
+                    set(app, "dock_magnify", app.cfg.dock_magnify.into());
+                }
+            },
+        );
     });
     ui.add_space(space::S20);
     group(ui, Some("Desktop"), |g| {

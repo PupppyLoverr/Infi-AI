@@ -94,13 +94,17 @@ pub fn free_half(state: &ShellState) -> (f64, f64, f64, f64) {
         (w / 2.0, w)
     };
     match state.dock_position {
-        crate::dock::DockPos::Left => x0 = x0.max(crate::dock::STRIP as f64),
-        crate::dock::DockPos::Right => x1 = x1.min(w - crate::dock::STRIP as f64),
+        crate::dock::DockPos::Left => {
+            x0 = x0.max((crate::dock::STRIP + crate::dock::MARGIN) as f64)
+        }
+        crate::dock::DockPos::Right => {
+            x1 = x1.min(w - (crate::dock::STRIP + crate::dock::MARGIN) as f64)
+        }
         crate::dock::DockPos::Bottom => {}
     }
     let y0 = PANEL_HEIGHT as f64;
     let y1 = if state.dock_position == crate::dock::DockPos::Bottom {
-        h - crate::dock::STRIP as f64
+        h - (crate::dock::STRIP + crate::dock::MARGIN) as f64
     } else {
         h
     };

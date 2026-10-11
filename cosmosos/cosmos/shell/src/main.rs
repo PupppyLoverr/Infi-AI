@@ -171,6 +171,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         panel_size: (0, PANEL_HEIGHT),
         dock_size: (0, 0),
         dock_position: dock::DockPos::Bottom,
+        dock_magnify: false,
         switcher_size: (0, 0),
         switcher_order: Vec::new(),
         switcher_sel: 0,
@@ -229,6 +230,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         quick_dirty: false,
         panel_hover: (0.0, false),
         dock_hover: None,
+        dock_label: None,
         dock_dirty: true,
         switcher_dirty: false,
         quick_open: false,
@@ -619,8 +621,13 @@ pub struct ShellState {
     /// Last pointer position along the dock rail's axis (cell
     /// highlight + magnification centre).
     pub dock_hover: Option<f64>,
+    /// Hovered dock cell and when the pointer settled on it; its label
+    /// shows after dock::LABEL_DELAY.
+    pub dock_label: Option<(usize, std::time::Instant)>,
     /// Which screen edge the dock rail sits on (config `dock_position`).
     pub dock_position: dock::DockPos,
+    /// Config `dock_magnify` — icons grow under the pointer.
+    pub dock_magnify: bool,
     pub dock_dirty: bool,
     pub switcher_dirty: bool,
     /// Quick-settings flyout state.
@@ -1757,6 +1764,12 @@ impl ShellState {
                 if let Some(tx) = &self.weather_tx {
                     let _ = tx.send(city.to_string());
                 }
+            }
+        }
+        if let Some(on) = map.get("dock_magnify").and_then(|v| v.as_bool()) {
+            if on != self.dock_magnify {
+                self.dock_magnify = on;
+                self.dock_dirty = true;
             }
         }
         // Dock edge — a position change re-anchors the surface entirely

@@ -74,6 +74,8 @@ pub struct CosmosConfig {
     pub wallpaper: String,
     /// Clock and weather cards on the desktop (top-left).
     pub desktop_widgets: bool,
+    /// Dock icons magnify under the pointer (off by default).
+    pub dock_magnify: bool,
     /// Weather place name ("" = derive from the time zone city); geocoded
     /// via Open-Meteo by the shell.
     pub weather_city: String,
@@ -91,6 +93,7 @@ impl Default for CosmosConfig {
             dock_position: "bottom".to_string(),
             wallpaper: "violet".to_string(),
             desktop_widgets: true,
+            dock_magnify: false,
             weather_city: String::new(),
         }
     }
@@ -192,6 +195,11 @@ impl CosmosConfig {
                 self.desktop_widgets = value
                     .as_bool()
                     .ok_or_else(|| "desktop_widgets must be a bool".to_string())?;
+            }
+            "dock_magnify" => {
+                self.dock_magnify = value
+                    .as_bool()
+                    .ok_or_else(|| "dock_magnify must be a bool".to_string())?;
             }
             "weather_city" => {
                 let v = value

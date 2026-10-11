@@ -355,14 +355,14 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         };
 
         let old_geo = self.space.element_bbox(&elem).unwrap();
-        let outputs_for_window = self.space.outputs_for_element(&elem);
-        let output = outputs_for_window
-            .first()
-            // The window hasn't been mapped yet, use the primary output instead
-            .or_else(|| self.space.outputs().next())
-            // Assumes that at least one output exists
-            .expect("No outputs found");
-        let geometry = self.space.output_geometry(output).unwrap();
+        // Maximise into the work area (menubar + dock exclusive zones),
+        // leaving room for the SSD titlebar stacked above the surface.
+        let area = self.work_area(Some(&elem));
+        let titlebar = elem.titlebar_height();
+        let geometry = smithay::utils::Rectangle::new(
+            (area.loc.x, area.loc.y + titlebar).into(),
+            (area.size.w, (area.size.h - titlebar).max(1)).into(),
+        );
 
         window.set_maximized(true).unwrap();
         window.configure(geometry).unwrap();
@@ -372,7 +372,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             .get::<OldGeometry>()
             .unwrap()
             .save(old_geo);
-        self.space.map_element(elem, geometry.loc, false);
+        self.space.map_element(elem, area.loc, false);
     }
 
     pub fn move_request_x11(&mut self, window: &X11Surface) {

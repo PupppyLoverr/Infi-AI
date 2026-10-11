@@ -213,7 +213,7 @@ fn user_name() -> String {
 fn box_origin(size: (u32, u32), dock_pos: dock::DockPos, height: f64) -> (f64, f64) {
     let (w, h) = (size.0 as f64, size.1 as f64);
     let card_w = LAUNCHER_WIDTH as f64;
-    let rail = dock::STRIP as f64 + START_GAP;
+    let rail = (dock::STRIP + dock::MARGIN) as f64 + START_GAP;
     let min_top = crate::PANEL_HEIGHT as f64 + START_GAP;
     let centred = ((w - card_w) / 2.0).max(8.0);
     let (left, top) = match dock_pos {
@@ -1756,16 +1756,19 @@ mod search_layout_tests {
         let size = (1536, 864);
         let (left, top) = box_origin(size, dock::DockPos::Bottom, 560.0);
         assert_eq!(left, (1536.0 - LAUNCHER_WIDTH as f64) / 2.0);
-        assert_eq!(top + 560.0, 864.0 - dock::STRIP as f64 - START_GAP);
+        assert_eq!(
+            top + 560.0,
+            864.0 - (dock::STRIP + dock::MARGIN) as f64 - START_GAP
+        );
         let (_, top) = box_origin(size, dock::DockPos::Bottom, 900.0);
         assert_eq!(top, crate::PANEL_HEIGHT as f64 + START_GAP);
         let (left, top) = box_origin(size, dock::DockPos::Left, 560.0);
-        assert_eq!(left, dock::STRIP as f64 + START_GAP);
+        assert_eq!(left, (dock::STRIP + dock::MARGIN) as f64 + START_GAP);
         assert_eq!(top, crate::PANEL_HEIGHT as f64 + START_GAP);
         let (left, _) = box_origin(size, dock::DockPos::Right, 560.0);
         assert_eq!(
             left + LAUNCHER_WIDTH as f64,
-            1536.0 - dock::STRIP as f64 - START_GAP
+            1536.0 - (dock::STRIP + dock::MARGIN) as f64 - START_GAP
         );
     }
 
