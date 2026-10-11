@@ -172,6 +172,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         dock_size: (0, 0),
         dock_position: dock::DockPos::Bottom,
         dock_magnify: false,
+        dock_autohide: false,
+        dock_hidden: false,
+        dock_hide_seq: 0,
+        dock_reveal_at: None,
         switcher_size: (0, 0),
         switcher_order: Vec::new(),
         switcher_sel: 0,
@@ -636,6 +640,13 @@ pub struct ShellState {
     pub dock_position: dock::DockPos,
     /// Config `dock_magnify` — icons grow under the pointer.
     pub dock_magnify: bool,
+    /// Auto-hide: off by default. While hidden the dock is a transparent
+    /// edge strip; `dock_hide_seq` invalidates stale hide timers and
+    /// `dock_reveal_at` marks a pending 300 ms edge-dwell reveal.
+    pub dock_autohide: bool,
+    pub dock_hidden: bool,
+    pub dock_hide_seq: u64,
+    pub dock_reveal_at: Option<std::time::Instant>,
     pub dock_dirty: bool,
     pub switcher_dirty: bool,
     /// Quick-settings flyout state.
@@ -752,7 +763,13 @@ impl ShellState {
             }
         }
         layer.set_size(sw, sh);
-        layer.set_exclusive_zone((dock::STRIP + dock::MARGIN) as i32);
+        // A hiding dock reserves nothing — windows use the full edge.
+        let zone = if self.dock_autohide {
+            0
+        } else {
+            (dock::STRIP + dock::MARGIN) as i32
+        };
+        layer.set_exclusive_zone(zone);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         layer.wl_surface().commit();
         self.dock_surface = Some(layer);
@@ -1816,6 +1833,22 @@ impl ShellState {
             if on != self.dock_magnify {
                 self.dock_magnify = on;
                 self.dock_dirty = true;
+            }
+        }
+        if let Some(on) = map.get("dock_autohide").and_then(|v| v.as_bool()) {
+            if on != self.dock_autohide {
+                self.dock_autohide = on;
+                self.dock_hidden = false;
+                self.dock_reveal_at = None;
+                // The exclusive zone changes, so recreate the layer.
+                if self.dock_surface.is_some() {
+                    self.dock_surface = None;
+                    let qh = self.qh.clone();
+                    self.create_dock(&qh);
+                }
+                if on {
+                    dock::schedule_hide(self);
+                }
             }
         }
         // Dock edge — a position change re-anchors the surface entirely

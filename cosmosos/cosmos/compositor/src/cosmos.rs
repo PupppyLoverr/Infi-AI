@@ -76,6 +76,8 @@ pub struct CosmosConfig {
     pub desktop_widgets: bool,
     /// Dock icons magnify under the pointer (off by default).
     pub dock_magnify: bool,
+    /// Dock hides until the pointer rests on its edge (off by default).
+    pub dock_autohide: bool,
     /// Weather place name ("" = derive from the time zone city); geocoded
     /// via Open-Meteo by the shell.
     pub weather_city: String,
@@ -94,6 +96,7 @@ impl Default for CosmosConfig {
             wallpaper: "violet".to_string(),
             desktop_widgets: true,
             dock_magnify: false,
+            dock_autohide: false,
             weather_city: String::new(),
         }
     }
@@ -200,6 +203,11 @@ impl CosmosConfig {
                 self.dock_magnify = value
                     .as_bool()
                     .ok_or_else(|| "dock_magnify must be a bool".to_string())?;
+            }
+            "dock_autohide" => {
+                self.dock_autohide = value
+                    .as_bool()
+                    .ok_or_else(|| "dock_autohide must be a bool".to_string())?;
             }
             "weather_city" => {
                 let v = value
