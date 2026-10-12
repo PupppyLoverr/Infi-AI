@@ -90,6 +90,50 @@ fn battery_label(info: &crate::sysinfo::SysInfo) -> Option<String> {
         .map(|b| format!("{}%", b.percent))
 }
 
+/// One tray hit target, left to right.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TrayItem {
+    Agent,
+    Focus,
+    Net,
+    Vol,
+    Battery,
+    Controls,
+    Clock,
+}
+
+/// Tray targets with their `[x0, x1)` spans in panel coordinates — the
+/// same 20px stride `draw` paints, so hover and clicks land on the glyph.
+pub fn tray_items(state: &ShellState) -> Vec<(TrayItem, f64, f64)> {
+    let (w, _) = state.panel_size;
+    let mut items = Vec::new();
+    if agent_running(state) {
+        items.push((TrayItem::Agent, 20.0));
+    }
+    if state.dnd {
+        items.push((TrayItem::Focus, 20.0));
+    }
+    items.push((TrayItem::Net, 20.0));
+    items.push((TrayItem::Vol, 20.0));
+    if let Some(b) = battery_label(&state.sysinfo) {
+        items.push((TrayItem::Battery, 26.0 + draw::text_width(12.0, &b) as f64));
+    }
+    items.push((TrayItem::Controls, 20.0));
+    items.push((
+        TrayItem::Clock,
+        draw::text_width(13.0, &state.sysinfo.clock) as f64 + 8.0,
+    ));
+    let mut x = w as f64 - status_text_len(state) - 4.0;
+    items
+        .into_iter()
+        .map(|(item, iw)| {
+            let span = (item, x - 3.0, x + iw - 3.0);
+            x += iw;
+            span
+        })
+        .collect()
+}
+
 /// Width of the status column — shared by draw, click and `tray_clicked`.
 /// Layout: [agent?][dnd?][net][vol][battery + %?][controls] icons at a
 /// 20px stride, then the clock text.
@@ -124,6 +168,7 @@ pub fn draw(state: &mut ShellState) {
     let net_on = state.sysinfo.network.online;
     let net_wifi = state.sysinfo.network.wifi;
     let agent_on = agent_running(state);
+    let tray = tray_items(state);
     let bat_label = battery_label(&state.sysinfo);
     let vol_muted = state
         .sysinfo
@@ -278,15 +323,17 @@ pub fn draw(state: &mut ShellState) {
     }
 
     // Right side: status icons + clock (rightmost — the tray), then the pager.
-    if hov && hx >= tray_x {
+    // Each tray item highlights on its own: 6px radius, 10% of the text colour.
+    if let Some((_, x0, x1)) = tray.iter().find(|(_, x0, x1)| hov && hx >= *x0 && hx < *x1) {
+        let tint = if dark { 0xFF } else { 0x00 };
         draw::fill_round_rect(
             &mut pixmap,
-            tray_x as f32 + 2.0,
-            4.0,
-            status_w as f32 + 8.0,
-            h as f32 - 8.0,
-            8.0,
-            hover_bg,
+            *x0 as f32,
+            5.0,
+            (*x1 - *x0) as f32,
+            h as f32 - 10.0,
+            6.0,
+            Color::from_rgba8(tint, tint, tint, 0x1A),
         );
     }
     // Tray icons then the clock — the Win11/macOS status-icons idiom.
@@ -422,12 +469,31 @@ pub fn click(state: &mut ShellState, x: f64, _y: f64) -> bool {
     // just dismissed by the focus-loss `leave` of THIS same click, the
     // toggle must not fire — the click's job was already the dismissal.
     if state.tray_clicked(x) {
+        let item = tray_items(state)
+            .into_iter()
+            .find(|(_, x0, x1)| x >= *x0 && x < *x1)
+            .map(|(item, _, _)| item);
         let just_dismissed = state
             .quick_dismissed_at
             .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(300));
         state.quick_dismissed_at = None;
         if !just_dismissed {
-            state.set_quick_open(!state.quick_open);
+            let open = !state.quick_open;
+            state.set_quick_open(open);
+            // Wi-Fi and volume open straight into their own Control Centre
+            // view; the other items open the Control Centre itself.
+            if open {
+                state.cc_detail = match item {
+                    Some(TrayItem::Net) => {
+                        Some(crate::ccdetail::View::Wifi(crate::ccdetail::wifi_networks()))
+                    }
+                    Some(TrayItem::Vol) => {
+                        Some(crate::ccdetail::View::Sound(crate::ccdetail::sinks()))
+                    }
+                    _ => None,
+                };
+                state.quick_dirty = true;
+            }
         }
         return true;
     }
