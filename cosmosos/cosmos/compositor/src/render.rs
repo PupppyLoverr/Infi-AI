@@ -957,6 +957,18 @@ where
         Instant::now(),
     );
 
+    let scale: Scale<f64> = output.current_scale().fractional_scale().into();
+    let extent = elements.iter().fold((0, 0), |(w, h), e| {
+        let g = smithay::backend::renderer::element::Element::geometry(e, scale);
+        (w.max(g.loc.x + g.size.w), h.max(g.loc.y + g.size.h))
+    });
+    tracing::info!(
+        ?size,
+        scale = scale.x,
+        elements = elements.len(),
+        ?extent,
+        "capture output"
+    );
     let mut tracker = OutputDamageTracker::from_output(output);
     tracker
         .render_output(renderer, &mut fb, 0, &elements, clear_color)

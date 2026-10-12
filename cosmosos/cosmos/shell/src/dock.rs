@@ -864,7 +864,7 @@ fn open_menu(state: &mut ShellState, items: &[DockEntry], idx: usize) {
     let (a, len) = layout(items, span, hover).0[idx];
     let mid = a + len / 2.0;
     let (scr_w, scr_h) = glass::screen_size();
-    let off = (MARGIN + STRIP) as f64 + 8.0;
+    let off = (MARGIN + STRIP) as f64 + 10.0;
     let (x, y) = match state.dock_position {
         DockPos::Bottom => (mid - cw / 2.0, scr_h as f64 - off - ch),
         // Side docks sit below the menubar's exclusive zone, so their
@@ -875,6 +875,15 @@ fn open_menu(state: &mut ShellState, items: &[DockEntry], idx: usize) {
             crate::PANEL_HEIGHT as f64 + mid - ch / 2.0,
         ),
     };
+    tracing::debug!(
+        mid,
+        ch,
+        dock_size = ?state.dock_size,
+        screen = ?(scr_w, scr_h),
+        x,
+        y,
+        "dock menu placement"
+    );
     state.dock_label = None;
     let key_app = state
         .apps

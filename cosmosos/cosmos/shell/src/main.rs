@@ -1501,8 +1501,7 @@ impl ShellState {
         self.set_quick_open(false);
         self.dock_menu = rows;
         self.dock_menu_app = app;
-        let inset = menubar::INSET as i32;
-        self.set_menu_at(Some(menubar::DOCK), x + inset, Some(y + inset));
+        self.set_menu_at(Some(menubar::DOCK), x, Some(y));
     }
 
     /// `y: None` drops the card just under the menubar; `Some(y)` puts
