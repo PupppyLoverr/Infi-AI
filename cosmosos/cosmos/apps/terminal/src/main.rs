@@ -277,6 +277,7 @@ fn main() {
             Term::fallback(format!("failed to spawn shell: {e}"))
         }
     };
+    cosmos_uitk::terminal_keys(true);
     if let Err(e) = cosmos_uitk::run("Terminal", "cosmos.terminal", (680, 440), move |ui| {
         let got = term.pump();
         if !term.dead {
