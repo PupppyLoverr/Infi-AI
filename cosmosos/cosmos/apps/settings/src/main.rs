@@ -189,15 +189,17 @@ enum Pane {
     Dock,
     Apps,
     Session,
+    About,
 }
 
 impl Pane {
-    const ALL: [Pane; 5] = [
+    const ALL: [Pane; 6] = [
         Pane::Appearance,
         Pane::Wallpaper,
         Pane::Dock,
         Pane::Apps,
         Pane::Session,
+        Pane::About,
     ];
     fn title(self) -> &'static str {
         match self {
@@ -206,6 +208,7 @@ impl Pane {
             Pane::Dock => "Desktop & Dock",
             Pane::Apps => "Apps",
             Pane::Session => "Session",
+            Pane::About => "About",
         }
     }
     fn icon(self) -> Icon {
@@ -214,7 +217,7 @@ impl Pane {
             Pane::Wallpaper => Icon::Image,
             Pane::Dock => Icon::Desktop,
             Pane::Apps => Icon::Grid,
-            Pane::Session => Icon::Info,
+            Pane::Session | Pane::About => Icon::Info,
         }
     }
 }
@@ -229,6 +232,7 @@ fn pane_arg(mut args: impl Iterator<Item = String>) -> Option<Pane> {
                 "dock" => Some(Pane::Dock),
                 "apps" => Some(Pane::Apps),
                 "session" => Some(Pane::Session),
+                "about" => Some(Pane::About),
                 _ => None,
             };
         }
@@ -332,6 +336,7 @@ fn draw(ui: &mut egui::Ui, app: &mut App) {
                                 Pane::Dock => dock(ui, app),
                                 Pane::Apps => apps(ui, app),
                                 Pane::Session => session(ui, &kit, app),
+                                Pane::About => about(ui, &kit),
                             }
                             if !app.status.is_empty() {
                                 ui.add_space(space::S12);
@@ -628,6 +633,44 @@ fn session(ui: &mut egui::Ui, kit: &Kit, app: &mut App) {
                 }
             },
         );
+    });
+}
+
+/// About CosmosOS: the menubar's first system-menu item lands here.
+fn about(ui: &mut egui::Ui, kit: &Kit) {
+    let read = |p: &str| std::fs::read_to_string(p).unwrap_or_default();
+    let os = read("/etc/os-release");
+    let field = |k: &str| {
+        os.lines()
+            .find_map(|l| l.strip_prefix(&format!("{k}=")))
+            .map(|v| v.trim_matches('"').to_string())
+    };
+    let system = field("PRETTY_NAME")
+        .or_else(|| field("NAME"))
+        .unwrap_or_else(|| "CosmosOS".into());
+    let kernel = read("/proc/sys/kernel/osrelease").trim().to_string();
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let cpu = read("/proc/cpuinfo")
+        .lines()
+        .find_map(|l| l.strip_prefix("model name")?.split_once(':'))
+        .map(|(_, v)| format!("{} · {cores} cores", v.trim()))
+        .unwrap_or_else(|| format!("{cores} cores"));
+    let mem_kb: u64 = read("/proc/meminfo")
+        .lines()
+        .find_map(|l| l.strip_prefix("MemTotal:")?.split_whitespace().next()?.parse().ok())
+        .unwrap_or(0);
+    let memory = format!("{:.1} GB", mem_kb as f64 / 1_048_576.0);
+    group(ui, None, |g| {
+        for (k, v) in [
+            ("System", system),
+            ("Kernel", kernel),
+            ("Processor", cpu),
+            ("Memory", memory),
+        ] {
+            g.row(k, |ui| {
+                ui.label(egui::RichText::new(v.as_str()).color(kit.text2()));
+            });
+        }
     });
 }
 

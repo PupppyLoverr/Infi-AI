@@ -191,7 +191,7 @@ fn run_action(action: SystemAction) -> Result<(), String> {
 }
 
 /// logind power calls — the real path on systemd systems.
-fn dbus_power(method: &str) -> Result<(), String> {
+pub fn dbus_power(method: &str) -> Result<(), String> {
     let conn = zbus::blocking::Connection::system().map_err(|e| e.to_string())?;
     conn.call_method(
         Some("org.freedesktop.login1"),

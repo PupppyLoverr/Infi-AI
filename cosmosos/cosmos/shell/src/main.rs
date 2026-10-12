@@ -1422,7 +1422,7 @@ impl ShellState {
             self.panel_dirty = true;
             return;
         };
-        let (w, h) = menubar::surface_size(m);
+        let (w, h) = menubar::surface_size(menubar::current(self, m));
         let inset = menubar::INSET as i32;
         let left = (x - inset).clamp(0, (self.panel_size.0 as i32 - w as i32).max(0));
         let top = match y {
@@ -1454,10 +1454,10 @@ impl ShellState {
 
     pub fn menu_click(&mut self, x: f64, y: f64) {
         let Some(m) = self.menu_open else { return };
-        let Some(row) = menubar::item_at(m, x, y) else {
+        let Some(row) = menubar::item_at(menubar::current(self, m), x, y) else {
             return;
         };
-        let action = menubar::items(m)[row].1;
+        let action = menubar::current(self, m)[row].1;
         let focused = self.windows.iter().find(|w| w.focused).cloned();
         if action.needs_window() && focused.is_none() {
             return;
@@ -1529,6 +1529,40 @@ impl ShellState {
                     .spawn()
                 {
                     tracing::warn!("menu: terminal failed: {err}");
+                }
+            }
+            Action::NewFilesWindow => spawn_logged("cosmos-files", &[]),
+            Action::Keys(keys) => self.ipc.send(&cosmos_ipc::Request::SendShortcut {
+                id,
+                keys: keys.to_vec(),
+            }),
+            Action::Open(place) => {
+                use menubar::Place;
+                let dir = match place {
+                    Place::Home => std::path::PathBuf::from(
+                        std::env::var("HOME").unwrap_or_else(|_| "/".into()),
+                    ),
+                    Place::Desktop => desktop_dir(),
+                    Place::Documents => user_dir("DOCUMENTS", "Documents"),
+                    Place::Downloads => user_dir("DOWNLOAD", "Downloads"),
+                    Place::Pictures => user_dir("PICTURES", "Pictures"),
+                    Place::Trash => std::env::var("XDG_DATA_HOME")
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|_| {
+                            std::path::PathBuf::from(
+                                std::env::var("HOME").unwrap_or_else(|_| "/".into()),
+                            )
+                            .join(".local/share")
+                        })
+                        .join("Trash/files"),
+                };
+                let _ = std::fs::create_dir_all(&dir);
+                spawn_logged("cosmos-files", &[&dir.to_string_lossy()]);
+            }
+            Action::About => spawn_logged("cosmos-settings", &["--pane", "about"]),
+            Action::Sleep => {
+                if let Err(err) = desktop::dbus_power("Suspend") {
+                    tracing::warn!("menu: sleep failed: {err}");
                 }
             }
             Action::Logout | Action::Restart | Action::Shutdown => {
@@ -2702,6 +2736,11 @@ fn spawn_logged(cmd: &str, args: &[&str]) {
 
 /// `$XDG_DESKTOP_DIR` from user-dirs.dirs, else `~/Desktop`.
 fn desktop_dir() -> std::path::PathBuf {
+    user_dir("DESKTOP", "Desktop")
+}
+
+/// An XDG user dir (`XDG_<key>_DIR` in user-dirs.dirs), else `~/<fallback>`.
+fn user_dir(key: &str, fallback: &str) -> std::path::PathBuf {
     let home = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into()));
     let cfg = std::env::var("XDG_CONFIG_HOME")
         .map(std::path::PathBuf::from)
@@ -2710,14 +2749,14 @@ fn desktop_dir() -> std::path::PathBuf {
         .ok()
         .and_then(|t| {
             t.lines()
-                .find_map(|l| l.strip_prefix("XDG_DESKTOP_DIR="))
+                .find_map(|l| l.strip_prefix(&format!("XDG_{key}_DIR=")))
                 .map(|v| {
                     v.trim_matches('"')
                         .replace("$HOME", &home.to_string_lossy())
                 })
         })
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| home.join("Desktop"))
+        .unwrap_or_else(|| home.join(fallback))
 }
 
 /// Create "untitled folder" (then "untitled folder 2", …) on the Desktop.
@@ -2758,7 +2797,7 @@ mod desktop_menu_tests {
 
     #[test]
     fn desktop_menu_items_need_no_window() {
-        let items = crate::menubar::items(crate::menubar::DESKTOP);
+        let items = crate::menubar::DESKTOP_ITEMS;
         assert_eq!(items.len(), 5);
         assert!(items.iter().all(|(_, a)| !a.needs_window()));
     }

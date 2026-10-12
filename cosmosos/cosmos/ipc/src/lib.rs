@@ -100,6 +100,13 @@ pub enum Request {
     MinimizeWindow {
         id: u64,
     },
+    /// Focus a window and type a key chord into it (the menubar's Edit
+    /// menu). `keys` are evdev codes, pressed in order then released
+    /// in reverse, e.g. `[29, 46]` for Ctrl+C.
+    SendShortcut {
+        id: u64,
+        keys: Vec<u32>,
+    },
     /// Switch the active workspace.
     SwitchWorkspace {
         workspace: u8,

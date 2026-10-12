@@ -903,6 +903,24 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         pointer.frame(self);
     }
 
+    /// Type a chord of evdev `keys` into the focused client: press in
+    /// order, release in reverse.
+    pub fn send_shortcut(&mut self, keys: &[u32]) {
+        let keyboard = self.seat.get_keyboard().unwrap();
+        let presses = keys.iter().map(|k| (*k, KeyState::Pressed));
+        let releases = keys.iter().rev().map(|k| (*k, KeyState::Released));
+        for (key, state) in presses.chain(releases) {
+            keyboard.input(
+                self,
+                smithay::input::keyboard::Keycode::new(key + 8),
+                state,
+                SCOUNTER.next_serial(),
+                0,
+                |_, _, _| FilterResult::Forward::<()>,
+            );
+        }
+    }
+
     pub fn release_all_keys(&mut self) {
         let keyboard = self.seat.get_keyboard().unwrap();
         for keycode in keyboard.pressed_keys() {
