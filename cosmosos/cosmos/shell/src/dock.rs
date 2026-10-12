@@ -393,15 +393,25 @@ fn dot(pixmap: &mut PixmapMut<'_>, x: f64, y: f64, color: Color) {
     }
 }
 
-fn label(item: &DockEntry) -> &str {
+fn label<'a>(state: &'a ShellState, item: &'a DockEntry) -> &'a str {
     if let Some(app) = &item.app {
         return &app.name;
     }
     if item.trash {
-        "Trash"
-    } else {
-        "Launcher"
+        return "Trash";
     }
+    if item.extra {
+        // A running app with no desktop entry (e.g. an X11 tool): its
+        // window title, else its app id.
+        return item
+            .windows
+            .iter()
+            .filter_map(|id| state.windows.iter().find(|w| w.id == *id))
+            .map(|w| w.title.as_str())
+            .find(|t| !t.is_empty())
+            .unwrap_or(&item.icon);
+    }
+    "Launcher"
 }
 
 pub fn draw(state: &mut ShellState) {
@@ -434,7 +444,11 @@ pub fn draw(state: &mut ShellState) {
             hop(t0.elapsed().as_secs_f64() / BOUNCE.as_secs_f64()),
         )
     });
+    if busy || bounce.is_some() {
+        tracing::debug!(busy, lift = ?bounce.as_ref().map(|b| b.1), "dock anim frame");
+    }
     let items = entries(state);
+    let labels: Vec<String> = items.iter().map(|i| label(state, i).to_string()).collect();
     let hover = state.dock_hover;
     let vertical = pos != DockPos::Bottom;
 
@@ -640,7 +654,7 @@ pub fn draw(state: &mut ShellState) {
         .filter(|_| hover.is_some());
     if let Some(idx) = label_idx.filter(|&i| i < cells.len()) {
         let (a, len) = cells[idx];
-        let name = label(&items[idx]);
+        let name = labels[idx].as_str();
         let pill_w = draw::text_width(12.0, name) + 20.0;
         let pill_h = 26.0f32;
         let size = len - (CELL - ICON_SZ);
@@ -795,9 +809,22 @@ fn activate(state: &mut ShellState, items: &[DockEntry], idx: usize) -> bool {
 fn open_menu(state: &mut ShellState, items: &[DockEntry], idx: usize) {
     use crate::menubar::Action;
     let item = &items[idx];
-    let Some(app) = item.app.clone() else {
-        return;
+    // Running extras without a desktop entry still get their windows and
+    // Quit; they can't be pinned or relaunched.
+    let app = match item.app.clone() {
+        Some(app) => app,
+        None if item.extra => crate::desktop::AppEntry {
+            id: item.icon.clone(),
+            name: label(state, item).to_string(),
+            exec: String::new(),
+            icon: item.icon.clone(),
+            terminal: false,
+            comment: String::new(),
+            action: None,
+        },
+        None => return,
     };
+    let launchable = !app.exec.is_empty();
     let mut rows: Vec<(String, Action)> = item
         .windows
         .iter()
@@ -815,9 +842,11 @@ fn open_menu(state: &mut ShellState, items: &[DockEntry], idx: usize) {
             (t, Action::FocusWindow(w.id))
         })
         .collect();
-    rows.push(("New Window".into(), Action::DockNewWindow));
     let key = icons::key_for(&app.id);
-    if key != AGENTS {
+    if launchable {
+        rows.push(("New Window".into(), Action::DockNewWindow));
+    }
+    if launchable && key != AGENTS {
         if state.dock_pins.contains(&key) {
             rows.push(("Remove from Dock".into(), Action::DockRemove));
         } else {
@@ -838,8 +867,13 @@ fn open_menu(state: &mut ShellState, items: &[DockEntry], idx: usize) {
     let off = (MARGIN + STRIP) as f64 + 8.0;
     let (x, y) = match state.dock_position {
         DockPos::Bottom => (mid - cw / 2.0, scr_h as f64 - off - ch),
-        DockPos::Left => (off, mid - ch / 2.0),
-        DockPos::Right => (scr_w as f64 - off - cw, mid - ch / 2.0),
+        // Side docks sit below the menubar's exclusive zone, so their
+        // surface coordinates start PANEL_HEIGHT down the screen.
+        DockPos::Left => (off, crate::PANEL_HEIGHT as f64 + mid - ch / 2.0),
+        DockPos::Right => (
+            scr_w as f64 - off - cw,
+            crate::PANEL_HEIGHT as f64 + mid - ch / 2.0,
+        ),
     };
     state.dock_label = None;
     let key_app = state
@@ -1088,6 +1122,13 @@ pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {
         state.dock_hover = Some(coord);
         arm_reveal(state);
         return false;
+    }
+    // The surface overhangs the strip (labels, magnification): a pointer
+    // in the overhang is off the dock, so auto-hide may proceed even
+    // when no leave arrives.
+    let (w, h) = state.dock_size;
+    if edge_depth(state.dock_position, w, h, x, y) > (MARGIN + STRIP) as f64 {
+        return leave(state);
     }
     let items = entries(state);
     let cell = hit(state, coord, &items);
