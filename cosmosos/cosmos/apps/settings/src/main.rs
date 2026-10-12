@@ -277,7 +277,7 @@ fn set(app: &mut App, key: &'static str, value: serde_json::Value) {
     app.status.clear();
 }
 
-const WALLPAPERS: &[&str] = &["violet", "ocean", "coral", "aurora", "peach", "indigo"];
+const WALLPAPERS: &[&str] = &["violet", "ocean", "sunset", "peach", "forest", "graphite"];
 
 thread_local! {
     static THUMBS: std::cell::RefCell<std::collections::HashMap<String, Option<egui::TextureHandle>>> =
