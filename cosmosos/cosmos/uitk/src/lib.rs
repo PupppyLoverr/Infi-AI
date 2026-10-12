@@ -294,6 +294,38 @@ pub struct UiState {
 }
 
 impl UiState {
+    /// Reads the seat's current text selection and queues it as an egui
+    /// paste once the owner has written it.
+    fn request_paste(&self) {
+        let Some(offer) = self.data_devices.last().and_then(|d| {
+            d.inner()
+                .data::<smithay_client_toolkit::data_device_manager::data_device::DataDeviceData>()
+                .and_then(|d| d.selection_offer())
+        }) else {
+            return;
+        };
+        for mime in TEXT_MIMES {
+            if !offer.with_mime_types(|m| m.iter().any(|t| t == mime)) {
+                continue;
+            }
+            let Ok(mut pipe) = offer.receive(mime.to_string()) else {
+                continue;
+            };
+            let tx = self.paste_tx.clone();
+            std::thread::spawn(move || {
+                use std::io::Read;
+                let mut buf = Vec::new();
+                let _ = pipe.read_to_end(&mut buf);
+                if let Ok(text) = String::from_utf8(buf) {
+                    if !text.is_empty() {
+                        let _ = tx.send(text);
+                    }
+                }
+            });
+            return;
+        }
+    }
+
     /// Run one egui frame, blit into the shm buffer, and return when egui
     /// wants the next repaint.
     fn frame(&mut self, qh: &QueueHandle<UiState>) -> Duration {
@@ -503,6 +535,42 @@ fn map_modifiers(m: Modifiers) -> egui::Modifiers {
     }
 }
 
+static TERMINAL_KEYS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Terminal clipboard chords: Ctrl+Shift+C/X/V, leaving plain Ctrl+C/X/V
+/// to reach the app as keys (^C, ^V). Call before [`run`].
+pub fn terminal_keys(on: bool) {
+    TERMINAL_KEYS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[derive(Debug, PartialEq)]
+enum Chord {
+    Copy,
+    Cut,
+    Paste,
+}
+
+fn clipboard_chord(sym: Keysym, m: egui::Modifiers) -> Option<Chord> {
+    let terminal = TERMINAL_KEYS.load(std::sync::atomic::Ordering::Relaxed);
+    if m.alt {
+        return None;
+    }
+    if m.ctrl && m.shift == terminal {
+        match sym {
+            Keysym::c | Keysym::C => return Some(Chord::Copy),
+            Keysym::x | Keysym::X => return Some(Chord::Cut),
+            Keysym::v | Keysym::V => return Some(Chord::Paste),
+            _ => {}
+        }
+    }
+    match sym {
+        Keysym::Insert if m.ctrl && !m.shift => Some(Chord::Copy),
+        Keysym::Insert if m.shift && !m.ctrl => Some(Chord::Paste),
+        Keysym::Delete if m.shift && !m.ctrl => Some(Chord::Cut),
+        _ => None,
+    }
+}
+
 fn key_event(event: &KeyEvent, pressed: bool, modifiers: egui::Modifiers) -> Vec<egui::Event> {
     let mut ev = Vec::new();
     if let Some(key) = map_key(event.keysym) {
@@ -674,7 +742,13 @@ impl KeyboardHandler for UiState {
         event: KeyEvent,
     ) {
         self.last_serial = serial;
-        self.pending.extend(key_event(&event, true, self.modifiers));
+        match clipboard_chord(event.keysym, self.modifiers) {
+            Some(Chord::Copy) => self.pending.push(egui::Event::Copy),
+            Some(Chord::Cut) => self.pending.push(egui::Event::Cut),
+            Some(Chord::Paste) => self.request_paste(),
+            None => self.pending.extend(key_event(&event, true, self.modifiers)),
+        }
+        self.dirty = true;
     }
 
     fn repeat_key(
@@ -844,34 +918,9 @@ impl DataDeviceHandler for UiState {
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        data_device: &WlDataDevice,
+        _data_device: &WlDataDevice,
     ) {
-        let Some(offer) = data_device
-            .data::<smithay_client_toolkit::data_device_manager::data_device::DataDeviceData>()
-            .and_then(|d| d.selection_offer())
-        else {
-            return;
-        };
-        for mime in TEXT_MIMES {
-            if !offer.with_mime_types(|m| m.iter().any(|t| t == mime)) {
-                continue;
-            }
-            let Ok(mut pipe) = offer.receive(mime.to_string()) else {
-                continue;
-            };
-            let tx = self.paste_tx.clone();
-            std::thread::spawn(move || {
-                use std::io::Read;
-                let mut buf = Vec::new();
-                let _ = pipe.read_to_end(&mut buf);
-                if let Ok(text) = String::from_utf8(buf) {
-                    if !text.is_empty() {
-                        let _ = tx.send(text);
-                    }
-                }
-            });
-            return;
-        }
+        // Pasting is on demand (Ctrl+V); the offer stays on the device.
     }
     fn drop_performed(
         &mut self,
@@ -1043,5 +1092,43 @@ mod waker_tests {
             .dispatch(Duration::from_millis(50), &mut woken)
             .unwrap();
         assert!(!woken);
+    }
+}
+
+#[cfg(test)]
+mod clipboard_tests {
+    use super::{clipboard_chord, terminal_keys, Chord, Keysym};
+
+    fn m(ctrl: bool, shift: bool) -> egui::Modifiers {
+        egui::Modifiers {
+            ctrl,
+            shift,
+            command: ctrl,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn chords_follow_app_kind() {
+        assert_eq!(
+            clipboard_chord(Keysym::v, m(true, false)),
+            Some(Chord::Paste)
+        );
+        assert_eq!(
+            clipboard_chord(Keysym::c, m(true, false)),
+            Some(Chord::Copy)
+        );
+        assert_eq!(
+            clipboard_chord(Keysym::Insert, m(false, true)),
+            Some(Chord::Paste)
+        );
+        assert_eq!(clipboard_chord(Keysym::v, m(false, false)), None);
+        terminal_keys(true);
+        assert_eq!(clipboard_chord(Keysym::v, m(true, false)), None);
+        assert_eq!(
+            clipboard_chord(Keysym::V, m(true, true)),
+            Some(Chord::Paste)
+        );
+        terminal_keys(false);
     }
 }
