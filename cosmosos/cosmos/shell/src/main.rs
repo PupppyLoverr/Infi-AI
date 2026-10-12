@@ -2767,7 +2767,11 @@ impl DataDeviceHandler for ShellState {
             {
                 let has_uri = offer.with_mime_types(|m| m.contains(&"text/uri-list".to_string()));
                 if has_uri {
-                    offer.accept_mime_type(0, Some("text/uri-list".to_string()));
+                    offer.accept_mime_type(offer.serial, Some("text/uri-list".to_string()));
+                    offer.set_actions(
+                        wayland_client::protocol::wl_data_device_manager::DndAction::Copy,
+                        wayland_client::protocol::wl_data_device_manager::DndAction::Copy,
+                    );
                 }
             }
         }
@@ -3013,7 +3017,14 @@ impl ShellState {
         {
             let uri = "text/uri-list".to_string();
             let ok = target.is_some() && offer.with_mime_types(|m| m.contains(&uri));
-            offer.accept_mime_type(0, ok.then_some(uri));
+            offer.accept_mime_type(offer.serial, ok.then_some(uri));
+            // Without a chosen action the compositor cancels the drop.
+            let act = if ok {
+                wayland_client::protocol::wl_data_device_manager::DndAction::Copy
+            } else {
+                wayland_client::protocol::wl_data_device_manager::DndAction::empty()
+            };
+            offer.set_actions(act, act);
         }
     }
 
@@ -3032,6 +3043,7 @@ impl ShellState {
             return;
         };
         let Some((_, app)) = dock::drop_target(self, x, y) else {
+            tracing::debug!(x, y, "dock: drop outside Files/Editor");
             return;
         };
         let Some(offer) = data_device
@@ -3040,14 +3052,19 @@ impl ShellState {
         else {
             return;
         };
-        let Ok(mut pipe) = offer.receive("text/uri-list".to_string()) else {
-            return;
+        let mut pipe = match offer.receive("text/uri-list".to_string()) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!("dock: drop receive failed: {e}");
+                return;
+            }
         };
         offer.finish();
         std::thread::spawn(move || {
             use std::io::Read;
             let mut text = String::new();
             let _ = pipe.read_to_string(&mut text);
+            tracing::debug!(%text, app = %app.id, "dock: file drop");
             dock::open_dropped(&app, &uri_paths(&text));
         });
     }
