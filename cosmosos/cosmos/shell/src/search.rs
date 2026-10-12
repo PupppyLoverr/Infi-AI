@@ -162,7 +162,12 @@ pub fn results(state: &ShellState) -> Vec<Row> {
                 kind: Kind::File(path.clone()),
                 title: name.clone(),
                 hint: "File",
-                icon: "search-doc".into(),
+                icon: if std::path::Path::new(&path).is_dir() {
+                    "folder"
+                } else {
+                    "file"
+                }
+                .into(),
                 sub: dir,
             });
         }
