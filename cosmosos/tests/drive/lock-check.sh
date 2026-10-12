@@ -3,7 +3,7 @@
 # stack. Installed by inject-lock-check.sh, run once at boot.
 #
 # The real greeter/lock interactions are driven host-side via QMP
-# sendkey + screendumps (tests/drive/lock.sh). This script:
+# input-send-event typing + screendumps (tests/drive/lock.sh). This script:
 #   1. waits for the cosmos session (ipc sock) — that alone proves
 #      greetd -> cosmos-greeter -> StartSession -> cosmos-session worked
 #   2. runs the cosmos-agentd MCP smoke (socket, handshake, tools/list,

@@ -31,6 +31,7 @@ exec qemu-system-x86_64 \\
   -drive file=$RAW,format=raw,if=virtio \\
   -device virtio-vga,xres=\${GUEST_RES_X:-1024},yres=\${GUEST_RES_Y:-768} \\
   -device virtio-tablet-pci \\
+  -device virtio-keyboard-pci \\
   -audiodev none,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0 \\
   -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \\
   -smbios type=1,product=CosmosOS \\

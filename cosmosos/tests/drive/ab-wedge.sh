@@ -9,12 +9,13 @@ D="${DRIVE_DIR:-work/drive-ab}"
 LABEL="${1:-run}"
 mkdir -p "$D"
 MON="${MON_SOCK:-work/image/monitor.sock}"
+export QMP_SOCK="${QMP_SOCK:-work/image/qmp.sock}"
 
 click() { tests/drive/qmp.sh click "$1" "$2"; }
 
 # spawn two terminals at known cascade spots, let them settle
-printf 'sendkey meta_l-ret\n' | socat -t 2 - UNIX-CONNECT:$MON >/dev/null; sleep 2
-printf 'sendkey meta_l-ret\n' | socat -t 2 - UNIX-CONNECT:$MON >/dev/null; sleep 3
+tests/drive/qkey.sh meta_l-ret; sleep 2
+tests/drive/qkey.sh meta_l-ret; sleep 3
 DRIVE_DIR=$D tests/drive/shot.sh "ab-${LABEL}-00-spawn" >/dev/null
 
 # 15 alternations: A titlebar -> B titlebar (top-left vs right window)
