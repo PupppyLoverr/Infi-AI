@@ -350,7 +350,11 @@ pub fn wallpaper_for(name: &str, dark: bool) -> String {
         _ => None,
     };
     if let Some(new) = renamed {
-        let suffix = if name.ends_with("-light") { "-light" } else { "" };
+        let suffix = if name.ends_with("-light") {
+            "-light"
+        } else {
+            ""
+        };
         return wallpaper_for(&format!("{new}{suffix}"), dark);
     }
     if dark || name.ends_with("-light") {
