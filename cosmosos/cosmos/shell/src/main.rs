@@ -1725,7 +1725,7 @@ impl ShellState {
     /// The tray's quick-settings click region — rightmost status text block.
     pub fn tray_clicked(&mut self, x: f64) -> bool {
         let (w, _) = self.panel_size;
-        let status_w = crate::panel::status_text_len(&self.sysinfo, self.dnd);
+        let status_w = crate::panel::status_text_len(self);
         x >= w as f64 - status_w - 12.0
     }
 

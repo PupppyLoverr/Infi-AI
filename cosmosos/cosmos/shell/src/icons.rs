@@ -426,6 +426,29 @@ pub fn icon(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32, co
             circle!(pb, 12.0, 17.5, 1.5);
             fill(pixmap, pb, color);
         }
+        "ethernet" => {
+            // Wired: one upstream port branching to two.
+            rr!(pb, 9.0, 3.5, 6.0, 5.0, 1.2);
+            rr!(pb, 3.5, 15.5, 6.0, 5.0, 1.2);
+            rr!(pb, 14.5, 15.5, 6.0, 5.0, 1.2);
+            mv!(pb, 12.0, 8.5);
+            ln!(pb, 12.0, 12.0);
+            mv!(pb, 6.5, 15.5);
+            ln!(pb, 6.5, 12.0);
+            ln!(pb, 17.5, 12.0);
+            ln!(pb, 17.5, 15.5);
+            stroke(pixmap, pb, s, w * 0.9, color);
+        }
+        "controls" => {
+            // Control Centre: two switches, one on and one off.
+            rr!(pb, 3.5, 4.5, 17.0, 6.5, 3.25);
+            rr!(pb, 3.5, 13.0, 17.0, 6.5, 3.25);
+            stroke(pixmap, pb, s, w * 0.9, color);
+            let mut knobs = PathBuilder::new();
+            circle!(knobs, 17.25, 7.75, 1.9);
+            circle!(knobs, 6.75, 16.25, 1.9);
+            fill(pixmap, knobs, color);
+        }
         "net-off" => {
             // Offline: base dot + a strike-through.
             let mut pb = PathBuilder::new();
