@@ -2,8 +2,10 @@
 //!
 //! A worker thread geocodes the configured place (or the time zone's
 //! city), fetches current conditions plus today's high/low, and sends
-//! `Some(Weather)`; any failure sends `None` so the card hides instead
-//! of showing stale or invented numbers.
+//! `Some(Weather)`. A failed fetch sends the last good reading for the
+//! same place from ~/.cache/cosmos/weather.json (the card captions its
+//! age), or `None` when there is none, so the card hides rather than
+//! inventing numbers.
 
 use std::process::Command;
 use std::sync::mpsc;
@@ -16,6 +18,8 @@ pub struct Weather {
     pub high: f64,
     pub low: f64,
     pub code: u32,
+    /// Unix seconds when this reading was fetched.
+    pub fetched: u64,
 }
 
 const REFRESH: Duration = Duration::from_secs(15 * 60);
@@ -33,8 +37,12 @@ pub fn start(tx: calloop::channel::Sender<Option<Weather>>, place: String) -> mp
             } else {
                 place.clone()
             };
-            let got = if name.is_empty() { None } else { fetch(&name) };
-            let wait = if got.is_some() { REFRESH } else { RETRY };
+            let fresh = if name.is_empty() { None } else { fetch(&name) };
+            if let Some(w) = &fresh {
+                save_cache(&name, w);
+            }
+            let got = fresh.clone().or_else(|| load_cache(&name));
+            let wait = if fresh.is_some() { REFRESH } else { RETRY };
             if tx.send(got).is_err() {
                 return;
             }
@@ -69,6 +77,7 @@ fn parse_forecast(place: String, fc: &serde_json::Value) -> Option<Weather> {
     let cur = fc.get("current")?;
     let daily = fc.get("daily")?;
     Some(Weather {
+        fetched: now_secs(),
         place,
         temp: cur.get("temperature_2m")?.as_f64()?,
         code: cur.get("weather_code")?.as_u64()? as u32,
@@ -78,6 +87,84 @@ fn parse_forecast(place: String, fc: &serde_json::Value) -> Option<Weather> {
 }
 
 /// HTTPS GET via the image's wget (keeps a TLS stack out of the shell).
+pub fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn cache_path() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))?;
+    Some(base.join("cosmos/weather.json"))
+}
+
+fn save_cache(query: &str, w: &Weather) {
+    let Some(path) = cache_path() else {
+        return;
+    };
+    let v = serde_json::json!({
+        "query": query, "place": w.place, "temp": w.temp, "high": w.high,
+        "low": w.low, "code": w.code, "fetched": w.fetched,
+    });
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, v.to_string());
+}
+
+fn load_cache(query: &str) -> Option<Weather> {
+    let v: serde_json::Value = serde_json::from_slice(&std::fs::read(cache_path()?).ok()?).ok()?;
+    if v.get("query")?.as_str()? != query {
+        return None;
+    }
+    Some(Weather {
+        place: v.get("place")?.as_str()?.to_string(),
+        temp: v.get("temp")?.as_f64()?,
+        high: v.get("high")?.as_f64()?,
+        low: v.get("low")?.as_f64()?,
+        code: v.get("code")?.as_u64()? as u32,
+        fetched: v.get("fetched")?.as_u64()?,
+    })
+}
+
+/// "Updated 2 h ago" once a reading is older than one refresh cycle.
+pub fn age_caption(fetched: u64, now: u64) -> Option<String> {
+    let age = now.saturating_sub(fetched);
+    if age < 20 * 60 {
+        return None;
+    }
+    Some(if age < 3600 {
+        format!("Updated {} min ago", age / 60)
+    } else if age < 86_400 {
+        format!("Updated {} h ago", age / 3600)
+    } else {
+        format!("Updated {} d ago", age / 86_400)
+    })
+}
+
+#[cfg(test)]
+mod cache_tests {
+    #[test]
+    fn age_caption_shows_only_stale_readings() {
+        assert_eq!(super::age_caption(0, 600), None);
+        assert_eq!(
+            super::age_caption(0, 1800).as_deref(),
+            Some("Updated 30 min ago")
+        );
+        assert_eq!(
+            super::age_caption(0, 7200).as_deref(),
+            Some("Updated 2 h ago")
+        );
+        assert_eq!(
+            super::age_caption(0, 3 * 86_400).as_deref(),
+            Some("Updated 3 d ago")
+        );
+    }
+}
+
 fn get_json(url: &str) -> Option<serde_json::Value> {
     let out = Command::new("wget")
         .args(["-qO-", "--timeout=10", "--tries=1", url])

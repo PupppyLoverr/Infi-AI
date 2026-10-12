@@ -7,10 +7,11 @@ use smithay_client_toolkit::{compositor::Region, shell::WaylandSurface};
 use tiny_skia::{Color, PixmapMut};
 use wayland_client::protocol::wl_shm;
 
-use crate::{dock, draw, glass, weather, ShellState};
+use crate::{draw, weather, ShellState};
 
-pub const W: u32 = 280;
-pub const CARD_H: u32 = 104;
+pub const W: u32 = 320;
+pub const CARD_H: u32 = 132;
+const WX_H: u32 = 104;
 const GAP: u32 = 12;
 /// Inset from the usable area's top-left (below the menubar, right of a
 /// left dock).
@@ -19,7 +20,7 @@ const RADIUS: f32 = 18.0;
 
 pub fn height(has_weather: bool) -> u32 {
     if has_weather {
-        CARD_H * 2 + GAP
+        CARD_H + GAP + WX_H
     } else {
         CARD_H
     }
@@ -131,17 +132,18 @@ pub fn draw(state: &mut ShellState) {
         return;
     };
     let dark = state.dark;
-    let (fallback, hairline, fg, fg2) = if dark {
+    // Translucent: the wallpaper shows through; a soft 8% edge, no frame.
+    let (fill, hairline, fg, fg2) = if dark {
         (
-            Color::from_rgba8(0x1A, 0x1B, 0x1E, 0xF2),
-            Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x24),
+            Color::from_rgba8(0x00, 0x00, 0x00, 0x38),
+            Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x14),
             CtColor::rgba(0xF2, 0xF2, 0xF4, 0xFF),
             CtColor::rgba(0xC8, 0xC8, 0xCE, 0xFF),
         )
     } else {
         (
-            Color::from_rgba8(0xFA, 0xFA, 0xFB, 0xF6),
-            Color::from_rgba8(0x00, 0x00, 0x00, 0x1A),
+            Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x66),
+            Color::from_rgba8(0x00, 0x00, 0x00, 0x14),
             CtColor::rgba(0x16, 0x16, 0x19, 0xFF),
             CtColor::rgba(0x48, 0x48, 0x4E, 0xFF),
         )
@@ -162,35 +164,14 @@ pub fn draw(state: &mut ShellState) {
         return;
     };
 
-    // Screen origin of the surface, for wallpaper sampling.
-    let left_zone = if state.dock_position == dock::DockPos::Left {
-        (dock::STRIP + dock::MARGIN) as f32
-    } else {
-        0.0
-    };
-    let sx = left_zone + MARGIN as f32;
-    let sy = crate::PANEL_HEIGHT as f32 + MARGIN as f32;
-    let wallpaper = ShellState::wallpaper_name();
-    let card = |pixmap: &mut PixmapMut<'_>, y: f32| {
-        glass::fill_glass(
-            pixmap,
-            &wallpaper,
-            0.0,
-            y,
-            w as f32,
-            CARD_H as f32,
-            RADIUS,
-            sx,
-            sy + y,
-            dark,
-            fallback,
-        );
+    let card = |pixmap: &mut PixmapMut<'_>, y: f32, ch: u32| {
+        draw::fill_round_rect(pixmap, 0.0, y, w as f32, ch as f32, RADIUS, fill);
         draw::stroke_round_rect(
             pixmap,
             0.5,
             y + 0.5,
             w as f32 - 1.0,
-            CARD_H as f32 - 1.0,
+            ch as f32 - 1.0,
             RADIUS,
             1.0,
             hairline,
@@ -199,14 +180,37 @@ pub fn draw(state: &mut ShellState) {
     let tw = w as f32 - 40.0;
 
     let (time, date) = clock_lines();
-    card(&mut pixmap, 0.0);
-    draw::text_bold(&mut pixmap, 20.0, 14.0, tw, 50.0, 42.0, &time, fg);
-    draw::text(&mut pixmap, 20.0, 70.0, tw, 18.0, 13.0, &date, fg2);
+    card(&mut pixmap, 0.0, CARD_H);
+    // 64pt light numerals; a 12 h suffix ("pm") sits small beside them.
+    let (digits, suffix) = time.split_once(' ').unwrap_or((&time, ""));
+    draw::text_light(&mut pixmap, 18.0, 8.0, tw, 80.0, 64.0, digits, fg);
+    if !suffix.is_empty() {
+        let dx = 18.0 + draw::text_width(64.0, digits) + 6.0;
+        draw::text(&mut pixmap, dx, 50.0, tw - dx, 26.0, 20.0, suffix, fg2);
+    }
+    draw::text(&mut pixmap, 21.0, 96.0, tw, 20.0, 14.0, &date, fg2);
 
     if let Some(wx) = &state.weather {
         let y = (CARD_H + GAP) as f32;
-        card(&mut pixmap, y);
-        draw::text_bold(&mut pixmap, 20.0, y + 14.0, tw, 18.0, 13.0, &wx.place, fg);
+        card(&mut pixmap, y, WX_H);
+        let age = weather::age_caption(wx.fetched, weather::now_secs());
+        let age_w = age
+            .as_deref()
+            .map_or(0.0, |a| draw::text_width(11.0, a) + 8.0);
+        draw::text_bold(
+            &mut pixmap,
+            20.0,
+            y + 14.0,
+            tw - age_w,
+            18.0,
+            13.0,
+            &wx.place,
+            fg,
+        );
+        if let Some(a) = &age {
+            let ax = w as f32 - 20.0 - draw::text_width(11.0, a);
+            draw::text(&mut pixmap, ax, y + 16.0, age_w, 16.0, 11.0, a, fg2);
+        }
         draw::text_bold(
             &mut pixmap,
             20.0,
@@ -251,7 +255,7 @@ mod tests {
     #[test]
     fn heights_and_temps() {
         assert_eq!(super::height(false), super::CARD_H);
-        assert_eq!(super::height(true), super::CARD_H * 2 + 12);
+        assert_eq!(super::height(true), super::CARD_H + 12 + super::WX_H);
         assert_eq!(super::deg(-0.4), "0°");
         assert_eq!(super::deg(14.6), "15°");
         let (t, d) = super::clock_lines();

@@ -319,7 +319,16 @@ pub fn text(
     color: CtColor,
 ) {
     text_styled(
-        pixmap, x, y, max_w, line_h, font_size, content, color, false, UI_FAMILY,
+        pixmap,
+        x,
+        y,
+        max_w,
+        line_h,
+        font_size,
+        content,
+        color,
+        cosmic_text::Weight::NORMAL,
+        UI_FAMILY,
     );
 }
 
@@ -380,7 +389,42 @@ pub fn text_bold(
     color: CtColor,
 ) {
     text_styled(
-        pixmap, x, y, max_w, line_h, font_size, content, color, true, UI_FAMILY,
+        pixmap,
+        x,
+        y,
+        max_w,
+        line_h,
+        font_size,
+        content,
+        color,
+        cosmic_text::Weight::SEMIBOLD,
+        UI_FAMILY,
+    );
+}
+
+/// Light-weight UI text, for large display numerals.
+#[allow(clippy::too_many_arguments)]
+pub fn text_light(
+    pixmap: &mut PixmapMut<'_>,
+    x: f32,
+    y: f32,
+    max_w: f32,
+    line_h: f32,
+    font_size: f32,
+    content: &str,
+    color: CtColor,
+) {
+    text_styled(
+        pixmap,
+        x,
+        y,
+        max_w,
+        line_h,
+        font_size,
+        content,
+        color,
+        cosmic_text::Weight::LIGHT,
+        UI_FAMILY,
     );
 }
 
@@ -412,7 +456,7 @@ pub fn text_mono(
         font_size,
         content,
         color,
-        false,
+        cosmic_text::Weight::NORMAL,
         MONO_FAMILY,
     );
 }
@@ -426,7 +470,7 @@ fn text_styled(
     font_size: f32,
     content: &str,
     color: CtColor,
-    bold: bool,
+    weight: cosmic_text::Weight,
     family: Family<'_>,
 ) {
     FONT_SYSTEM.with(|fs| {
@@ -440,11 +484,7 @@ fn text_styled(
             // Inter when the image ships it, DejaVu otherwise — fontdb
             // falls back per-glyph, so Name() degrades gracefully.
             let attrs = Attrs::new().family(family);
-            let attrs = if bold {
-                attrs.weight(cosmic_text::Weight::SEMIBOLD)
-            } else {
-                attrs
-            };
+            let attrs = attrs.weight(weight);
             buf.set_text(&mut fs, content, &attrs, Shaping::Advanced);
             buf.shape_until_scroll(&mut fs, false);
             let ox = (x * k) as i32;
