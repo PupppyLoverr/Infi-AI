@@ -1133,6 +1133,9 @@ impl ShellState {
         self.start_todo_edit = None;
         if open {
             self.set_quick_open(false);
+            if self.menu_open.is_some() {
+                self.set_menu(None, 0);
+            }
             self.launcher_query = self.launcher_preset.take().unwrap_or_default();
             self.launcher_sel = 0;
             self.launcher_hover = None;
