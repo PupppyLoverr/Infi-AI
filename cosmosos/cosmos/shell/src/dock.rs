@@ -864,7 +864,7 @@ fn open_menu(state: &mut ShellState, items: &[DockEntry], idx: usize) {
     let (a, len) = layout(items, span, hover).0[idx];
     let mid = a + len / 2.0;
     let (scr_w, scr_h) = glass::screen_size();
-    let off = (MARGIN + STRIP) as f64 + 8.0;
+    let off = (MARGIN + STRIP) as f64 + 10.0;
     let (x, y) = match state.dock_position {
         DockPos::Bottom => (mid - cw / 2.0, scr_h as f64 - off - ch),
         // Side docks sit below the menubar's exclusive zone, so their
