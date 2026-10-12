@@ -7,6 +7,7 @@ mod ask;
 mod assist;
 mod ccdetail;
 mod clipwatch;
+mod deskicons;
 mod desktop;
 mod dock;
 mod draw;
@@ -155,6 +156,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         panel: None,
         dock_surface: None,
         widgets_surface: None,
+        desk_surface: None,
+        desk_size: (0, 0),
+        desk_dirty: false,
+        desk: deskicons::Desk::default(),
         widgets_size: (0, 0),
         widgets_dirty: false,
         show_widgets: true,
@@ -286,6 +291,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     state.create_panel(&qh);
     state.create_dock(&qh);
     state.create_widgets(&qh);
+    state.create_desk(&qh);
     let (weather_tx, weather_rx) = channel::channel::<Option<weather::Weather>>();
     state.weather_tx = Some(weather::start(weather_tx, String::new()));
     let (ask_tx, ask_rx) = channel::channel::<(u64, ask::Event)>();
@@ -453,6 +459,11 @@ pub struct ShellState {
     pub dock_surface: Option<LayerSurface>,
     /// Desktop clock/weather cards (layer Bottom), when enabled.
     pub widgets_surface: Option<LayerSurface>,
+    /// ~/Desktop icon grid (layer Bottom, right edge).
+    pub desk_surface: Option<LayerSurface>,
+    pub desk_size: (u32, u32),
+    pub desk_dirty: bool,
+    pub desk: deskicons::Desk,
     pub widgets_size: (u32, u32),
     pub widgets_dirty: bool,
     /// Config `desktop_widgets`.
@@ -710,6 +721,23 @@ impl ShellState {
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         layer.wl_surface().commit();
         self.widgets_surface = Some(layer);
+    }
+
+    pub fn create_desk(&mut self, qh: &QueueHandle<Self>) {
+        let surface = self.compositor_state.create_surface(qh);
+        let layer = self.layer_shell.create_layer_surface(
+            qh,
+            surface,
+            Layer::Bottom,
+            Some("cosmos-desktop-icons"),
+            None,
+        );
+        layer.set_anchor(Anchor::TOP | Anchor::RIGHT | Anchor::BOTTOM);
+        layer.set_margin(deskicons::MARGIN, deskicons::MARGIN, deskicons::MARGIN, 0);
+        layer.set_size(deskicons::COLS * deskicons::CELL_W, 0);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        layer.wl_surface().commit();
+        self.desk_surface = Some(layer);
     }
 
     fn resize_widgets(&mut self) {
@@ -1756,6 +1784,7 @@ impl ShellState {
             self.launcher_dirty = true;
             self.notify_dirty = true;
             self.widgets_dirty = true;
+            self.desk_dirty = true;
         }
         if let Some(on) = map.get("lite_mode").and_then(|v| v.as_bool()) {
             if on != self.lite {
@@ -1772,6 +1801,7 @@ impl ShellState {
                 self.panel_dirty = true;
                 self.dock_dirty = true;
                 self.widgets_dirty = true;
+                self.desk_dirty = true;
             }
         }
         if let Some(on) = map.get("desktop_widgets").and_then(|v| v.as_bool()) {
@@ -1804,6 +1834,7 @@ impl ShellState {
                 self.dock_position = pos;
                 self.dock_surface = None;
                 self.widgets_dirty = true;
+                self.desk_dirty = true;
                 let qh = self.qh.clone();
                 self.create_dock(&qh);
             }
@@ -1854,6 +1885,7 @@ impl ShellState {
     }
 
     fn on_tick(&mut self) {
+        self.desk_dirty |= deskicons::refresh(self);
         self.panel_dirty = true;
         // One time source for the menubar and the desktop clock card.
         self.sysinfo.clock = widgets::menubar_clock();
@@ -1861,6 +1893,7 @@ impl ShellState {
         if minute != self.widgets_clock {
             self.widgets_clock = minute;
             self.widgets_dirty = true;
+            self.desk_dirty = true;
         }
 
         // Start's Photos slideshow steps every 6 s; nothing else repaints it.
@@ -1954,6 +1987,10 @@ impl ShellState {
         if self.dock_dirty && self.dock_surface.is_some() {
             self.dock_dirty = false;
             dock::draw(self);
+        }
+        if self.desk_dirty && self.desk_surface.is_some() {
+            self.desk_dirty = false;
+            deskicons::draw(self);
         }
         if self.widgets_dirty && self.widgets_surface.is_some() {
             self.widgets_dirty = false;
@@ -2109,9 +2146,15 @@ impl LayerShellHandler for ShellState {
             );
             self.switcher_dirty = true;
         }
+        if self.desk_surface.as_ref() == Some(layer) {
+            self.desk_size = configure.new_size;
+            deskicons::rescan(self);
+            self.desk_dirty = true;
+        }
         if self.widgets_surface.as_ref() == Some(layer) {
             self.widgets_size = configure.new_size;
             self.widgets_dirty = true;
+            self.desk_dirty = true;
         }
         if self.launcher_surface.as_ref() == Some(layer) {
             self.launcher_size = configure.new_size;
@@ -2371,6 +2414,7 @@ impl PointerHandler for ShellState {
                 .chain(self.island_surface.iter())
                 .chain(self.notify_surface.iter())
                 .chain(self.quick_surface.iter())
+                .chain(self.desk_surface.iter())
                 .find(|l| l.wl_surface() == &ev.surface)
                 .cloned()
             else {
@@ -2411,6 +2455,14 @@ impl PointerHandler for ShellState {
                         self.close_help();
                     } else if self.island_surface.as_ref() == Some(&layer) {
                         self.island_click(ev.position.0, ev.position.1);
+                    } else if self.desk_surface.as_ref() == Some(&layer)
+                        && matches!(ev.kind, PointerEventKind::Press { button: 0x110, .. })
+                    {
+                        // Same dismissals as a bare-desktop press.
+                        self.set_menu(None, 0);
+                        self.set_quick_open(false);
+                        self.close_island();
+                        self.desk_dirty |= deskicons::press(self, ev.position.0, ev.position.1);
                     }
                 }
                 PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
@@ -2439,10 +2491,15 @@ impl PointerHandler for ShellState {
                         self.menu_dirty |= menubar::hover(self, ev.position.0, ev.position.1);
                     } else if self.island_surface.as_ref() == Some(&layer) {
                         self.island_dirty |= island::hover(self, ev.position.0, ev.position.1);
+                    } else if self.desk_surface.as_ref() == Some(&layer) {
+                        self.desk_dirty |= deskicons::motion(self, ev.position.0, ev.position.1);
                     }
                 }
                 PointerEventKind::Release { .. } => {
                     self.start_vol_drag = None;
+                    if self.desk_surface.as_ref() == Some(&layer) {
+                        self.desk_dirty |= deskicons::release(self);
+                    }
                     if self.quick_surface.as_ref() == Some(&layer) {
                         quick::release(self);
                     }

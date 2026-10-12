@@ -204,6 +204,11 @@ python3 "$SEED/mkpdf.py" "$SEED/Documents/Welcome to CosmosOS.md" \
   "$OVERLAY/etc/skel/Documents/CosmosOS User Guide.pdf"
 python3 "$SEED/mkphotos.py" "$OVERLAY/etc/skel/Pictures"
 cp -r "$SEED/hello-cosmos" "$OVERLAY/etc/skel/Projects/"
+# Desktop: the welcome guide plus a Projects alias (relative, so it
+# resolves to each user's own ~/Projects).
+install -d "$OVERLAY/etc/skel/Desktop"
+install -m644 "$SEED/Documents/Welcome to CosmosOS.md" "$OVERLAY/etc/skel/Desktop/"
+ln -sfn ../Projects "$OVERLAY/etc/skel/Desktop/Projects"
 
 # launcher/dock entry. Exec wraps opencode in cosmos-terminal -e (>= 910d3ab:
 # args join into a command line run via $SHELL -c) so the TUI gets a real TTY.
