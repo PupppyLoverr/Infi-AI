@@ -51,6 +51,8 @@ pub struct NetworkState {
     /// Short label: "Wired", "Wi-Fi", "Offline", or interface/SSID name.
     pub label: String,
     pub online: bool,
+    /// The primary link is wireless (Wi-Fi glyph), not wired.
+    pub wifi: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -263,16 +265,20 @@ fn nm_state() -> Option<NetworkState> {
     // NM state: 70=connected(global), 60=connected(site), 50=connected(local),
     // anything below is degraded/offline.
     let online = state >= 50;
-    let label = if online {
-        primary_connection_name(&conn).unwrap_or_else(|| "Online".to_string())
+    let (label, wifi) = if online {
+        primary_connection(&conn).unwrap_or_else(|| ("Online".to_string(), false))
     } else {
-        "Offline".to_string()
+        ("Offline".to_string(), false)
     };
-    Some(NetworkState { label, online })
+    Some(NetworkState {
+        label,
+        online,
+        wifi,
+    })
 }
 
-fn primary_connection_name(conn: &zbus::blocking::Connection) -> Option<String> {
-    // PrimaryConnection object path → that connection's Id.
+fn primary_connection(conn: &zbus::blocking::Connection) -> Option<(String, bool)> {
+    // PrimaryConnection object path → that connection's Id and whether it is Wi-Fi.
     let reply = conn
         .call_method(
             Some("org.freedesktop.NetworkManager"),
@@ -291,26 +297,33 @@ fn primary_connection_name(conn: &zbus::blocking::Connection) -> Option<String> 
     if path == "/" {
         return None;
     }
-    let reply = conn
-        .call_method(
-            Some("org.freedesktop.NetworkManager"),
-            &*path,
-            Some("org.freedesktop.DBus.Properties"),
-            "Get",
-            &("org.freedesktop.NetworkManager.Connection.Active", "Id"),
-        )
-        .ok()?;
-    let body = reply.body();
-    match body.deserialize::<zbus::zvariant::Value>().ok()? {
-        zbus::zvariant::Value::Str(s) => Some(s.to_string()),
-        _ => None,
-    }
+    let prop = |name: &str| -> Option<String> {
+        let reply = conn
+            .call_method(
+                Some("org.freedesktop.NetworkManager"),
+                &*path,
+                Some("org.freedesktop.DBus.Properties"),
+                "Get",
+                &("org.freedesktop.NetworkManager.Connection.Active", name),
+            )
+            .ok()?;
+        let body = reply.body();
+        let v = body.deserialize::<zbus::zvariant::Value>().ok()?;
+        match v {
+            zbus::zvariant::Value::Str(s) => Some(s.to_string()),
+            _ => None,
+        }
+    };
+    let id = prop("Id")?;
+    let wifi = prop("Type").is_some_and(|t| t == "802-11-wireless");
+    Some((id, wifi))
 }
 
 fn sysclass_network() -> NetworkState {
     // No NM: check /sys/class/net for a live non-lo link and a default route.
     let mut label = "Offline".to_string();
     let mut online = false;
+    let mut wifi = false;
     if let Ok(read) = std::fs::read_dir("/sys/class/net") {
         for entry in read.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
@@ -321,7 +334,8 @@ fn sysclass_network() -> NetworkState {
                 .map(|s| s.trim() == "up")
                 .unwrap_or(false);
             if up {
-                label = if name.starts_with('w') {
+                wifi = entry.path().join("wireless").exists() || name.starts_with('w');
+                label = if wifi {
                     "Wi-Fi".to_string()
                 } else {
                     name.clone()
@@ -349,7 +363,11 @@ fn sysclass_network() -> NetworkState {
             label = "Link".to_string();
         }
     }
-    NetworkState { label, online }
+    NetworkState {
+        label,
+        online,
+        wifi,
+    }
 }
 
 // ---------------------------------------------------------------- audio

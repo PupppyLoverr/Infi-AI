@@ -58,17 +58,53 @@ fn focused_app_name(state: &ShellState) -> String {
         })
 }
 
+/// Pager cap: occupied workspaces plus the current one, at most this many.
+const MAX_WS: usize = 5;
+
+/// Workspaces the pager shows: occupied ones plus the current one, at most
+/// [`MAX_WS`], always keeping the current one in view.
+pub fn visible_workspaces(all: &[cosmos_ipc::WorkspaceInfo]) -> Vec<cosmos_ipc::WorkspaceInfo> {
+    let shown: Vec<_> = all
+        .iter()
+        .filter(|w| w.focused || w.window_count > 0)
+        .cloned()
+        .collect();
+    if shown.len() <= MAX_WS {
+        return shown;
+    }
+    let cur = shown.iter().position(|w| w.focused).unwrap_or(0);
+    let start = cur.saturating_sub(MAX_WS / 2).min(shown.len() - MAX_WS);
+    shown[start..start + MAX_WS].to_vec()
+}
+
+/// An agent is working right now — the tray shows the sparkle only then.
+pub fn agent_running(state: &ShellState) -> bool {
+    state.agents.iter().any(|a| a.busy && !a.stopped)
+}
+
+/// "NN%" beside the battery glyph when a battery is present.
+fn battery_label(info: &crate::sysinfo::SysInfo) -> Option<String> {
+    info.battery
+        .as_ref()
+        .filter(|b| b.present)
+        .map(|b| format!("{}%", b.percent))
+}
+
 /// Width of the status column — shared by draw, click and `tray_clicked`.
-/// Layout: [dnd?][net][vol][battery?] icons at 20px stride, then the clock text.
-pub fn status_text_len(info: &crate::sysinfo::SysInfo, dnd: bool) -> f64 {
-    let icons = 2.0
-        + if dnd { 1.0 } else { 0.0 }
-        + info
-            .battery
-            .as_ref()
-            .map(|b| if b.present { 1.0 } else { 0.0 })
-            .unwrap_or(0.0);
-    8.0 + icons * 20.0 + 6.0 + draw::text_width(13.0, &info.clock) as f64
+/// Layout: [agent?][dnd?][net][vol][battery + %?][controls] icons at a
+/// 20px stride, then the clock text.
+pub fn status_text_len(state: &ShellState) -> f64 {
+    let info = &state.sysinfo;
+    let bat = battery_label(info);
+    let icons = [agent_running(state), state.dnd, bat.is_some()]
+        .iter()
+        .filter(|on| **on)
+        .count()
+        + 3;
+    let bat_w = bat
+        .map(|b| draw::text_width(12.0, &b) as f64 + 6.0)
+        .unwrap_or(0.0);
+    8.0 + icons as f64 * 20.0 + bat_w + 6.0 + draw::text_width(13.0, &info.clock) as f64
 }
 
 /// Repaint the panel.
@@ -84,8 +120,11 @@ pub fn draw(state: &mut ShellState) {
     let (hx, hov) = state.panel_hover;
     let name = focused_app_name(state);
     let titles = crate::menubar::titles(state);
-    let status_w = status_text_len(&state.sysinfo, state.dnd);
+    let status_w = status_text_len(state);
     let net_on = state.sysinfo.network.online;
+    let net_wifi = state.sysinfo.network.wifi;
+    let agent_on = agent_running(state);
+    let bat_label = battery_label(&state.sysinfo);
     let vol_muted = state
         .sysinfo
         .volume
@@ -99,8 +138,8 @@ pub fn draw(state: &mut ShellState) {
         .filter(|b| b.present)
         .map(|b| b.percent);
     let clock = state.sysinfo.clock.clone();
-    let ws_count = crate::workspace_count(state);
-    let workspaces = state.workspaces.clone();
+    let workspaces = visible_workspaces(&state.workspaces);
+    let ws_count = workspaces.len();
     let dark = state.dark;
     let tray_x = w as f64 - status_w - 12.0;
     let pill = crate::island::pill_rect(state);
@@ -253,6 +292,11 @@ pub fn draw(state: &mut ShellState) {
     // Tray icons then the clock — the Win11/macOS status-icons idiom.
     let mut ix = tray_x + 8.0;
     let icon_y = h as f32 / 2.0 - 7.0;
+    // Agent sparkle — only while an agent is working.
+    if agent_on {
+        icons::icon(&mut pixmap, "sparkle", ix as f32, icon_y, 14.0, glyph);
+        ix += 20.0;
+    }
     // Focus (DND) moon — macOS shows it in the status area while on.
     if state.dnd {
         let moon = tiny_skia::Paint {
@@ -276,7 +320,11 @@ pub fn draw(state: &mut ShellState) {
     }
     icons::icon(
         &mut pixmap,
-        if net_on { "net-on" } else { "net-off" },
+        match (net_on, net_wifi) {
+            (false, _) => "net-off",
+            (true, true) => "net-on",
+            (true, false) => "ethernet",
+        },
         ix as f32,
         icon_y,
         14.0,
@@ -295,7 +343,23 @@ pub fn draw(state: &mut ShellState) {
     if let Some(pct) = bat_pct {
         icons::battery(&mut pixmap, ix as f32, icon_y, 14.0, glyph, pct);
         ix += 20.0;
+        if let Some(label) = &bat_label {
+            let lw = draw::text_width(12.0, label);
+            draw::text(
+                &mut pixmap,
+                ix as f32,
+                h as f32 / 2.0 - 7.5,
+                lw + 2.0,
+                16.0,
+                12.0,
+                label,
+                fg,
+            );
+            ix += lw as f64 + 6.0;
+        }
     }
+    icons::icon(&mut pixmap, "controls", ix as f32, icon_y, 14.0, glyph);
+    ix += 20.0;
     draw::text(
         &mut pixmap,
         ix as f32 + 2.0,
@@ -415,14 +479,15 @@ pub fn click(state: &mut ShellState, x: f64, _y: f64) -> bool {
         }
     }
     // Workspace pager.
-    let count = crate::workspace_count(state);
-    let status_w = status_text_len(&state.sysinfo, state.dnd);
+    let shown = visible_workspaces(&state.workspaces);
+    let count = shown.len();
+    let status_w = status_text_len(state);
     let ws_start = (w as f64 - status_w - 12.0) - count as f64 * WS_CELL_W - 10.0;
     if x >= ws_start && x < ws_start + count as f64 * WS_CELL_W {
         let idx = ((x - ws_start) / WS_CELL_W) as usize;
         if idx < count {
             state.ipc.send(&cosmos_ipc::Request::SwitchWorkspace {
-                workspace: idx as u8,
+                workspace: shown[idx].id,
             });
             return true;
         }
@@ -435,8 +500,45 @@ pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {
     let _ = y;
     let prev = state.panel_hover;
     state.panel_hover = (x, true);
-    let edge = |px: f64, w: f64| {
-        px < LAUNCH_BTN_W || px >= w - status_text_len(&state.sysinfo, state.dnd) - 12.0
-    };
+    let edge = |px: f64, w: f64| px < LAUNCH_BTN_W || px >= w - status_text_len(state) - 12.0;
     edge(prev.0, state.panel_size.0 as f64) != edge(x, state.panel_size.0 as f64)
+}
+
+#[cfg(test)]
+mod tests {
+    use cosmos_ipc::WorkspaceInfo;
+
+    fn ws(id: u8, focused: bool, window_count: usize) -> WorkspaceInfo {
+        WorkspaceInfo {
+            id,
+            focused,
+            window_count,
+        }
+    }
+
+    fn ids(all: &[WorkspaceInfo]) -> Vec<u8> {
+        super::visible_workspaces(all)
+            .iter()
+            .map(|w| w.id)
+            .collect()
+    }
+
+    #[test]
+    fn pager_shows_occupied_and_current_only() {
+        let all = [
+            ws(0, false, 2),
+            ws(1, false, 0),
+            ws(2, true, 0),
+            ws(3, false, 1),
+        ];
+        assert_eq!(ids(&all), [0, 2, 3]);
+    }
+
+    #[test]
+    fn pager_caps_at_five_and_keeps_current() {
+        let all: Vec<_> = (0..9).map(|i| ws(i, i == 8, 1)).collect();
+        assert_eq!(ids(&all), [4, 5, 6, 7, 8]);
+        let all: Vec<_> = (0..9).map(|i| ws(i, i == 0, 1)).collect();
+        assert_eq!(ids(&all), [0, 1, 2, 3, 4]);
+    }
 }
