@@ -244,6 +244,7 @@ fn dispatch_request<BackendData: Backend>(
                     message: format!("no such window: {id}"),
                 });
             };
+            tracing::info!(id, ?keys, "ipc send_shortcut");
             state.focus_window(&window);
             state.send_shortcut(&keys);
             None
@@ -328,6 +329,15 @@ fn dispatch_request<BackendData: Backend>(
         },
         Request::Screenshot { path } => {
             let output = state.space.outputs().next().cloned();
+            if let Some(o) = &output {
+                tracing::info!(
+                    outputs = state.space.outputs().count(),
+                    name = %o.name(),
+                    scale = o.current_scale().fractional_scale(),
+                    mode = ?o.current_mode().map(|m| m.size),
+                    "ipc screenshot"
+                );
+            }
             match output {
                 Some(output) => {
                     let result = state.backend_data.capture_output(

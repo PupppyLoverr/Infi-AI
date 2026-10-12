@@ -1824,8 +1824,10 @@ fn render_surface<'a>(
         .as_ref()
         .is_some_and(|(keys, clear)| *keys == scene && *clear == clear_color)
     {
+        tracing::debug!(target: "cosmos_scene", elements = scene.len(), "scene unchanged");
         return Ok((false, surface.last_states.clone()));
     }
+    tracing::debug!(target: "cosmos_scene", elements = scene.len(), "scene composite");
     surface.last_scene = None;
 
     surface

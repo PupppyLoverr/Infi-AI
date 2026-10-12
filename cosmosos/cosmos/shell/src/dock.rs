@@ -875,6 +875,15 @@ fn open_menu(state: &mut ShellState, items: &[DockEntry], idx: usize) {
             crate::PANEL_HEIGHT as f64 + mid - ch / 2.0,
         ),
     };
+    tracing::debug!(
+        mid,
+        ch,
+        dock_size = ?state.dock_size,
+        screen = ?(scr_w, scr_h),
+        x,
+        y,
+        "dock menu placement"
+    );
     state.dock_label = None;
     let key_app = state
         .apps
