@@ -238,6 +238,16 @@ fn dispatch_request<BackendData: Backend>(
             state.focus_window(&window);
             None
         }
+        Request::SendShortcut { id, keys } => {
+            let Some(window) = state.window_by_id(id) else {
+                return Some(Event::Error {
+                    message: format!("no such window: {id}"),
+                });
+            };
+            state.focus_window(&window);
+            state.send_shortcut(&keys);
+            None
+        }
         Request::MoveWindowToWorkspace { id, workspace } => {
             if workspace as usize >= WORKSPACE_COUNT {
                 return Some(Event::Error {

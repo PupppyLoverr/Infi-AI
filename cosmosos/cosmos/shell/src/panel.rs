@@ -40,7 +40,8 @@ fn menus_x(name: &str) -> f64 {
 /// Falls back to the window title, then nothing.
 fn focused_app_name(state: &ShellState) -> String {
     let Some(win) = state.windows.iter().find(|w| w.focused) else {
-        return String::new();
+        // The bare desktop carries Finder's menus under its own name.
+        return "Desktop".into();
     };
     let id = icons::key_for(&win.app_id);
     state
@@ -82,6 +83,7 @@ pub fn draw(state: &mut ShellState) {
     let (bg, hover_bg, _sep, fg, fg_dim) = theme(state.dark);
     let (hx, hov) = state.panel_hover;
     let name = focused_app_name(state);
+    let titles = crate::menubar::titles(state);
     let status_w = status_text_len(&state.sysinfo, state.dnd);
     let net_on = state.sysinfo.network.online;
     let vol_muted = state
@@ -183,7 +185,7 @@ pub fn draw(state: &mut ShellState) {
             fg,
         );
         // App menus — titles after the bold name; the open one highlighted.
-        for (i, (tx, tw)) in crate::menubar::title_rects(menus_x(&name))
+        for (i, (tx, tw)) in crate::menubar::title_rects(menus_x(&name), &titles)
             .into_iter()
             .enumerate()
         {
@@ -206,7 +208,7 @@ pub fn draw(state: &mut ShellState) {
                 tw as f32,
                 16.0,
                 13.0,
-                crate::menubar::TITLES[i],
+                titles[i],
                 fg,
             );
         }
@@ -220,7 +222,7 @@ pub fn draw(state: &mut ShellState) {
         let name_right = if name.is_empty() {
             LAUNCH_BTN_W + 4.0
         } else {
-            crate::menubar::titles_end(menus_x(&name)) + 12.0
+            crate::menubar::titles_end(menus_x(&name), &titles) + 12.0
         };
         let pager_left = w as f64 - status_w - 12.0 - ws_count as f64 * WS_CELL_W - 10.0;
         if px > name_right && px + pw < pager_left {
@@ -373,7 +375,8 @@ pub fn click(state: &mut ShellState, x: f64, _y: f64) -> bool {
     let was_open = state.menu_open;
     let name = focused_app_name(state);
     if !name.is_empty() {
-        for (i, (tx, tw)) in crate::menubar::title_rects(menus_x(&name))
+        let titles = crate::menubar::titles(state);
+        for (i, (tx, tw)) in crate::menubar::title_rects(menus_x(&name), &titles)
             .into_iter()
             .enumerate()
         {
