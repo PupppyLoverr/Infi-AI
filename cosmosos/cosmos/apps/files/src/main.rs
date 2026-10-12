@@ -164,7 +164,8 @@ impl Files {
         match fs::read_dir(&self.dir) {
             Ok(rd) => {
                 for e in rd.flatten() {
-                    let md = e.metadata().ok();
+                    // Follow symlinks (the desktop's Projects alias); dangling ones fall back to lstat.
+                    let md = fs::metadata(e.path()).or_else(|_| e.metadata()).ok();
                     let is_dir = md
                         .as_ref()
                         .map(|m| m.is_dir())
