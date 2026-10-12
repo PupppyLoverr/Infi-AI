@@ -221,6 +221,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         launcher_search: false,
         launcher_preview: None,
         launcher_card_h: 0.0,
+        reveal_mod: false,
         start_todos: None,
         start_todo_edit: None,
         start_photo: None,
@@ -619,6 +620,8 @@ pub struct ShellState {
     pub launcher_preview: Option<preview::FilePreview>,
     /// Painted Search or Ask card height (pill + results/answer).
     pub launcher_card_h: f64,
+    /// Ctrl or Super held: Enter on a file result reveals it in Files.
+    pub reveal_mod: bool,
     pub start_todos: Option<Vec<startw::Todo>>,
     pub start_todo_edit: Option<String>,
     pub start_photo: Option<(std::path::PathBuf, tiny_skia::Pixmap)>,
@@ -1246,6 +1249,7 @@ impl ShellState {
                     self.launcher_sel = idx;
                     self.launch_selected();
                 }
+                launcher::Hit::AskToggle => launcher::toggle_ask(self),
                 launcher::Hit::Backdrop => self.close_launcher(),
                 _ => {}
             }
@@ -1315,7 +1319,10 @@ impl ShellState {
                 }
                 self.launcher_dirty = true;
             }
-            launcher::Hit::Action(_) | launcher::Hit::Input | launcher::Hit::List => {}
+            launcher::Hit::Action(_)
+            | launcher::Hit::Input
+            | launcher::Hit::AskToggle
+            | launcher::Hit::List => {}
             launcher::Hit::Backdrop => self.close_launcher(),
         }
     }
@@ -2507,10 +2514,11 @@ impl KeyboardHandler for ShellState {
         _qh: &QueueHandle<Self>,
         _keyboard: &wl_keyboard::WlKeyboard,
         _serial: u32,
-        _modifiers: Modifiers,
+        modifiers: Modifiers,
         _raw_modifiers: RawModifiers,
         _layout: u32,
     ) {
+        self.reveal_mod = modifiers.ctrl || modifiers.logo;
     }
 }
 

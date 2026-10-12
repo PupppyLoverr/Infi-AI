@@ -33,10 +33,49 @@ const MAX_REC: usize = 3;
 const WIDGET_H: f64 = 60.0;
 /// Footer avatar + name hit/draw width.
 const USER_W: f64 = 220.0;
-/// Search or Ask (super+Space): a 680×56 pill in the upper third whose
-/// results expand beneath it in the same glass.
+/// Search or Ask (super+Space): a 600×52 pill in the upper third that
+/// widens to 680 once results expand beneath it in the same glass.
 const SEARCH_W: f64 = 680.0;
-const PILL_H: f64 = 56.0;
+const EMPTY_W: f64 = 600.0;
+const PILL_H: f64 = 52.0;
+/// The Ask toggle at the pill's right end.
+const ASK_BTN: (f64, f64) = (64.0, 28.0);
+
+fn search_w(query_empty: bool) -> f64 {
+    if query_empty {
+        EMPTY_W
+    } else {
+        SEARCH_W
+    }
+}
+
+/// Ask button rect (x, y, w, h) relative to the pill's top-left.
+fn ask_btn_rect(w: f64) -> (f64, f64, f64, f64) {
+    let (bw, bh) = ASK_BTN;
+    (w - 12.0 - bw, (PILL_H - bh) / 2.0, bw, bh)
+}
+
+/// Tab / the Ask button: flip between Search and Ask.
+pub fn toggle_ask(state: &mut ShellState) {
+    match state.launcher_query.strip_prefix('?') {
+        Some(rest) => state.launcher_query = rest.to_string(),
+        None => state.launcher_query.insert(0, '?'),
+    }
+    state.launcher_sel = 0;
+    state.launcher_dirty = true;
+}
+
+/// Ctrl/Super+Enter: show the selected file in Files instead of opening it.
+fn reveal_selected(state: &mut ShellState) -> bool {
+    let rows = state.filtered_results();
+    let idx = state.launcher_sel.min(rows.len().saturating_sub(1));
+    let Some(search::Kind::File(path)) = rows.get(idx).map(|r| r.kind.clone()) else {
+        return false;
+    };
+    crate::spawn_quiet("cosmos-files", &[&path]);
+    state.close_launcher();
+    true
+}
 const SEARCH_ROWS: usize = 8;
 /// Right-hand preview pane for a selected Files result.
 const PREVIEW_W: f32 = 276.0;
@@ -80,6 +119,8 @@ pub enum Hit {
     /// Press on the widget board, relative to its top-left.
     Widget(i32, i32),
     Input,
+    /// The Ask toggle on the Search pill.
+    AskToggle,
     List,
     Backdrop,
 }
@@ -568,18 +609,18 @@ fn theme(dark: bool) -> (Color, Color, Color, Color, CtColor, CtColor) {
 }
 
 /// Search pill outline at morph progress `m`: grows out of the island
-/// capsule at the menubar's centre (0) into the 680×56 pill (1).
+/// capsule at the menubar's centre (0) into the empty 600×52 pill (1).
 /// Returns (x, y, w, h, radius).
 fn search_morph_rect(size: (u32, u32), m: f32) -> (f32, f32, f32, f32, f32) {
     let lerp = |a: f32, b: f32| a + (b - a) * m;
-    let (left, top) = search_origin(size);
+    let (left, top) = search_origin(size, true);
     let cap_w = crate::island::PILL_W as f32;
     let cap_h = crate::PANEL_HEIGHT as f32;
     let cap_x = (size.0 as f32 - cap_w) / 2.0;
     (
         lerp(cap_x, left as f32),
         lerp(0.0, top as f32),
-        lerp(cap_w, SEARCH_W as f32),
+        lerp(cap_w, EMPTY_W as f32),
         lerp(cap_h, PILL_H as f32),
         lerp(cap_h / 2.0, PILL_H as f32 / 2.0),
     )
@@ -618,9 +659,9 @@ fn draw_search_morph(pixmap: &mut PixmapMut<'_>, size: (u32, u32), m: f32, dark:
     );
 }
 
-fn search_origin(size: (u32, u32)) -> (f64, f64) {
+fn search_origin(size: (u32, u32), query_empty: bool) -> (f64, f64) {
     (
-        ((size.0 as f64 - SEARCH_W) / 2.0).max(8.0),
+        ((size.0 as f64 - search_w(query_empty)) / 2.0).max(8.0),
         (size.1 as f64 * 0.22).max(48.0),
     )
 }
@@ -674,13 +715,19 @@ pub fn hit_test_search(
     query_empty: bool,
     card_h: f64,
 ) -> Hit {
-    let (left, top) = search_origin(size);
+    let (left, top) = search_origin(size, query_empty);
+    let w = search_w(query_empty);
     let lay = search_layout(rows, query_empty);
-    if x < left || x > left + SEARCH_W || y < top || y > top + lay.height.max(card_h) {
+    if x < left || x > left + w || y < top || y > top + lay.height.max(card_h) {
         return Hit::Backdrop;
     }
     let ry = y - top;
     if ry < PILL_H {
+        let (bx, by, bw, bh) = ask_btn_rect(w);
+        let rx = x - left;
+        if rx >= bx && rx < bx + bw && ry >= by && ry < by + bh {
+            return Hit::AskToggle;
+        }
         return Hit::Input;
     }
     lay.rows
@@ -702,9 +749,9 @@ fn draw_search(
     answer: Option<(String, Option<Result<(), String>>)>,
 ) -> f64 {
     let (box_bg, sel_bg, sep, _input_bg, fg, fg_dim) = theme(dark);
-    let (left, top) = search_origin(size);
+    let (left, top) = search_origin(size, query.is_empty());
     let lay = search_layout(rows, query.is_empty());
-    let sw = SEARCH_W as f32;
+    let sw = search_w(query.is_empty()) as f32;
     let answer = answer.map(|(text, done)| {
         let mut lines = ask::wrap(&text, sw - 48.0, |s| draw::text_width(13.0, s));
         if lines.len() > ASK_LINES {
@@ -751,18 +798,20 @@ fn draw_search(
         sep,
     );
 
-    // The pill: magnifier (or an "Ask" chip in ? mode), query, caret.
+    // The pill: magnifier (sparkle bubble in Ask), query, caret, Ask button.
     let ask = query.starts_with('?');
+    if ask {
+        ask_edge(pixmap, (l, t, sw, ht), r, dark);
+    }
     let shown = if ask { query[1..].trim_start() } else { query };
     let mid = t + PILL_H as f32 / 2.0;
-    let text_x = if ask {
-        draw::fill_round_rect(pixmap, l + 14.0, mid - 12.0, 46.0, 24.0, 12.0, sel_bg);
-        draw::text_centered(pixmap, l + 14.0, mid - 8.0, 46.0, 16.0, 12.0, "Ask", fg);
-        l + 70.0
+    let glyph = Color::from_rgba8(fg_dim.r(), fg_dim.g(), fg_dim.b(), 0xFF);
+    if ask {
+        icons::icon(pixmap, "search-ask", l + 16.0, mid - 10.0, 20.0, glyph);
     } else {
         magnifier(pixmap, l + 26.0, mid, fg_dim);
-        l + 50.0
-    };
+    }
+    let text_x = l + 50.0;
     let (label, color) = match (shown.is_empty(), ask) {
         (false, _) => (shown, fg),
         (true, true) => ("Ask Cosmos anything", fg_dim),
@@ -787,16 +836,27 @@ fn draw_search(
         22.0,
         Color::from_rgba8(fg.r(), fg.g(), fg.b(), 0xFF),
     );
-    if !ask {
+    {
+        let (bx, by, bw, bh) = ask_btn_rect(sw as f64);
+        let (bx, by, bw, bh) = (l + bx as f32, t + by as f32, bw as f32, bh as f32);
+        let (fill, ink) = if ask {
+            let a = draw::accent(dark);
+            (a, CtColor::rgba(0xFF, 0xFF, 0xFF, 0xFF))
+        } else {
+            (sel_bg, fg)
+        };
+        draw::fill_round_rect(pixmap, bx, by, bw, bh, bh / 2.0, fill);
+        let ink_c = Color::from_rgba8(ink.r(), ink.g(), ink.b(), 0xFF);
+        icons::icon(pixmap, "search-ask", bx + 8.0, by + 6.0, 16.0, ink_c);
         draw::text(
             pixmap,
-            l + sw - 104.0,
-            mid - 7.0,
-            88.0,
-            14.0,
-            11.0,
-            "Tab to Ask",
-            fg_dim,
+            bx + 28.0,
+            by + 6.0,
+            bw - 30.0,
+            16.0,
+            12.0,
+            "Ask",
+            ink,
         );
     }
     if query.is_empty() {
@@ -805,15 +865,7 @@ fn draw_search(
 
     draw::fill_rect(pixmap, l + 12.0, t + PILL_H as f32, sw - 24.0, 1.0, sep);
     if let Some((lines, done)) = answer {
-        draw_answer(
-            pixmap,
-            (l, t, sw, ht),
-            &lines,
-            done.as_ref(),
-            dark,
-            fg,
-            fg_dim,
-        );
+        draw_answer(pixmap, (l, t, sw), &lines, done.as_ref(), fg, fg_dim);
         return height;
     }
     // Rows share the card with the preview pane when one is showing.
@@ -852,7 +904,13 @@ fn draw_search(
         }
         let big = i == 0;
         let isz = if big { 24.0 } else { 20.0 };
-        icons::app_tile(pixmap, &row.icon, l + 16.0, ry + (rh - isz) / 2.0, isz);
+        let iy = ry + (rh - isz) / 2.0;
+        match &row.kind {
+            search::Kind::File(p) => {
+                icons::file_tile(pixmap, p, row.icon == "folder", l + 16.0, iy, isz)
+            }
+            _ => icons::app_tile(pixmap, &row.icon, l + 16.0, iy, isz),
+        }
         let title: String = row.title.chars().take(48).collect();
         let tx = l + 50.0;
         if big {
@@ -1011,21 +1069,12 @@ fn draw_preview(
     );
 }
 
-/// The streamed answer, edged with the accent gradient (spec §2.2).
-#[allow(clippy::too_many_arguments)]
-fn draw_answer(
-    pixmap: &mut PixmapMut<'_>,
-    (l, t, sw, ht): (f32, f32, f32, f32),
-    lines: &[String],
-    done: Option<&Result<(), String>>,
-    dark: bool,
-    fg: CtColor,
-    fg_dim: CtColor,
-) {
+/// Ask mode's accent edge glow around the whole card (spec §2.2, v6 P1-1).
+fn ask_edge(pixmap: &mut PixmapMut<'_>, (l, t, sw, ht): (f32, f32, f32, f32), r: f32, dark: bool) {
     let accent = draw::accent(dark);
     let fade =
         Color::from_rgba(accent.red(), accent.green(), accent.blue(), 0.15).unwrap_or(accent);
-    for (width, alpha) in [(5.0, 0.22), (1.5, 1.0)] {
+    for (width, alpha) in [(10.0, 0.10), (5.0, 0.22), (1.5, 1.0)] {
         let shader = tiny_skia::LinearGradient::new(
             tiny_skia::Point::from_xy(l, t),
             tiny_skia::Point::from_xy(l + sw, t + ht),
@@ -1038,7 +1087,7 @@ fn draw_answer(
             tiny_skia::Transform::identity(),
         );
         let (Some(path), Some(mut shader)) = (
-            draw::round_rect_path(l + 0.75, t + 0.75, sw - 1.5, ht - 1.5, CARD_R - 0.75),
+            draw::round_rect_path(l + 0.75, t + 0.75, sw - 1.5, ht - 1.5, r - 0.75),
             shader,
         ) else {
             break;
@@ -1055,6 +1104,18 @@ fn draw_answer(
         };
         pixmap.stroke_path(&path, &paint, &stroke, draw::xf(), None);
     }
+}
+
+/// The streamed answer under the pill (the card edge is `ask_edge`).
+#[allow(clippy::too_many_arguments)]
+fn draw_answer(
+    pixmap: &mut PixmapMut<'_>,
+    (l, t, sw): (f32, f32, f32),
+    lines: &[String],
+    done: Option<&Result<(), String>>,
+    fg: CtColor,
+    fg_dim: CtColor,
+) {
     let y0 = t + PILL_H as f32 + 14.0;
     let status = match done {
         None if lines.is_empty() => "Thinking…",
@@ -1693,7 +1754,11 @@ pub fn key_press(state: &mut ShellState, event: KeyEvent) {
         Keysym::Escape => {
             state.ipc.send(&cosmos_ipc::Request::ToggleLauncher);
         }
-        Keysym::Return | Keysym::KP_Enter => state.launch_selected(),
+        Keysym::Return | Keysym::KP_Enter => {
+            if !(state.reveal_mod && reveal_selected(state)) {
+                state.launch_selected();
+            }
+        }
         Keysym::BackSpace => {
             state.launcher_query.pop();
             state.launcher_sel = 0;
@@ -1716,13 +1781,7 @@ pub fn key_press(state: &mut ShellState, event: KeyEvent) {
             state.launcher_dirty = true;
         }
         Keysym::Tab if state.launcher_search => {
-            // Tab flips between Search and Ask.
-            match state.launcher_query.strip_prefix('?') {
-                Some(rest) => state.launcher_query = rest.to_string(),
-                None => state.launcher_query.insert(0, '?'),
-            }
-            state.launcher_sel = 0;
-            state.launcher_dirty = true;
+            toggle_ask(state);
         }
         Keysym::Tab => {
             let n = state.filtered_results().len();
@@ -1796,11 +1855,11 @@ mod search_layout_tests {
             )
         );
         assert_eq!(x + w / 2.0, 768.0);
-        let (left, top) = search_origin(size);
+        let (left, top) = search_origin(size, true);
         let end = search_morph_rect(size, 1.0);
         assert_eq!(
             (end.0, end.1, end.2, end.3),
-            (left as f32, top as f32, SEARCH_W as f32, PILL_H as f32)
+            (left as f32, top as f32, 600.0, 52.0)
         );
         let rows = [
             row(Kind::Setting("dock")),
@@ -1812,10 +1871,21 @@ mod search_layout_tests {
         assert_eq!(labels, ["TOP HIT", "Files"]);
         assert_eq!(lay.rows.len(), 3);
         let size = (1536, 864);
-        let (l, t) = search_origin(size);
+        let (l, t) = search_origin(size, false);
         assert_eq!(
             hit_test_search(l + 100.0, t + 20.0, size, &rows, false, 0.0),
             Hit::Input
+        );
+        let (bx, by, ..) = ask_btn_rect(SEARCH_W);
+        assert_eq!(
+            hit_test_search(l + bx + 4.0, t + by + 4.0, size, &rows, false, 0.0),
+            Hit::AskToggle
+        );
+        let (el, et) = search_origin(size, true);
+        let (bx, by, ..) = ask_btn_rect(EMPTY_W);
+        assert_eq!(
+            hit_test_search(el + bx + 4.0, et + by + 4.0, size, &[], true, 0.0),
+            Hit::AskToggle
         );
         assert_eq!(
             hit_test_search(l + 100.0, t + lay.rows[2] + 5.0, size, &rows, false, 0.0),

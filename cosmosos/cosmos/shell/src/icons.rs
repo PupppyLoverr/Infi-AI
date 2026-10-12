@@ -186,6 +186,73 @@ pub fn app_tile(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32
     );
 }
 
+/// File-type tile for search results: folders reuse the Files tile;
+/// files are a folded-corner page in their kind's colour (matching the
+/// Files app) with the extension in white.
+pub fn file_tile(pixmap: &mut PixmapMut<'_>, path: &str, dir: bool, x: f32, y: f32, size: f32) {
+    if dir {
+        app_tile(pixmap, "cosmos-files", x, y, size);
+        return;
+    }
+    let ext = path
+        .rsplit('/')
+        .next()
+        .and_then(|n| n.rsplit_once('.'))
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    use cosmos_theme::semantic::{DANGER, SUCCESS, WARNING};
+    let [r, g, b] = match ext.as_str() {
+        "txt" | "md" | "log" | "rst" | "org" | "csv" => [0x7C, 0x86, 0x9C],
+        "rs" | "py" | "js" | "ts" | "c" | "h" | "cpp" | "go" | "sh" | "toml" | "json" | "yaml"
+        | "yml" | "html" | "css" | "xml" => [0x8B, 0x5C, 0xF6],
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "avif" => SUCCESS,
+        "pdf" => DANGER,
+        "zip" | "tar" | "gz" | "xz" | "zst" | "7z" | "bz2" | "deb" | "tgz" => WARNING,
+        "mp3" | "flac" | "wav" | "ogg" | "opus" | "m4a" => [0xEC, 0x48, 0x99],
+        "mp4" | "mkv" | "webm" | "mov" | "avi" => [0x63, 0x66, 0xF1],
+        _ => [0x9C, 0xA3, 0xAF],
+    };
+    let (pw, fold) = (size * 0.78, size * 0.28);
+    let px = x + (size - pw) / 2.0;
+    let mut pb = PathBuilder::new();
+    pb.move_to(px, y);
+    pb.line_to(px + pw - fold, y);
+    pb.line_to(px + pw, y + fold);
+    pb.line_to(px + pw, y + size);
+    pb.line_to(px, y + size);
+    pb.close();
+    let fill = |pixmap: &mut PixmapMut<'_>, pb: PathBuilder, c: Color| {
+        if let Some(p) = pb.finish() {
+            let mut paint = Paint::default();
+            paint.set_color(c);
+            paint.anti_alias = true;
+            pixmap.fill_path(&p, &paint, FillRule::Winding, crate::draw::xf(), None);
+        }
+    };
+    fill(pixmap, pb, Color::from_rgba8(r, g, b, 0xFF));
+    let mut pb = PathBuilder::new();
+    pb.move_to(px + pw - fold, y);
+    pb.line_to(px + pw - fold, y + fold);
+    pb.line_to(px + pw, y + fold);
+    pb.close();
+    fill(pixmap, pb, Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x73));
+    let label: String = ext.to_uppercase().chars().take(4).collect();
+    if !label.is_empty() {
+        let fs = (size * 0.3).max(6.5);
+        let tw = crate::draw::text_width(fs, &label).min(pw);
+        crate::draw::text_bold(
+            pixmap,
+            px + (pw - tw) / 2.0,
+            y + size - fs - size * 0.12,
+            pw,
+            fs + 2.0,
+            fs,
+            &label,
+            cosmic_text::Color::rgba(0xFF, 0xFF, 0xFF, 0xFF),
+        );
+    }
+}
+
 /// Draw the glyph for `key` centred inside a `size`×`size` box at (x, y).
 pub fn icon(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32, color: Color) {
     let s = size / 24.0;

@@ -337,6 +337,11 @@ fn main() {
         if p.is_dir() {
             files.dir = p;
             files.refresh();
+        } else if let Some(dir) = p.parent().filter(|d| d.is_dir()) {
+            // `cosmos-files <file>` reveals it (Search's Ctrl+Enter).
+            files.dir = dir.to_path_buf();
+            files.refresh();
+            files.selected = Some(p);
         }
     }
     if args.iter().any(|a| a == "--chooser") {
