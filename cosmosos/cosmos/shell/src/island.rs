@@ -218,6 +218,38 @@ pub fn paint_pill(
     // Square top edge (it hangs off the screen edge), round bottom.
     draw::fill_round_rect(pm, x, y, w, h, h / 2.0, bg);
     draw::fill_round_rect(pm, x, y, w, h / 2.0, 0.0, bg);
+    // Concave fillets: the pill flows out of the screen edge instead of
+    // meeting it at sharp shoulders.
+    const FILLET: f32 = 8.0;
+    let k = FILLET * 0.552_284_8;
+    let mut pb = tiny_skia::PathBuilder::new();
+    for (edge, out) in [(x, -1.0f32), (x + w, 1.0)] {
+        pb.move_to(edge, y);
+        pb.line_to(edge, y + FILLET);
+        pb.cubic_to(
+            edge,
+            y + FILLET - k,
+            edge + out * (FILLET - k),
+            y,
+            edge + out * FILLET,
+            y,
+        );
+        pb.close();
+    }
+    if let Some(path) = pb.finish() {
+        let paint = tiny_skia::Paint {
+            shader: tiny_skia::Shader::SolidColor(bg),
+            anti_alias: true,
+            ..Default::default()
+        };
+        pm.fill_path(
+            &path,
+            &paint,
+            tiny_skia::FillRule::Winding,
+            crate::draw::xf(),
+            None,
+        );
+    }
     let lite = crate::LITE.with(|l| l.get());
     let phase = if lite { 0.0 } else { pulse_phase() };
     let breathe = 0.5 - 0.5 * (phase * std::f32::consts::TAU).cos();
