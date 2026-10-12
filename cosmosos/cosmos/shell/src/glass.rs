@@ -300,7 +300,7 @@ mod tests {
     #[test]
     fn shipped_wallpapers_load_as_tinted_glass_in_both_modes() {
         let d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../wallpapers");
-        for name in ["aurora", "coral", "indigo", "ocean", "peach", "violet"] {
+        for name in ["forest", "graphite", "ocean", "peach", "sunset", "violet"] {
             for dark in [true, false] {
                 let wall = cosmos_ipc::wallpaper_for(name, dark);
                 let g = load_from(&d, &wall, dark).unwrap_or_else(|| panic!("{wall} dark={dark}"));
@@ -308,8 +308,9 @@ mod tests {
                 let (r, gg, b) = (px.red(), px.green(), px.blue());
                 let chroma = r.max(gg).max(b) - r.min(gg).min(b);
                 eprintln!("{wall} dark={dark} centre=({r},{gg},{b}) chroma={chroma}");
+                // Graphite is the deliberately neutral one; it only has to load.
                 assert!(
-                    chroma >= 12,
+                    name == "graphite" || chroma >= 12,
                     "{wall} dark={dark} glass is grey: ({r},{gg},{b})"
                 );
             }

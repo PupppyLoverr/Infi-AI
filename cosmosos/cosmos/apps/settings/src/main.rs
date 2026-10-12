@@ -277,7 +277,7 @@ fn set(app: &mut App, key: &'static str, value: serde_json::Value) {
     app.status.clear();
 }
 
-const WALLPAPERS: &[&str] = &["violet", "ocean", "coral", "aurora", "peach", "indigo"];
+const WALLPAPERS: &[&str] = &["violet", "ocean", "sunset", "peach", "forest", "graphite"];
 
 thread_local! {
     static THUMBS: std::cell::RefCell<std::collections::HashMap<String, Option<egui::TextureHandle>>> =
@@ -657,7 +657,13 @@ fn about(ui: &mut egui::Ui, kit: &Kit) {
         .unwrap_or_else(|| format!("{cores} cores"));
     let mem_kb: u64 = read("/proc/meminfo")
         .lines()
-        .find_map(|l| l.strip_prefix("MemTotal:")?.split_whitespace().next()?.parse().ok())
+        .find_map(|l| {
+            l.strip_prefix("MemTotal:")?
+                .split_whitespace()
+                .next()?
+                .parse()
+                .ok()
+        })
         .unwrap_or(0);
     let memory = format!("{:.1} GB", mem_kb as f64 / 1_048_576.0);
     group(ui, None, |g| {

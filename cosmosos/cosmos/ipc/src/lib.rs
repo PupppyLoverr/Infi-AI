@@ -341,6 +341,22 @@ pub fn set_wallpaper_accent(rgb: [u8; 3]) {
 /// File stem for the active wallpaper in this appearance: light mode
 /// uses the pastel `<name>-light` variant shipped alongside each one.
 pub fn wallpaper_for(name: &str, dark: bool) -> String {
+    // v6 renamed three wallpapers; old configs keep working.
+    let base = name.strip_suffix("-light").unwrap_or(name);
+    let renamed = match base {
+        "coral" => Some("sunset"),
+        "aurora" => Some("forest"),
+        "indigo" => Some("graphite"),
+        _ => None,
+    };
+    if let Some(new) = renamed {
+        let suffix = if name.ends_with("-light") {
+            "-light"
+        } else {
+            ""
+        };
+        return wallpaper_for(&format!("{new}{suffix}"), dark);
+    }
     if dark || name.ends_with("-light") {
         name.to_string()
     } else {
