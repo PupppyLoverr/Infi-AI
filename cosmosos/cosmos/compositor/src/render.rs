@@ -715,7 +715,7 @@ where
             // Cover-fit: the texture is stretched to the output — the
             // generator's aspect matches common modes closely enough
             // that fill beats letterboxing.
-            let key = ssd::decal_key(5, (true, name.len() as u32 ^ size.w as u32, size.w, size.h));
+            let key = ssd::decal_key(5, (name.as_str(), size.w, size.h));
             return ssd::decal_element(
                 renderer,
                 key,

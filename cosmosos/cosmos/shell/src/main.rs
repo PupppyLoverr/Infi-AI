@@ -1726,6 +1726,9 @@ impl ShellState {
                 // The desktop takes no keyboard focus, so the island's
                 // focus-loss dismissal never fires for a desktop press.
                 self.close_island();
+                if self.desk.selected.take().is_some() {
+                    self.desk_dirty = true;
+                }
                 if button == BTN_RIGHT {
                     self.open_desktop_menu(x, y);
                 }
@@ -1907,7 +1910,12 @@ impl ShellState {
                 self.launcher_dirty = true;
             }
         }
+        let was_busy = panel::agent_running(self);
         self.agents = activity::scan_agents();
+        // The tray sparkle follows the agent's busy flag.
+        if panel::agent_running(self) != was_busy {
+            self.panel_dirty = true;
+        }
         // Elapsed timers + approval/agent changes.
         self.refresh_island();
         let before = self.notifications.len();

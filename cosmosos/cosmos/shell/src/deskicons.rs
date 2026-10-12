@@ -341,9 +341,8 @@ fn paint_item(
         }
     }
     let max = CELL_W as f32 - 8.0;
-    let tw = draw::text_width(12.0, &item.name).min(max);
-    let lx = cx + (CELL_W as f32 - tw) / 2.0;
-    let ly = iy + ICON + 8.0;
+    let lines = label_lines(&item.name, max, |t| draw::text_width(12.0, t));
+    let ly = iy + ICON + 6.0;
     // Labels sit on the wallpaper: a 1px contrasting shadow keeps them legible.
     let (fg, shadow) = if dark {
         (
@@ -356,12 +355,55 @@ fn paint_item(
             CtColor::rgba(0xFF, 0xFF, 0xFF, 0x80),
         )
     };
-    if sel {
-        let c = Color::from_rgba8(tint, tint, tint, if dark { 0x33 } else { 0x1F });
-        draw::fill_round_rect(pixmap, lx - 5.0, ly - 1.0, tw + 10.0, 18.0, 5.0, c);
+    for (n, line) in lines.iter().enumerate() {
+        let tw = draw::text_width(12.0, line).min(max);
+        let lx = cx + (CELL_W as f32 - tw) / 2.0;
+        let y = ly + n as f32 * LINE_H;
+        if sel {
+            let c = Color::from_rgba8(tint, tint, tint, if dark { 0x33 } else { 0x1F });
+            draw::fill_round_rect(pixmap, lx - 5.0, y - 1.0, tw + 10.0, LINE_H + 1.0, 5.0, c);
+        }
+        draw::text(pixmap, lx, y + 1.0, max, LINE_H, 12.0, line, shadow);
+        draw::text(pixmap, lx, y, max, LINE_H, 12.0, line, fg);
     }
-    draw::text(pixmap, lx, ly + 1.0, max, 16.0, 12.0, &item.name, shadow);
-    draw::text(pixmap, lx, ly, max, 16.0, 12.0, &item.name, fg);
+}
+
+const LINE_H: f32 = 15.0;
+
+/// Splits a label into at most two lines that each fit `max`: breaks at
+/// the last space that fits, else mid-word; an overlong rest ends in "…".
+fn label_lines(name: &str, max: f32, width: impl Fn(&str) -> f32) -> Vec<String> {
+    if width(name) <= max {
+        return vec![name.to_string()];
+    }
+    let chars: Vec<char> = name.chars().collect();
+    let fits = |n: usize| width(&chars[..n].iter().collect::<String>()) <= max;
+    let mut cut = (1..=chars.len())
+        .take_while(|&n| fits(n))
+        .last()
+        .unwrap_or(1);
+    if let Some(sp) = chars[..cut].iter().rposition(|c| *c == ' ') {
+        if sp > 0 {
+            cut = sp;
+        }
+    }
+    let first: String = chars[..cut].iter().collect();
+    let rest: String = chars[cut..]
+        .iter()
+        .collect::<String>()
+        .trim_start()
+        .to_string();
+    let second = if width(&rest) <= max {
+        rest
+    } else {
+        let rc: Vec<char> = rest.chars().collect();
+        let keep = (0..rc.len())
+            .take_while(|&n| width(&format!("{}…", rc[..=n].iter().collect::<String>())) <= max)
+            .last()
+            .map_or(0, |n| n + 1);
+        format!("{}…", rc[..keep].iter().collect::<String>())
+    };
+    vec![first, second]
 }
 
 pub fn draw(state: &mut ShellState) {
@@ -423,6 +465,19 @@ pub fn draw(state: &mut ShellState) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn long_labels_wrap_to_two_lines() {
+        let w = |t: &str| t.chars().count() as f32 * 7.0;
+        assert_eq!(super::label_lines("notes.txt", 88.0, w), vec!["notes.txt"]);
+        assert_eq!(
+            super::label_lines("Welcome to CosmosOS.md", 88.0, w),
+            vec!["Welcome to", "CosmosOS.md"]
+        );
+        let l = super::label_lines("Welcome to a very long document name.md", 88.0, w);
+        assert_eq!(l[0], "Welcome to");
+        assert!(l[1].ends_with('…') && w(&l[1]) <= 88.0);
+    }
+
     use super::*;
 
     #[test]
