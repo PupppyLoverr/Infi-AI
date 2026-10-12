@@ -285,6 +285,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         clip_source: None,
         data_device_manager: None,
         data_devices: Vec::new(),
+        desk_dnd: None,
         drop_tx,
         dnd_on_island: false,
         agents: activity::scan_agents(),
@@ -577,6 +578,11 @@ pub struct ShellState {
     /// island card (uri-list DnD → staged files).
     pub data_device_manager: Option<DataDeviceManagerState>,
     pub data_devices: Vec<DataDevice>,
+    /// The desktop icon being dragged out as a file, and its uri-list.
+    pub desk_dnd: Option<(
+        smithay_client_toolkit::data_device_manager::data_source::DragSource,
+        String,
+    )>,
     /// Channel decoded uri-list drops arrive on.
     pub drop_tx: calloop::channel::Sender<Vec<String>>,
     /// True while a drag hovers the island card.
@@ -2574,14 +2580,21 @@ impl PointerHandler for ShellState {
                         self.close_help();
                     } else if self.island_surface.as_ref() == Some(&layer) {
                         self.island_click(ev.position.0, ev.position.1);
-                    } else if self.desk_surface.as_ref() == Some(&layer)
-                        && matches!(ev.kind, PointerEventKind::Press { button: 0x110, .. })
+                    } else if let (
+                        true,
+                        PointerEventKind::Press {
+                            button: 0x110,
+                            serial,
+                            ..
+                        },
+                    ) = (self.desk_surface.as_ref() == Some(&layer), &ev.kind)
                     {
                         // Same dismissals as a bare-desktop press.
                         self.set_menu(None, 0);
                         self.set_quick_open(false);
                         self.close_island();
-                        self.desk_dirty |= deskicons::press(self, ev.position.0, ev.position.1);
+                        self.desk_dirty |=
+                            deskicons::press(self, ev.position.0, ev.position.1, *serial);
                     }
                 }
                 PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
@@ -2615,7 +2628,12 @@ impl PointerHandler for ShellState {
                     } else if self.island_surface.as_ref() == Some(&layer) {
                         self.island_dirty |= island::hover(self, ev.position.0, ev.position.1);
                     } else if self.desk_surface.as_ref() == Some(&layer) {
-                        self.desk_dirty |= deskicons::motion(self, ev.position.0, ev.position.1);
+                        let (x, y) = ev.position;
+                        self.desk_dirty |= deskicons::motion(self, x, y);
+                        if let Some((path, serial)) = deskicons::take_outbound(self, x, y) {
+                            self.start_file_drag(&path, serial);
+                            self.desk_dirty = true;
+                        }
                     }
                 }
                 PointerEventKind::Release { .. } => {
@@ -2749,7 +2767,11 @@ impl DataDeviceHandler for ShellState {
             {
                 let has_uri = offer.with_mime_types(|m| m.contains(&"text/uri-list".to_string()));
                 if has_uri {
-                    offer.accept_mime_type(0, Some("text/uri-list".to_string()));
+                    offer.accept_mime_type(offer.serial, Some("text/uri-list".to_string()));
+                    offer.set_actions(
+                        wayland_client::protocol::wl_data_device_manager::DndAction::Copy,
+                        wayland_client::protocol::wl_data_device_manager::DndAction::Copy,
+                    );
                 }
             }
         }
@@ -2831,8 +2853,148 @@ fn uri_paths(text: &str) -> Vec<String> {
     text.lines()
         .map(str::trim)
         .filter(|l| !l.starts_with('#') && !l.is_empty())
-        .map(|l| l.strip_prefix("file://").unwrap_or(l).to_string())
+        .map(|l| percent_decode(l.strip_prefix("file://").unwrap_or(l)))
         .collect()
+}
+
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = (b[i] == b'%')
+            .then(|| s.get(i + 1..i + 3))
+            .flatten()
+            .and_then(|h| u8::from_str_radix(h, 16).ok());
+        match hex {
+            Some(v) => {
+                out.push(v);
+                i += 3;
+            }
+            None => {
+                out.push(b[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// A `text/uri-list` line for `path`, reserved bytes percent-encoded.
+fn file_uri(path: &std::path::Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let mut uri = String::from("file://");
+    for &c in path.as_os_str().as_bytes() {
+        if c.is_ascii_alphanumeric() || b"/-._~".contains(&c) {
+            uri.push(c as char);
+        } else {
+            uri.push_str(&format!("%{c:02X}"));
+        }
+    }
+    uri.push_str("\r\n");
+    uri
+}
+
+#[cfg(test)]
+mod uri_tests {
+    #[test]
+    fn file_uri_round_trips_spaces() {
+        let p = std::path::Path::new("/home/cosmos/Desktop/Welcome to CosmosOS.md");
+        let uri = super::file_uri(p);
+        assert_eq!(
+            uri,
+            "file:///home/cosmos/Desktop/Welcome%20to%20CosmosOS.md\r\n"
+        );
+        assert_eq!(super::uri_paths(&uri), vec![p.display().to_string()]);
+    }
+}
+
+impl ShellState {
+    /// Hand a desktop icon drag to the compositor as a file drag.
+    fn start_file_drag(&mut self, path: &std::path::Path, serial: u32) {
+        let (Some(mgr), Some(dev), Some(layer)) = (
+            self.data_device_manager.as_ref(),
+            self.data_devices.last(),
+            self.desk_surface.as_ref(),
+        ) else {
+            return;
+        };
+        let src = mgr.create_drag_and_drop_source(
+            &self.qh,
+            ["text/uri-list"],
+            wayland_client::protocol::wl_data_device_manager::DndAction::Copy,
+        );
+        src.start_drag(dev, layer.wl_surface(), None, serial);
+        self.desk_dnd = Some((src, file_uri(path)));
+    }
+}
+
+impl smithay_client_toolkit::data_device_manager::data_source::DataSourceHandler for ShellState {
+    fn accept_mime(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wayland_client::protocol::wl_data_source::WlDataSource,
+        _: Option<String>,
+    ) {
+    }
+
+    fn send_request(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        source: &wayland_client::protocol::wl_data_source::WlDataSource,
+        mime: String,
+        mut fd: smithay_client_toolkit::data_device_manager::WritePipe,
+    ) {
+        use std::io::Write;
+        if let Some((src, uri)) = self.desk_dnd.as_ref() {
+            if src.inner() == source && mime == "text/uri-list" {
+                let _ = fd.write_all(uri.as_bytes());
+            }
+        }
+    }
+
+    fn cancelled(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        source: &wayland_client::protocol::wl_data_source::WlDataSource,
+    ) {
+        if self
+            .desk_dnd
+            .as_ref()
+            .is_some_and(|(s, _)| s.inner() == source)
+        {
+            self.desk_dnd = None;
+        }
+    }
+
+    fn dnd_dropped(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wayland_client::protocol::wl_data_source::WlDataSource,
+    ) {
+    }
+
+    fn dnd_finished(
+        &mut self,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+        source: &wayland_client::protocol::wl_data_source::WlDataSource,
+    ) {
+        self.cancelled(conn, qh, source);
+    }
+
+    fn action(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wayland_client::protocol::wl_data_source::WlDataSource,
+        _: wayland_client::protocol::wl_data_device_manager::DndAction,
+    ) {
+    }
 }
 
 impl ShellState {
@@ -2855,7 +3017,14 @@ impl ShellState {
         {
             let uri = "text/uri-list".to_string();
             let ok = target.is_some() && offer.with_mime_types(|m| m.contains(&uri));
-            offer.accept_mime_type(0, ok.then_some(uri));
+            offer.accept_mime_type(offer.serial, ok.then_some(uri));
+            // Without a chosen action the compositor cancels the drop.
+            let act = if ok {
+                wayland_client::protocol::wl_data_device_manager::DndAction::Copy
+            } else {
+                wayland_client::protocol::wl_data_device_manager::DndAction::empty()
+            };
+            offer.set_actions(act, act);
         }
     }
 
@@ -2874,6 +3043,7 @@ impl ShellState {
             return;
         };
         let Some((_, app)) = dock::drop_target(self, x, y) else {
+            tracing::debug!(x, y, "dock: drop outside Files/Editor");
             return;
         };
         let Some(offer) = data_device
@@ -2882,14 +3052,19 @@ impl ShellState {
         else {
             return;
         };
-        let Ok(mut pipe) = offer.receive("text/uri-list".to_string()) else {
-            return;
+        let mut pipe = match offer.receive("text/uri-list".to_string()) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!("dock: drop receive failed: {e}");
+                return;
+            }
         };
         offer.finish();
         std::thread::spawn(move || {
             use std::io::Read;
             let mut text = String::new();
             let _ = pipe.read_to_string(&mut text);
+            tracing::debug!(%text, app = %app.id, "dock: file drop");
             dock::open_dropped(&app, &uri_paths(&text));
         });
     }
