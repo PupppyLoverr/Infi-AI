@@ -22,6 +22,8 @@ struct Editor {
     status: String,
     open_field: String,
     show_open: bool,
+    /// The path sheet was opened to save (Save As) rather than to open.
+    saving: bool,
     cursor: (usize, usize),
     /// Selected char range, sorted; `None` when the selection is empty.
     selection: Option<(usize, usize)>,
@@ -47,6 +49,7 @@ impl Editor {
             status: String::new(),
             open_field: String::new(),
             show_open: false,
+            saving: false,
             cursor: (1, 1),
             selection: None,
             ask: None,
@@ -82,10 +85,30 @@ impl Editor {
         }
     }
 
+    fn save_as(&mut self) {
+        self.open_field = match &self.path {
+            Some(p) => p.display().to_string(),
+            None => std::env::var("HOME")
+                .map(|h| format!("{h}/Untitled.txt"))
+                .unwrap_or_default(),
+        };
+        self.saving = true;
+        self.show_open = true;
+    }
+
+    fn open_sheet(&mut self) {
+        self.open_field = self
+            .path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        self.saving = false;
+        self.show_open = true;
+    }
+
     fn save(&mut self) {
         let Some(path) = self.path.clone() else {
-            self.show_open = true;
-            self.status = "choose a path to save".into();
+            self.save_as();
             return;
         };
         match fs::write(&path, &self.text) {
@@ -268,7 +291,15 @@ fn line_col(text: &str, char_idx: usize) -> (usize, usize) {
 
 fn draw(ui: &mut egui::Ui, ed: &mut Editor) {
     let kit = Kit::get(ui.ctx());
-    if ui
+    // Ctrl+Shift+S first: consume_key ignores an unrequested Shift.
+    if ui.ctx().input_mut(|i| {
+        i.consume_key(
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::S,
+        )
+    }) {
+        ed.save_as();
+    } else if ui
         .ctx()
         .input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S))
     {
@@ -278,12 +309,7 @@ fn draw(ui: &mut egui::Ui, ed: &mut Editor) {
         .ctx()
         .input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::O))
     {
-        ed.open_field = ed
-            .path
-            .as_ref()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default();
-        ed.show_open = true;
+        ed.open_sheet();
     }
     let lang = Lang::of(ed.path.as_ref());
     let name = ed
@@ -308,12 +334,7 @@ fn draw(ui: &mut egui::Ui, ed: &mut Editor) {
             toolbar_spacer(ui, 2.0 * 28.0 + 4.0);
             ui.spacing_mut().item_spacing.x = 4.0;
             if toolbar_button(ui, Icon::FolderOpen, "Open… (Ctrl+O)", false).clicked() {
-                ed.open_field = ed
-                    .path
-                    .as_ref()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_default();
-                ed.show_open = true;
+                ed.open_sheet();
             }
             if toolbar_button(ui, Icon::Save, "Save (Ctrl+S)", false).clicked() {
                 ed.save();
@@ -427,7 +448,7 @@ fn draw(ui: &mut egui::Ui, ed: &mut Editor) {
         let open = sheet(
             &ctx,
             egui::Id::new("editor-open"),
-            "Open or Save As",
+            if ed.saving { "Save As" } else { "Open" },
             |ui| {
                 text_field(
                     ui,
@@ -440,14 +461,15 @@ fn draw(ui: &mut egui::Ui, ed: &mut Editor) {
                 ui.add_space(space::S16);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let p = ed.open_field.trim().to_string();
-                    if (button(ui, ButtonKind::Primary, "Open").clicked() || enter) && !p.is_empty()
+                    let label = if ed.saving { "Save" } else { "Open" };
+                    if (button(ui, ButtonKind::Primary, label).clicked() || enter) && !p.is_empty()
                     {
-                        ed.load(PathBuf::from(p.clone()));
-                        done = true;
-                    }
-                    if button(ui, ButtonKind::Secondary, "Save As").clicked() && !p.is_empty() {
-                        ed.path = Some(PathBuf::from(p));
-                        ed.save();
+                        if ed.saving {
+                            ed.path = Some(PathBuf::from(p));
+                            ed.save();
+                        } else {
+                            ed.load(PathBuf::from(p));
+                        }
                         done = true;
                     }
                     if button(ui, ButtonKind::Plain, "Cancel").clicked() {

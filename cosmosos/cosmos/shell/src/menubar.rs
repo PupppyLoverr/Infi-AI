@@ -120,6 +120,7 @@ const FILE_EDITOR: Items = &[
     ("New Window", Action::NewWindow),
     ("Open…", Action::Keys(&[CTRL, 24])),
     ("Save", Action::Keys(&[CTRL, 31])),
+    ("Save As…", Action::Keys(&[CTRL, SHIFT, 31])),
     ("Close Window", Action::Close),
 ];
 const FILE_DESKTOP: Items = &[
