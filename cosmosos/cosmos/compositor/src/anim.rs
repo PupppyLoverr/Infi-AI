@@ -18,8 +18,8 @@ use std::{
 
 /// Window map-in: fade + zoom from ~94% (macOS sheet feel, subtler).
 pub const MAP_IN: Duration = Duration::from_millis(160);
-/// Minimize-out: fade + shrink — the window visibly leaves before it unmaps.
-pub const MINIMIZE_OUT: Duration = Duration::from_millis(130);
+/// Minimize-out: shrink + fade into the dock before the window unmaps.
+pub const MINIMIZE_OUT: Duration = Duration::from_millis(250);
 /// Workspace switch: windows of the incoming desktop slide in sideways.
 pub const WS_SLIDE: Duration = Duration::from_millis(190);
 /// Floating cards: pop/fade/slide entrances.
@@ -89,7 +89,16 @@ impl Animations {
         let e = ease_out_cubic(t);
         Some(match kind {
             WinAnim::MapIn => (e, lerp(0.94, 1.0, e)),
-            WinAnim::MinimizeOut => (1.0 - e, lerp(1.0, 0.90, e)),
+            WinAnim::MinimizeOut => (1.0 - e * e, lerp(1.0, 0.08, e)),
+        })
+    }
+
+    /// Eased 0→1 progress of a running minimize-out — how far the
+    /// window has travelled toward the dock.
+    pub fn minimize_progress(&self, id: u64, now: Instant) -> Option<f32> {
+        let (start, kind) = self.windows.get(&id)?;
+        (*kind == WinAnim::MinimizeOut).then(|| {
+            ease_out_cubic(now.duration_since(*start).as_secs_f32() / MINIMIZE_OUT.as_secs_f32())
         })
     }
 

@@ -136,6 +136,16 @@ pub fn app_tile(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32
         "cosmos-monitor" => ((0x43, 0xDE, 0x6E), (0x12, 0x8A, 0x38)),
         "cosmos-agents" => ((0x9D, 0x7B, 0xFF), (0x5B, 0x2F, 0xD9)),
         "firefox" => ((0xFF, 0xB0, 0x3A), (0xE0, 0x44, 0x0E)),
+        "trash" => ((0x9A, 0x9E, 0xAA), (0x52, 0x55, 0x60)),
+        "launcher" => {
+            // The launcher follows the accent: lighter top, deeper base.
+            let a = crate::draw::accent(true);
+            let ch = |v: f32, k: f32| ((v * k).clamp(0.0, 1.0) * 255.0) as u8;
+            (
+                (ch(a.red(), 1.18), ch(a.green(), 1.18), ch(a.blue(), 1.18)),
+                (ch(a.red(), 0.62), ch(a.green(), 0.62), ch(a.blue(), 0.62)),
+            )
+        }
         _ => ((0x8A, 0x8F, 0x9E), (0x44, 0x46, 0x50)),
     };
     let Some(path) = squircle(x, y, size) else {
@@ -209,6 +219,36 @@ pub fn icon(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32, co
 
     let key = key_for(key);
     match key.as_str() {
+        "launcher" => {
+            // Dock launcher: a 3×3 dot grid (the app-grid idiom).
+            for gy in [6.0f32, 12.0, 18.0] {
+                for gx in [6.0f32, 12.0, 18.0] {
+                    circle!(pb, gx, gy, 2.1);
+                }
+            }
+            fill(pixmap, pb, color);
+        }
+        "trash" => {
+            // Bin: lid bar + handle, tapered body with two ribs.
+            rr!(pb, 4.0, 5.5, 16.0, 2.2, 1.1);
+            fill(pixmap, pb, color);
+            let mut pb = PathBuilder::new();
+            rr!(pb, 9.5, 3.0, 5.0, 2.5, 1.0);
+            fill(pixmap, pb, color);
+            let mut pb = PathBuilder::new();
+            mv!(pb, 5.8, 8.6);
+            ln!(pb, 18.2, 8.6);
+            ln!(pb, 17.0, 20.2);
+            ln!(pb, 7.0, 20.2);
+            pb.close();
+            stroke(pixmap, pb, s, w, color);
+            let mut pb = PathBuilder::new();
+            mv!(pb, 10.0, 11.0);
+            ln!(pb, 10.4, 17.6);
+            mv!(pb, 14.0, 11.0);
+            ln!(pb, 13.6, 17.6);
+            stroke(pixmap, pb, s, w, color);
+        }
         "start" => {
             // Cosmos mark: four rounded cells (Launchpad × Windows logo).
             for (gx, gy) in [(4.5f32, 4.5f32), (13.0, 4.5), (4.5, 13.0), (13.0, 13.0)] {

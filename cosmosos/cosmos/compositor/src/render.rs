@@ -314,6 +314,24 @@ where
         // transform: map-in zoom+fade, minimize shrink-out, workspace
         // slide. Non-animating windows keep the plain `Window` variant.
         if let Some(output_geo) = space.output_geometry(output) {
+            // Minimised windows shrink toward the dock pill's centre line
+            // (MARGIN + STRIP/2 = 46 logical px off its screen edge, see
+            // shell/src/dock.rs).
+            const DOCK_PILL_MID: i32 = 46;
+            let dock_target = layer_map
+                .layers()
+                .find(|l| l.namespace() == "cosmos-dock")
+                .and_then(|l| layer_map.layer_geometry(l))
+                .map(|g| {
+                    let (cx, cy) = (g.loc.x + g.size.w / 2, g.loc.y + g.size.h / 2);
+                    if g.size.w >= g.size.h {
+                        (cx, g.loc.y + g.size.h - DOCK_PILL_MID)
+                    } else if g.loc.x <= 0 {
+                        (g.loc.x + DOCK_PILL_MID, cy)
+                    } else {
+                        (g.loc.x + g.size.w - DOCK_PILL_MID, cy)
+                    }
+                });
             for window in space.elements().rev() {
                 let Some(bbox) = space.element_bbox(window) else {
                     continue;
@@ -333,7 +351,18 @@ where
                 let dx = id
                     .map(|id| cosmos.anims.ws_dx(id, now, output_geo.size.w))
                     .unwrap_or(0);
-                let animating = wscale != 1.0 || dx != 0;
+                let (mdx, mdy) = match (
+                    id.and_then(|id| cosmos.anims.minimize_progress(id, now)),
+                    dock_target,
+                ) {
+                    (Some(e), Some((tx, ty))) => {
+                        let local = bbox.loc - output_geo.loc;
+                        let (cx, cy) = (local.x + bbox.size.w / 2, local.y + bbox.size.h / 2);
+                        (((tx - cx) as f32 * e) as f64, ((ty - cy) as f32 * e) as f64)
+                    }
+                    _ => (0.0, 0.0),
+                };
+                let animating = wscale != 1.0 || dx != 0 || mdx != 0.0 || mdy != 0.0;
                 for el in AsRenderElements::<R>::render_elements::<WindowRenderElement<R>>(
                     window,
                     renderer,
@@ -354,7 +383,10 @@ where
                         output_render_elements.push(OutputRenderElements::WindowAnim(
                             RelocateRenderElement::from_element(
                                 scaled,
-                                ((dx as f64 * output_scale).round() as i32, 0),
+                                (
+                                    ((dx as f64 + mdx) * output_scale).round() as i32,
+                                    (mdy * output_scale).round() as i32,
+                                ),
                                 Relocate::Relative,
                             ),
                         ));

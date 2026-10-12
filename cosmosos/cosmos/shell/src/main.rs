@@ -176,6 +176,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         panel_size: (0, PANEL_HEIGHT),
         dock_size: (0, 0),
         dock_position: dock::DockPos::Bottom,
+        dock_magnify: false,
+        dock_autohide: false,
+        dock_hidden: false,
+        dock_hide_seq: 0,
+        dock_reveal_at: None,
+        dock_bounce: None,
+        dock_drag: None,
+        dock_poof: None,
+        dnd_on_dock: false,
+        dock_drop: None,
+        dock_anim_timer: false,
         switcher_size: (0, 0),
         switcher_order: Vec::new(),
         switcher_sel: 0,
@@ -237,6 +248,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         quick_dirty: false,
         panel_hover: (0.0, false),
         dock_hover: None,
+        dock_label: None,
+        dock_pins: dock::load_pins(),
+        dock_menu: Vec::new(),
+        dock_menu_app: None,
         dock_dirty: true,
         switcher_dirty: false,
         quick_open: false,
@@ -630,8 +645,36 @@ pub struct ShellState {
     /// Last pointer position along the dock rail's axis (cell
     /// highlight + magnification centre).
     pub dock_hover: Option<f64>,
+    /// Hovered dock cell and when the pointer settled on it; its label
+    /// shows after dock::LABEL_DELAY.
+    pub dock_label: Option<(usize, std::time::Instant)>,
+    /// Pinned dock apps in order (persisted; Agents always present).
+    pub dock_pins: Vec<String>,
+    /// Rows of the open dock context menu and the app it targets.
+    pub dock_menu: Vec<(String, menubar::Action)>,
+    pub dock_menu_app: Option<AppEntry>,
     /// Which screen edge the dock rail sits on (config `dock_position`).
     pub dock_position: dock::DockPos,
+    /// Config `dock_magnify` — icons grow under the pointer.
+    pub dock_magnify: bool,
+    /// Auto-hide: off by default. While hidden the dock is a transparent
+    /// edge strip; `dock_hide_seq` invalidates stale hide timers and
+    /// `dock_reveal_at` marks a pending 300 ms edge-dwell reveal.
+    pub dock_autohide: bool,
+    pub dock_hidden: bool,
+    pub dock_hide_seq: u64,
+    pub dock_reveal_at: Option<std::time::Instant>,
+    /// Launch bounce in flight (app id, start) and whether the dock's
+    /// animation timer (bounce / Agents ring) is armed.
+    pub dock_bounce: Option<(String, std::time::Instant)>,
+    pub dock_drag: Option<dock::DockDrag>,
+    /// Surface point + start of the poof left by an unpinned drag.
+    pub dock_poof: Option<((f64, f64), std::time::Instant)>,
+    /// A file drag is over the dock; `dock_drop` is the Files/Editor cell
+    /// it would open in.
+    pub dnd_on_dock: bool,
+    pub dock_drop: Option<usize>,
+    pub dock_anim_timer: bool,
     pub dock_dirty: bool,
     pub switcher_dirty: bool,
     /// Quick-settings flyout state.
@@ -765,7 +808,13 @@ impl ShellState {
             }
         }
         layer.set_size(sw, sh);
-        layer.set_exclusive_zone((dock::STRIP + dock::MARGIN) as i32);
+        // A hiding dock reserves nothing — windows use the full edge.
+        let zone = if self.dock_autohide {
+            0
+        } else {
+            (dock::STRIP + dock::MARGIN) as i32
+        };
+        layer.set_exclusive_zone(zone);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         layer.wl_surface().commit();
         self.dock_surface = Some(layer);
@@ -1440,6 +1489,22 @@ impl ShellState {
         self.set_menu_at(Some(menubar::DESKTOP), x, Some(y));
     }
 
+    /// Dock icon context menu with its card's top-left at screen (x, y).
+    pub fn open_dock_menu(
+        &mut self,
+        rows: Vec<(String, menubar::Action)>,
+        app: Option<AppEntry>,
+        x: i32,
+        y: i32,
+    ) {
+        self.close_launcher();
+        self.set_quick_open(false);
+        self.dock_menu = rows;
+        self.dock_menu_app = app;
+        let inset = menubar::INSET as i32;
+        self.set_menu_at(Some(menubar::DOCK), x + inset, Some(y + inset));
+    }
+
     /// `y: None` drops the card just under the menubar; `Some(y)` puts
     /// its top edge at screen `y`.
     fn set_menu_at(&mut self, menu: Option<usize>, x: i32, y: Option<i32>) {
@@ -1450,7 +1515,7 @@ impl ShellState {
             self.panel_dirty = true;
             return;
         };
-        let (w, h) = menubar::surface_size(menubar::current(self, m));
+        let (w, h) = menubar::surface_size(menubar::rows(self, m).len());
         let inset = menubar::INSET as i32;
         let left = (x - inset).clamp(0, (self.panel_size.0 as i32 - w as i32).max(0));
         let top = match y {
@@ -1482,10 +1547,12 @@ impl ShellState {
 
     pub fn menu_click(&mut self, x: f64, y: f64) {
         let Some(m) = self.menu_open else { return };
-        let Some(row) = menubar::item_at(menubar::current(self, m), x, y) else {
+        let rows = menubar::rows(self, m);
+        let Some(row) = menubar::item_at(rows.len(), x, y) else {
             return;
         };
-        let action = menubar::current(self, m)[row].1;
+        let action = rows[row].1;
+        let dock_app = self.dock_menu_app.clone();
         let focused = self.windows.iter().find(|w| w.focused).cloned();
         if action.needs_window() && focused.is_none() {
             return;
@@ -1591,6 +1658,26 @@ impl ShellState {
             Action::Sleep => {
                 if let Err(err) = desktop::dbus_power("Suspend") {
                     tracing::warn!("menu: sleep failed: {err}");
+                }
+            }
+            Action::FocusWindow(id) => self.ipc.send(&cosmos_ipc::Request::FocusWindow { id }),
+            Action::DockNewWindow => {
+                if let Some(app) = dock_app {
+                    if let Err(err) = desktop::launch(&app) {
+                        tracing::warn!("dock: new window {} failed: {err}", app.id);
+                    }
+                }
+            }
+            Action::DockKeep | Action::DockRemove => {
+                if let Some(app) = dock_app {
+                    dock::set_pinned(self, &app.id, action == Action::DockKeep);
+                }
+            }
+            Action::DockQuit => {
+                if let Some(app) = dock_app {
+                    for id in dock::windows_of(self, &app.id) {
+                        self.ipc.send(&cosmos_ipc::Request::CloseWindow { id });
+                    }
                 }
             }
             Action::Logout | Action::Restart | Action::Shutdown => {
@@ -1826,6 +1913,28 @@ impl ShellState {
                 }
             }
         }
+        if let Some(on) = map.get("dock_magnify").and_then(|v| v.as_bool()) {
+            if on != self.dock_magnify {
+                self.dock_magnify = on;
+                self.dock_dirty = true;
+            }
+        }
+        if let Some(on) = map.get("dock_autohide").and_then(|v| v.as_bool()) {
+            if on != self.dock_autohide {
+                self.dock_autohide = on;
+                self.dock_hidden = false;
+                self.dock_reveal_at = None;
+                // The exclusive zone changes, so recreate the layer.
+                if self.dock_surface.is_some() {
+                    self.dock_surface = None;
+                    let qh = self.qh.clone();
+                    self.create_dock(&qh);
+                }
+                if on {
+                    dock::schedule_hide(self);
+                }
+            }
+        }
         // Dock edge — a position change re-anchors the surface entirely
         // (anchors + exclusive zone), so the layer is recreated.
         if let Some(pos) = map
@@ -1915,6 +2024,9 @@ impl ShellState {
         // The tray sparkle follows the agent's busy flag.
         if panel::agent_running(self) != was_busy {
             self.panel_dirty = true;
+        }
+        if dock::agents_busy(self) {
+            dock::start_anim(self);
         }
         // Elapsed timers + approval/agent changes.
         self.refresh_island();
@@ -2429,11 +2541,11 @@ impl PointerHandler for ShellState {
                 continue;
             };
             match ev.kind {
-                PointerEventKind::Press { .. } => {
+                PointerEventKind::Press { button, .. } => {
                     if self.panel.as_ref() == Some(&layer) {
                         self.panel_dirty = panel::click(self, ev.position.0, ev.position.1);
                     } else if self.dock_surface.as_ref() == Some(&layer) {
-                        self.dock_dirty = dock::click(self, ev.position.0, ev.position.1);
+                        self.dock_dirty = dock::click(self, button, ev.position.0, ev.position.1);
                     } else if self.launcher_surface.as_ref() == Some(&layer) {
                         self.launcher_click(ev.position.0, ev.position.1);
                     } else if self.notify_surface.as_ref() == Some(&layer) {
@@ -2477,7 +2589,11 @@ impl PointerHandler for ShellState {
                     if self.panel.as_ref() == Some(&layer) {
                         self.panel_dirty |= panel::hover(self, ev.position.0, ev.position.1);
                     } else if self.dock_surface.as_ref() == Some(&layer) {
-                        self.dock_dirty |= dock::hover(self, ev.position.0, ev.position.1);
+                        self.dock_dirty |= if self.dock_drag.is_some() {
+                            dock::drag_motion(self, ev.position.0, ev.position.1)
+                        } else {
+                            dock::hover(self, ev.position.0, ev.position.1)
+                        };
                     } else if self.launcher_surface.as_ref() == Some(&layer) {
                         if let Some(board_x) = self.start_vol_drag {
                             let w = LAUNCHER_WIDTH as f32 - 32.0;
@@ -2507,6 +2623,9 @@ impl PointerHandler for ShellState {
                     self.start_vol_drag = None;
                     if self.desk_surface.as_ref() == Some(&layer) {
                         self.desk_dirty |= deskicons::release(self);
+                    }
+                    if self.dock_surface.as_ref() == Some(&layer) {
+                        self.dock_dirty |= dock::release(self);
                     }
                     if self.quick_surface.as_ref() == Some(&layer) {
                         quick::release(self);
@@ -2607,10 +2726,17 @@ impl DataDeviceHandler for ShellState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
         data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
-        _x: f64,
-        _y: f64,
+        x: f64,
+        y: f64,
         surface: &wl_surface::WlSurface,
     ) {
+        self.dnd_on_dock = self
+            .dock_surface
+            .as_ref()
+            .is_some_and(|l| l.wl_surface() == surface);
+        if self.dnd_on_dock {
+            self.dock_dnd_motion(data_device, x, y);
+        }
         let on_island = self
             .island_surface
             .as_ref()
@@ -2637,16 +2763,24 @@ impl DataDeviceHandler for ShellState {
         _data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
     ) {
         self.dnd_on_island = false;
+        if std::mem::take(&mut self.dnd_on_dock) {
+            self.dock_drop = None;
+            self.dock_dirty |= dock::leave(self);
+            self.dock_dirty = true;
+        }
     }
 
     fn motion(
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
-        _x: f64,
-        _y: f64,
+        data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
+        x: f64,
+        y: f64,
     ) {
+        if self.dnd_on_dock {
+            self.dock_dnd_motion(data_device, x, y);
+        }
     }
 
     fn selection(
@@ -2663,6 +2797,10 @@ impl DataDeviceHandler for ShellState {
         _qh: &QueueHandle<Self>,
         data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
     ) {
+        if self.dnd_on_dock {
+            self.dock_file_drop(data_device);
+            return;
+        }
         if !self.dnd_on_island {
             return;
         }
@@ -2681,19 +2819,79 @@ impl DataDeviceHandler for ShellState {
             use std::io::Read;
             let mut text = String::new();
             let _ = pipe.read_to_string(&mut text);
-            let paths: Vec<String> = text
-                .lines()
-                .filter_map(|l| {
-                    let l = l.trim();
-                    if l.starts_with('#') || l.is_empty() {
-                        return None;
-                    }
-                    Some(l.strip_prefix("file://").unwrap_or(l).to_string())
-                })
-                .collect();
+            let paths = uri_paths(&text);
             if !paths.is_empty() {
                 let _ = tx.send(paths);
             }
+        });
+    }
+}
+
+/// Local paths from a `text/uri-list` payload.
+fn uri_paths(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+        .map(|l| l.strip_prefix("file://").unwrap_or(l).to_string())
+        .collect()
+}
+
+impl ShellState {
+    /// A file drag moving over the dock: Files and Editor accept it.
+    fn dock_dnd_motion(
+        &mut self,
+        data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
+        x: f64,
+        y: f64,
+    ) {
+        self.dock_dirty |= dock::hover(self, x, y);
+        let target = dock::drop_target(self, x, y).map(|(i, _)| i);
+        if target != self.dock_drop {
+            self.dock_drop = target;
+            self.dock_dirty = true;
+        }
+        if let Some(offer) = data_device
+            .data::<smithay_client_toolkit::data_device_manager::data_device::DataDeviceData>()
+            .and_then(|d| d.drag_offer())
+        {
+            let uri = "text/uri-list".to_string();
+            let ok = target.is_some() && offer.with_mime_types(|m| m.contains(&uri));
+            offer.accept_mime_type(0, ok.then_some(uri));
+        }
+    }
+
+    /// Files dropped on the dock's Files or Editor cell open there.
+    fn dock_file_drop(
+        &mut self,
+        data_device: &wayland_client::protocol::wl_data_device::WlDataDevice,
+    ) {
+        self.dock_drop = None;
+        self.dock_dirty = true;
+        let Some((x, y)) = data_device
+            .data::<smithay_client_toolkit::data_device_manager::data_device::DataDeviceData>()
+            .and_then(|d| d.drag_offer())
+            .map(|o| (o.x, o.y))
+        else {
+            return;
+        };
+        let Some((_, app)) = dock::drop_target(self, x, y) else {
+            return;
+        };
+        let Some(offer) = data_device
+            .data::<smithay_client_toolkit::data_device_manager::data_device::DataDeviceData>()
+            .and_then(|d| d.drag_offer())
+        else {
+            return;
+        };
+        let Ok(mut pipe) = offer.receive("text/uri-list".to_string()) else {
+            return;
+        };
+        offer.finish();
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut text = String::new();
+            let _ = pipe.read_to_string(&mut text);
+            dock::open_dropped(&app, &uri_paths(&text));
         });
     }
 }
