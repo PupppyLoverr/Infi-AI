@@ -200,7 +200,14 @@ pub fn menus(app: Option<&str>) -> Vec<(&'static str, Items)> {
             ("Help", HELP),
         ],
         Some(id) => vec![
-            ("File", if id == "cosmos.editor" { FILE_EDITOR } else { FILE }),
+            (
+                "File",
+                if id == "cosmos.editor" {
+                    FILE_EDITOR
+                } else {
+                    FILE
+                },
+            ),
             ("Edit", EDIT),
             ("View", VIEW),
             ("Window", WINDOW),
@@ -277,7 +284,9 @@ pub fn item_at(items: Items, x: f64, y: f64) -> Option<usize> {
 }
 
 pub fn hover(state: &mut ShellState, x: f64, y: f64) -> bool {
-    let h = state.menu_open.and_then(|m| item_at(current(state, m), x, y));
+    let h = state
+        .menu_open
+        .and_then(|m| item_at(current(state, m), x, y));
     if h != state.menu_hover {
         state.menu_hover = h;
         true

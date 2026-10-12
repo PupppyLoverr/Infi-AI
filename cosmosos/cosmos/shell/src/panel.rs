@@ -150,11 +150,11 @@ pub fn draw(state: &mut ShellState) {
     let glyph = Color::from_rgba8(fg.r(), fg.g(), fg.b(), fg.a());
     icons::icon(
         &mut pixmap,
-        "start",
-        LAUNCH_BTN_W as f32 / 2.0 - 9.0,
-        h as f32 / 2.0 - 9.0,
-        18.0,
-        draw::accent(dark),
+        "cosmos",
+        LAUNCH_BTN_W as f32 / 2.0 - 8.0,
+        h as f32 / 2.0 - 8.0,
+        16.0,
+        glyph,
     );
 
     // Focused app — macOS menubar shows the app icon then its bold name.

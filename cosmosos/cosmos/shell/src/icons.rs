@@ -216,6 +216,27 @@ pub fn icon(pixmap: &mut PixmapMut<'_>, key: &str, x: f32, y: f32, size: f32, co
             }
             fill(pixmap, pb, color);
         }
+        "cosmos" => {
+            // Menubar Cosmos mark: a core with one moon on its orbit. The
+            // orbit breaks around the moon so the two read apart at 16px.
+            let moon = -45f32.to_radians();
+            let gap = 32f32.to_radians();
+            let steps = 48;
+            for i in 0..=steps {
+                let a = moon + gap + (std::f32::consts::TAU - 2.0 * gap) * i as f32 / steps as f32;
+                let (px, py) = (12.0 + 8.5 * a.cos(), 12.0 + 8.5 * a.sin());
+                if i == 0 {
+                    mv!(pb, px, py);
+                } else {
+                    ln!(pb, px, py);
+                }
+            }
+            stroke(pixmap, pb, s, 1.8, color);
+            let mut dots = PathBuilder::new();
+            circle!(dots, 12.0, 12.0, 3.6);
+            circle!(dots, 12.0 + 8.5 * moon.cos(), 12.0 + 8.5 * moon.sin(), 2.4);
+            fill(pixmap, dots, color);
+        }
         "clipboard" => {
             // Copy glyph: two overlapping rounded rects.
             rr!(pb, 9.0, 3.5, 11.5, 14.0, 2.0);
