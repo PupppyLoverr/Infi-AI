@@ -38,6 +38,8 @@ pub struct Drag {
     grab: (f64, f64),
     pos: (f64, f64),
     moved: bool,
+    /// The press serial, for handing the drag to the compositor.
+    serial: u32,
 }
 
 #[derive(Debug, Default)]
@@ -213,7 +215,7 @@ fn open(item: &Item) {
     }
 }
 
-pub fn press(state: &mut ShellState, x: f64, y: f64) -> bool {
+pub fn press(state: &mut ShellState, x: f64, y: f64, serial: u32) -> bool {
     let Some(i) = hit(&state.desk.items, x, y) else {
         let was = state.desk.selected.take();
         return was.is_some();
@@ -234,6 +236,7 @@ pub fn press(state: &mut ShellState, x: f64, y: f64) -> bool {
             grab: (x - cx, y - cy),
             pos: (x, y),
             moved: false,
+            serial,
         });
     }
     true
@@ -249,6 +252,20 @@ pub fn motion(state: &mut ShellState, x: f64, y: f64) -> bool {
     d.moved = true;
     d.pos = (x, y);
     true
+}
+
+/// A moved icon dragged past the desktop column leaves as a file drag
+/// (onto the dock's Files or Editor): returns its path and press serial.
+pub fn take_outbound(state: &mut ShellState, x: f64, y: f64) -> Option<(PathBuf, u32)> {
+    let d = state.desk.drag.filter(|d| d.moved)?;
+    let (w, h) = (state.desk_size.0 as f64, state.desk_size.1 as f64);
+    if (0.0..w).contains(&x) && (0.0..h).contains(&y) {
+        return None;
+    }
+    state.desk.drag = None;
+    state.desk.last_click = None;
+    let item = state.desk.items.get(d.item)?;
+    Some((item.path.clone(), d.serial))
 }
 
 pub fn release(state: &mut ShellState) -> bool {
