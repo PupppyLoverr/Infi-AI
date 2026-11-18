@@ -154,11 +154,13 @@ The previous implementation (CosmosOS v1–v6, `cosmosos/` tree) is preserved on
   X11 apps get a display through xwayland-satellite. Gates still open: snap
   zones with Snap Assist (compositor work, not yet written), the per-feature
   `tests/drive` scripts, and a hardware run.
-- **P3 — Shell.** The layer-shell spike is done: `shell/panel` is a 32 px bar on
-  `zwlr_layer_shell_v1` that reserves space (verified in a nested session), draws
-  the palette, and reads workspace state from niri's IPC. Next: the status
-  cluster and pointer input on the bar, then the dock, launcher, and control
-  centre. Gate: idle RAM budget met with the shell running; 60 fps animations
+- **P3 — Shell.** The bar, the island and the hybrid dock are built and driven
+  by a real pointer: clicking a workspace pill switches workspace, a dock cell
+  focuses or launches its app, and `solyra-panel notify` puts a message in the
+  island. Verified end to end through Xvfb → weston → nested niri with
+  `xdotool`, asserting on niri's own IPC. Next: the status cluster, the control
+  centre, the launcher as a Solyra surface, and notifications beyond the
+  island. Gate: idle RAM budget met with the shell running; 60 fps animations
   on llvmpipe and on real GPU.
 - **P4 — Apps v1 + originals.** Spec in `docs/apps.md`: terminal first, then files,
   then settings with the Default Apps switcher; upstream apps stay installed and

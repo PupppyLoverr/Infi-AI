@@ -11,3 +11,4 @@ shell/panel/
 shell/**
 !shell/out/
 !shell/out/solyra-panel
+shell/panel/target

@@ -79,7 +79,7 @@ durations when the settings app exists.
 | Window chrome | **Shipped** (compositor) | Rounded corners, focus ring, no titlebar furniture of our own |
 | Overview | **Shipped** (niri) | Zoomed-out workspaces, keyboard-driven |
 | Launcher | Upstream Fuzzel | Becomes a Solyra surface with search-or-ask in P3/P4 |
-| Dock | Planned | Three variants in the section below; the hybrid is recommended |
+| Dock | **Shipped** (hybrid) | Floating card, start cell, one cell per app, agent shelf when agents exist |
 | Control centre | Planned | Network, volume, battery, theme, power |
 | Notifications | Planned | Top-right stack, 12 px cards, per-app mark |
 | Lock | Upstream swaylock | Solyra lock surface in P6 |
@@ -111,9 +111,12 @@ the bar. It holds one thing at a time, the most urgent:
 It is not a notification centre and not a media player by default. When two
 things compete, the one that needs a decision wins; the other waits.
 
-Implementation: the bar is the panel layer surface; the island is a second
-layer surface on the same top layer, anchored top-centre with no exclusive
-zone, so it can animate without relaying out the workspace.
+Implementation: the bar is the panel layer surface and the island is drawn
+inside it, growing horizontally out of the notch. It is fed by
+`solyra-panel notify "text"`, which writes a message with a timestamp to
+`$XDG_RUNTIME_DIR/solyra-island`; the panel shows it for eight seconds. A
+separate layer surface can take over later if the island needs to grow taller
+than the bar.
 
 ## Dock variants
 
@@ -133,8 +136,9 @@ instead of a dot — is what makes it usable with twenty windows open. The agent
 shelf is the part neither reference has, and it is where this distro's whole
 premise shows up: running agents get a home that is not your tile layout.
 
-Decision: **open**, owner's call. The panel ships the bar first; the dock
-follows whichever variant is chosen.
+Decision: **the hybrid is built** (`shell/panel`). Variants 1 and 2 stay
+documented as alternatives — if the hybrid's agent shelf turns out to be noise,
+falling back to variant 1 is a drawing change, not a rewrite.
 
 ## Interaction rules
 
