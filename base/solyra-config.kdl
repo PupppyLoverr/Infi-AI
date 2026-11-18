@@ -62,6 +62,10 @@ animations {
     }
 }
 
+// The shell: bar, island, and dock. A client, so killing it never takes the
+// session down; the compositor respawns nothing, the session just loses chrome.
+spawn-at-startup "solyra-panel"
+
 binds {
     // Discoverability: the full map on Mod+? .
     Mod+Shift+Slash { show-hotkey-overlay; }
