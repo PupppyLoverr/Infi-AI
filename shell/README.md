@@ -18,6 +18,10 @@ workspace state from niri's IPC socket, and keeps a live clock.
   loop, no polling thread touching the queue.
 - Drawn with a software buffer (`wl_shm`): background, hairline, dot, rounded
   pills, and text rasterised with `ab_glyph` from Adwaita Sans.
+- A reserved notch in the centre: 186 × 26, square at the top edge, 14 px
+  bottom corners, a fake lens dot. Nothing renders inside it, so hardware with
+  and without a camera looks identical. The dynamic island will grow out of it
+  as its own layer surface.
 
 Not built yet: dock, launcher, control centre, notifications, window switcher,
 and the `zgx` rendering host. See PLAN.md §4 (P3) and

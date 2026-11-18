@@ -34,6 +34,9 @@ use wayland_client::protocol::wl_surface::WlSurface;
 use wayland_client::{Connection, Dispatch, QueueHandle};
 
 const BAR_HEIGHT: u32 = 32;
+const NOTCH_WIDTH: u32 = 186;
+const NOTCH_HEIGHT: u32 = 26;
+const NOTCH_RADIUS: i32 = 14;
 
 // Tokens shared with base/solyra-config.kdl and docs/design-language.md.
 const BG: (u8, u8, u8) = (0x12, 0x10, 0x16);
@@ -42,6 +45,8 @@ const TEXT: (u8, u8, u8) = (0xdc, 0xd6, 0xe2);
 const TEXT_DIM: (u8, u8, u8) = (0x8b, 0x83, 0x94);
 const ACCENT: (u8, u8, u8) = (0xb4, 0x8a, 0xad);
 const PILL: (u8, u8, u8) = (0x24, 0x1f, 0x2a);
+const VOID: (u8, u8, u8) = (0x07, 0x06, 0x0a);
+const LENS: (u8, u8, u8) = (0x1b, 0x27, 0x33);
 const ON_ACCENT: (u8, u8, u8) = (0x14, 0x10, 0x18);
 
 fn main() {
@@ -171,6 +176,12 @@ impl App {
 
         fill(pixels, stride, 0, 0, width, height, BG);
         fill(pixels, stride, 0, height as i32 - 1, width, 1, HAIRLINE);
+
+        // The reserved centre: a notch-shaped void with a fake lens, so a
+        // machine without a camera has the same geometry as one with a notch.
+        // Nothing else renders inside it; the island grows out of it later.
+        notch(pixels, stride, width, NOTCH_WIDTH, NOTCH_HEIGHT, NOTCH_RADIUS, VOID);
+        circle(pixels, stride, width as i32 / 2, 11, 3, LENS);
 
         // Brand mark: accent dot, then the product name.
         circle(pixels, stride, 16, 16, 4, ACCENT);
@@ -390,6 +401,47 @@ fn circle(pixels: &mut [u8], stride: usize, cx: i32, cy: i32, radius: i32, color
                     (cy + dy) as usize,
                     color,
                     coverage,
+                );
+            }
+        }
+    }
+}
+
+/// A notch: flush with the top edge, rounded on the bottom corners only.
+fn notch(
+    pixels: &mut [u8],
+    stride: usize,
+    screen_width: u32,
+    width: u32,
+    height: u32,
+    radius: i32,
+    color: (u8, u8, u8),
+) {
+    let left = (screen_width as i32 - width as i32) / 2;
+    let r = radius as f32;
+    let corner_start = height as f32 - r;
+    for row in 0..height as i32 {
+        for col in 0..width as i32 {
+            let mut inside = true;
+            let dy = row as f32 - corner_start;
+            if dy > 0.0 {
+                let dx = if (col as i32) < radius {
+                    r - col as f32
+                } else if (col as i32) >= (width as i32 - radius) {
+                    col as f32 - (width as f32 - r - 1.0)
+                } else {
+                    0.0
+                };
+                inside = dx * dx + dy * dy <= r * r;
+            }
+            if inside {
+                blend(
+                    pixels,
+                    stride,
+                    (left + col) as usize,
+                    row as usize,
+                    color,
+                    1.0,
                 );
             }
         }

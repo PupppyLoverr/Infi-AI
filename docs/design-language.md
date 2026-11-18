@@ -48,6 +48,8 @@ first-party apps land; it changes the face, not the scale.
 ## Metrics
 
 - Panel: 32 px tall, full width, exclusive zone 32. Content inset 16 px.
+- Notch: 186 × 26 px, centred, 14 px bottom corners, always void.
+- Island: 24 px pill, 4 px below the top edge, expands from the notch.
 - Window: 12 px corner radius, 2 px border; `accent` when focused,
   `border-idle` otherwise.
 - Workspace pill: 18 × 14, radius 7, 6 px gap. Active pill is `accent` with
@@ -77,11 +79,62 @@ durations when the settings app exists.
 | Window chrome | **Shipped** (compositor) | Rounded corners, focus ring, no titlebar furniture of our own |
 | Overview | **Shipped** (niri) | Zoomed-out workspaces, keyboard-driven |
 | Launcher | Upstream Fuzzel | Becomes a Solyra surface with search-or-ask in P3/P4 |
-| Dock | Planned | Bottom, floating, pinned plus running; opens the launcher |
+| Dock | Planned | Three variants in the section below; the hybrid is recommended |
 | Control centre | Planned | Network, volume, battery, theme, power |
 | Notifications | Planned | Top-right stack, 12 px cards, per-app mark |
 | Lock | Upstream swaylock | Solyra lock surface in P6 |
 | Setup | Planned | First-boot wizard, see `docs/setup.md` |
+
+## Bar, notch and island
+
+The bar is permanent. It is an exclusive zone in the compositor, so tiled
+windows start below it and can never enter it — no overlap, no hiding, no
+"the bar slides away" state. It shows the focused app's name and menus on the
+left, status on the right, and a reserved void in the middle.
+
+**The notch.** The centre 186 × 26 px is drawn as a void — a black shape with
+14 px bottom corners, with a fake lens dot, because hardware without a camera
+still gets the same geometry. Nothing renders inside it. Reserving it now means
+a laptop with a real notch looks identical to one without, and the shell never
+has to reflow around hardware.
+
+**The island.** The dynamic island is a 24 px pill that sits 4 px below the top
+edge and grows out of the notch. It is the only surface allowed to interrupt
+the bar. It holds one thing at a time, the most urgent:
+
+| State | Shows | Example |
+| --- | --- | --- |
+| Idle | Nothing — collapsed to the notch | — |
+| Working | Spinner, owner, one verb | "Agent · tidying Downloads" |
+| Attention | Icon, question, two keys | "Delete 12 files? ⏎ approve · esc skip" |
+
+It is not a notification centre and not a media player by default. When two
+things compete, the one that needs a decision wins; the other waits.
+
+Implementation: the bar is the panel layer surface; the island is a second
+layer surface on the same top layer, anchored top-centre with no exclusive
+zone, so it can animate without relaying out the workspace.
+
+## Dock variants
+
+Three behaviours, one icon set, drawn side by side for a decision. None is
+built yet.
+
+| Variant | Geometry | Running state | Cost |
+| --- | --- | --- | --- |
+| 1 · macOS style | Floating card, clear of the bottom edge, magnify on hover | Dot under the icon | Magnify needs compositor-side scaling or heavy redraws |
+| 2 · Windows style | Edge-to-edge bar welded to the bottom | Short accent underline | Costs full width; its tray duplicates the top bar |
+| 3 · Solyra hybrid | Floating card with a start cell and an agent shelf | Accent underline, one cell per app | Needs the agent shelf wired to real sessions |
+
+The hybrid is the recommendation: macOS geometry keeps the desktop visible and
+the card can float over a tiled window without stealing a strip of every
+workspace, while the Windows half — one cell per app, grouping, an underline
+instead of a dot — is what makes it usable with twenty windows open. The agent
+shelf is the part neither reference has, and it is where this distro's whole
+premise shows up: running agents get a home that is not your tile layout.
+
+Decision: **open**, owner's call. The panel ships the bar first; the dock
+follows whichever variant is chosen.
 
 ## Interaction rules
 
