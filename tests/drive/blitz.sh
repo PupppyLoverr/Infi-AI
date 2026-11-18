@@ -29,13 +29,13 @@ qemu-system-x86_64 -enable-kvm -m 2G -smp 2 \
   -monitor unix:$MON_SOCK,server,nowait -qmp unix:$QMP_SOCK,server,nowait \
   -smbios type=1,product=CosmosOS -no-reboot &
 QPID=$!
-for i in $(seq 1 15); do [ -S "$QMP_SOCK" ] && break; sleep 1; done
+for _ in $(seq 1 15); do [ -S "$QMP_SOCK" ] && break; sleep 1; done
 [ -S "$QMP_SOCK" ] || { echo "FATAL: qmp socket never appeared"; exit 1; }
 echo "qemu pid $QPID — serial $SERIAL"
 echo "QMP_SOCK=$QMP_SOCK MON_SOCK=$MON_SOCK"
 echo "$QPID" > "$W/qemu.pid"
 # stay alive — host drives dumps/logins interactively
-for i in $(seq 1 1200); do
+for _ in $(seq 1 1200); do
   sleep 5
   grep -q '==BLITZ-END==' "$SERIAL" 2>/dev/null && break
 done

@@ -29,7 +29,7 @@ qemu-system-x86_64 -enable-kvm -m 2G -smp 2 \
   -smbios type=1,product=CosmosOS -no-reboot &
 QPID=$!
 trap 'kill $QPID 2>/dev/null' EXIT
-for i in $(seq 1 15); do [ -S "$QMP_SOCK" ] && break; sleep 1; done
+for _ in $(seq 1 15); do [ -S "$QMP_SOCK" ] && break; sleep 1; done
 [ -S "$QMP_SOCK" ] || { echo "FATAL: qmp socket never appeared"; exit 1; }
 echo "qemu pid $QPID — serial $SERIAL"
 echo "QMP_SOCK=$QMP_SOCK MON_SOCK=$MON_SOCK"
@@ -43,7 +43,7 @@ qmp()  { QMP_SOCK=$QMP_SOCK "$ROOT/tests/drive/qmp.sh" "$@"; }
 # click pw field, type password) — coordinates vary by resolution.
 
 # stay alive for the interactive marker/click loop
-for i in $(seq 1 1200); do
+for _ in $(seq 1 1200); do
   sleep 5
   grep -q '==NOTIFY-END==' "$SERIAL" 2>/dev/null && break
 done

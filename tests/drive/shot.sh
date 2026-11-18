@@ -8,7 +8,7 @@ MON="${MON_SOCK:-$ROOT/work/image/monitor.sock}"
 DIR="${DRIVE_DIR:-$ROOT/work/drive-latest}"
 NAME="$1"
 mkdir -p "$DIR"
-for i in 1 2 3 4 5 6; do
+for _ in 1 2 3 4 5 6; do
   printf "screendump %s\n" "$DIR/$NAME.ppm" | socat -t 2 - UNIX-CONNECT:"$MON" >/dev/null 2>&1
   sleep 1
   [ -f "$DIR/$NAME.ppm" ] || continue

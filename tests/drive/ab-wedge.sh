@@ -4,11 +4,10 @@
 # Usage: DRIVE_DIR=work/drive-AB ./tests/drive/ab-wedge.sh [label]
 # Emits $DRIVE_DIR/ab-<label>-NN.png + ab-<label>.txt tally.
 set -u
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../.." || exit 1
 D="${DRIVE_DIR:-work/drive-ab}"
 LABEL="${1:-run}"
 mkdir -p "$D"
-MON="${MON_SOCK:-work/image/monitor.sock}"
 export QMP_SOCK="${QMP_SOCK:-work/image/qmp.sock}"
 
 click() { tests/drive/qmp.sh click "$1" "$2"; }

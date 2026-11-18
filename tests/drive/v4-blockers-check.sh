@@ -82,7 +82,8 @@ else say "FAIL A2: respawned locker never unlocked"; fi
 
 # --- A5 ---------------------------------------------------------------
 mark
-WL=$(ls $XRD | grep -m1 '^wayland-[0-9]*$')
+# shellcheck disable=SC2012
+WL=$(find "$XRD" -maxdepth 1 -name 'wayland-[0-9]*' -printf '%f\n' 2>/dev/null | head -n1)
 EXPECT=$(ls -1 /home/cosmos | wc -l)
 su -l cosmos -c "WAYLAND_DISPLAY=$WL XDG_RUNTIME_DIR=$XRD cosmos-files 2>&1 | logger -t cosmos-files &"
 if await "files: listing" 20; then

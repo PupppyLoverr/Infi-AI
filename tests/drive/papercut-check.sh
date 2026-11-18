@@ -73,7 +73,8 @@ echo "-- create probe:"
 snapper -c root create --description "papercut-evidence" 2>&1 || true
 snapper list 2>&1 || true
 systemctl is-enabled snapper-timeline.timer snapper-cleanup.timer 2>&1
-ls /etc/apt/apt.conf.d/ 2>/dev/null | grep -i snapper || echo "no apt snapper hook"
+# shellcheck disable=SC2010
+ls /etc/apt/apt.conf.d/ 2>/dev/null | grep -qi snapper || echo "no apt snapper hook"
 
 echo "==EFI=="
 efibootmgr -v 2>&1 | head -15

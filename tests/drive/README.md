@@ -8,3 +8,7 @@ screendumps, and Solyra reuses it from day one.
 **Not yet rewired:** the scripts assume the old tree layout
 (`$ROOT/cosmosos/work/image` for sockets). They get re-pointed at the new
 `base/` build layout when the first image lands in P1 (PLAN.md §4).
+
+CI gates these scripts at `shellcheck -S warning`; info-level findings
+(quote-splitting, `&& ||` notes, unreachable-command hints) are deliberately
+not gated until the harness is rewired and actually driven again.

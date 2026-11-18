@@ -17,7 +17,6 @@
 
 DIR=/var/lib/cosmos/portal
 OUT=$DIR/evidence.txt
-SOCK=/run/user/1000/cosmos-ipc.sock
 mkdir -p "$DIR"
 exec >"$OUT" 2>&1
 
