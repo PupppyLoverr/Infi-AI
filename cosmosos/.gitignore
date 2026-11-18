@@ -1,8 +1,0 @@
-/target
-cosmos/target
-*.img
-*.qcow2
-*.iso
-seed/
-work/
-dist/

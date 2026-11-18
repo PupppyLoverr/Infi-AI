@@ -1,36 +1,37 @@
-# CosmosOS
+# Solyra OS
 
-A Linux distribution that boots straight into **Cosmos** — a custom desktop
-environment blending the best of Windows 11 and macOS into one coherent,
-restrained design.
+A Linux distro built for humans **and** AI agents on the same desktop — beautiful,
+tiny (≤ 4 GB), fast, and forgiving: nothing an agent does is unrecoverable.
 
-Everything lives in [`cosmosos/`](cosmosos/):
+> **Working name.** "Solyra" is the project name during P0–P2; a final branding-time
+> name review happens before any public release (see PLAN.md §8).
 
-- `cosmosos/cosmos/` — the Rust desktop stack: a Smithay-based Wayland
-  compositor (workspaces, edge-snap + master/stack tiling, macOS-style
-  chrome, full motion system, 6 accent presets), a layer-shell shell
-  (menubar, dock, Spotlight/Start launcher, Quick Settings with theme
-  dial + dark/light pill, notifications, Snap Assist, window switcher,
-  super+? keybind cheatsheet), the `cosmos-uitk` egui toolkit (Inter +
-  JetBrains Mono), and the native apps (terminal, files, editor,
-  settings, system monitor).
-- `cosmosos/image/` — the distro pipeline: `build.sh` produces a bootable
-  raw x86_64 disk image (mmdebstrap trixie + GRUB) and `run.sh` boots it in
-  QEMU/KVM.
-- `cosmosos/docs/` — design docs (UI/UX blend decisions), the image build
-  guide, and security posture.
-- `cosmosos/tests/` — the QMP drive harness that human-drives the guest OS
-  in QEMU.
+## What it is
 
-## Quick start
+- **Base:** Fedora Atomic (bootc) — the whole OS is a container image; updates are
+  atomic, rollback is native, images build in CI.
+- **Window management:** a fork of [niri](https://github.com/YaLTeu/niri) — scrollable
+  tiling by default, plus master/stack, floating, and snap layouts with Snap Assist.
+- **Shell and apps:** written in [zgx](https://github.com/zeronsh/zgx) — a retained-mode
+  Rust GUI framework (wgpu rendering, fine-grained updates, idle windows do zero work).
+  zui (our GPUI fork) is used where immediate mode genuinely wins.
+- **Agents:** [zeron](https://github.com/zeronsh/zeron) as the agent control plane.
+  Agents get their own desktop space, a policy sandbox, approval prompts in the UI,
+  a full audit trail, and one-click rollback of anything they did.
+- **Setup:** a first-boot setup wizard in the Windows OOBE / macOS Setup Assistant
+  tradition — network, account, appearance, and optional layers like Gaming.
 
-On an x86_64 Linux host:
+## Status
 
-```sh
-cd cosmosos/image
-./build.sh   # → dist/cosmosos-x86_64.img
-./run.sh     # boots it under KVM
+Phase 0 (repo reset) — see [PLAN.md](PLAN.md) for the full plan, phases, and budgets.
+The previous implementation (CosmosOS v1–v6) is preserved on the `cosmos-legacy` branch.
+
+## Layout
+
 ```
-
-See [`cosmosos/PLAN.md`](cosmosos/PLAN.md) for the roadmap and
-[`cosmosos/docs/`](cosmosos/docs/) for design and build details.
+PLAN.md            — the living build plan
+docs/              — design language, agent-platform design, budgets
+assets/wallpapers/ — original wallpaper art
+tests/drive/       — QEMU QMP drive harness (human-drives-the-VM test tooling)
+base/  comp/  shell/  apps/  agent/   — land in P1+ (see PLAN.md §3)
+```
