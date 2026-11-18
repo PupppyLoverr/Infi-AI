@@ -10,6 +10,7 @@ RUN dnf -y install \
       libdisplay-info-devel libseat-devel \
       mesa-libgbm-devel mesa-libEGL-devel libglvnd-devel \
       pipewire-devel pulseaudio-libs-devel \
+      cairo-gobject-devel pango-devel \
  && dnf -y clean all
 
 WORKDIR /src

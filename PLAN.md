@@ -139,8 +139,11 @@ The previous implementation (CosmosOS v1–v6, `cosmosos/` tree) is preserved on
 
 - **P0 — Reset (day 1).** Push current tree to `cosmos-legacy` branch. Wipe main to
   this plan + curated docs. Stand up CI (image build on every main push).
-- **P1 — Base image.** Containerfile → bootc image → ISO → boots to a TTY. Measured:
-  install size, idle RAM of bare boot, boot time. Gate: boots on QEMU x86_64 + aarch64.
+- **P1 — Base image.** Containerfile → bootc image → raw disk → boots to a TTY.
+  Measured: install size, idle RAM of bare boot, boot time. Gate: boots on QEMU x86_64
+  + aarch64. **Done 2026-11-18 (x86_64): boots to multi-user in QEMU; 2.0 GB
+  deployed; see docs/budgets.md. Raw-disk path replaces bootc-image-builder in
+  environments without partitioned loop devices; ISO/installer media stays for P7.**
 - **P2 — Window management.** niri fork builds in our image; Cosmos keybinds and
   config; scrollable tiling + snap zones. Gate: drive harness (ported from
   `tests/drive`) drives windows headlessly; screenshots reviewed.

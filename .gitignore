@@ -7,6 +7,9 @@ target/
 *.qcow2
 *.iso
 
+# Solyra disk build outputs (scripts/build-disk.sh)
+dist/
+
 # OS junk
 .DS_Store
 Thumbs.db

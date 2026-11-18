@@ -18,6 +18,24 @@ RUN dnf -y install \
       openssh-server \
  && dnf -y clean all
 
+# --- identity ----------------------------------------------------------------
+# Solyra's own identity lives in the image so every boot (disk, ISO, VM)
+# reports it. Codename "Perihelion" tracks PLAN.md.
+RUN printf '%s\n' \
+      'NAME="Solyra OS"' \
+      'VERSION="0.1 (Perihelion)"' \
+      'ID=solyra' \
+      'ID_LIKE=fedora' \
+      'VERSION_ID=0.1' \
+      'PLATFORM_ID="platform:f46"' \
+      'PRETTY_NAME="Solyra OS 0.1 (Perihelion)"' \
+      'ANSI_COLOR="0;38;2;60;110;180"' \
+      'HOME_URL="https://github.com/pupppyloverr/infi-ai"' \
+      'SUPPORT_URL="https://github.com/pupppyloverr/infi-ai/issues"' \
+      > /usr/lib/os-release
+RUN mkdir -p /usr/etc && \
+    printf 'Solyra OS 0.1 (Perihelion) \\n \\l\n\n' > /usr/etc/issue
+
 # --- default user -----------------------------------------------------------
 # Provisioned via sysusers (bootc-friendly: no layer-time account state).
 # The first-boot setup wizard (P6) takes over real account setup later.
