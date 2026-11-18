@@ -31,6 +31,7 @@ terminal/file-manager shortcuts all respond, with the whole desktop using about
 341 MiB at idle. Snap zones and a hardware run remain. See
 [the build instructions](base/README.md), [measured budgets](docs/budgets.md),
 and [the roadmap](PLAN.md).
+
 The previous implementation (CosmosOS v1–v6) is preserved on the `cosmos-legacy` branch.
 
 ## Layout
