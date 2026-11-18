@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solyra OS — Linux for humans and agents</title>
+<meta name="description" content="Solyra OS is a Linux distro built for humans and AI agents on the same desktop: beautiful, tiny, fast, and forgiving.">
+<style>
+  :root { color-scheme: dark; }
+  * { margin: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: radial-gradient(120% 120% at 20% 0%, #2b1a4e 0%, #171129 45%, #0d0a16 100%);
+    color: #eae6f4;
+    padding: 2rem;
+  }
+  main { max-width: 40rem; }
+  h1 {
+    font-size: clamp(2.4rem, 6vw, 3.6rem);
+    letter-spacing: -0.03em;
+    background: linear-gradient(100deg, #ffb86b, #ff7a9c 60%, #b48cff);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .tag { margin-top: .8rem; font-size: 1.15rem; color: #c9c2de; line-height: 1.6; }
+  .pill {
+    display: inline-block; margin-top: 1.6rem; padding: .3rem .8rem;
+    border: 1px solid #ffffff26; border-radius: 999px;
+    font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; color: #a79fc0;
+  }
+  .points { margin-top: 2rem; display: grid; gap: .7rem; color: #bdb5d4; line-height: 1.5; }
+  .points b { color: #eae6f4; font-weight: 600; }
+  footer { margin-top: 2.6rem; font-size: .85rem; color: #877fa0; }
+  a { color: #b48cff; text-decoration: none; } a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Solyra OS</h1>
+  <p class="tag">A Linux distro built for humans <em>and</em> AI agents on the same
+  desktop — beautiful, tiny, fast, and forgiving: nothing an agent does is
+  unrecoverable.</p>
+  <span class="pill">In the works · Phase 1</span>
+  <div class="points">
+    <div><b>Small:</b> ≤ 4 GB installed, ≤ 400 MiB idle RAM, boots in seconds.</div>
+    <div><b>Beautiful:</b> scrollable tiling, snap layouts, one coherent design language.</div>
+    <div><b>For agents:</b> their own desktop space, sandboxed, every action auditable and undoable.</div>
+    <div><b>For everyone:</b> opinionated defaults, deep customization, gaming ready.</div>
+  </div>
+  <footer>Development plan on <a href="https://github.com/pupppyloverr/infi-ai/blob/main/PLAN.md">GitHub</a> · working name, branding pending</footer>
+</main>
+</body>
+</html>

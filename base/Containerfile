@@ -13,7 +13,6 @@ FROM quay.io/fedora/fedora-bootc:46
 # QEMU until the harness is rewired (tests/drive/README.md).
 RUN dnf -y install \
       NetworkManager \
-      network-config-filenames \
       polkit \
       sudo \
       openssh-server \

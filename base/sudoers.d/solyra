@@ -1,0 +1,3 @@
+# Dev-image convenience: the provisioned user administers the machine.
+# The setup wizard (P6) replaces this with the real admin model.
+solyra ALL=(ALL) ALL
