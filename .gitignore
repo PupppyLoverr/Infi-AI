@@ -19,3 +19,6 @@ comp/out/
 # OS junk
 .DS_Store
 Thumbs.db
+
+# Shell build artifact copied into the image
+shell/out/

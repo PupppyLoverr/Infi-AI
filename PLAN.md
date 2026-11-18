@@ -119,13 +119,15 @@ agent layer instead of rebuilding `agentd` from scratch:
 README.md            — the project, in plain words
 PLAN.md              — this file (living)
 docs/
-  design.md          — design language, tokens, motion, materials (ported from v5/v6)
+  design-language.md — tokens, type, metrics, motion, surface inventory
+  apps.md            — first-party app plan and the Default Apps switcher
+  setup.md           — first-boot wizard flow, including the gaming bundle
   agent-platform.md  — agent space, sandboxing, approvals, audit, zeron integration
   budgets.md         — RAM/storage/boot budgets, measured every milestone
   decisions.md       — ADRs: every stack decision above, with evidence
 base/                — Containerfile, image config, ISO/build pipeline, CI
 comp/                — solyra-comp (niri fork) + our patches
-shell/               — solyra-shell (zgx)
+shell/               — solyra-shell: the panel layer surface first, zgx host later
 apps/                — terminal, files, editor, settings, monitor (zgx), one crate each
 agent/               — agent-space bridge, policy engine, VM runner, MCP tools
 assets/wallpapers/   — original wallpaper art (kept from v5/v6)
@@ -152,17 +154,22 @@ The previous implementation (CosmosOS v1–v6, `cosmosos/` tree) is preserved on
   X11 apps get a display through xwayland-satellite. Gates still open: snap
   zones with Snap Assist (compositor work, not yet written), the per-feature
   `tests/drive` scripts, and a hardware run.
-- **P3 — Shell.** Layer-shell spike, then menubar/dock/launcher/control centre in zgx.
-  Gate: idle RAM budget met with shell running; 60 fps animations on llvmpipe and on
-  real GPU.
-- **P4 — Apps v1 + originals.** Terminal and files in zgx; settings with Default Apps
-  switcher; originals packaged. Gate: daily-driver checklist passes (the v1–v6
-  smoke rig, extended).
-- **P5 — Agent platform.** zeron engine integrated; Agent Space; sandbox level 1;
-  approvals/audit; snapshot rollback. Gate: the rollback demo passes end-to-end.
-- **P6 — Browser shell** (Track A), per-agent VMs (sandbox level 2), gamer bits
-  (gamescope preset, VRR toggle), theming system, installer (Calamares against the
-  bootc image), aarch64 polish.
+- **P3 — Shell.** The layer-shell spike is done: `shell/panel` is a 32 px bar on
+  `zwlr_layer_shell_v1` that reserves space (verified in a nested session), draws
+  the palette, and reads workspace state from niri's IPC. Next: the status
+  cluster and pointer input on the bar, then the dock, launcher, and control
+  centre. Gate: idle RAM budget met with the shell running; 60 fps animations
+  on llvmpipe and on real GPU.
+- **P4 — Apps v1 + originals.** Spec in `docs/apps.md`: terminal first, then files,
+  then settings with the Default Apps switcher; upstream apps stay installed and
+  selectable. Gate: the daily-driver checklist in that document passes.
+- **P5 — Agent platform.** Spec in `docs/agent-platform.md`: Agent Space on reserved
+  workspaces, level-1 sandbox (dedicated user, bubblewrap, policy file), approvals,
+  JSONL audit, and a rollback story. File snapshots need a root filesystem decision
+  because the development disk is XFS. Gate: the rollback demo passes end-to-end.
+- **P6 — Browser shell** (Track A), per-agent VMs (sandbox level 2), the first-boot
+  wizard in `docs/setup.md` (including the Flatpak gaming bundle), theming system,
+  installer (Calamares against the bootc image), aarch64 polish.
 - **P7 — 1.0.** Soak tests, budgets audit, docs, first public ISO.
 
 ## 5. What we keep from the old tree

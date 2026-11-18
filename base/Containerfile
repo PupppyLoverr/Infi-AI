@@ -57,13 +57,17 @@ COPY base/sysusers.d/10-solyra.conf /usr/lib/sysusers.d/10-solyra.conf
 COPY base/sudoers.d/solyra /etc/sudoers.d/solyra
 RUN systemd-sysusers --dry-run /usr/lib/sysusers.d/10-solyra.conf
 
-# --- compositor --------------------------------------------------------------
-# Built from comp/ in the dev container (comp/dev.Containerfile); the build
-# drops the release binary at comp/out/niri. Two names: solyra-comp is the
-# real binary, niri stays as an alias so stock niri docs/configs work.
+# --- compositor and shell -----------------------------------------------------
+# Both are built in the dev container (comp/dev.Containerfile) and dropped at
+# comp/out/niri and shell/out/solyra-panel. Two names for the compositor:
+# solyra-comp is the real binary, niri stays an alias so stock docs work.
+# The panel is installed but not started at login yet: it has no pointer
+# input, so the default session stays clean until it does (shell/README.md).
 COPY comp/out/niri /usr/bin/solyra-comp
 COPY base/solyra-session /usr/bin/solyra-session
-RUN chmod +x /usr/bin/solyra-session && ln -s solyra-comp /usr/bin/niri
+COPY shell/out/solyra-panel /usr/bin/solyra-panel
+RUN chmod +x /usr/bin/solyra-session /usr/bin/solyra-panel && \
+    ln -s solyra-comp /usr/bin/niri
 COPY base/solyra-config.kdl /etc/solyra/comp.kdl
 COPY base/solyra.desktop /usr/share/wayland-sessions/solyra.desktop
 RUN /usr/bin/solyra-comp validate -c /etc/solyra/comp.kdl

@@ -1,0 +1,18 @@
+[package]
+name = "solyra-panel"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Solyra panel: the first layer-shell surface of the shell (P3 spike)"
+
+[dependencies]
+calloop = "0.14"
+wayland-client = "0.31"
+smithay-client-toolkit = { version = "0.20", default-features = false, features = ["calloop"] }
+ab_glyph = "0.2"
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[profile.release]
+strip = true
+lto = "thin"

@@ -66,3 +66,26 @@ per-agent snapshots (files / VM disk).
 Browser chrome (tabs, address bar, history, downloads) is zgx over
 WebKitGTK — ships first, working day one. Servo embedding is a separate
 research track with no committed date, reviewed quarterly.
+
+## ADR-0006: The panel is a dedicated layer surface, not a compositor patch
+
+`solyra-panel` (P3 spike) creates its own `zwlr_layer_shell_v1` surface with
+`smithay-client-toolkit`, anchors top/left/right, and sets an exclusive zone of
+32. Measured in a nested session against the shipping config at 1280x800: the
+tiled window's top edge moves from 24 px to 56 px, and to 88 px with a
+temporary 64 px zone. The compositor reserves exactly the zone; the panel is a
+client that can be killed and restarted without touching the session.
+
+- Chosen: shell surfaces are ordinary clients on the layer-shell protocol.
+  Input handling, restarts, and testing stay in the shell's own process.
+- Rejected for now: patching the compositor to draw the bar. It would make
+  every shell change a compositor rebuild and a session restart.
+- Rejected for now: zgx as the panel host. At zgx `1b41efa` its desktop host
+  creates `xdg_toplevel` windows only; adding the layer role means vendoring a
+  winit patch. The spike proves the protocol path first, and zgx rendering can
+  attach to the same surface later without changing the contract.
+- Consequence: the shell needs its own text rendering and layout for now. The
+  panel rasterises Adwaita Sans with `ab_glyph` into a shm buffer (1.1 MB
+  binary, no C dependencies).
+- Open: pointer input on the bar (workspace click, tray), which needs a seat
+  and therefore keyboard interactivity `on-demand` on the panel surface.

@@ -1,66 +1,111 @@
-# Cosmos UI/UX — a Windows + macOS blend
+# Solyra design language
 
-Design goal: borrow the best interaction ideas from Windows 11 and macOS and fuse them into one coherent, restrained desktop. One blue system accent reserved for true active state (Cosmos brand), plus colour where it is traditional — app-icon tints and the traffic lights. No decoration for decoration's sake — every element either informs or acts.
+One idea: a calm, warm-dark desktop where the accent means *active*, the chrome
+disappears, and every surface is reachable from the keyboard. Windows tile; the
+shell frames them; nothing decorative ships.
 
-## Colour system
+The tokens below are the ones in the code today — `base/solyra-config.kdl` for
+the compositor and `shell/panel/src/main.rs` for the first shell surface — so
+this document describes the product, not an aspiration.
 
-- **Accent** — `draw::accent(dark)` (`#3D8BFF` dark / `#0A6EE8` light) and `draw::accent_soft` (the same blue at ~25% alpha for selection washes behind text). Used only where state is genuinely *on*: toggle track, slider progress, mute pill, active-workspace pill, dock focus dot, launcher/assist selection, switcher cell, start glyph. egui apps get the same blue for text selection, hyperlinks, and the pressed widget (`uitk/theme.rs`).
-- **Icon tints** — `icons::tint_for(app_id)`: Finder-blue Files, amber Editor, green Monitor, grey Settings, neutral Terminal. Applied wherever an *app* icon renders (dock, launcher grid + results, snap assist, switcher, notifications, menubar focused-app icon). System icons (wifi/volume/battery/power) stay neutral — they're status, not identity.
-- **Traffic lights** — real macOS colours when focused (`DISC_COLORS` in `ssd.rs`: `#FF5F57`/`#FEBC2E`/`#28C840`), muted rings unfocused, near-black glyphs revealed on hover.
-- **Wallpaper** — procedural aurora: deep-navy base + gaussian indigo/teal/violet blooms + vignette (`background_element` in `render.rs`), computed into a bilinear texture, no image asset. Light mode = pale slate + pastel blooms.
-- Everything else stays greyscale: cards, menubar, panel, borders, text.
+## Colour
 
-## Language mix per surface
+| Token | Value | Use |
+| --- | --- | --- |
+| `bg` | `#121016` | Desktop, panel, and every full-bleed surface |
+| `surface` | `#1A1720` | Cards and popovers above the desktop |
+| `pill` | `#241F2A` | Inactive control fills, workspace pills |
+| `hairline` | `#2A2430` | 1 px separators; the panel's bottom edge |
+| `border-idle` | `#3A3342` | Unfocused window border |
+| `accent` | `#B48AAD` | The active thing: focus ring, selected pill, progress |
+| `on-accent` | `#141018` | Text and glyphs on accent fills |
+| `text` | `#DCD6E2` | Primary text |
+| `text-dim` | `#8B8394` | Secondary text, inactive labels |
 
-| Surface | From macOS | From Windows 11 | Cosmos choice |
-|---|---|---|---|
-| **Dock (bottom)** | Floating centred translucent card, icon strip, running dots, pinned/running divider, no exclusive zone (windows slide under) | Centred taskbar arrangement, click-to-focus/launch, mirrors ALL running apps | New surface: start glyph + pinned icons + running extras — the Dock IS the taskbar |
-| **Panel (top)** | Menu-bar idiom: app mark + **focused app name** (semibold) left, system status right | Workspace pager | Pure menubar — task buttons moved to the dock; the two-bar split is the signature blend |
-| **Window chrome** | Traffic-light cluster (left, circles, glyph-on-hover), centred title, 32px, **rounded top corners** | — | macOS chrome fully incl. real red/yellow/green discs when focused; 10px corner radius |
-| **Launcher** | Spotlight: centred floating card, dim backdrop, type-first; Launchpad icon grid | Start: search field, "PINNED" grid, "ALL APPS" list, footer with system actions | Spotlight placement + Start contents; typing flips grid → Spotlight results |
-| **Tray** | — | Quick Settings flyout on tray click | Flyout card anchored to tray: network, volume slider, battery, power row |
-| **Workspace pager** | — | Win11 virtual-desktop strip | Numbered pills; active = accent pill with white digits |
-| **Notifications** | Banner stack top-right, app icon per card | Toasts top-right | Kept; rounded 12px cards, per-app icon, drop shadow |
-| **Background** | Soft tonal field | — | Procedural aurora: navy base + indigo/teal/violet gaussian blooms + vignette |
-| **Shadows** | Popover/menubar drop shadows | — | SDF gaussian decals under every floating card (dock, flyout, notifications, switcher, launcher, assist) — the compositor paints them for bounded layer surfaces, the shell paints them for fullscreen overlays |
-| **Snap preview** | — | Snap-assist zone hint | Opaque 2px hairline outline of the drop zone (solid fills can't alpha-blend on llvmpipe; the outline reads cleaner anyway) |
-| **Corners** | Rounded cards | Rounded everything | All shell cards unified at 12px radius (dock keeps 15px as the largest card); windows keep square bodies with rounded titlebar tops |
+Rules that keep it coherent:
 
-## Skipped (deliberately)
+- The accent is a **state**, not decoration. One accent element per region.
+- Everything structural is greyscale. Colour only appears for state, app
+  identity, and wallpapers.
+- Text on accent is `on-accent`, never white: the mauve is light, white on it
+  reads as a smudge.
+- Contrast: `text` on `bg` is ~11:1, `text-dim` on `bg` ~4.6:1, `on-accent` on
+  `accent` ~7:1. Dim text is for secondary labels only, never for body copy.
 
-- **Start-logo bottom-left (Windows)**: the mark lives on the panel AND the dock's left cell — both open the launcher.
-- **Rounded bottom window corners**: titlebar top corners are rounded (10px); bottom corners need per-client alpha shaping in the renderer — deferred.
-- **Blur/translucency materials (Mica/Vibrancy)**: shm buffers + llvmpipe; translucency exists only as alpha-tinted fills on our own surfaces.
-- **Snap flyout on maximize hover**: keyboard snapping (Super+arrows) already ships; flyout deferred — no fake affordances.
+## Type
 
-## Motion & tiling
+| Role | Face | Size | Weight |
+| --- | --- | --- | --- |
+| Bar and control labels | Adwaita Sans | 11–11.5 | regular |
+| Clock, window titles | Adwaita Sans | 13 | regular |
+| Section headers | Adwaita Sans | 11 | semibold, `text-dim` |
+| Key chords, terminal | DejaVu Sans Mono | 12 | regular |
 
-- **Motion system** (`compositor/src/anim.rs`): window map/unmap fade+scale, minimize shrink-out, workspace horizontal slide, and per-surface layer entrances — launcher/assist/help fade, switcher pop, quick-settings + dock slide-up, notifications slide-right. All anims run in the render loop (no extra threads), <200ms, and honour `reduce_motion` config.
-- **Dynamic tiling** (super+T per workspace): master+stack — the first window owns the left 58% (`TILE_MASTER`), the rest stack vertically right, 8px gaps (`TILE_GAP`). New windows join the stack; closing re-flows. Opt-in per workspace, floating remains the default.
+Adwaita Sans and DejaVu Sans Mono both ship in the image, so the shell has no
+font dependency of its own. Inter remains the intended replacement when the
+first-party apps land; it changes the face, not the scale.
 
-## Keybind cheatsheet (super+?)
+## Metrics
 
-- Fullscreen scrim + card listing every binding, grouped Apps / Windows / Workspaces / Session, key column in JetBrains Mono. `cosmos_ipc::KEYBINDS` is the single source of truth both sides read; Esc/Return/click dismisses; shell-initiated close round-trips `Request::ToggleHelp` so toggles can't desync (same contract as the launcher).
+- Panel: 32 px tall, full width, exclusive zone 32. Content inset 16 px.
+- Window: 12 px corner radius, 2 px border; `accent` when focused,
+  `border-idle` otherwise.
+- Workspace pill: 18 × 14, radius 7, 6 px gap. Active pill is `accent` with
+  `on-accent` digits.
+- Struts: 8 px on every edge, so tiled windows never touch the screen edge.
+- Popovers: 12 px radius, 1 px `hairline`, shadow `softness 40`.
 
-## Typefaces
+## Motion
 
-- **Inter** for all shell text + window titles (`draw::UI_FAMILY`, `ssd.rs`), **JetBrains Mono** for key chords and the terminal (`draw::MONO_FAMILY`, egui `FontFamily::Monospace`). `uitk::fonts::install` registers the real faces into egui from `/usr/share/fonts` when the image ships `fonts-inter` + `fonts-jetbrains-mono`; fontdb/egui fall back to DejaVu/bundled elsewhere.
+From `base/solyra-config.kdl`, all `ease-out-expo`:
 
-## Quick Settings additions
+| Transition | Duration |
+| --- | --- |
+| Window open | 180 ms |
+| Window close | 150 ms |
+| Window move | 120 ms |
 
-- **Theme row**: 6 accent-swatch discs (selection ring on the active preset, 22px stride) + right-edge **dark/light pill** (crescent/sun glyph) — flips `appearance` via `SetConfig` with optimistic repaint.
+Motion is short and never blocks input. Anything longer than 200 ms needs a
+reason in the commit that adds it. A reduced-motion setting will map to zero
+durations when the settings app exists.
 
-## Type & metrics
+## Surfaces
 
-- Panel (menubar) 32px; titlebar 32px; dock height 54 (8px float margin), cell 46, icon 28, card radius 15.
-- All other shell cards: 12px radius (launcher, quick settings, notifications, window switcher, snap-assist picker).
-- Launcher: Spotlight vignette scrim (airy near the card, deeper at corners) + card shadow; grid 6 columns, cell 78px high, icon 30 + 10.5 label; section headers semibold 11px; footer buttons carry the settings/logout icons.
-- Shadows: gaussian SDF pixmap — window chrome + layer decals 32px bleed, σ≈11, α≈0.36, +10px down; in-canvas card shadows 20px bleed, σ≈9, α≈0.34, +7px — cached per card size.
-- Title font 13; menubar app name 13 semibold; panel text 12–13; flyout body 13 / headers 11 dim.
-- Traffic-light circles: 12px diameter, 20px pitch, order L→R = close, minimize, maximize. Unfocused = grey rings; focused = macOS-coloured discs; glyphs appear on hover only.
-- Icon set (`shell/src/icons.rs`): monochrome stroke glyphs on a 24px grid — start mark, terminal, files, editor, settings, monitor, lock, logout, reboot, shutdown, generic window — shared by panel, dock, launcher, flyout and notifications.
-- Snap Assist input region covers only the dimmed free half below the menubar: tray/dock/snapped-window clicks pass through (the picker dismisses on the resulting focus loss) instead of being swallowed.
-- Hover parity: launcher pinned cells / RECOMMENDED rows / footer buttons highlight under the pointer (`launcher_hover`), cleared on Leave/close; dock separators: after the start glyph and between pinned apps and running extras.
-- Icon-led flyout rows: Network/Volume/Battery each carry their tray glyph at the left edge; the mute pill shows the speaker icon, not letters.
-- Extra chords: `Super+D` show desktop (minimize-all / restore same set), `Super+E` file manager, `Super+T` workspace tiling, `Super+?` cheatsheet.
-- Workspace pager digits optically centered in their cells; active workspace = accent pill with white digits.
+| Surface | State | Intent |
+| --- | --- | --- |
+| Panel (top) | **Shipped** (P3 spike) | Brand mark, workspace pills, clock. Status cluster comes next. |
+| Window chrome | **Shipped** (compositor) | Rounded corners, focus ring, no titlebar furniture of our own |
+| Overview | **Shipped** (niri) | Zoomed-out workspaces, keyboard-driven |
+| Launcher | Upstream Fuzzel | Becomes a Solyra surface with search-or-ask in P3/P4 |
+| Dock | Planned | Bottom, floating, pinned plus running; opens the launcher |
+| Control centre | Planned | Network, volume, battery, theme, power |
+| Notifications | Planned | Top-right stack, 12 px cards, per-app mark |
+| Lock | Upstream swaylock | Solyra lock surface in P6 |
+| Setup | Planned | First-boot wizard, see `docs/setup.md` |
+
+## Interaction rules
+
+1. **Keyboard first.** Every action has a binding; the mouse is an alternative,
+   never the only path. `Mod+Shift+Slash` shows the map.
+2. **One way to do a thing.** The dock and the panel never duplicate a control.
+3. **No fake affordances.** If a control cannot work yet, it does not ship.
+   The panel's pills read real compositor state; when they cannot, they say so.
+4. **Nothing floats over content without a reason.** Layer surfaces reserve
+   space or dismiss on Escape; there is no permanent overlay.
+5. **Restartable.** The shell is a client. Killing it must never lose windows,
+   workspaces, or the session.
+
+## Upstream apps, for now
+
+Foot, Thunar, Fuzzel, and swaylock ship until their Solyra replacements are
+stable. They are themed through the compositor where possible (borders,
+corners, focus) and left alone where not — a half-themed GTK app looks worse
+than an honest one. The Default Apps switcher in `docs/apps.md` is how a user
+moves between the two.
+
+## Light mode
+
+Planned, not shipped. The token names stay; the values invert to a warm paper
+palette with the same accent. Nothing in the shell may hardcode a colour
+outside the token table, which is why the panel keeps its palette in one block
+at the top of `main.rs`.
