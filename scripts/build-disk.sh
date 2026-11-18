@@ -7,14 +7,17 @@
 # to-filesystem` performs the ostree deployment on the pre-mounted rootfs.
 #
 # Usage: sudo ./scripts/build-disk.sh [output.raw] [size]   (default 8G)
+# The result is an unsigned, x86_64 UEFI development disk, not installer media.
 
 set -euo pipefail
+export LC_ALL=C
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${SOLYRA_IMAGE:-solyra-base:dev}"
 OUT="${1:-$REPO_ROOT/dist/solyra.raw}"
 SIZE="${2:-8G}"
-WORK="$(mktemp -d /tmp/solyra-disk.XXXXXX)"
+ESP_LOOP=
+ROOT_LOOP=
 
 log() { printf '\n== %s ==\n' "$*"; }
 
@@ -22,20 +25,27 @@ if [[ "$(id -u)" != 0 ]]; then
   echo "must run as root (sudo)" >&2
   exit 1
 fi
-for tool in losetup sfdisk mkfs.vfat mkfs.xfs mcopy grub-mkimage; do
+for tool in losetup sfdisk mkfs.vfat mkfs.xfs xfs_admin mmd mcopy mdir grub-mkimage docker skopeo; do
   command -v "$tool" >/dev/null || { echo "$tool missing" >&2; exit 1; }
 done
 
+WORK="$(mktemp -d "${TMPDIR:-/var/tmp}/solyra-disk.XXXXXX")"
 cleanup() {
-  mountpoint -q "$WORK/root" 2>/dev/null && umount "$WORK/root" || true
-  losetup -d "$ROOT_LOOP" 2>/dev/null || true
+  if mountpoint -q "$WORK/root"; then
+    umount "$WORK/root" || return 1
+  fi
+  if [[ -n "$ROOT_LOOP" ]]; then losetup -d "$ROOT_LOOP"; fi
+  if [[ -n "$ESP_LOOP" ]]; then losetup -d "$ESP_LOOP"; fi
   rm -rf "$WORK"
 }
 trap cleanup EXIT
 
 log "creating $OUT ($SIZE)"
-rm -rf "$OUT" "$OUT.meta"
 mkdir -p "$(dirname "$OUT")"
+if [[ -e "$OUT" || -L "$OUT" ]] || ! (set -o noclobber; : > "$OUT"); then
+  echo "cannot reserve a new output file: $OUT" >&2
+  exit 1
+fi
 truncate -s "$SIZE" "$OUT"
 
 log "partitioning (ESP 512M + root xfs)"
@@ -50,7 +60,6 @@ ROOT_START="${PARTINFO[1]%% *}"; ROOT_SIZE="${PARTINFO[1]##* }"
 echo "esp: start=$ESP_START sectors=$ESP_SIZE | root: start=$ROOT_START sectors=$ROOT_SIZE"
 ESP_OFFSET=$(( ESP_START * 512 ))
 ROOT_OFFSET=$(( ROOT_START * 512 ))
-printf 'esp=%s\nroot=%s\n' "$ESP_OFFSET" "$ROOT_OFFSET" > "$OUT.meta"
 
 log "creating filesystems"
 ESP_LOOP="$(losetup -f --show -o "$ESP_OFFSET" --sizelimit $(( ESP_SIZE * 512 )) "$OUT")"
@@ -66,38 +75,26 @@ ROOT_UUID="$(xfs_admin -u "$ROOT_LOOP" 2>/dev/null | awk -F'= ' '{print $2}')"
 echo "root uuid: $ROOT_UUID"
 
 log "bootc install to-filesystem"
-if [[ ! -f "${SOLYRA_OCI:-/tmp/solyra.oci}" ]]; then
+OCI="${SOLYRA_OCI:-$WORK/solyra.oci}"
+if [[ -z "${SOLYRA_OCI:-}" ]]; then
   log "preparing OCI archive for bootc (skopeo)"
-  docker save "$IMAGE" -o /tmp/solyra-docker.tar
-  skopeo copy docker-archive:/tmp/solyra-docker.tar \
-    oci-archive:"${SOLYRA_OCI:-/tmp/solyra.oci}":solyra-base:dev
-  rm -f /tmp/solyra-docker.tar
+  skopeo copy "docker-daemon:$IMAGE" "oci-archive:$OCI:solyra-base:dev"
+fi
+if [[ ! -f "$OCI" ]]; then
+  echo "OCI archive not found: $OCI" >&2
+  exit 1
 fi
 docker run --rm --privileged \
   -v "$WORK/root:/mnt/root" \
-  -v "${SOLYRA_OCI:-/tmp/solyra.oci}:/mnt/solyra.oci:ro" \
-  -e container=podman \
-  --entrypoint /bin/bash \
-  "$IMAGE" -c '
-    set -euo pipefail
-    # The ESP is a tmpfs mount point so bootc accepts the layout; the ESP
-    # contents are copied onto the real ESP afterwards with mtools (vfat
-    # cannot be mounted in the build environment).
-    mkdir -p /mnt/root/boot/efi
-    mount -t tmpfs tmpfs /mnt/root/boot/efi
-    # The bootloader step fails here (build host has no EFI, and the root
-    # loop device is not a real disk); the ostree deployment itself is
-    # complete at that point and our standalone GRUB covers booting.
-    bootc install to-filesystem \
-      --source-imgref "oci-archive:/mnt/solyra.oci:solyra-base:dev" \
-      --karg "root=UUID='"$ROOT_UUID"'" \
-      /mnt/root || echo "bootc exited nonzero (bootloader step expected to fail)"
-  '
+  -v "$(realpath "$OCI"):/mnt/solyra.oci:ro" \
+  --entrypoint bootc "$IMAGE" install to-filesystem \
+    --bootloader none --skip-finalize \
+    --source-imgref "oci-archive:/mnt/solyra.oci:solyra-base:dev" \
+    --root-mount-spec "UUID=$ROOT_UUID" /mnt/root
 echo "bootc install finished"
 
 log "inspecting deployed boot layout"
-find "$WORK/root/boot" -maxdepth 3 2>/dev/null | head -30
-BLS="$(find -L "$WORK/root/boot" -name 'ostree-*.conf' 2>/dev/null | head -1 || true)"
+BLS="$(find "$WORK/root/boot" -name 'ostree-*.conf' -print -quit)"
 if [[ -z "$BLS" ]]; then
   echo "no BLS entries found; bootc deploy may have failed" >&2
   exit 1
@@ -108,23 +105,10 @@ BLS_LINUX="$(sed -n 's/^linux *//p' "$BLS")"
 BLS_INITRD="$(sed -n 's/^initrd *//p' "$BLS")"
 BLS_OPTIONS="$(sed -n 's/^options *//p' "$BLS")"
 
-log "ensuring ostree boot-version links"
-# bootc writes these in its finalize step, which is skipped when the
-# bootloader step fails; ostree-prepare-root needs the karg path to resolve.
-BLS_HASH="$(printf '%s' "$BLS_OPTIONS" | sed -n 's/.*ostree=\/ostree\/boot.[0-9]*\/[^/]*\/\([0-9a-f]*\)\/0.*/\1/p')"
-DEPLOY_DIR="$(find -L "$WORK/root/ostree/deploy/default/deploy" -maxdepth 1 -name '*.0' -type d 2>/dev/null | head -1 || true)"
-if [[ -n "$BLS_HASH" && -n "$DEPLOY_DIR" ]]; then
-  DEPLOY_NAME="$(basename "$DEPLOY_DIR")"
-  LINK_DIR="$WORK/root/ostree/boot.1/default/$BLS_HASH"
-  mkdir -p "$LINK_DIR"
-  if [[ ! -e "$LINK_DIR/0" ]]; then
-    ln -s "../../../deploy/default/deploy/$DEPLOY_NAME" "$LINK_DIR/0"
-    echo "created boot.1 link: default/$BLS_HASH/0 -> $DEPLOY_NAME"
-  else
-    echo "boot.1 link already present"
-  fi
-else
-  echo "could not derive boot.1 link (hash='$BLS_HASH' deploy='$DEPLOY_DIR')" >&2
+if [[ ! " $BLS_OPTIONS " =~ [[:space:]]ostree=(/ostree/[^[:space:]]+) ]] ||
+   [[ ! -d "$WORK/root${BASH_REMATCH[1]}" ]]; then
+  echo "BLS entry does not resolve to an OSTree deployment" >&2
+  exit 1
 fi
 
 log "installing GRUB standalone EFI into the ESP"
@@ -145,7 +129,7 @@ mkdir -p "$WORK/efiboot"
 grub-mkimage -O x86_64-efi \
   -o "$WORK/efiboot/BOOTX64.EFI" \
   -p '(hd0,gpt1)/EFI/BOOT' \
-  part_gpt fat xfs search search_fs_uuid linux gzio echo boot
+  part_gpt fat xfs search search_fs_uuid linux gzio boot normal
 cp "$GRUB_CFG" "$WORK/efiboot/grub.cfg"
 
 log "writing ESP via mtools (image@$ESP_OFFSET)"
@@ -156,13 +140,11 @@ mcopy -i "$OUT@@$ESP_OFFSET" "$WORK/efiboot/BOOTX64.EFI" ::EFI/BOOT/BOOTX64.EFI
 mcopy -i "$OUT@@$ESP_OFFSET" "$WORK/efiboot/grub.cfg" ::EFI/BOOT/grub.cfg
 mdir -i "$OUT@@$ESP_OFFSET" ::/EFI/BOOT
 
+log "measuring installed size"
+du -shx "$WORK/root"
 log "syncing and detaching"
 sync
-umount "$WORK/root"
-losetup -d "$ESP_LOOP" "$ROOT_LOOP"
-
-log "measuring installed size"
-du -sh --apparent-size "$WORK" 2>/dev/null || true
-df -h "$OUT" | tail -1
+cleanup
+trap - EXIT
 echo "disk image ready: $OUT"
 ls -lh "$OUT"

@@ -1,9 +1,9 @@
 # Solyra OS base image — Fedora Atomic (bootc).
 #
-# P1 scope (PLAN.md §4): a minimal, bootable base that boots to a TTY.
-# compositor (comp/), shell, and apps layer on in later phases.
+# P2 scope (PLAN.md §4): a minimal bootable base and niri session.
 #
-# Build:  podman build -t solyra-base:dev .
+# Build:  sudo docker build -f base/Containerfile -t solyra-base:dev .
+# (context is the repo root: the compositor binary comes from comp/out/)
 # Measured every milestone (docs/budgets-legacy.md discipline): see base/README.md
 FROM quay.io/fedora/fedora-bootc:46
 
@@ -16,6 +16,20 @@ RUN dnf -y install \
       polkit \
       sudo \
       openssh-server \
+ && dnf -y clean all
+
+# --- compositor runtime (solyra-comp, forked niri) ---------------------------
+# Libraries the vendored niri links against; the binary itself is COPYd in
+# from comp/out/niri (built in comp/dev.Containerfile). mesa-dri-drivers
+# gives llvmpipe so software GL works in VMs and on no-GPU hardware.
+# dbus-tools lets the session import WAYLAND_DISPLAY/DISPLAY into the user
+# manager; xwayland-satellite gives X11 apps a display without Xorg.
+RUN dnf -y install \
+      libinput libxkbcommon libseat libdisplay-info libwayland-server \
+      mesa-libgbm mesa-libEGL mesa-dri-drivers libglvnd \
+      pipewire-libs pango cairo-gobject \
+      dbus-broker dbus-tools udisks2 xwayland-satellite \
+      foot fuzzel thunar swaylock dejavu-sans-mono-fonts \
  && dnf -y clean all
 
 # --- identity ----------------------------------------------------------------
@@ -39,8 +53,20 @@ RUN mkdir -p /usr/etc && \
 # --- default user -----------------------------------------------------------
 # Provisioned via sysusers (bootc-friendly: no layer-time account state).
 # The first-boot setup wizard (P6) takes over real account setup later.
-COPY sysusers.d/10-solyra.conf /usr/lib/sysusers.d/10-solyra.conf
-COPY sudoers.d/solyra /etc/sudoers.d/solyra
+COPY base/sysusers.d/10-solyra.conf /usr/lib/sysusers.d/10-solyra.conf
+COPY base/sudoers.d/solyra /etc/sudoers.d/solyra
+RUN systemd-sysusers --dry-run /usr/lib/sysusers.d/10-solyra.conf
+
+# --- compositor --------------------------------------------------------------
+# Built from comp/ in the dev container (comp/dev.Containerfile); the build
+# drops the release binary at comp/out/niri. Two names: solyra-comp is the
+# real binary, niri stays as an alias so stock niri docs/configs work.
+COPY comp/out/niri /usr/bin/solyra-comp
+COPY base/solyra-session /usr/bin/solyra-session
+RUN chmod +x /usr/bin/solyra-session && ln -s solyra-comp /usr/bin/niri
+COPY base/solyra-config.kdl /etc/solyra/comp.kdl
+COPY base/solyra.desktop /usr/share/wayland-sessions/solyra.desktop
+RUN /usr/bin/solyra-comp validate -c /etc/solyra/comp.kdl
 
 # --- trim -------------------------------------------------------------------
 # Locale clutter and docs trees are the cheapest GBs. Package set review and

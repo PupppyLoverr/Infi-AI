@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Solyra OS
+Comment=Solyra session (solyra-comp, forked niri)
+Exec=/usr/bin/solyra-session --session
+Type=Application
+DesktopNames=Solyra

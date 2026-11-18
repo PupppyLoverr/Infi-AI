@@ -1,27 +1,53 @@
 # Solyra base image
 
-The whole OS is this container image, built by CI and booted via
-[bootc](https://containers.github.io/bootc/). Updates are atomic and rollback
-is native — that is what makes "undo anything an agent did" a system property
-instead of a script.
+The development OS image is built from Fedora bootc. The local VM disk is
+for desktop bring-up; it does not validate installation, updates, or rollback.
 
 ## Build locally
 
+From the repository root, build the vendored compositor first:
+
 ```sh
-cd base
-podman build -t localhost/solyra-base:dev .
+sudo docker build -f comp/dev.Containerfile -t solyra-dev:dev comp/
+mkdir -p comp/out
+sudo docker run --rm -v "$PWD/comp:/src" solyra-dev:dev sh -ec '
+  CARGO_PROFILE_RELEASE_STRIP=symbols CARGO_PROFILE_RELEASE_LTO=off \
+    cargo build --locked --release -p niri -j 2
+  install -m 755 target/release/niri out/niri
+'
+sudo docker build -f base/Containerfile -t solyra-base:dev .
 ```
 
-## Produce a bootable disk / ISO
+## Produce a bootable test disk
 
-[bootc-image-builder](https://github.com/osbuild/bootc-image-builder) converts
-the container image into qcow2/raw/ISO. P1 wires this into CI with a qcow2 +
-raw output and measures it (PLAN.md §7 budgets).
+`sudo ./scripts/build-disk.sh dist/solyra.raw` builds a local x86_64 UEFI
+test disk from `solyra-base:dev`. It requires Docker, Skopeo, XFS tools,
+dosfstools, mtools, `sfdisk`/`losetup`, and x86_64 EFI GRUB modules. It
+requires a new output path and writes a development-only GRUB config; use
+OVMF without Secure Boot for the VM. Installer media remains a later phase.
+
+Provision a user with a home directory, then start `solyra-session --session`
+from that user's active local TTY, or select **Solyra OS** in a Wayland-capable
+display manager. The development image does not set a default password or
+ship an autologin service. To override shortcuts and appearance, copy
+`/etc/solyra/comp.kdl` to `~/.config/solyra/comp.kdl`. Super+Enter opens Foot,
+Super+E opens Thunar, Super+D opens Fuzzel, and Super+Tab opens the workspace
+overview.
+
+## Known limits of this image
+
+- niri refuses software EGL renderers, so a VM needs a virtual GPU with 3D
+  support (`-device virtio-vga-gl`, VirGL). With a plain `virtio-vga` the
+  session starts and opens its Wayland socket but never draws a frame.
+- There is no display manager yet, so nothing starts the session at boot; the
+  session is started by hand or by a test unit.
+- `systemd-oomd` and `systemd-resolved` log "Failed at step USER" during early
+  boot on this image and need their system users checked.
 
 ## Measure (every milestone)
 
 ```sh
-podman image inspect localhost/solyra-base:dev --format '{{.Size}}'
+sudo docker image inspect solyra-base:dev --format '{{.Size}}'
 ```
 
 Idle RAM and boot time are measured on the booted image in QEMU — the

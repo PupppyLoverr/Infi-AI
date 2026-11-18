@@ -20,10 +20,23 @@ jobs:
       # harness is rewired for the new layout (tests/drive/README.md).
       - name: Shellcheck the drive harness
         run: shellcheck -S warning tests/drive/*.sh
+      - name: Shellcheck the image and session scripts
+        run: shellcheck -S warning scripts/build-disk.sh base/solyra-session
 
-  # P1 replaces this with the real bootc image build (see PLAN.md §4).
-  image-build-placeholder:
+  image-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: echo "Image build lands in P1 — base/Containerfile"
+      - name: Build the niri release binary
+        run: |
+          docker build -f comp/dev.Containerfile -t solyra-dev:ci comp/
+          mkdir -p comp/out
+          docker run --rm -v "$PWD/comp:/src" solyra-dev:ci sh -ec '
+            CARGO_PROFILE_RELEASE_STRIP=symbols CARGO_PROFILE_RELEASE_LTO=off \
+              cargo build --locked --release -p niri -j 2
+            install -m 755 target/release/niri out/niri
+          '
+      - name: Build the desktop image and validate its config
+        run: |
+          docker build -f base/Containerfile -t solyra-base:ci .
+          docker run --rm --entrypoint cat solyra-base:ci /etc/solyra/comp.kdl | cmp base/solyra-config.kdl -

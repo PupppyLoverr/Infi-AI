@@ -46,12 +46,12 @@ CI-built images are native properties, not projects we write.
   trimming (no GNOME, no Toolbox extras) lands at **~3 GB installed**. Budget reviewed
   every milestone (see §7).
 
-### Window management: fork niri → `cosmos-comp`
+### Window management: fork niri → `solyra-comp`
 
 niri (Rust, GPL-3.0) is the best-engineered compositor we can start from: scrollable
 tiling, excellent animations, wlr-protocols complete, VRR support, tiny and fast.
 
-Fork it as `cosmos-comp` and modify:
+Package the vendored niri build as `solyra-comp` and add:
 1. Add **layout modes** per workspace: scrollable (default), master/stack, floating,
    and Windows-11-style snap zones with Snap Assist (the v1–v6 model, which was good).
 2. Port the Cosmos motion curves and glass/material pipeline (GPU-side now, not the
@@ -70,7 +70,7 @@ has terminals, webviews, a component library, IME, drag-and-drop, and AccessKit
 accessibility. Its own benchmarks show roughly half of GPUI's CPU and lower idle
 memory. It is also *our* framework — building the distro on it dogfoods and hardens it.
 
-- **Shell** (`cosmos-shell` in zgx): menubar, dock (bottom/left/right), launcher
+- **Shell** (`solyra-shell` in zgx): menubar, dock (bottom/left/right), launcher
   (Search-or-Ask), Control Centre, notifications, dynamic island, window switcher,
   cheatsheet — the v1–v6 feature set, re-skinned on the new engine.
   - **Spike 1 (first code we write):** layer-shell surfaces in zgx (wlr-layer-shell-v1
@@ -93,7 +93,7 @@ memory. It is also *our* framework — building the distro on it dogfoods and ha
 - Port the useful host/integration pieces from `zeron` (its desktop app's session,
   sync, and webview plumbing) rather than rewriting them.
 
-### Agents: zeron is the platform, CosmosOS is its best home
+### Agents: Solyra uses zeron as its agent platform
 
 `zeron` (control plane for Claude Code, Codex, Cursor, Devin…) becomes the distro's
 agent layer instead of rebuilding `agentd` from scratch:
@@ -124,8 +124,8 @@ docs/
   budgets.md         — RAM/storage/boot budgets, measured every milestone
   decisions.md       — ADRs: every stack decision above, with evidence
 base/                — Containerfile, image config, ISO/build pipeline, CI
-comp/                — cosmos-comp (niri fork) + our patches
-shell/               — cosmos-shell (zgx)
+comp/                — solyra-comp (niri fork) + our patches
+shell/               — solyra-shell (zgx)
 apps/                — terminal, files, editor, settings, monitor (zgx), one crate each
 agent/               — agent-space bridge, policy engine, VM runner, MCP tools
 assets/wallpapers/   — original wallpaper art (kept from v5/v6)
@@ -141,12 +141,17 @@ The previous implementation (CosmosOS v1–v6, `cosmosos/` tree) is preserved on
   this plan + curated docs. Stand up CI (image build on every main push).
 - **P1 — Base image.** Containerfile → bootc image → raw disk → boots to a TTY.
   Measured: install size, idle RAM of bare boot, boot time. Gate: boots on QEMU x86_64
-  + aarch64. **Done 2026-11-18 (x86_64): boots to multi-user in QEMU; 2.0 GB
-  deployed; see docs/budgets.md. Raw-disk path replaces bootc-image-builder in
-  environments without partitioned loop devices; ISO/installer media stays for P7.**
-- **P2 — Window management.** niri fork builds in our image; Cosmos keybinds and
-  config; scrollable tiling + snap zones. Gate: drive harness (ported from
-  `tests/drive`) drives windows headlessly; screenshots reviewed.
+  + aarch64. The x86_64 prototype reached multi-user in QEMU and used 2.0 GiB
+  for its root filesystem. Serial login, idle RAM, and aarch64 remain unverified.
+  The local raw-disk path uses a development GRUB configuration; installer media
+  and production update/rollback testing are separate milestones.
+- **P2 — Window management.** niri builds in our image and runs from a
+  cold-booted disk in QEMU: the session owns a DRM output, opens Foot and
+  Thunar on Super+Enter and Super+E, tiles them into two columns, moves focus,
+  and opens the workspace overview. The session imports its environment, and
+  X11 apps get a display through xwayland-satellite. Gates still open: snap
+  zones with Snap Assist (compositor work, not yet written), the per-feature
+  `tests/drive` scripts, and a hardware run.
 - **P3 — Shell.** Layer-shell spike, then menubar/dock/launcher/control centre in zgx.
   Gate: idle RAM budget met with shell running; 60 fps animations on llvmpipe and on
   real GPU.

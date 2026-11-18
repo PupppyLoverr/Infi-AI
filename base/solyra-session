@@ -1,0 +1,12 @@
+#!/bin/bash
+# Solyra session launcher: starts the compositor with the Solyra default
+# config. Used by the drive harness (tests/drive) and, later, by the display
+# manager / setup wizard (P6).
+set -euo pipefail
+
+CONFIG="${SOLYRA_COMP_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/solyra/comp.kdl}"
+if [[ -z "${SOLYRA_COMP_CONFIG:-}" && ! -f "$CONFIG" ]]; then
+  CONFIG=/etc/solyra/comp.kdl
+fi
+
+exec /usr/bin/solyra-comp --config "$CONFIG" "$@"

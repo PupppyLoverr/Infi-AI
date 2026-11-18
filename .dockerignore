@@ -1,0 +1,8 @@
+**
+!base/
+!base/**
+!comp/
+comp/**
+!comp/out/
+comp/out/**
+!comp/out/niri

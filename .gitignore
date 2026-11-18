@@ -10,6 +10,12 @@ target/
 # Solyra disk build outputs (scripts/build-disk.sh)
 dist/
 
+# Compositor build artifact copied out of the dev container
+comp/out/
+
+# Local Amp workspace data
+.amp/
+
 # OS junk
 .DS_Store
 Thumbs.db

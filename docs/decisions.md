@@ -16,14 +16,14 @@ machine in an unrecoverable state).
 - Fallback: if the 4 GB installed-size budget proves impossible on Fedora,
   Debian is re-evaluated with the budget numbers in hand (PLAN.md §7).
 
-## ADR-0002: Window management is a niri fork (`cosmos-comp`)
+## ADR-0002: Window management is a niri fork (`solyra-comp`)
 
 niri (Rust, GPL-3.0; upstream niri-wm/niri, 27k stars, v26.04 and active daily) is the
 best-engineered compositor to start from: scrollable
 tiling, quality animations, complete wlr protocol coverage, VRR, small and
 fast. We fork it and add layout modes (master/stack, floating, snap zones +
 Snap Assist), the Cosmos motion system, and an agent-surface protocol. The
-GPL-3.0 license carries through cosmos-comp — acceptable for a distro.
+GPL-3.0 applies to `solyra-comp` — acceptable for a distro.
 
 - Rejected: writing another compositor on Smithay from scratch — the v1–v6
   core mistake (~16k LOC for a 7/10 result); Hyprland — C++, breaks the
@@ -40,8 +40,15 @@ Its published benchmarks show roughly half of GPUI's CPU and lower idle
 memory. It is also our framework — the distro dogfoods and hardens it.
 
 - zui (our GPUI fork) is available where immediate mode genuinely wins.
-- Known gap: zgx has no layer-shell today. Week-1 spike decides the shell
-  architecture; fallback is shell surfaces as compositor-pinned toplevels.
+- At zgx `1b41efa`, `zgx-desktop` creates winit windows and implements its
+  Wayland popups against their existing `xdg_surface`. Neither that host
+  nor its vendored winit implements the layer-shell surface role. Our niri
+  snapshot already supports `zwlr_layer_shell_v1`.
+- First shell experiment: give one small panel its own Wayland layer-shell
+  surface before attaching a buffer, then reuse zgx for its layout and
+  rendering. Verify exclusive space reservation, pointer input, and panel
+  removal restoring the work area in niri before choosing the final host.
+  A compositor-pinned toplevel remains a fallback, not a layer-shell test.
 - Risk cover: upstream originals (terminal, file manager, …) stay installed
   with a Default Apps switcher until zgx versions are stable — owner
   requirement, doubles as churn insurance while zgx is at 0.1.
