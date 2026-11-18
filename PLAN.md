@@ -48,7 +48,7 @@ CI-built images are native properties, not projects we write.
 
 ### Window management: fork niri → `cosmos-comp`
 
-niri (Rust, MIT) is the best-engineered compositor we can start from: scrollable
+niri (Rust, GPL-3.0) is the best-engineered compositor we can start from: scrollable
 tiling, excellent animations, wlr-protocols complete, VRR support, tiny and fast.
 
 Fork it as `cosmos-comp` and modify:

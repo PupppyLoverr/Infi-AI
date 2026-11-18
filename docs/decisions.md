@@ -18,10 +18,12 @@ machine in an unrecoverable state).
 
 ## ADR-0002: Window management is a niri fork (`cosmos-comp`)
 
-niri (Rust, MIT) is the best-engineered compositor to start from: scrollable
+niri (Rust, GPL-3.0; upstream niri-wm/niri, 27k stars, v26.04 and active daily) is the
+best-engineered compositor to start from: scrollable
 tiling, quality animations, complete wlr protocol coverage, VRR, small and
 fast. We fork it and add layout modes (master/stack, floating, snap zones +
-Snap Assist), the Cosmos motion system, and an agent-surface protocol.
+Snap Assist), the Cosmos motion system, and an agent-surface protocol. The
+GPL-3.0 license carries through cosmos-comp — acceptable for a distro.
 
 - Rejected: writing another compositor on Smithay from scratch — the v1–v6
   core mistake (~16k LOC for a 7/10 result); Hyprland — C++, breaks the
