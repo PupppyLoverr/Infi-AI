@@ -1,0 +1,32 @@
+# Solyra OS base image — Fedora Atomic (bootc).
+#
+# P1 scope (PLAN.md §4): a minimal, bootable base that boots to a TTY.
+# compositor (comp/), shell, and apps layer on in later phases.
+#
+# Build:  podman build -t solyra-base:dev .
+# Measured every milestone (docs/budgets-legacy.md discipline): see base/README.md
+FROM quay.io/fedora/fedora-bootc:46
+
+# --- essentials only --------------------------------------------------------
+# NetworkManager + polkit: wired up in the v1-v6 image and needed by every
+# tray/agent later. openssh-server: the drive harness reaches the guest over
+# QEMU until the harness is rewired (tests/drive/README.md).
+RUN dnf -y install \
+      NetworkManager \
+      network-config-filenames \
+      polkit \
+      sudo \
+      openssh-server \
+ && dnf -y clean all
+
+# --- default user -----------------------------------------------------------
+# Provisioned via sysusers (bootc-friendly: no layer-time account state).
+# The first-boot setup wizard (P6) takes over real account setup later.
+COPY sysusers.d/10-solyra.conf /usr/lib/sysusers.d/10-solyra.conf
+COPY sudoers.d/solyra /etc/sudoers.d/solyra
+
+# --- trim -------------------------------------------------------------------
+# Locale clutter and docs trees are the cheapest GBs. Package set review and
+# the real size measurement are the P1 gate (PLAN.md §7).
+RUN rm -rf /usr/share/locale/*/ /usr/share/man/*/ /usr/share/doc/* && \
+    rm -rf /var/cache/* /var/log/*
