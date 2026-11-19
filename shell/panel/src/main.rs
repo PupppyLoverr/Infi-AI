@@ -16,6 +16,7 @@
 mod agent;
 mod canvas;
 mod launcher;
+mod notify;
 mod state;
 mod surfaces;
 mod tokens;
@@ -123,6 +124,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let dock = make_dock_surface(&compositor, &layer_shell, &qh, prefs.dock_style, 320);
 
     let cmd_queue: Arc<Mutex<Vec<ShellCmd>>> = Arc::new(Mutex::new(Vec::new()));
+    {
+        let conn_wake = conn.clone();
+        let qh_wake = qh.clone();
+        notify::spawn_server(cmd_queue.clone(), move || {
+            conn_wake.display().sync(&qh_wake, ());
+            let _ = conn_wake.flush();
+        });
+    }
     {
         let conn_wake = conn.clone();
         let qh_wake = qh.clone();

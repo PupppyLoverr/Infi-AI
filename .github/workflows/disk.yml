@@ -12,6 +12,11 @@ on:
   push:
     branches: ['claude/**']
 
+# Only the newest push builds; older runs on the same branch are cancelled.
+concurrency:
+  group: disk-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   disk:
     runs-on: ubuntu-latest
