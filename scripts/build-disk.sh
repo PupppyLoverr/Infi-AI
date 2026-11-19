@@ -111,6 +111,40 @@ if [[ ! " $BLS_OPTIONS " =~ [[:space:]]ostree=(/ostree/[^[:space:]]+) ]] ||
   exit 1
 fi
 
+# Optional: boot straight into the desktop. This is a development-disk
+# convenience for VMs; the release image has no default password and no
+# autologin (PLAN.md, P6 setup wizard).
+if [[ "${SOLYRA_AUTOLOGIN:-0}" == "1" ]]; then
+  log "enabling development autologin on tty1"
+  DEPLOY="$(find "$WORK/root/ostree/deploy/default/deploy" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+  UNIT_DIR="$DEPLOY/etc/systemd/system"
+  mkdir -p "$UNIT_DIR/multi-user.target.wants"
+  cat > "$UNIT_DIR/solyra-autologin.service" <<'UNIT'
+[Unit]
+Description=Solyra development session (autologin)
+After=systemd-user-sessions.service systemd-logind.service
+Conflicts=getty@tty1.service kmsconvt@tty1.service
+
+[Service]
+User=solyra
+PAMName=login
+TTYPath=/dev/tty1
+StandardInput=tty-force
+StandardOutput=journal+console
+StandardError=journal+console
+Environment=XDG_SESSION_TYPE=wayland
+Environment=XDG_CURRENT_DESKTOP=Solyra
+ExecStartPre=+/usr/bin/install -d -m 0700 -o solyra -g solyra /var/home/solyra
+ExecStart=/usr/bin/solyra-session --session
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  ln -sf ../solyra-autologin.service "$UNIT_DIR/multi-user.target.wants/solyra-autologin.service"
+  ln -sf /dev/null "$UNIT_DIR/getty@tty1.service"
+  ln -sf /dev/null "$UNIT_DIR/kmsconvt@tty1.service"
+fi
+
 log "installing GRUB standalone EFI into the ESP"
 GRUB_CFG="$WORK/grub.cfg"
 cat > "$GRUB_CFG" <<EOF

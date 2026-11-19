@@ -19,6 +19,8 @@ input {
 
 environment {
     LANG "C.UTF-8"
+    GTK_THEME "Adwaita:dark"
+    XDG_CURRENT_DESKTOP "Solyra"
     QT_QPA_PLATFORM "wayland"
     MOZ_ENABLE_WAYLAND "1"
 }
