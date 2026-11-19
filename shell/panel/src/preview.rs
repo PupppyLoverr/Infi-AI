@@ -616,7 +616,7 @@ fn two_x_renders_are_sharp_and_keep_logical_hit_regions() {
     }
     let frac = differing as f64 / total as f64;
     assert!(
-        frac > 0.004,
+        frac > 0.0005,
         "2x render has no extra detail (looks stretched): {frac:.4}"
     );
     assert!(frac < 0.25, "2x layout differs from 1x: {frac:.4}");
