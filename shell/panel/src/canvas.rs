@@ -756,9 +756,10 @@ impl<'a> Canvas<'a> {
                     Rgba::rgb(0x63, 0x66, 0xf1),
                 );
                 self.stroke_round_rect(x, y, size, size, r, 1.0, Rgba::rgba(255, 255, 255, 76));
-                let g = s * 0.23;
-                self.ring(cx, cy, g, 1.8, Rgba::rgb(255, 255, 255));
-                self.circle(cx + g * 0.34, cy - g * 0.32, g * 0.36, Rgba::rgb(255, 255, 255));
+                let g = s * 0.25;
+                self.ring(cx, cy, g, 1.7, Rgba::rgb(255, 255, 255));
+                // Occulting disc: the Solyra eclipse, cut from the ring's right.
+                self.circle(cx + g * 0.42, cy - g * 0.34, g * 0.78, Rgba::rgb(0x8a, 0x6b, 0xf6));
             }
             "files" | "thunar" => {
                 self.dgrad_round_rect(
@@ -771,21 +772,23 @@ impl<'a> Canvas<'a> {
                     Rgba::rgb(0x25, 0x63, 0xeb),
                 );
                 self.stroke_round_rect(x, y, size, size, r, 1.0, Rgba::rgba(255, 255, 255, 70));
-                let fw = (s * 0.56).round() as i32;
-                let fh = (s * 0.42).round() as i32;
+                let fw = (s * 0.58).round() as i32;
+                let fh = (s * 0.40).round() as i32;
                 let fx = x + (size - fw) / 2;
-                let fy = y + (size - fh) / 2 + 2;
-                // Folder back tab + frosted front pocket.
-                self.round_rect(fx, fy - 3, (fw as f32 * 0.46) as i32, 6, 2.5, Rgba::rgba(255, 255, 255, 210));
-                self.vgrad_round_rect(
-                    fx,
-                    fy,
-                    fw,
-                    fh,
-                    4.0,
-                    Rgba::rgb(0xff, 0xff, 0xff),
-                    Rgba::rgb(0xdb, 0xea, 0xfe),
-                );
+                let fy = y + (size - fh) / 2 + 3;
+                // Tab.
+                self.round_rect(fx, fy - 4, (fw as f32 * 0.42) as i32, 7, 3.0, Rgba::rgba(255, 255, 255, 235));
+                // Back panel, then a document peeking above the pocket.
+                self.vgrad_round_rect(fx, fy, fw, fh, 4.5, Rgba::rgb(0xff, 0xff, 0xff), Rgba::rgb(0xe3, 0xee, 0xfd));
+                let doc_w = (fw as f32 * 0.42) as i32;
+                let doc_x = fx + (fw - doc_w) / 2;
+                self.round_rect(doc_x, fy + 4, doc_w, (fh as f32 * 0.62) as i32, 2.5, Rgba::rgba(0xff, 0xff, 0xff, 240));
+                for i in 0..3 {
+                    self.round_rect(doc_x + 3, fy + 8 + i * 4, doc_w - 6, 1, 0.5, Rgba::rgba(0x25, 0x63, 0xeb, 120));
+                }
+                // Front pocket.
+                self.vgrad_round_rect(fx, fy + (fh as f32 * 0.42) as i32, fw, (fh as f32 * 0.58) as i32, 4.0,
+                                      Rgba::rgb(0xff, 0xff, 0xff), Rgba::rgb(0xdb, 0xea, 0xfe));
             }
             "terminal" | "foot" => {
                 self.dgrad_round_rect(
@@ -851,15 +854,12 @@ impl<'a> Canvas<'a> {
                     Rgba::rgb(0x33, 0x41, 0x55),
                 );
                 self.stroke_round_rect(x, y, size, size, r, 1.0, Rgba::rgba(255, 255, 255, 64));
-                self.ring(cx, cy, s * 0.19, 2.2, Rgba::rgb(248, 250, 252));
-                for i in 0..6 {
-                    let a = (i as f32) * std::f32::consts::FRAC_PI_3;
-                    self.circle(
-                        cx + a.cos() * s * 0.24,
-                        cy + a.sin() * s * 0.24,
-                        1.7,
-                        Rgba::rgb(248, 250, 252),
-                    );
+                let lw = (s * 0.44) as i32;
+                let lx = cx as i32 - lw / 2;
+                for (i, knob) in [0.30f32, 0.68, 0.45].iter().enumerate() {
+                    let ly = (cy + (i as f32 - 1.0) * s * 0.15) as i32;
+                    self.line(lx as f32, ly as f32, (lx + lw) as f32, ly as f32, 1.6, Rgba::rgba(248, 250, 252, 200));
+                    self.circle(lx as f32 + lw as f32 * knob, ly as f32, 2.6, Rgba::rgb(248, 250, 252));
                 }
             }
             "agent" => {

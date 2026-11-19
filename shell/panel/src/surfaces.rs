@@ -69,8 +69,8 @@ pub fn floating_dock_width(style: DockStyle, wins: &[WindowInfo]) -> u32 {
     match style {
         DockStyle::Solyra => {
             // Start (42) + divider (13) + N apps (42 each, 8 gap) + divider (13) + Agent (42) + 20 pad
-            let apps_w = entries.len() as i32 * 42 + (entries.len().saturating_sub(1) as i32) * 8;
-            (20 + 42 + 16 + apps_w + 16 + 42).max(220) as u32
+            let apps_w = entries.len() as i32 * 40 + (entries.len().saturating_sub(1) as i32) * 8;
+            (20 + 40 + 16 + apps_w + 16 + 40).max(220) as u32
         }
         DockStyle::Macos => {
             // Launcher + N apps (44 each, 8 gap) + divider (16) + Trash (44) + 20 pad
@@ -106,8 +106,8 @@ pub fn draw_bar(
         0,
         w,
         h,
-        Rgba::rgba(0x16, 0x12, 0x22, 152),
-        Rgba::rgba(0x10, 0x0d, 0x19, 174),
+        Rgba::rgba(0x1c, 0x16, 0x2b, 132),
+        Rgba::rgba(0x13, 0x0f, 0x20, 158),
     );
     cv.fill_rect(0, h - 1, w, 1, Rgba::rgba(255, 255, 255, 24));
 
@@ -287,7 +287,7 @@ pub fn draw_bar(
     });
 
     // Status pill (Control Centre trigger): Wi-Fi + Volume + Battery + Twin-switches.
-    let status_w = 96;
+    let status_w = 104;
     let status_x = clock_start - status_w - 12;
     let status_hov = hover.is_some_and(|(hx, hy)| {
         hx >= status_x as f64 && hx < (status_x + status_w) as f64 && hy >= 4.0 && hy < 30.0
@@ -305,16 +305,16 @@ pub fn draw_bar(
         },
     );
     let wifi_col = if prefs.wifi_on { TEXT } else { TEXT_DIM };
-    cv.icon_wifi(status_x as f32 + 14.0, 17.0, 13.0, wifi_col);
-    cv.icon_volume(status_x as f32 + 35.0, 17.0, 13.0, prefs.volume, TEXT);
+    cv.icon_wifi(status_x as f32 + 15.0, 17.0, 14.5, wifi_col);
+    cv.icon_volume(status_x as f32 + 39.0, 17.0, 14.5, prefs.volume, TEXT);
     cv.icon_battery(
-        status_x as f32 + 59.0,
+        status_x as f32 + 65.0,
         17.0,
         telem.battery_pct,
         TEXT_MED,
         Rgba::rgb(0x4a, 0xde, 0x80),
     );
-    cv.icon_control_centre(status_x as f32 + 83.0, 17.0, TEXT);
+    cv.icon_control_centre(status_x as f32 + 91.0, 17.0, TEXT);
     regions.push(Region {
         x: status_x,
         y: 4,

@@ -37,9 +37,9 @@ layout {
     background-color "#0e0b16"
     focus-ring { off; }
     border {
-        width 2
+        width 1
         active-gradient from="#c084fc" to="#818cf8" angle=135
-        inactive-color "#3a3342"
+        inactive-color "#2f2a3d"
     }
     shadow {
         on
@@ -69,6 +69,11 @@ hotkey-overlay {
 window-rule {
     geometry-corner-radius 12
     clip-to-geometry true
+    // Translucent apps (the terminal) get the same glass treatment as chrome.
+    background-effect {
+        blur true
+        xray false
+    }
 }
 
 // --- shell surfaces -------------------------------------------------------
@@ -158,12 +163,6 @@ layer-rule {
         blur true
         xray false
     }
-}
-
-// The wallpaper belongs in the overview backdrop, not on top of it.
-layer-rule {
-    match namespace="^wallpaper$"
-    place-within-backdrop true
 }
 
 animations {

@@ -74,6 +74,8 @@ COPY assets/wallpapers/sunset-1920x1080.png /usr/share/solyra/wallpapers/sunset.
 COPY assets/wallpapers/forest-1920x1080.png /usr/share/solyra/wallpapers/forest.png
 COPY assets/wallpapers/graphite-1920x1080.png /usr/share/solyra/wallpapers/graphite.png
 COPY base/theme/foot.ini /etc/xdg/foot/foot.ini
+COPY base/theme/gtk-3.0/settings.ini /etc/gtk-3.0/settings.ini
+COPY base/theme/gtk-4.0/settings.ini /etc/gtk-4.0/settings.ini
 COPY base/solyra-config.kdl /etc/solyra/comp.kdl
 COPY base/solyra.desktop /usr/share/wayland-sessions/solyra.desktop
 RUN /usr/bin/solyra-comp validate -c /etc/solyra/comp.kdl
