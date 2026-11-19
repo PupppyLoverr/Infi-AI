@@ -87,17 +87,38 @@ changes the face, not the scale.
 
 ## 5. Materials and depth
 
-There is **no backdrop blur** — niri has no blur protocol, and pretending
-otherwise produces muddy translucency. Depth comes from three things instead:
+The bar, the dock and the notch each choose a material in Settings >
+Appearance (`bar_material`, `dock_material`, `notch_material` in
+`shell.conf`). The panel paints the tint, rim and lit edge; solyra-comp
+(our niri fork, which has backdrop blur) draws what only the compositor can
+see. The panel asks for blur on exactly the painted shape with
+`ext-background-effect-v1`, so the clear room above a magnifying dock or
+around the island is never blurred.
 
-1. **Value steps.** `bg` → `surface` → `surface-raised`, each 8–12 lightness
-   points apart.
-2. **A 1 px top highlight** on floating cards (`#3A3344` at ~20 % alpha) so the
-   card reads as lit from above.
-3. **A hairline shadow** under floating cards: 2 px, `#000000` at 45 %.
+| Material | Panel paints | Compositor adds | Use |
+| --- | --- | --- | --- |
+| **Solid** | opaque fill, faint rim | nothing | maximum legibility; the classic black notch |
+| **See-through** | light tint (alpha ~150), rim | nothing; the desktop stays sharp | minimal looks |
+| **Glass** (default bar, dock) | thin tint (alpha ~120), rim, 1 px lit top edge | blur, saturation x1.5 | the macOS-like look |
+| **Acrylic** | tint mixed 22-30 % with the wallpaper's average colour (alpha ~190) | blur, saturation x1.15, grain 0.06 | the Windows-like look |
 
-Gradients are vertical and subtle: at most 8 lightness points across a card.
-The bar is `#18141D` → `#121016`; the dock card is `#26212E` → `#19161F`.
+**Adaptive density.** Glass and See-through get denser (alpha +70) when the
+wallpaper's lightness fights the text colour: a bright wallpaper under
+light-on-dark text, or the reverse. This is the legibility guard that both
+Apple (Liquid Glass adapts to what is behind it) and Microsoft (Acrylic's
+luminosity layer) build in. **Solid surfaces everywhere** (`opaque=1`)
+overrides every material, as an accessibility switch.
+
+Apps: zgx apps open transparent windows over the compositor's window blur.
+The sidebar or tab strip is the most see-through layer (alpha 150), the
+content area denser (214), cards a faint wash; `app_glass=0` or Solid
+surfaces makes them opaque. `solyra-ui::scope` maps zgx's theme tokens to
+Solyra's, so every stock control uses the Solyra palette and the chosen
+accent.
+
+Previews: `SOLYRA_RENDER_DIR=out cargo test` in `shell/panel` writes
+`material-*.png`, whole desktop scenes per material, dark and light. The
+compositor's blur is approximated there.
 
 ---
 
@@ -105,57 +126,37 @@ The bar is `#18141D` → `#121016`; the dock card is `#26212E` → `#19161F`.
 
 ### 6.1 Bar — **shipped**
 
-32 px, full width, exclusive zone 32. Windows tile below it and never enter it.
-The bar never hides, on any workspace.
+32 px, full width, exclusive zone 32. Styles (`bar_style`): **Menu bar**
+(Finder-style: Solyra menu, the focused app's name, Go, Window, View, Help,
+each a real dropdown), **Compact** (workspaces and status only) and
+**Hidden** (no strip, nothing reserved). Right side: search, network, volume,
+battery when present, control centre, date and clock (12/24 h, seconds and
+date optional). Workspace pills are optional.
 
-Anatomy, left to right:
+Menus open on a full-screen transparent overlay: a click outside closes,
+hovering another title switches, as on macOS. Restart and Shut down ask for
+a second click.
 
-| Region | Content | Metrics |
-| --- | --- | --- |
-| Brand | 8 px accent dot + "Solyra" | dot at x=16, label at x=28, baseline 21 |
-| Menus | `File Edit View Go Window Help` (**planned**) | 12 px, 12 px gaps |
-| Workspaces | Pills 1–6, active filled accent | 18 × 14, radius 7, 6 px gap, starts at x=96 |
-| Notch | Reserved void, fake lens | 186 × 26, radius 14 bottom, centred |
-| Island | Grows out of the notch | 24 px tall, y=4, radius 12 |
-| Status | Network, volume, battery (**planned**) | 11.5 px, right-aligned before the clock |
-| Clock | `HH:MM` + `Wed 18 Nov` | 13 px, right inset 16 |
+### 6.2 Notch and Dynamic Island — **shipped**
 
-Hover on a pill raises it to `surface-raised`; the active pill stays accent.
-Click sends `FocusWorkspace` to the compositor.
+One black (or chosen material) shape at the top centre that morphs between
+idle, a compact live activity and an expanded card, frame by frame (instant
+with reduced motion). `notch_style`: **Notch** (hangs from the screen edge,
+concave ears), **Dynamic Island** (a floating capsule) or **Off**.
 
-### 6.2 Island — **shipped**
+Priority, most urgent first: an agent approval or question (approve, deny,
+answer inline; keys A/D/T), a fresh notification, what is playing (any MPRIS
+player, with play/pause/next/previous), an agent at work. Expanded idle shows
+a glance: time, date, battery, network, running agents.
 
-The only surface allowed to interrupt the bar. One item at a time, most urgent
-first.
+### 6.3 Dock — **shipped** (four variants)
 
-| State | Content | Size |
-| --- | --- | --- |
-| Idle | Nothing; collapsed into the notch | — |
-| Working | Accent dot + owner + verb | height 24, width = text + 46, max 420 |
-| Attention (**planned**) | Icon + question + `⏎ approve` / `esc skip` | same, plus two key hints |
-
-Source: `solyra-panel notify "text"` writes a timestamped line to
-`$XDG_RUNTIME_DIR/solyra-island`; the panel shows it for 8 s, then collapses.
-Not a notification centre, not a media player.
-
-### 6.3 Dock — **shipped** (hybrid)
-
-Floating card, bottom-centre, no exclusive zone. It floats over content rather
-than reserving a strip of every workspace.
-
-| Part | Metrics |
-| --- | --- |
-| Card | height 56 (8 px inset → 48 visible), radius 16, 20 px horizontal padding |
-| Start cell | 34 × 34, radius 10, accent fill, `on-accent` glyph |
-| App cell | 34 × 34, radius 10, `surface-raised`; hover → `#3A3245` + 2 px accent top edge |
-| Running mark | 12 × 2 accent bar, 6 px above the card's bottom edge |
-| Cell gap | 6 |
-| Separator | 1 px `hairline`, 4 px vertical inset (**planned**, before the shelf) |
-| Agent shelf | Cells per live agent session; hidden when none (**planned**) |
-
-Behaviour: one cell per app, not per window. Click focuses the most recent
-window; a second click cycles. Pinned apps that are not running appear after
-running ones and launch on click. The card sizes to its content.
+`dock_style`: **Solyra** (floating card), **Floating** (macOS-like, optional
+magnification), **Taskbar** (Windows-like full-width bar: task view, start,
+search, centred apps, tray, clock) and **Minimal** (icons only). Auto-hide
+tucks the dock away 0.7 s after the pointer leaves; touching the bottom
+edge brings it back. One cell per app; a click focuses the latest window or
+launches the app.
 
 ### 6.4 Launcher — **planned**
 
@@ -187,11 +188,16 @@ struts come from the compositor: 8 px struts, 16 px gaps.
 Zoomed-out workspaces on a dimmed backdrop. Keyboard: `Mod+Tab` toggles,
 arrows move, `⏎` enters. No chrome of our own.
 
-### 6.9 Lock — **planned**
+### 6.9 Lock — **shipped**
 
-Full-bleed `bg`, centred clock at 48 px, date under it, and a single password
-field. No wallpaper, no widgets: a lock screen shows time and asks for a
-password.
+`solyra-panel lock` (Super+Ctrl+L): ext-session-lock on every output,
+password checked by PAM (`/etc/pam.d/solyra-lock`, same stack as login) off
+the UI thread, input through xkb (any layout), Caps Lock shown, back-off
+after repeated failures. `lock_style`: **Solyra** (blurred wallpaper, time
+and field centred), **Centred** (macOS-like: date and time at the top, avatar
+and field below) and **Clock corner** (Windows-like: large clock lower left,
+any key shows the sign-in card). swaylock stays installed as the fallback
+and recovery (Super+Alt+L).
 
 ### 6.10 Setup wizard — **planned**
 
@@ -264,9 +270,6 @@ every duration to zero.
 
 | Surface | State |
 | --- | --- |
-| Bar, notch, island, dock, window chrome, overview | **shipped** |
-| Status cluster (real battery/network), control centre, launcher (grouped), agent tasks and approvals | **shipped** (not yet run on a live niri session) |
-| App menus, notifications beyond the island, lock, setup | planned |
-
-Planned surfaces have their metrics fixed here so they land consistent with
-what ships, rather than being designed twice.
+| Menu bar, notch / island, four docks, materials, lock screen, launcher, control centre, notifications, agent tasks and approvals | **shipped**, verified by unit tests and rendered previews; not yet run on a live session by a person |
+| zgx apps (Settings, Terminal, Browse, Setup) | **shipped**, screenshotted under headless weston in CI |
+| Snap zones (niri is a scrolling tiler; presets instead), screen readers in the shell, fractional scaling | not done |

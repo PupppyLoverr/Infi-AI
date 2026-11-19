@@ -42,8 +42,12 @@ pub struct Slab {
     pub highlight: Option<Rgba>,
 }
 
+fn luma(c: Rgba) -> u32 {
+    (c.0 as u32 * 299 + c.1 as u32 * 587 + c.2 as u32 * 114) / 1000
+}
+
 fn is_dark(c: Rgba) -> bool {
-    (c.0 as u32 * 299 + c.1 as u32 * 587 + c.2 as u32 * 114) / 1000 < 128
+    luma(c) < 128
 }
 
 fn mix(a: Rgba, b: Rgba, t: f32) -> Rgba {
@@ -55,6 +59,13 @@ fn mix(a: Rgba, b: Rgba, t: f32) -> Rgba {
 /// `tint` is the wallpaper's average colour, used by Acrylic.
 pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
     let dark = is_dark(base);
+    // Adaptive density (the idea behind Liquid Glass adapting to what is
+    // behind it, and Acrylic's luminosity layer): when the wallpaper is the
+    // same lightness as the text (a bright wallpaper under light-on-dark
+    // text, or the reverse) the translucent materials get denser so text
+    // keeps its contrast.
+    let fights = tint.is_some_and(|t| if dark { luma(t) > 150 } else { luma(t) < 95 });
+    let boost = |a: u8| if fights { a.saturating_add(70) } else { a };
     let rim = |a: u8| {
         if dark {
             Rgba::rgba(255, 255, 255, a)
@@ -70,12 +81,12 @@ pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
             highlight: None,
         },
         Material::Clear => Slab {
-            fill: with_alpha(base, if dark { 150 } else { 140 }),
+            fill: with_alpha(base, boost(if dark { 150 } else { 140 })),
             edge: rim(if dark { 30 } else { 24 }),
             highlight: None,
         },
         Material::Glass => Slab {
-            fill: with_alpha(base, if dark { 120 } else { 130 }),
+            fill: with_alpha(base, boost(if dark { 120 } else { 130 })),
             edge: rim(if dark { 40 } else { 30 }),
             highlight: Some(Rgba::rgba(255, 255, 255, if dark { 46 } else { 170 })),
         },
@@ -190,6 +201,19 @@ mod tests {
         assert!(slab(Material::Glass, base, None).highlight.is_some());
         assert!(blurs(Material::Glass) && blurs(Material::Acrylic));
         assert!(!blurs(Material::Solid) && !blurs(Material::Clear));
+    }
+
+    #[test]
+    fn glass_gets_denser_over_a_wallpaper_that_fights_the_text() {
+        let dark_bar = Theme::dark().bar;
+        let calm = slab(Material::Glass, dark_bar, Some(Rgba::rgb(20, 40, 90))).fill.3;
+        let bright = slab(Material::Glass, dark_bar, Some(Rgba::rgb(240, 230, 220))).fill.3;
+        assert!(bright > calm + 40, "{calm} -> {bright}");
+        let light_bar = Theme::light().bar;
+        let dark_wall = slab(Material::Glass, light_bar, Some(Rgba::rgb(15, 15, 30))).fill.3;
+        let light_wall = slab(Material::Glass, light_bar, Some(Rgba::rgb(230, 220, 240))).fill.3;
+        assert!(dark_wall > light_wall + 40);
+        assert_eq!(slab(Material::Solid, dark_bar, Some(Rgba::rgb(255, 255, 255))).fill.3, 255);
     }
 
     #[test]

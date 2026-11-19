@@ -38,8 +38,16 @@ A development disk is built by the `disk` GitHub Actions workflow; see
 [base/README.md](base/README.md#get-a-ready-made-disk-ci) for downloading and
 running it in a VM.
 
+The desktop takes the best of macOS and Windows (see
+[docs/design-research.md](docs/design-research.md)): a Finder-style menu bar,
+a notch or Dynamic Island that carries agent approvals and now playing, four
+dock variants (including a Windows-style taskbar), Solid / See-through /
+Glass / Acrylic materials per surface, and macOS- and Windows-style lock
+screens. Every option is in Settings. To try it in VMware on Windows, use the
+`solyra-vmware` artifact (see [base/vmware/README.txt](base/vmware/README.txt)).
+
 What exists beyond the shell: zgx apps (Settings, Terminal with tabs, Browse),
-the `solyra-agent` runtime pieces (approval hooks, a terminal wrapper the notch
+the `solyra-agent` runtime pieces (approval hooks for Claude Code, Codex and an opencode bridge, a terminal wrapper the notch
 can type into, a bubblewrap sandbox with undo), notifications, HiDPI, and a
 CI-built test disk. What does not: a first-boot login flow, an installer ISO,
 screen-reader support in the shell, fractional scaling, snap zones (niri is a

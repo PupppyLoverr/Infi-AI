@@ -55,6 +55,16 @@ Everyday programs in the image: Foot, Thunar, Firefox, Mousepad, NetworkManager
 terminal, Super+E files, Super+B browser, Super+D launcher, Super+Shift+A agent
 tasks.
 
+### VMware Workstation / Player (Windows)
+
+The same run also uploads `solyra-vmware`: `solyra.vmdk` (the raw disk
+converted by `qemu-img`; CI checks every byte reads back identical with
+`qemu-img compare`), a ready `solyra.vmx` and `README.txt`. Unzip, then File >
+Open `solyra.vmx`. The VM must use **UEFI with Secure Boot off** and **3D
+acceleration on** (both set in the `.vmx`): niri refuses software rendering,
+so without VMware's 3D (vmwgfx) the desktop never draws. `open-vm-tools` is in
+the image. Full steps and troubleshooting: [vmware/README.txt](vmware/README.txt).
+
 ## Known limits of this image
 
 - niri refuses software EGL renderers, so a VM needs a virtual GPU with 3D
