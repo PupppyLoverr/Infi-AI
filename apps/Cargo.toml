@@ -1,0 +1,30 @@
+[workspace]
+resolver = "3"
+members = ["solyra-ui", "solyra-term", "solyra-settings"]
+
+[workspace.package]
+edition = "2024"
+license = "GPL-3.0-only"
+rust-version = "1.95"
+
+[workspace.dependencies]
+zgx = { git = "https://github.com/zeronsh/zgx", rev = "699ae02edf13db061bbc4de66178833e32608c9c" }
+zgx-desktop = { git = "https://github.com/zeronsh/zgx", rev = "699ae02edf13db061bbc4de66178833e32608c9c" }
+zgx-components = { git = "https://github.com/zeronsh/zgx", rev = "699ae02edf13db061bbc4de66178833e32608c9c" }
+zgx-terminal = { git = "https://github.com/zeronsh/zgx", rev = "699ae02edf13db061bbc4de66178833e32608c9c" }
+solyra-tokens = { path = "../crates/solyra-tokens" }
+solyra-ui = { path = "solyra-ui" }
+solyra-conf = { path = "../crates/solyra-conf" }
+
+# A dependency's [patch] never reaches an app, so the app repeats zgx's own
+# (docs/getting-started.md in zeronsh/zgx): Wayland popups, AccessKit fixes.
+[patch.crates-io]
+wgpu-hal = { git = "https://github.com/zeronsh/zgx", rev = "699ae02edf13db061bbc4de66178833e32608c9c" }
+winit = { git = "https://github.com/zeronsh/zgx", rev = "699ae02edf13db061bbc4de66178833e32608c9c" }
+accesskit_unix = { git = "https://github.com/zeronsh/zgx", rev = "699ae02edf13db061bbc4de66178833e32608c9c" }
+accesskit_atspi_common = { git = "https://github.com/zeronsh/zgx", rev = "699ae02edf13db061bbc4de66178833e32608c9c" }
+accesskit_consumer = { git = "https://github.com/zeronsh/zgx", rev = "699ae02edf13db061bbc4de66178833e32608c9c" }
+
+[profile.release]
+strip = true
+lto = "thin"

@@ -96,6 +96,34 @@ fn fixtures() -> Vec<agent::TaskView> {
     vec![ask, blocked, run, failed, done]
 }
 
+fn ask_fixtures() -> Vec<agent::TaskView> {
+    let typed = agent::reduce(
+        "claude-1",
+        &log(&[
+            r#"{"ts":9900,"type":"started","name":"Refactor parser","agent":"claude","interactive":true,"environment":"Runs as your user, no sandbox"}"#,
+            r#"{"ts":9990,"type":"question","request_id":"q1","text":"The config has two possible formats. Which one should the new loader read first?"}"#,
+        ]),
+        "",
+    );
+    let choices = agent::reduce(
+        "codex-2",
+        &log(&[
+            r#"{"ts":9900,"type":"started","name":"Update CI","agent":"codex"}"#,
+            r#"{"ts":9990,"type":"question","request_id":"q2","text":"Which branch should I push to?","choices":["main","dev","a new branch"]}"#,
+        ]),
+        "",
+    );
+    let working = agent::reduce(
+        "claude-3",
+        &log(&[
+            r#"{"ts":9900,"type":"started","name":"Write tests","agent":"claude","interactive":true}"#,
+            r#"{"ts":9990,"type":"milestone","text":"Running cargo test"}"#,
+        ]),
+        "",
+    );
+    vec![typed, choices, working]
+}
+
 struct Shot {
     name: String,
     w: u32,
@@ -298,6 +326,8 @@ fn render_all() -> Vec<Shot> {
                     now: 10_000,
                     root_hint: "/run/user/1000/solyra-agent",
                     error: None,
+                    reply: "",
+                    typing: false,
                 };
                 draw_agents(cv, th, &fonts, &v, None);
             },
@@ -310,6 +340,8 @@ fn render_all() -> Vec<Shot> {
                 now: 10_000,
                 root_hint: "",
                 error: None,
+                reply: "",
+                typing: false,
             };
             draw_agents(cv, th, &fonts, &v, None);
         }));
@@ -326,6 +358,8 @@ fn render_all() -> Vec<Shot> {
                     now: 10_000,
                     root_hint: "",
                     error: None,
+                    reply: "",
+                    typing: false,
                 };
                 draw_agents(cv, th, &fonts, &v, None);
             },
@@ -343,6 +377,8 @@ fn render_all() -> Vec<Shot> {
                     now: 10_000,
                     root_hint: "",
                     error: Some("Decision not recorded: permission denied"),
+                    reply: "",
+                    typing: false,
                 };
                 draw_agents(cv, th, &fonts, &v, None);
             },
@@ -368,6 +404,8 @@ fn render_all() -> Vec<Shot> {
                     now: 10_000,
                     root_hint: "",
                     error: None,
+                    reply: "",
+                    typing: false,
                 };
                 draw_agents(cv, th, &fonts, &v, None);
             },
@@ -386,6 +424,34 @@ fn render_all() -> Vec<Shot> {
                     now: 10_000,
                     root_hint: "",
                     error: None,
+                    reply: "",
+                    typing: false,
+                };
+                draw_agents(cv, th, &fonts, &v, None);
+            }));
+        }
+
+        let asks = ask_fixtures();
+        for (name, sel, reply, typing) in [
+            (
+                "agents-question-typing",
+                0usize,
+                "Read the TOML one first",
+                true,
+            ),
+            ("agents-question-choices", 1, "", false),
+            ("agents-message-agent", 2, "", false),
+        ] {
+            shots.push(shoot(name, kind, AGENTS_W, AGENTS_H, |cv, th| {
+                let v = AgentsView {
+                    runtime_present: true,
+                    tasks: &asks,
+                    selected: sel,
+                    now: 10_000,
+                    root_hint: "",
+                    error: None,
+                    reply,
+                    typing,
                 };
                 draw_agents(cv, th, &fonts, &v, None);
             }));
@@ -418,6 +484,7 @@ fn render_all() -> Vec<Shot> {
             ),
             ("bar-quiet", 1280, None),
         ] {
+            let activity = None;
             shots.push(shoot(name, kind, width, BAR_HEIGHT, |cv, th| {
                 let t = telem(Some(57), NetworkState::Wireless, true);
                 draw_bar(
@@ -428,12 +495,29 @@ fn render_all() -> Vec<Shot> {
                     &[win(1, "foot", "x", true)],
                     None,
                     attention,
+                    activity,
                     &prefs,
                     &t,
                     None,
                 );
             }));
         }
+        shots.push(shoot("bar-activity", kind, 1280, BAR_HEIGHT, |cv, th| {
+            let t = telem(Some(57), NetworkState::Wireless, true);
+            draw_bar(
+                cv,
+                th,
+                &fonts,
+                &[(1, true), (2, false)],
+                &[win(1, "foot", "x", true)],
+                None,
+                None,
+                Some("claude · Running cargo test"),
+                &prefs,
+                &t,
+                None,
+            );
+        }));
         let summary = Summary::of(true, &tasks);
         shots.push(shoot(
             "dock-solyra",

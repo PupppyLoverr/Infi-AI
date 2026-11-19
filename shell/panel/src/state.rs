@@ -115,6 +115,39 @@ impl WallpaperPreset {
     }
 }
 
+/// How a wallpaper image is fitted to the screen (swaybg's `-m`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WallpaperMode {
+    Fill,
+    Fit,
+    Stretch,
+    Center,
+    Tile,
+}
+
+impl WallpaperMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Fill => "fill",
+            Self::Fit => "fit",
+            Self::Stretch => "stretch",
+            Self::Center => "center",
+            Self::Tile => "tile",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim() {
+            "fill" => Some(Self::Fill),
+            "fit" => Some(Self::Fit),
+            "stretch" => Some(Self::Stretch),
+            "center" => Some(Self::Center),
+            "tile" => Some(Self::Tile),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum ShellCmd {
     Notify(String),
@@ -125,6 +158,11 @@ pub enum ShellCmd {
     CloseOverlays,
     SetDock(DockStyle),
     SetWallpaper(WallpaperPreset),
+    /// A user-chosen image. The path is validated before use.
+    SetWallpaperFile {
+        mode: WallpaperMode,
+        path: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -189,6 +227,9 @@ impl NetworkState {
 pub struct ShellPrefs {
     pub dock_style: DockStyle,
     pub wallpaper: WallpaperPreset,
+    /// A user-chosen image; when set it wins over the preset.
+    pub wallpaper_file: Option<String>,
+    pub wallpaper_mode: WallpaperMode,
     pub theme: ThemeKind,
     /// Focus: while on, plain `notify` messages are held back. Agent
     /// approvals are never muted.
@@ -202,6 +243,8 @@ impl Default for ShellPrefs {
         Self {
             dock_style: DockStyle::Solyra,
             wallpaper: WallpaperPreset::Graphite,
+            wallpaper_file: None,
+            wallpaper_mode: WallpaperMode::Fill,
             theme: ThemeKind::Dark,
             dnd_on: false,
             volume: 76,
@@ -242,6 +285,17 @@ impl ShellPrefs {
                         prefs.wallpaper = w;
                     }
                 }
+                "wallpaper_file" => {
+                    let v = v.trim();
+                    if !v.is_empty() {
+                        prefs.wallpaper_file = Some(v.to_string());
+                    }
+                }
+                "wallpaper_mode" => {
+                    if let Some(m) = WallpaperMode::parse(v) {
+                        prefs.wallpaper_mode = m;
+                    }
+                }
                 "theme" => {
                     if let Some(t) = ThemeKind::parse(v) {
                         prefs.theme = t;
@@ -268,17 +322,32 @@ impl ShellPrefs {
             return;
         };
         if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            if let Err(err) = std::fs::create_dir_all(parent) {
+                eprintln!("solyra-panel: cannot create {}: {err}", parent.display());
+                return;
+            }
         }
-        let body = format!(
-            "dock_style={}\nwallpaper={}\ntheme={}\nvolume={}\nbrightness={}\n",
-            self.dock_style.as_str(),
-            self.wallpaper.as_str(),
-            self.theme.as_str(),
-            self.volume,
-            self.brightness,
-        );
-        let _ = std::fs::write(path, body);
+        let pairs: Vec<(&str, Option<String>)> = vec![
+            ("dock_style", Some(self.dock_style.as_str().into())),
+            ("wallpaper", Some(self.wallpaper.as_str().into())),
+            ("wallpaper_file", self.wallpaper_file.clone()),
+            ("wallpaper_mode", Some(self.wallpaper_mode.as_str().into())),
+            ("theme", Some(self.theme.as_str().into())),
+            ("volume", Some(self.volume.to_string())),
+            ("brightness", Some(self.brightness.to_string())),
+        ];
+        if let Err(err) = solyra_conf::update(&path, &pairs) {
+            eprintln!("solyra-panel: cannot save {}: {err}", path.display());
+        }
+    }
+
+    /// Last-modified time of the config file, to notice edits made elsewhere
+    /// (the Settings app).
+    pub fn config_mtime() -> Option<std::time::SystemTime> {
+        std::fs::metadata(Self::config_path()?)
+            .ok()?
+            .modified()
+            .ok()
     }
 }
 
@@ -345,6 +414,19 @@ fn parse_cmd_line(raw: &str) -> Option<ShellCmd> {
     if let Some(rest) = s.strip_prefix("dock ") {
         return DockStyle::parse(rest).map(ShellCmd::SetDock);
     }
+    if let Some(rest) = s.strip_prefix("wallpaper-file ") {
+        // `wallpaper-file <mode> <path>`; the path may contain spaces.
+        let (mode, path) = rest.trim().split_once(' ')?;
+        let mode = WallpaperMode::parse(mode)?;
+        let path = path.trim();
+        if path.is_empty() {
+            return None;
+        }
+        return Some(ShellCmd::SetWallpaperFile {
+            mode,
+            path: path.to_string(),
+        });
+    }
     if let Some(rest) = s.strip_prefix("wallpaper ") {
         return WallpaperPreset::parse(rest).map(ShellCmd::SetWallpaper);
     }
@@ -370,16 +452,74 @@ pub fn read_island_file() -> Option<String> {
     Some(text.trim().to_string())
 }
 
+/// Why a wallpaper file cannot be used, or `Ok` with its canonical path.
+pub fn validate_wallpaper(path: &str) -> Result<PathBuf, String> {
+    const MAX_BYTES: u64 = 64 * 1024 * 1024;
+    let p = PathBuf::from(path);
+    let canon = p.canonicalize().map_err(|e| format!("{path}: {e}"))?;
+    let meta = std::fs::metadata(&canon).map_err(|e| format!("{path}: {e}"))?;
+    if !meta.is_file() {
+        return Err(format!("{path} is not a file"));
+    }
+    if meta.len() > MAX_BYTES {
+        return Err(format!("{path} is larger than 64 MiB"));
+    }
+    let mut head = [0u8; 12];
+    let n = std::fs::File::open(&canon)
+        .and_then(|mut f| f.read(&mut head))
+        .map_err(|e| format!("{path}: {e}"))?;
+    let png = head[..n].starts_with(&[0x89, b'P', b'N', b'G']);
+    let jpeg = head[..n].starts_with(&[0xff, 0xd8, 0xff]);
+    if !(png || jpeg) {
+        return Err(format!("{path} is not a PNG or JPEG image"));
+    }
+    Ok(canon)
+}
+
+/// Show `path` as the wallpaper. Starts the new `swaybg` first and then
+/// retires the old one, so the desktop never flashes bare. No shell is
+/// involved, so a file name cannot inject anything.
+pub fn apply_wallpaper_file(path: &std::path::Path, mode: WallpaperMode) -> std::io::Result<()> {
+    let child = std::process::Command::new("swaybg")
+        .arg("-i")
+        .arg(path)
+        .args(["-m", mode.as_str()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    // Retire the older swaybg instances once the new one has had time to
+    // draw. Everything except the process just started goes; the child id is
+    // compared, so a lone instance is never killed.
+    let keep = child.id();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(400));
+        let Ok(out) = std::process::Command::new("pgrep")
+            .args(["-x", "swaybg"])
+            .output()
+        else {
+            return;
+        };
+        for pid in String::from_utf8_lossy(&out.stdout)
+            .split_whitespace()
+            .filter_map(|p| p.parse::<u32>().ok())
+            .filter(|p| *p != keep)
+        {
+            let _ = std::process::Command::new("kill")
+                .arg(pid.to_string())
+                .status();
+        }
+    });
+    // The child is deliberately not waited on: swaybg runs until replaced.
+    std::mem::forget(child);
+    Ok(())
+}
+
 pub fn apply_wallpaper(preset: WallpaperPreset) {
     let path = preset.path();
-    let cmd = format!(
-        "old=$(pidof swaybg 2>/dev/null || true); \
-         swaybg -i '{}' -m fill >/dev/null 2>&1 & \
-         sleep 0.2; \
-         [ -n \"$old\" ] && kill $old >/dev/null 2>&1 || true",
-        path
-    );
-    let _ = std::process::Command::new("sh").arg("-c").arg(cmd).spawn();
+    if let Err(err) = apply_wallpaper_file(std::path::Path::new(&path), WallpaperMode::Fill) {
+        eprintln!("solyra-panel: cannot start swaybg: {err}");
+    }
 }
 
 // ---------------------------------------------------------------- niri IPC
@@ -1045,6 +1185,40 @@ mod tests {
         assert_eq!(read_network(path), NetworkState::Wired);
         assert_eq!(read_network("/definitely/not/here"), NetworkState::Offline);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn wallpaper_validation_checks_type_and_existence() {
+        let root = scratch("wall");
+        let png = root.join("ok.png");
+        fs::write(&png, [0x89, b'P', b'N', b'G', 0, 0, 0, 0, 0, 0, 0, 0]).unwrap();
+        let jpg = root.join("ok.jpg");
+        fs::write(&jpg, [0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap();
+        let txt = root.join("notes.png");
+        fs::write(&txt, b"definitely not an image").unwrap();
+        assert!(validate_wallpaper(png.to_str().unwrap()).is_ok());
+        assert!(validate_wallpaper(jpg.to_str().unwrap()).is_ok());
+        assert!(validate_wallpaper(txt.to_str().unwrap())
+            .unwrap_err()
+            .contains("not a PNG or JPEG"));
+        assert!(validate_wallpaper(root.join("missing.png").to_str().unwrap()).is_err());
+        assert!(validate_wallpaper(root.to_str().unwrap())
+            .unwrap_err()
+            .contains("not a file"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn wallpaper_file_command_parses_paths_with_spaces() {
+        match parse_cmd_line("wallpaper-file fit /home/u/My Pictures/a b.png") {
+            Some(ShellCmd::SetWallpaperFile { mode, path }) => {
+                assert_eq!(mode, WallpaperMode::Fit);
+                assert_eq!(path, "/home/u/My Pictures/a b.png");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(parse_cmd_line("wallpaper-file weird /x.png").is_none());
+        assert!(parse_cmd_line("wallpaper-file fill").is_none());
     }
 
     #[test]

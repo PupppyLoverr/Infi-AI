@@ -1,0 +1,8 @@
+[package]
+name = "solyra-conf"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Read-modify-write for ~/.config/solyra/*.conf key=value files, shared by the panel and Settings"
+
+[dependencies]

@@ -8,23 +8,7 @@
 
 use ab_glyph::{point, Font, FontRef, PxScale, ScaleFont};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Rgba(pub u8, pub u8, pub u8, pub u8);
-
-impl Rgba {
-    pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
-        Self(r, g, b, 255)
-    }
-
-    pub const fn rgba(r: u8, g: u8, b: u8, a: u8) -> Self {
-        Self(r, g, b, a)
-    }
-
-    #[allow(dead_code)]
-    pub fn with_alpha(self, a: u8) -> Self {
-        Self(self.0, self.1, self.2, a)
-    }
-}
+pub use solyra_tokens::Rgba;
 
 pub struct Fonts {
     pub regular: Option<FontRef<'static>>,

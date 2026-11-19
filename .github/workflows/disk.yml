@@ -34,10 +34,24 @@ jobs:
             CARGO_PROFILE_RELEASE_STRIP=symbols CARGO_PROFILE_RELEASE_LTO=off \
               cargo build --locked --release -p niri -j 3
             install -m 755 target/release/niri out/niri'
-          docker run --rm -v "$PWD/shell:/shell" -w /shell/panel solyra-dev:ci sh -ec '
+          docker run --rm -v "$PWD:/repo" -w /repo/shell/panel solyra-dev:ci sh -ec '
             cargo test --locked
             cargo build --locked --release
             install -m 755 target/release/solyra-panel ../out/solyra-panel'
+
+      - name: Build and test the zgx apps
+        run: |
+          mkdir -p apps/out
+          # zgx needs Rust 1.95+ (edition 2024); the Fedora package may be older.
+          docker run --rm -v "$PWD:/repo" -w /repo/apps solyra-dev:ci sh -ec '
+            curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+            . "$HOME/.cargo/env"
+            rustc --version
+            export CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_PROFILE_DEV_DEBUG=0
+            cargo test --locked
+            cargo build --locked --release -j 3
+            for b in solyra-settings solyra-term; do install -m 755 target/release/$b out/$b; done'
+          ls -l apps/out
 
       - name: Build the OS image and validate the session config
         run: |
@@ -51,6 +65,20 @@ jobs:
               command -v "$b" >/dev/null || { echo "missing in image: $b"; exit 1; }
             done
             systemctl is-enabled greetd.service'
+
+      - name: Self-test the zgx apps in the image (headless Wayland, software Vulkan)
+        run: |
+          docker run --rm --entrypoint sh solyra-base:ci -ec '
+            dnf -y install weston >/dev/null
+            mkdir -p /tmp/xr && chmod 700 /tmp/xr
+            export XDG_RUNTIME_DIR=/tmp/xr
+            weston --backend=headless --socket=wl-ci --width=1280 --height=800 >/tmp/weston.log 2>&1 &
+            sleep 4
+            export WAYLAND_DISPLAY=wl-ci VK_ICD_FILENAMES=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -1)
+            for app in solyra-settings solyra-term; do
+              echo "== $app --self-test"
+              timeout 90 $app --self-test
+            done'
 
       - name: Install disk tooling
         run: |

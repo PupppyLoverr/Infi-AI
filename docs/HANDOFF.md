@@ -68,7 +68,7 @@ sudo docker run --rm -v "$PWD/comp:/comp" -w /comp solyra-dev:dev sh -ec '
   CARGO_PROFILE_RELEASE_STRIP=symbols CARGO_PROFILE_RELEASE_LTO=off \
     cargo build --locked --release -p niri -j 2
   install -m 755 target/release/niri out/niri'
-sudo docker run --rm -v "$PWD/shell:/shell" -w /shell/panel solyra-dev:dev sh -ec '
+sudo docker run --rm -v "$PWD:/repo" -w /repo/shell/panel solyra-dev:dev sh -ec '
   cargo build --locked --release
   install -m 755 target/release/solyra-panel ../out/solyra-panel'
 

@@ -6,6 +6,8 @@ license = "GPL-3.0-only"
 description = "Solyra panel: the first layer-shell surface of the shell (P3 spike)"
 
 [dependencies]
+solyra-tokens = { path = "../../crates/solyra-tokens" }
+solyra-conf = { path = "../../crates/solyra-conf" }
 calloop = "0.14"
 wayland-client = "0.31"
 smithay-client-toolkit = { version = "0.20", default-features = false, features = ["calloop"] }

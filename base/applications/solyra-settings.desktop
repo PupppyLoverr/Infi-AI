@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Settings
+Comment=Appearance, background, sound, network and default apps
+Exec=solyra-settings
+Icon=preferences-system
+Categories=Settings;

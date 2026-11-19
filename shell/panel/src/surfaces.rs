@@ -65,6 +65,13 @@ pub enum HitAction {
     ToggleTheme,
     AgentRequest(String),
     SelectTask(usize),
+    /// Pick offered choice `choice` of the open question on task `task`.
+    Choose {
+        task: usize,
+        choice: usize,
+    },
+    /// Start typing to the selected agent.
+    StartReply,
     Decide {
         task: usize,
         verdict: Verdict,
@@ -109,6 +116,7 @@ pub fn draw_bar(
     wins: &[WindowInfo],
     island_msg: Option<&str>,
     attention: Option<&str>,
+    activity: Option<&str>,
     prefs: &ShellPrefs,
     telem: &Telemetry,
     hover: Option<(f64, f64)>,
@@ -117,7 +125,10 @@ pub fn draw_bar(
     // human may use it. Approval pills are amber and click through to the
     // agents card.
     let is_attention = island_msg.is_none() && attention.is_some();
-    let island_msg = island_msg.or(attention);
+    // Plain messages win, then something that needs the human, then what a
+    // working agent is doing (quiet, accent dot, opens the agent card).
+    let is_activity = island_msg.is_none() && attention.is_none() && activity.is_some();
+    let island_msg = island_msg.or(attention).or(activity);
     let w = cv.width as i32;
     let h = cv.height as i32;
     let mut regions = Vec::new();
@@ -266,7 +277,7 @@ pub fn draw_bar(
             y: 0,
             w: pill_w,
             h,
-            action: HitAction::Shell(if is_attention {
+            action: HitAction::Shell(if is_attention || is_activity {
                 ShellCmd::ToggleAgents
             } else {
                 ShellCmd::ToggleIsland
@@ -1487,6 +1498,10 @@ pub struct AgentsView<'a> {
     pub root_hint: &'a str,
     /// Set when a decision could not be recorded; shown until the next action.
     pub error: Option<&'a str>,
+    /// What the user has typed so far in the reply field.
+    pub reply: &'a str,
+    /// Keys are going into the reply field.
+    pub typing: bool,
 }
 
 fn status_glyph(cv: &mut Canvas<'_>, th: &Theme, status: Status, cx: f32, cy: f32) {
@@ -1685,7 +1700,95 @@ pub fn draw_agents(
     let t = &view.tasks[sel];
     let mut y = DETAIL_TOP + 20;
 
-    if let Some(ap) = &t.pending {
+    if let Some(ap) = t
+        .pending
+        .as_ref()
+        .filter(|a| a.kind == crate::agent::AskKind::Question)
+    {
+        let who = t.agent.as_deref().unwrap_or(&t.name).to_uppercase();
+        cv.text(
+            fonts.semibold.as_ref(),
+            &format!("QUESTION FROM {who}"),
+            22,
+            y,
+            T_CAPTION,
+            th.agent_approval,
+        );
+        y += 20;
+        for l in wrap_text(fonts.semibold.as_ref(), &ap.action, T_BODY, w - 44, 3) {
+            cv.text(fonts.semibold.as_ref(), &l, 22, y, T_BODY, th.text);
+            y += 18;
+        }
+        let by = h - 78;
+        if let Some((verdict, _)) = t.decision_sent {
+            let msg = if verdict == Verdict::Answer {
+                "Sent: your answer. Waiting for the agent."
+            } else {
+                "Sent. Waiting for the agent."
+            };
+            card_row(cv, th, fonts, 18, by, w - 36, msg);
+        } else if !ap.choices.is_empty() {
+            let n = ap.choices.len().min(4) as i32;
+            let gap = 8;
+            let bw = (w - 36 - gap * (n - 1)) / n;
+            for (i, c) in ap.choices.iter().take(4).enumerate() {
+                let bx = 18 + i as i32 * (bw + gap);
+                cv.round_rect(
+                    bx,
+                    by,
+                    bw,
+                    34,
+                    R_ROW,
+                    if hovered(hover, bx, by, bw, 34) {
+                        th.tile_hover
+                    } else {
+                        th.tile
+                    },
+                );
+                cv.stroke_round_rect(bx, by, bw, 34, R_ROW, 1.0, th.separator);
+                cv.text_truncated(
+                    fonts.semibold.as_ref(),
+                    &format!("{} {}", i + 1, c),
+                    bx + 10,
+                    by + 21,
+                    T_LABEL,
+                    bw - 20,
+                    th.text,
+                );
+                regions.push(Region {
+                    x: bx,
+                    y: by,
+                    w: bw,
+                    h: 34,
+                    action: HitAction::Choose {
+                        task: sel,
+                        choice: i,
+                    },
+                });
+            }
+        } else {
+            reply_field(
+                cv,
+                th,
+                fonts,
+                18,
+                by,
+                w - 36,
+                view.reply,
+                view.typing,
+                "Type your answer, Enter to send",
+            );
+        }
+        cv.text_truncated(
+            fonts.regular.as_ref(),
+            "Your answer goes to the agent as typed. This is not a sandbox.",
+            22,
+            h - 20,
+            T_CAPTION,
+            w - 44,
+            th.text_dim,
+        );
+    } else if let Some(ap) = &t.pending {
         cv.text(
             fonts.semibold.as_ref(),
             "APPROVAL REQUESTED",
@@ -1734,6 +1837,7 @@ pub fn draw_agents(
                     "Sent: approved for this task. Waiting for the runtime."
                 }
                 (Verdict::Deny, _) => "Sent: denied. Waiting for the runtime.",
+                (Verdict::Answer, _) => "Sent: your answer. Waiting for the runtime.",
             };
             cv.round_rect(18, by, w - 36, 34, R_ROW, th.tile);
             cv.text_truncated(
@@ -1882,6 +1986,22 @@ pub fn draw_agents(
                 y += 17;
             }
         }
+        if t.interactive && !t.status.is_terminal() {
+            let by = h - 78;
+            let hint = if view.typing {
+                "Message to the agent, Enter to send"
+            } else {
+                "Press R to message this agent"
+            };
+            reply_field(cv, th, fonts, 18, by, w - 36, view.reply, view.typing, hint);
+            regions.push(Region {
+                x: 18,
+                y: by,
+                w: w - 36,
+                h: 34,
+                action: HitAction::StartReply,
+            });
+        }
         let skipped = t.malformed_lines + t.unknown_events;
         if skipped > 0 {
             let note = format!("{skipped} event(s) in this task's log could not be read.");
@@ -1911,4 +2031,81 @@ pub fn draw_agents(
     }
 
     regions
+}
+
+fn card_row(cv: &mut Canvas<'_>, th: &Theme, fonts: &Fonts, x: i32, y: i32, w: i32, msg: &str) {
+    cv.round_rect(x, y, w, 34, R_ROW, th.tile);
+    cv.text_truncated(
+        fonts.regular.as_ref(),
+        msg,
+        x + 12,
+        y + 21,
+        T_LABEL,
+        w - 24,
+        th.text,
+    );
+}
+
+/// A one-line text field. Shows the placeholder hint until something is typed,
+/// and a caret while keys are going into it.
+#[allow(clippy::too_many_arguments)]
+fn reply_field(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    fonts: &Fonts,
+    x: i32,
+    y: i32,
+    w: i32,
+    value: &str,
+    active: bool,
+    hint: &str,
+) {
+    cv.round_rect(x, y, w, 34, R_ROW, th.field);
+    cv.stroke_round_rect(
+        x,
+        y,
+        w,
+        34,
+        R_ROW,
+        1.0,
+        if active {
+            th.selected_border
+        } else {
+            th.separator
+        },
+    );
+    if value.is_empty() {
+        cv.text_truncated(
+            fonts.regular.as_ref(),
+            hint,
+            x + 12,
+            y + 21,
+            T_LABEL,
+            w - 24,
+            th.text_dim,
+        );
+        if active {
+            cv.fill_rect(x + 11, y + 9, 2, 16, th.accent);
+        }
+    } else {
+        // Show the tail so the caret end is always visible.
+        let max_w = w - 28;
+        let mut shown = value.to_string();
+        while crate::canvas::text_width(fonts.regular.as_ref(), &shown, T_LABEL) > max_w
+            && shown.chars().count() > 1
+        {
+            shown.remove(0);
+        }
+        let tw = cv.text(
+            fonts.regular.as_ref(),
+            &shown,
+            x + 12,
+            y + 21,
+            T_LABEL,
+            th.text,
+        );
+        if active {
+            cv.fill_rect(x + 13 + tw, y + 9, 2, 16, th.accent);
+        }
+    }
 }

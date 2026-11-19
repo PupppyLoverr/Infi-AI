@@ -1,0 +1,608 @@
+//! Solyra Settings. It edits the system's real configuration (the shell's
+//! `shell.conf`, `defaults.toml`, PipeWire through `wpctl`) and every page
+//! keeps the original tool one click away, so nothing here can lock you out
+//! of the standard Linux way of doing the same thing.
+//!
+//! `--self-test` opens the window for two seconds and exits 0 (CI).
+
+use std::{cell::RefCell, path::PathBuf, rc::Rc, time::Duration};
+
+use zgx::{compose::prelude::*, reactive::Signal};
+use zgx_components::segmented;
+use zgx_desktop::{Application, FileDialogOptions, FileFilter, WindowOptions};
+
+mod apps;
+mod system;
+mod wallpaper;
+
+use apps::Role;
+
+const PAGES: [&str; 7] = [
+    "Appearance",
+    "Background",
+    "Sound",
+    "Network",
+    "Default apps",
+    "Display",
+    "About",
+];
+
+/// `Signal::set` returns whether the value changed; settings code only cares
+/// that it was set.
+trait Put<T> {
+    fn put(&self, value: T);
+}
+
+impl<T: PartialEq + 'static> Put<T> for Signal<T> {
+    fn put(&self, value: T) {
+        self.set(value);
+    }
+}
+
+fn conf_path() -> Option<PathBuf> {
+    solyra_conf::config_path("shell.conf")
+}
+
+fn defaults_path() -> Option<PathBuf> {
+    solyra_conf::config_path("defaults.toml")
+}
+
+fn read(path: Option<PathBuf>) -> String {
+    path.and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default()
+}
+
+/// Write `pairs` into shell.conf and report the result in `status`.
+fn save_conf(pairs: &[(&str, Option<String>)], status: &Signal<String>) {
+    let Some(path) = conf_path() else {
+        status.put("Cannot find your config folder (HOME is not set).".into());
+        return;
+    };
+    match solyra_conf::update(&path, pairs) {
+        Ok(()) => status.put(String::new()),
+        Err(e) => status.put(format!("Could not save {}: {e}", path.display())),
+    }
+}
+
+fn heading(t: &str) -> View {
+    text(t.to_string()).text_size(20.).font_bold().mb(4.)
+}
+
+fn caption(t: impl Into<String>) -> View {
+    text(t.into()).text_size(12.).opacity(0.7)
+}
+
+fn action(label: &str, on_click: impl Fn() + 'static) -> View {
+    button()
+        .px(14.)
+        .h(34.)
+        .rounded(8.)
+        .items_center()
+        .child(text(label.to_string()))
+        .on_click(on_click)
+}
+
+/// A button that opens the original tool for this page, with a visible reason
+/// when it is not installed.
+fn original_tool(label: &str, cmd: &'static [&'static str], status: Signal<String>) -> View {
+    let installed = system::on_path(cmd[0]);
+    let view = action(&format!("Open {label} (original)"), move || {
+        if let Err(e) = system::launch(cmd) {
+            status.put(format!("Could not open the original tool: {e}"));
+        }
+    });
+    if installed { view } else { view.opacity(0.4) }
+}
+
+fn appearance_page(status: Signal<String>) -> View {
+    component(move |cx| {
+        let rt = cx.runtime();
+        let conf = read(conf_path());
+        let theme_sel = rt.signal(usize::from(
+            solyra_conf::get(&conf, "theme") == Some("light"),
+        ));
+        let dock_sel = rt.signal(match solyra_conf::get(&conf, "dock_style") {
+            Some("macos") => 1,
+            Some("windows") => 2,
+            _ => 0,
+        });
+        {
+            let (t, s) = (theme_sel.clone(), status.clone());
+            let last = Rc::new(RefCell::new(None::<usize>));
+            cx.retain(rt.effect(move || {
+                let v = t.get();
+                if last.borrow_mut().replace(v).is_some_and(|p| p != v) {
+                    save_conf(
+                        &[("theme", Some(if v == 1 { "light" } else { "dark" }.into()))],
+                        &s,
+                    );
+                }
+            }));
+        }
+        {
+            let (d, s) = (dock_sel.clone(), status.clone());
+            let last = Rc::new(RefCell::new(None::<usize>));
+            cx.retain(rt.effect(move || {
+                let v = d.get();
+                if last.borrow_mut().replace(v).is_some_and(|p| p != v) {
+                    let name = ["solyra", "macos", "windows"][v.min(2)];
+                    save_conf(&[("dock_style", Some(name.into()))], &s);
+                }
+            }));
+        }
+        column()
+            .gap(14.)
+            .child(heading("Appearance"))
+            .child(text("Theme"))
+            .child(segmented("Theme", theme_sel, ["Dark", "Light"]))
+            .child(caption(
+                "Applies to the shell now and to Solyra apps the next time they open.",
+            ))
+            .child(text("Dock"))
+            .child(segmented(
+                "Dock style",
+                dock_sel,
+                ["Centered", "Floating", "Taskbar"],
+            ))
+    })
+}
+
+fn background_page(
+    status: Signal<String>,
+    dialogs: zgx_desktop::FileDialogs,
+    tasks: zgx_desktop::TaskSpawner,
+) -> View {
+    component(move |cx| {
+        let rt = cx.runtime();
+        let conf = read(conf_path());
+        let mode_names = ["fill", "fit", "stretch", "center", "tile"];
+        let mode = rt.signal(
+            mode_names
+                .iter()
+                .position(|m| Some(*m) == solyra_conf::get(&conf, "wallpaper_mode"))
+                .unwrap_or(0),
+        );
+        let current = rt.signal(
+            solyra_conf::get(&conf, "wallpaper_file")
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    format!(
+                        "Preset: {}",
+                        solyra_conf::get(&conf, "wallpaper").unwrap_or("graphite")
+                    )
+                }),
+        );
+        let imported = rt.signal(
+            wallpaper::store_dir()
+                .map(|d| wallpaper::list(&d))
+                .unwrap_or_default(),
+        );
+
+        let apply_file = {
+            let (status, current, mode) = (status.clone(), current.clone(), mode.clone());
+            Rc::new(move |path: PathBuf| {
+                let m = mode_names[mode.get().min(4)];
+                save_conf(
+                    &[
+                        ("wallpaper_file", Some(path.to_string_lossy().into_owned())),
+                        ("wallpaper_mode", Some(m.into())),
+                    ],
+                    &status,
+                );
+                current.put(path.to_string_lossy().into_owned());
+            })
+        };
+
+        {
+            // Changing the fit mode re-applies the current image.
+            let (mode, current, status) = (mode.clone(), current.clone(), status.clone());
+            let last = Rc::new(RefCell::new(None::<usize>));
+            cx.retain(rt.effect(move || {
+                let v = mode.get();
+                if last.borrow_mut().replace(v).is_some_and(|p| p != v)
+                    && !current.get().starts_with("Preset:")
+                {
+                    save_conf(
+                        &[("wallpaper_mode", Some(mode_names[v.min(4)].into()))],
+                        &status,
+                    );
+                }
+            }));
+        }
+
+        let presets = ["violet", "ocean", "sunset", "forest", "graphite"]
+            .into_iter()
+            .fold(row().gap(8.).flex_wrap(), |r, name| {
+                let (status, current) = (status.clone(), current.clone());
+                r.child(action(&capitalise(name), move || {
+                    save_conf(
+                        &[("wallpaper", Some(name.into())), ("wallpaper_file", None)],
+                        &status,
+                    );
+                    current.put(format!("Preset: {name}"));
+                }))
+            });
+
+        let choose = {
+            let (status, apply_file, imported, dialogs, tasks) = (
+                status.clone(),
+                apply_file.clone(),
+                imported.clone(),
+                dialogs.clone(),
+                tasks.clone(),
+            );
+            action("Choose an image…", move || {
+                let (status, apply_file, imported, dialogs) = (
+                    status.clone(),
+                    apply_file.clone(),
+                    imported.clone(),
+                    dialogs.clone(),
+                );
+                tasks.spawn(async move {
+                    let opts = FileDialogOptions::new("Choose a background")
+                        .filter(FileFilter::new("Images", ["png", "jpg", "jpeg"]));
+                    match dialogs.open_file(opts).await {
+                        Ok(Some(src)) => {
+                            let Some(dir) = wallpaper::store_dir() else {
+                                status
+                                    .put("Cannot find your data folder (HOME is not set).".into());
+                                return;
+                            };
+                            match wallpaper::import(&src, &dir) {
+                                Ok(dest) => {
+                                    apply_file(dest);
+                                    imported.put(wallpaper::list(&dir));
+                                }
+                                Err(e) => status.put(e),
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => status.put(format!("Could not open the file chooser: {e}")),
+                    }
+                });
+            })
+        };
+
+        let list = {
+            let (imported, apply_file, status) =
+                (imported.clone(), apply_file.clone(), status.clone());
+            switch(
+                {
+                    let imported = imported.clone();
+                    move || imported.get()
+                },
+                move |files, _cx| {
+                    if files.is_empty() {
+                        return caption(
+                            "Images you choose appear here so you can switch back to them.",
+                        );
+                    }
+                    files.into_iter().fold(column().gap(6.), |col, f| {
+                        let name = f
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("?")
+                            .to_string();
+                        let (apply_file, f1) = (apply_file.clone(), f.clone());
+                        let (imported, status, f2) = (imported.clone(), status.clone(), f.clone());
+                        col.child(
+                            row()
+                                .gap(8.)
+                                .items_center()
+                                .child(text(name).grow())
+                                .child(action("Use", move || apply_file(f1.clone())))
+                                .child(action("Delete", move || {
+                                    let Some(dir) = wallpaper::store_dir() else {
+                                        return;
+                                    };
+                                    match wallpaper::remove(&dir, &f2) {
+                                        Ok(()) => imported.put(wallpaper::list(&dir)),
+                                        Err(e) => status.put(e),
+                                    }
+                                })),
+                        )
+                    })
+                },
+            )
+        };
+
+        column()
+            .gap(14.)
+            .child(heading("Background"))
+            .child(text_signal({
+                let c = current.clone();
+                move || format!("Now: {}", c.get())
+            }))
+            .child(text("Presets"))
+            .child(presets)
+            .child(text("Your own image"))
+            .child(row().gap(8.).child(choose))
+            .child(text("Fit"))
+            .child(segmented(
+                "Fit",
+                mode,
+                ["Fill", "Fit", "Stretch", "Center", "Tile"],
+            ))
+            .child(caption(
+                "PNG or JPEG. Images are copied into ~/.local/share/solyra/wallpapers.",
+            ))
+            .child(list)
+    })
+}
+
+fn capitalise(s: &str) -> String {
+    let mut c = s.chars();
+    c.next()
+        .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+        .unwrap_or_default()
+}
+
+fn sound_page(status: Signal<String>) -> View {
+    component(move |cx| {
+        let rt = cx.runtime();
+        let (vol, muted) = system::get_volume().unwrap_or((0, false));
+        let available = system::get_volume().is_some();
+        let level = rt.signal(f32::from(vol.min(100)));
+        let mute = rt.signal(muted);
+        {
+            let (level, s) = (level.clone(), status.clone());
+            let last = Rc::new(RefCell::new(None::<u8>));
+            cx.retain(rt.effect(move || {
+                let v = level.get().round() as u8;
+                if last.borrow_mut().replace(v).is_some_and(|p| p != v) {
+                    if let Err(e) = system::set_volume(v) {
+                        s.put(e);
+                    }
+                }
+            }));
+        }
+        {
+            let (mute, s) = (mute.clone(), status.clone());
+            let last = Rc::new(RefCell::new(None::<bool>));
+            cx.retain(rt.effect(move || {
+                let v = mute.get();
+                if last.borrow_mut().replace(v).is_some_and(|p| p != v) {
+                    if let Err(e) = system::set_mute(v) {
+                        s.put(e);
+                    }
+                }
+            }));
+        }
+        let body: View = if available {
+            column()
+                .gap(10.)
+                .child(text_signal({
+                    let l = level.clone();
+                    move || format!("Output volume: {}%", l.get().round() as u8)
+                }))
+                .child(slider("Output volume", level, 0.0..=100.0).w(360.))
+                .child(checkbox("Muted", mute))
+        } else {
+            caption(
+                "No audio service answered (wpctl). Sound controls are unavailable on this system.",
+            )
+        };
+        column()
+            .gap(14.)
+            .child(heading("Sound"))
+            .child(body)
+            .child(original_tool(
+                "volume control",
+                &["pavucontrol"],
+                status.clone(),
+            ))
+    })
+}
+
+fn network_page(status: Signal<String>) -> View {
+    let devices = system::network_devices();
+    let list: View = match devices {
+        None => caption("NetworkManager did not answer (nmcli). Network details are unavailable."),
+        Some(d) if d.is_empty() => caption("No network devices found."),
+        Some(d) => d.into_iter().fold(column().gap(6.), |col, dev| {
+            let line = if dev.connection.is_empty() {
+                format!("{}  ·  {}  ·  {}", dev.device, dev.kind, dev.state)
+            } else {
+                format!(
+                    "{}  ·  {}  ·  {}  ·  {}",
+                    dev.device, dev.kind, dev.state, dev.connection
+                )
+            };
+            col.child(text(line))
+        }),
+    };
+    let tool: &'static [&'static str] = if system::on_path("nm-connection-editor") {
+        &["nm-connection-editor"]
+    } else {
+        &["foot", "-e", "nmtui"]
+    };
+    column()
+        .gap(14.)
+        .child(heading("Network"))
+        .child(list)
+        .child(caption("Connections are managed by NetworkManager. Use the original tool to add or change them."))
+        .child(original_tool("network editor", tool, status))
+}
+
+fn default_apps_page(status: Signal<String>) -> View {
+    component(move |cx| {
+        let rt = cx.runtime();
+        let text_now = read(defaults_path());
+        let mut col = column().gap(14.).child(heading("Default apps"));
+        for role in Role::ALL {
+            let options = apps::available(role, system::on_path);
+            let current = apps::chosen(&text_now, role);
+            let sel = rt.signal(options.iter().position(|c| c.bin == current).unwrap_or(0));
+            let labels: Vec<String> = options
+                .iter()
+                .map(|c| {
+                    if c.original {
+                        format!("{} (original)", c.name)
+                    } else {
+                        c.name.to_string()
+                    }
+                })
+                .collect();
+            {
+                let (sel, s) = (sel.clone(), status.clone());
+                let last = Rc::new(RefCell::new(None::<usize>));
+                cx.retain(rt.effect(move || {
+                    let v = sel.get();
+                    if last.borrow_mut().replace(v).is_some_and(|p| p != v) {
+                        let bin = options[v.min(options.len() - 1)].bin;
+                        let Some(path) = defaults_path() else {
+                            s.put("Cannot find your config folder (HOME is not set).".into());
+                            return;
+                        };
+                        let current = std::fs::read_to_string(&path).unwrap_or_default();
+                        match apps::set(&current, role, bin) {
+                            Ok(new) => {
+                                if let Some(dir) = path.parent() {
+                                    let _ = std::fs::create_dir_all(dir);
+                                }
+                                match std::fs::write(&path, new) {
+                                    Ok(()) => s.put(String::new()),
+                                    Err(e) => {
+                                        s.put(format!("Could not save {}: {e}", path.display()))
+                                    }
+                                }
+                            }
+                            Err(e) => s.put(e),
+                        }
+                    }
+                }));
+            }
+            col = col
+                .child(text(role.label()))
+                .child(segmented(role.label(), sel, labels));
+        }
+        let reset_status = status.clone();
+        col.child(caption("The original app is always installed and always listed. Super+Enter, Super+E and Super+B use these choices."))
+            .child(action("Back to the originals", move || {
+                let Some(path) = defaults_path() else { return };
+                let current = std::fs::read_to_string(&path).unwrap_or_default();
+                match std::fs::write(&path, apps::reset_all(&current)) {
+                    Ok(()) => reset_status.put("Defaults are back to the original apps. Reopen this page to see them.".into()),
+                    Err(e) => reset_status.put(format!("Could not save {}: {e}", path.display())),
+                }
+            }))
+    })
+}
+
+fn display_page(status: Signal<String>) -> View {
+    let outputs = std::process::Command::new("niri")
+        .args(["msg", "outputs"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    let body: View = match outputs {
+        Some(t) if !t.is_empty() => t.lines().fold(column().gap(2.), |c, l| {
+            c.child(text(l.to_string()).text_size(12.))
+        }),
+        _ => caption("The compositor did not report displays (niri msg outputs)."),
+    };
+    column()
+        .gap(14.)
+        .child(heading("Display"))
+        .child(body)
+        .child(caption("Resolution, scale and arrangement are set in ~/.config/solyra/comp.kdl (outputs). A graphical editor is planned."))
+        .child(original_tool("config folder in Files", &["thunar", "--", ".config/solyra"], status))
+}
+
+fn about_page() -> View {
+    let name = system::pretty_name(&std::fs::read_to_string("/etc/os-release").unwrap_or_default())
+        .unwrap_or_else(|| "Unknown system".into());
+    let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();
+    let host = std::fs::read_to_string("/proc/sys/kernel/hostname").unwrap_or_default();
+    column()
+        .gap(8.)
+        .child(heading("About"))
+        .child(text(name))
+        .child(text(format!("Kernel {}", kernel.trim())))
+        .child(text(format!("Computer name {}", host.trim())))
+        .child(caption(format!(
+            "Solyra Settings {}",
+            env!("CARGO_PKG_VERSION")
+        )))
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let self_test = std::env::args().any(|a| a == "--self-test");
+    let theme = solyra_ui::current_theme();
+    Application::new()
+        .window(WindowOptions {
+            title: "Settings".into(),
+            width: 860.,
+            height: 600.,
+            min_size: Some((640., 420.)),
+            ..Default::default()
+        })
+        .run(move |cx| {
+            let rt = cx.ui.runtime.clone();
+            let page = rt.signal(0usize);
+            let status = rt.signal(String::new());
+            let dialogs = cx.dialogs.clone();
+            let tasks = cx.tasks.clone();
+
+            let sidebar =
+                PAGES
+                    .iter()
+                    .enumerate()
+                    .fold(column().gap(4.).p(10.).w(190.), |col, (i, name)| {
+                        let page = page.clone();
+                        col.child(
+                            button()
+                                .h(36.)
+                                .px(12.)
+                                .rounded(8.)
+                                .items_center()
+                                .child(text(name.to_string()))
+                                .on_click(move || page.put(i)),
+                        )
+                    });
+
+            let st = status.clone();
+            let content = switch(
+                {
+                    let page = page.clone();
+                    move || page.get()
+                },
+                move |i, _cx| match i {
+                    0 => appearance_page(st.clone()),
+                    1 => background_page(st.clone(), dialogs.clone(), tasks.clone()),
+                    2 => sound_page(st.clone()),
+                    3 => network_page(st.clone()),
+                    4 => default_apps_page(st.clone()),
+                    5 => display_page(st.clone()),
+                    _ => about_page(),
+                },
+            );
+
+            cx.render(
+                row()
+                    .w_full()
+                    .h_full()
+                    .bg(solyra_ui::window_bg(&theme))
+                    .text_color(solyra_ui::color(theme.text))
+                    .child(sidebar)
+                    .child(
+                        column().grow().p(24.).gap(12.).child(content.grow()).child(
+                            text_signal({
+                                let s = status.clone();
+                                move || s.get()
+                            })
+                            .text_color(solyra_ui::color(theme.danger)),
+                        ),
+                    ),
+            );
+
+            if self_test {
+                let window = cx.window.clone();
+                cx.tasks.spawn(async move {
+                    zgx::timer::sleep(Duration::from_secs(2)).await;
+                    window.close();
+                });
+            }
+        })
+}

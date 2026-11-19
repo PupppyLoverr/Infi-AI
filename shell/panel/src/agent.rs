@@ -50,7 +50,7 @@ impl Status {
     pub fn label(self) -> &'static str {
         match self {
             Self::Running => "Working",
-            Self::WaitingApproval => "Needs approval",
+            Self::WaitingApproval => "Needs you",
             Self::Blocked => "Blocked",
             Self::Finished => "Finished",
             Self::Failed => "Failed",
@@ -100,6 +100,8 @@ impl Scope {
 pub enum Verdict {
     Approve,
     Deny,
+    /// A free-text answer to a question.
+    Answer,
 }
 
 impl Verdict {
@@ -107,6 +109,7 @@ impl Verdict {
         match self {
             Self::Approve => "approve",
             Self::Deny => "deny",
+            Self::Answer => "answer",
         }
     }
 
@@ -114,13 +117,26 @@ impl Verdict {
         match raw {
             "approve" => Some(Self::Approve),
             "deny" => Some(Self::Deny),
+            "answer" => Some(Self::Answer),
             _ => None,
         }
     }
 }
 
+/// What the agent is asking the human for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AskKind {
+    /// Permission to do something: approve or deny.
+    Permission,
+    /// A question: answered with text (or one of the offered choices).
+    Question,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Approval {
+    pub kind: AskKind,
+    /// Answers the agent offered for a question; empty means free text.
+    pub choices: Vec<String>,
     pub request_id: String,
     pub action: String,
     pub resource: Option<String>,
@@ -141,6 +157,11 @@ pub struct TaskView {
     pub id: String,
     pub name: String,
     pub objective: Option<String>,
+    /// The program's own name for itself (`claude`, `codex`), as reported.
+    pub agent: Option<String>,
+    /// The agent runs under `solyra-agent wrap`, so text sent from the panel
+    /// reaches it. Only ever true if the runtime said so.
+    pub interactive: bool,
     /// Where the agent says it runs, verbatim. Never inferred.
     pub environment: Option<String>,
     pub status: Status,
@@ -209,6 +230,8 @@ pub fn reduce(id: &str, events: &str, decisions: &str) -> TaskView {
         id: id.to_string(),
         name: id.to_string(),
         objective: None,
+        agent: None,
+        interactive: false,
         environment: None,
         status: Status::Running,
         milestones: Vec::new(),
@@ -246,6 +269,11 @@ pub fn reduce(id: &str, events: &str, decisions: &str) -> TaskView {
                     view.name = name;
                 }
                 view.objective = str_field(&ev, "objective");
+                view.agent = str_field(&ev, "agent");
+                view.interactive = ev
+                    .get("interactive")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 view.environment = str_field(&ev, "environment");
                 view.status = Status::Running;
             }
@@ -282,6 +310,8 @@ pub fn reduce(id: &str, events: &str, decisions: &str) -> TaskView {
                     scopes.push(Scope::Once);
                 }
                 view.pending = Some(Approval {
+                    kind: AskKind::Permission,
+                    choices: Vec::new(),
                     request_id,
                     action,
                     resource: str_field(&ev, "resource"),
@@ -291,7 +321,37 @@ pub fn reduce(id: &str, events: &str, decisions: &str) -> TaskView {
                 });
                 view.status = Status::WaitingApproval;
             }
-            "approval_resolved" => {
+            "question" => {
+                let (Some(request_id), Some(text)) =
+                    (str_field(&ev, "request_id"), str_field(&ev, "text"))
+                else {
+                    view.malformed_lines += 1;
+                    continue;
+                };
+                let choices = ev
+                    .get("choices")
+                    .and_then(Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(Value::as_str)
+                            .map(clip)
+                            .take(8)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                view.pending = Some(Approval {
+                    kind: AskKind::Question,
+                    choices,
+                    request_id,
+                    action: text,
+                    resource: None,
+                    reason: None,
+                    reversible: None,
+                    scopes: vec![Scope::Once],
+                });
+                view.status = Status::WaitingApproval;
+            }
+            "approval_resolved" | "question_resolved" => {
                 let resolved = str_field(&ev, "request_id");
                 if view.pending.as_ref().map(|p| &p.request_id) == resolved.as_ref() {
                     view.pending = None;
@@ -500,6 +560,83 @@ pub fn record_decision(
         .append(true)
         .open(dir.join(format!("{task_id}.jsonl")))?;
     // One write call so a concurrent reader never sees half a line.
+    file.write_all(format!("{line}\n").as_bytes())?;
+    file.sync_data()
+}
+
+/// Longest reply the panel will send.
+pub const MAX_REPLY_CHARS: usize = 2000;
+
+/// Text typed by the human, made safe to hand to a program or a pty: control
+/// characters (escape sequences, newlines, NUL) are dropped, length is capped.
+/// The receiver adds the Enter itself.
+pub fn sanitize_reply(raw: &str) -> String {
+    raw.chars()
+        .filter(|c| !c.is_control())
+        .take(MAX_REPLY_CHARS)
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// Answer a question: appended to the decisions log as `answer`.
+pub fn record_answer(
+    root: &Path,
+    task_id: &str,
+    request_id: &str,
+    text: &str,
+    now: u64,
+) -> io::Result<()> {
+    let text = sanitize_reply(text);
+    if text.is_empty() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty answer"));
+    }
+    append_line(
+        root,
+        "decisions",
+        task_id,
+        serde_json::json!({
+            "ts": now, "request_id": request_id, "decision": "answer",
+            "text": text, "source": "solyra-panel",
+        }),
+    )
+}
+
+/// Send a message to a running agent: appended to `messages/<id>.jsonl`, which
+/// `solyra-agent wrap` types into the agent's terminal. Only meaningful for a
+/// task that reported `interactive`.
+pub fn send_message(root: &Path, task_id: &str, text: &str, now: u64) -> io::Result<()> {
+    let text = sanitize_reply(text);
+    if text.is_empty() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty message"));
+    }
+    append_line(
+        root,
+        "messages",
+        task_id,
+        serde_json::json!({"ts": now, "text": text, "source": "solyra-panel"}),
+    )
+}
+
+fn append_line(root: &Path, dir: &str, task_id: &str, line: Value) -> io::Result<()> {
+    if !is_valid_id(task_id) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "task id contains unsafe characters",
+        ));
+    }
+    if !runtime_present(root) {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "no agent runtime directory",
+        ));
+    }
+    let dir = root.join(dir);
+    fs::create_dir_all(&dir)?;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join(format!("{task_id}.jsonl")))?;
     file.write_all(format!("{line}\n").as_bytes())?;
     file.sync_data()
 }
@@ -761,6 +898,61 @@ mod tests {
         let s = Summary::of(true, &[waiting, answered, done]);
         assert_eq!((s.live, s.waiting, s.blocked), (2, 1, 0));
         assert!(s.needs_attention());
+    }
+
+    #[test]
+    fn question_becomes_a_pending_ask_with_choices() {
+        let q = r#"{"ts":1,"type":"question","request_id":"q1","text":"Which branch?","choices":["main","dev"]}"#;
+        let v = reduce("t", &ev(&[q]), "");
+        let p = v.pending.expect("pending");
+        assert_eq!(p.kind, AskKind::Question);
+        assert_eq!(p.action, "Which branch?");
+        assert_eq!(p.choices, vec!["main", "dev"]);
+        assert_eq!(v.status, Status::WaitingApproval);
+        let done = r#"{"ts":2,"type":"question_resolved","request_id":"q1"}"#;
+        assert!(reduce("t", &ev(&[q, done]), "").pending.is_none());
+    }
+
+    #[test]
+    fn started_reports_agent_and_interactive_only_when_stated() {
+        let v = reduce(
+            "t",
+            &ev(&[r#"{"ts":1,"type":"started","name":"x","agent":"claude","interactive":true}"#]),
+            "",
+        );
+        assert_eq!(v.agent.as_deref(), Some("claude"));
+        assert!(v.interactive);
+        let v = reduce("t", &ev(&[r#"{"ts":1,"type":"started","name":"x"}"#]), "");
+        assert!(!v.interactive && v.agent.is_none());
+    }
+
+    #[test]
+    fn replies_are_sanitised() {
+        assert_eq!(sanitize_reply("  hi\x1b[31m there\n\r"), "hi[31m there");
+        assert_eq!(sanitize_reply("\x07\x00"), "");
+        assert_eq!(
+            sanitize_reply(&"a".repeat(5000)).chars().count(),
+            MAX_REPLY_CHARS
+        );
+    }
+
+    #[test]
+    fn answers_and_messages_round_trip() {
+        let root = scratch("ans");
+        let q = r#"{"ts":1,"type":"question","request_id":"q1","text":"Name?"}"#;
+        fs::write(root.join("tasks/t1.jsonl"), ev(&[q])).unwrap();
+        record_answer(&root, "t1", "q1", "  Ada\n", 5).unwrap();
+        let snap = load(&root, 10);
+        assert_eq!(
+            snap.tasks[0].decision_sent,
+            Some((Verdict::Answer, Scope::Once))
+        );
+        assert!(record_answer(&root, "t1", "q1", "\x1b", 5).is_err());
+        send_message(&root, "t1", "keep going", 6).unwrap();
+        let raw = fs::read_to_string(root.join("messages/t1.jsonl")).unwrap();
+        assert!(raw.contains("keep going") && raw.contains("solyra-panel"));
+        assert!(send_message(&root, "../x", "hi", 6).is_err());
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -46,6 +46,7 @@ RUN dnf -y install \
       firefox mousepad \
       rsms-inter-fonts adwaita-icon-theme \
       xdg-desktop-portal-gtk gvfs \
+      mesa-vulkan-drivers vulkan-loader fontconfig \
  && dnf -y clean all
 # Optional pieces: skipped with a visible note rather than failing the build.
 RUN dnf -y install --skip-unavailable polkit-gnome 2>&1 | tail -3 ; dnf -y clean all
@@ -84,7 +85,11 @@ RUN systemd-sysusers --dry-run /usr/lib/sysusers.d/10-solyra.conf
 COPY comp/out/niri /usr/bin/solyra-comp
 COPY base/solyra-session /usr/bin/solyra-session
 COPY shell/out/solyra-panel /usr/bin/solyra-panel
-RUN chmod +x /usr/bin/solyra-session /usr/bin/solyra-panel && \
+# zgx apps (apps/): built in CI by the dev container into apps/out/.
+COPY apps/out/solyra-settings /usr/bin/solyra-settings
+COPY apps/out/solyra-term /usr/bin/solyra-term
+COPY base/applications/ /usr/share/applications/
+RUN chmod +x /usr/bin/solyra-session /usr/bin/solyra-panel /usr/bin/solyra-settings /usr/bin/solyra-term && \
     ln -s solyra-comp /usr/bin/niri
 COPY assets/wallpapers/violet-1920x1080.png /usr/share/solyra/wallpapers/violet.png
 COPY assets/wallpapers/ocean-1920x1080.png /usr/share/solyra/wallpapers/ocean.png

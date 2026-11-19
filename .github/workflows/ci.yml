@@ -43,12 +43,12 @@ jobs:
       - name: Build the shell panel
         run: |
           mkdir -p shell/out
-          docker run --rm -v "$PWD/shell:/shell" -w /shell/panel solyra-dev:ci \
+          docker run --rm -v "$PWD:/repo" -w /repo/shell/panel solyra-dev:ci \
             sh -ec 'cargo build --locked --release &&
                     install -m 755 target/release/solyra-panel ../out/solyra-panel'
       - name: Test the shell panel
         run: |
-          docker run --rm -v "$PWD/shell:/shell" -w /shell/panel solyra-dev:ci \
+          docker run --rm -v "$PWD:/repo" -w /repo/shell/panel solyra-dev:ci \
             sh -ec 'cargo test --locked'
       - name: Build the desktop image and validate its config
         run: |

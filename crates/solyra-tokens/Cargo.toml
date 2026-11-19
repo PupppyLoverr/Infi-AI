@@ -1,0 +1,8 @@
+[package]
+name = "solyra-tokens"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Solyra design tokens shared by the shell and the apps"
+
+[dependencies]

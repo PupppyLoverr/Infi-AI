@@ -507,6 +507,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "solyra-conf"
+version = "0.1.0"
+
+[[package]]
 name = "solyra-panel"
 version = "0.1.0"
 dependencies = [
@@ -516,8 +520,14 @@ dependencies = [
  "png",
  "serde_json",
  "smithay-client-toolkit",
+ "solyra-conf",
+ "solyra-tokens",
  "wayland-client",
 ]
+
+[[package]]
+name = "solyra-tokens"
+version = "0.1.0"
 
 [[package]]
 name = "syn"

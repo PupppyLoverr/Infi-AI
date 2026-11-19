@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Solyra Terminal
+Comment=Terminal with tabs
+Exec=solyra-term
+Icon=utilities-terminal
+Categories=System;TerminalEmulator;

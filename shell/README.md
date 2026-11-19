@@ -50,7 +50,7 @@ the agent shelf in the dock (it stays hidden until agent sessions exist).
 
 ```sh
 sudo docker build -f comp/dev.Containerfile -t solyra-dev:dev comp/
-sudo docker run --rm -v "$PWD/shell:/shell" -w /shell/panel solyra-dev:dev \
+sudo docker run --rm -v "$PWD:/repo" -w /repo/shell/panel solyra-dev:dev \
   sh -ec 'cargo build --locked --release &&
           install -m 755 target/release/solyra-panel ../out/solyra-panel'
 ```

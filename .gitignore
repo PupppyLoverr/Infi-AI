@@ -12,6 +12,8 @@ dist/
 
 # Compositor build artifact copied out of the dev container
 comp/out/
+shell/out/
+apps/out/
 
 # Local Amp workspace data
 .amp/

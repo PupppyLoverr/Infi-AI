@@ -75,6 +75,9 @@ fn main() {
             "close" => Some("close".into()),
             "dock" => args.get(2).map(|v| format!("dock {v}")),
             "wallpaper" => args.get(2).map(|v| format!("wallpaper {v}")),
+            "wallpaper-file" => args
+                .get(3)
+                .map(|_| format!("wallpaper-file {} {}", args[2], args[3..].join(" "))),
             _ => None,
         };
         if let Some(line) = cmd_line {
@@ -157,11 +160,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         control: None,
         island_card: None,
         agents: None,
+        prefs_mtime: ShellPrefs::config_mtime(),
         agent_tasks: Vec::new(),
         agent_summary: agent::Summary::default(),
         agent_attention: None,
         agents_selected: 0,
         agents_error: None,
+        reply_buf: String::new(),
+        reply_mode: false,
+        agent_activity: None,
         catalog: Vec::new(),
         launcher_items: Vec::new(),
         launcher_query: String::new(),
@@ -183,6 +190,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         needs_state_sync: true,
         last_sync: Instant::now() - Duration::from_secs(10),
     };
+
+    // Re-apply the saved wallpaper: the session config only starts a default.
+    if app.prefs.wallpaper_file.is_some() || app.prefs.wallpaper != state::WallpaperPreset::Graphite
+    {
+        app.apply_saved_wallpaper();
+    }
 
     loop {
         event_queue.blocking_dispatch(&mut app)?;
@@ -294,6 +307,8 @@ struct App {
     control: Option<SurfaceSlot>,
     island_card: Option<SurfaceSlot>,
     agents: Option<SurfaceSlot>,
+    /// The config file's mtime as we last read or wrote it.
+    prefs_mtime: Option<std::time::SystemTime>,
 
     agent_tasks: Vec<agent::TaskView>,
     agent_summary: agent::Summary,
@@ -301,6 +316,12 @@ struct App {
     agent_attention: Option<String>,
     agents_selected: usize,
     agents_error: Option<String>,
+    /// Text being typed to the selected agent (an answer or a message).
+    reply_buf: String,
+    /// The user pressed R: keys type into `reply_buf` instead of acting.
+    reply_mode: bool,
+    /// What a working agent is doing, for the island when nothing else is.
+    agent_activity: Option<String>,
 
     /// Installed apps and commands, read when the launcher opens (not per key).
     catalog: Vec<AppEntry>,
@@ -349,6 +370,8 @@ impl App {
         self.island_card = None;
         self.agents = None;
         self.agents_error = None;
+        self.reply_buf.clear();
+        self.reply_mode = false;
     }
 
     fn open_overlay(
@@ -459,27 +482,84 @@ impl App {
             ShellCmd::CloseOverlays => self.close_overlays(),
             ShellCmd::SetDock(style) => {
                 self.prefs.dock_style = style;
-                self.prefs.save();
-                if self.dock_active_style != style {
-                    let wanted = floating_dock_width(style, &self.wins);
-                    self.dock = make_dock_surface(
-                        &self.compositor,
-                        &self.layer_shell,
-                        &self.qh,
-                        style,
-                        wanted,
-                    );
-                    self.dock_active_style = style;
-                }
+                self.save_prefs();
+                self.apply_dock_style(style);
             }
             ShellCmd::SetWallpaper(preset) => {
                 self.prefs.wallpaper = preset;
-                self.prefs.save();
+                self.prefs.wallpaper_file = None;
+                self.save_prefs();
                 apply_wallpaper(preset);
             }
+            ShellCmd::SetWallpaperFile { mode, path } => match state::validate_wallpaper(&path) {
+                Ok(canon) => match state::apply_wallpaper_file(&canon, mode) {
+                    Ok(()) => {
+                        self.prefs.wallpaper_file = Some(canon.to_string_lossy().into_owned());
+                        self.prefs.wallpaper_mode = mode;
+                        self.save_prefs();
+                    }
+                    Err(err) => self.say(format!("Could not set wallpaper: swaybg: {err}")),
+                },
+                Err(err) => self.say(format!("Could not set wallpaper: {err}")),
+            },
         }
         self.needs_state_sync = true;
         self.needs_redraw = true;
+    }
+
+    fn save_prefs(&mut self) {
+        self.prefs.save();
+        self.prefs_mtime = ShellPrefs::config_mtime();
+    }
+
+    /// Pick up edits another program (the Settings app) made to the config.
+    fn reload_prefs_if_changed(&mut self) {
+        let mtime = ShellPrefs::config_mtime();
+        if mtime == self.prefs_mtime {
+            return;
+        }
+        self.prefs_mtime = mtime;
+        let new = ShellPrefs::load();
+        let wallpaper_changed = new.wallpaper != self.prefs.wallpaper
+            || new.wallpaper_file != self.prefs.wallpaper_file
+            || new.wallpaper_mode != self.prefs.wallpaper_mode;
+        let dock_changed = new.dock_style != self.prefs.dock_style;
+        self.prefs = new;
+        if wallpaper_changed {
+            self.apply_saved_wallpaper();
+        }
+        if dock_changed {
+            let style = self.prefs.dock_style;
+            self.apply_dock_style(style);
+        }
+        self.needs_redraw = true;
+    }
+
+    fn apply_saved_wallpaper(&mut self) {
+        let result = match self.prefs.wallpaper_file.clone() {
+            Some(file) => state::validate_wallpaper(&file)
+                .map_err(|e| e.to_string())
+                .and_then(|p| {
+                    state::apply_wallpaper_file(&p, self.prefs.wallpaper_mode)
+                        .map_err(|e| e.to_string())
+                }),
+            None => {
+                apply_wallpaper(self.prefs.wallpaper);
+                Ok(())
+            }
+        };
+        if let Err(err) = result {
+            self.say(format!("Could not set wallpaper: {err}"));
+        }
+    }
+
+    fn apply_dock_style(&mut self, style: DockStyle) {
+        if self.dock_active_style != style {
+            let wanted = floating_dock_width(style, &self.wins);
+            self.dock =
+                make_dock_surface(&self.compositor, &self.layer_shell, &self.qh, style, wanted);
+            self.dock_active_style = style;
+        }
     }
 
     fn refresh_launcher_items(&mut self) {
@@ -500,6 +580,7 @@ impl App {
             self.agent_tasks.clear();
             self.agent_summary = agent::Summary::default();
             self.agent_attention = None;
+            self.agent_activity = None;
             return;
         };
         let snap = agent::load(&root, now);
@@ -511,7 +592,23 @@ impl App {
             .tasks
             .iter()
             .find(|t| t.pending.is_some() && t.decision_sent.is_none())
-            .map(|t| format!("Approval needed · {}", t.name));
+            .map(|t| match t.pending.as_ref().map(|p| p.kind) {
+                Some(agent::AskKind::Question) => {
+                    format!("Question · {}", t.agent.as_deref().unwrap_or(&t.name))
+                }
+                _ => format!("Approval needed · {}", t.name),
+            });
+        self.agent_activity = snap
+            .tasks
+            .iter()
+            .find(|t| t.status == agent::Status::Running && !t.is_quiet(now))
+            .map(|t| {
+                let who = t.agent.as_deref().unwrap_or(&t.name);
+                match t.latest_milestone() {
+                    Some(m) => format!("{who} · {}", m.text),
+                    None => format!("{who} · working"),
+                }
+            });
         self.agent_tasks = snap.tasks;
         self.agents_selected = self
             .agents_selected
@@ -521,6 +618,7 @@ impl App {
     fn sync_compositor_state(&mut self) {
         self.wins = windows();
         self.ws_list = workspaces();
+        self.reload_prefs_if_changed();
         self.load_agents();
 
         if let Some((t, ref msg)) = self.island_override {
@@ -569,6 +667,7 @@ impl App {
                     &self.wins,
                     self.island_msg.as_deref(),
                     self.agent_attention.as_deref(),
+                    self.agent_activity.as_deref(),
                     &self.prefs,
                     &telem,
                     hover,
@@ -669,6 +768,8 @@ impl App {
             now: agent::now_secs(),
             root_hint: &root_hint,
             error: self.agents_error.as_deref(),
+            reply: &self.reply_buf,
+            typing: self.reply_mode || self.typing_question(),
         };
         overlay!(self.agents, |cv, hover| draw_agents(
             &mut cv,
@@ -746,18 +847,38 @@ impl App {
             }
             HitAction::ToggleDnd => {
                 self.prefs.dnd_on = !self.prefs.dnd_on;
-                self.prefs.save();
+                self.save_prefs();
             }
             HitAction::ToggleTheme => {
                 self.prefs.theme = match self.prefs.theme {
                     tokens::ThemeKind::Dark => tokens::ThemeKind::Light,
                     tokens::ThemeKind::Light => tokens::ThemeKind::Dark,
                 };
-                self.prefs.save();
+                self.save_prefs();
             }
             HitAction::SelectTask(idx) => {
                 self.agents_selected = idx.min(self.agent_tasks.len().saturating_sub(1));
                 self.agents_error = None;
+            }
+            HitAction::Choose { task, choice } => {
+                self.agents_selected = task;
+                let text = self
+                    .agent_tasks
+                    .get(task)
+                    .and_then(|t| t.pending.as_ref())
+                    .and_then(|p| p.choices.get(choice).cloned());
+                if let Some(text) = text {
+                    self.answer(&text);
+                }
+            }
+            HitAction::StartReply => {
+                if self
+                    .agent_tasks
+                    .get(self.agents_selected)
+                    .is_some_and(|t| t.interactive)
+                {
+                    self.reply_mode = true;
+                }
             }
             HitAction::Decide {
                 task,
@@ -769,7 +890,7 @@ impl App {
                     .round()
                     .clamp(0.0, 100.0) as u8;
                 self.prefs.volume = pct;
-                self.prefs.save();
+                self.save_prefs();
                 let _ = std::process::Command::new("wpctl")
                     .args(["set-volume", "@DEFAULT_AUDIO_SINK@", &format!("{pct}%")])
                     .stdout(std::process::Stdio::null())
@@ -781,7 +902,7 @@ impl App {
                     .round()
                     .clamp(15.0, 100.0) as u8;
                 self.prefs.brightness = pct;
-                self.prefs.save();
+                self.save_prefs();
                 let _ = std::process::Command::new("brightnessctl")
                     .args(["set", &format!("{pct}%")])
                     .stdout(std::process::Stdio::null())
@@ -890,6 +1011,13 @@ impl App {
         // Escape dismisses the topmost overlay and nothing else: it never
         // answers an approval.
         if key == 1 {
+            if self.agents.is_some() && self.reply_mode {
+                // First Esc only leaves the text field; the card stays.
+                self.reply_mode = false;
+                self.reply_buf.clear();
+                self.needs_redraw = true;
+                return;
+            }
             self.apply_shell_cmd(ShellCmd::CloseOverlays);
             return;
         }
@@ -938,16 +1066,67 @@ impl App {
         self.needs_redraw = true;
     }
 
+    /// The selected task's open question that takes typed text (no fixed choices).
+    fn typing_question(&self) -> bool {
+        self.agent_tasks
+            .get(self.agents_selected)
+            .and_then(|t| t.pending.as_ref().filter(|_| t.decision_sent.is_none()))
+            .is_some_and(|p| p.kind == agent::AskKind::Question && p.choices.is_empty())
+    }
+
     fn handle_agents_key(&mut self, key: u32) {
         let last = self.agent_tasks.len().saturating_sub(1);
-        match key {
-            103 => {
-                self.agents_selected = self.agents_selected.saturating_sub(1);
-                self.agents_error = None;
+        // Typing: an answer to a question, or a message to an interactive agent.
+        if self.reply_mode || self.typing_question() {
+            match key {
+                14 => {
+                    self.reply_buf.pop();
+                }
+                28 | 96 => self.send_reply(),
+                103 | 108 if !self.reply_mode => {
+                    // Arrows still move between tasks while a question is open.
+                    self.move_selection(key == 108, last);
+                }
+                _ => {
+                    if let Some(ch) = evdev_to_ascii(key, self.shift_held) {
+                        if self.reply_buf.chars().count() < agent::MAX_REPLY_CHARS {
+                            self.reply_buf.push(ch);
+                        }
+                    }
+                }
             }
-            108 => {
-                self.agents_selected = (self.agents_selected + 1).min(last);
-                self.agents_error = None;
+            return;
+        }
+        match key {
+            103 => self.move_selection(false, last),
+            108 => self.move_selection(true, last),
+            // R: message the selected agent (only if it can receive text).
+            19 => {
+                let can = self
+                    .agent_tasks
+                    .get(self.agents_selected)
+                    .is_some_and(|t| t.interactive && !t.status.is_terminal());
+                if can {
+                    self.reply_mode = true;
+                    self.reply_buf.clear();
+                    self.agents_error = None;
+                } else {
+                    self.agents_error =
+                        Some("This agent cannot receive messages from here.".into());
+                }
+            }
+            // 1-8 pick an offered choice for a question.
+            2..=9 => {
+                let n = (key - 2) as usize;
+                let choice = self
+                    .agent_tasks
+                    .get(self.agents_selected)
+                    .and_then(|t| t.pending.as_ref().filter(|_| t.decision_sent.is_none()))
+                    .filter(|p| p.kind == agent::AskKind::Question)
+                    .and_then(|p| p.choices.get(n).cloned());
+                if let Some(text) = choice {
+                    self.answer(&text);
+                }
             }
             // A / D / T. Enter is deliberately unbound: an approval needs a
             // deliberate key, not the one that also dismisses dialogs.
@@ -967,6 +1146,67 @@ impl App {
                 agent::Scope::Once,
             ),
             _ => {}
+        }
+    }
+
+    fn move_selection(&mut self, down: bool, last: usize) {
+        self.agents_selected = if down {
+            (self.agents_selected + 1).min(last)
+        } else {
+            self.agents_selected.saturating_sub(1)
+        };
+        self.agents_error = None;
+        self.reply_buf.clear();
+        self.reply_mode = false;
+    }
+
+    /// Enter in the reply field: answer the open question, else message the agent.
+    fn send_reply(&mut self) {
+        let text = std::mem::take(&mut self.reply_buf);
+        if self.typing_question() {
+            self.answer(&text);
+        } else if let Some(t) = self.agent_tasks.get(self.agents_selected) {
+            let id = t.id.clone();
+            let Some(root) = agent::root_dir() else {
+                self.agents_error = Some("Message not sent: XDG_RUNTIME_DIR is not set".into());
+                return;
+            };
+            match agent::send_message(&root, &id, &text, agent::now_secs()) {
+                Ok(()) => {
+                    self.agents_error = None;
+                    self.reply_mode = false;
+                }
+                Err(err) => {
+                    self.reply_buf = text;
+                    self.agents_error = Some(format!("Message not sent: {err}"));
+                }
+            }
+        }
+    }
+
+    fn answer(&mut self, text: &str) {
+        let Some(t) = self.agent_tasks.get(self.agents_selected) else {
+            return;
+        };
+        let Some(p) = t.pending.as_ref().filter(|_| t.decision_sent.is_none()) else {
+            return;
+        };
+        let (task_id, request_id) = (t.id.clone(), p.request_id.clone());
+        let Some(root) = agent::root_dir() else {
+            self.agents_error = Some("Answer not sent: XDG_RUNTIME_DIR is not set".into());
+            return;
+        };
+        match agent::record_answer(&root, &task_id, &request_id, text, agent::now_secs()) {
+            Ok(()) => {
+                self.agents_error = None;
+                self.reply_buf.clear();
+                self.reply_mode = false;
+                self.load_agents();
+            }
+            Err(err) => {
+                self.reply_buf = text.to_string();
+                self.agents_error = Some(format!("Answer not sent: {err}"));
+            }
         }
     }
 }

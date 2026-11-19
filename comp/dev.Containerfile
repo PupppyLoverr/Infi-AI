@@ -11,6 +11,7 @@ RUN dnf -y install \
       mesa-libgbm-devel mesa-libEGL-devel libglvnd-devel \
       pipewire-devel pulseaudio-libs-devel \
       cairo-gobject-devel pango-devel \
+      dbus-devel fontconfig-devel curl \
  && dnf -y clean all
 
 WORKDIR /src
