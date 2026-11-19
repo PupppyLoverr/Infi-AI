@@ -18,9 +18,11 @@ mod canvas;
 mod dock;
 mod island;
 mod launcher;
+mod lock;
 mod media;
 mod menu;
 mod notify;
+mod pam;
 mod state;
 mod surfaces;
 mod tokens;
@@ -69,6 +71,13 @@ use wayland_client::{Connection, Dispatch, QueueHandle, WEnum};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("lock") {
+        if let Err(err) = lock::run() {
+            eprintln!("solyra-panel lock: {err}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if let Some(sub) = args.get(1).map(String::as_str) {
         let cmd_line = match sub {
             "notify" => Some(format!("notify {}", args[2..].join(" "))),

@@ -102,6 +102,26 @@ pub struct Canvas<'a> {
 }
 
 impl<'a> Canvas<'a> {
+    /// Like [`Canvas::new`] but keeps what is already in `pixels` (a
+    /// pre-rendered backdrop to draw over).
+    pub fn new_keep(pixels: &'a mut [u8], width: u32, height: u32, scale: i32) -> Self {
+        let scale = scale.clamp(1, 4);
+        let (pw, ph) = (width * scale as u32, height * scale as u32);
+        assert!(
+            pixels.len() >= (pw * ph * 4) as usize,
+            "buffer too small for {pw}x{ph}"
+        );
+        Self {
+            pixels,
+            width,
+            height,
+            scale,
+            pw,
+            ph,
+            stride: pw as usize * 4,
+        }
+    }
+
     /// `pixels` must hold `width*scale` by `height*scale` BGRA pixels.
     pub fn new(pixels: &'a mut [u8], width: u32, height: u32, scale: i32) -> Self {
         let scale = scale.clamp(1, 4);

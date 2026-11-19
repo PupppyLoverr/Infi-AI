@@ -114,6 +114,7 @@ COPY base/theme/gtk-3.0/settings.ini /etc/gtk-3.0/settings.ini
 COPY base/theme/gtk-4.0/settings.ini /etc/gtk-4.0/settings.ini
 COPY base/solyra-config.kdl /etc/solyra/comp.kdl
 COPY base/greetd.toml /etc/greetd/config.toml
+COPY base/pam.d/solyra-lock /etc/pam.d/solyra-lock
 # Log in on tty1 through greetd; the compositor session starts after login.
 RUN systemctl enable greetd.service && systemctl set-default graphical.target
 COPY base/solyra.desktop /usr/share/wayland-sessions/solyra.desktop

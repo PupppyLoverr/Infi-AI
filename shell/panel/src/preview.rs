@@ -811,6 +811,72 @@ fn menu_bar_and_menus_render() {
 }
 
 #[test]
+fn lock_screens_render() {
+    use crate::lock::{backdrop, blur, paint, View};
+    use solyra_conf::look::LockStyle;
+    let fonts = Fonts::load();
+    let wp = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/wallpapers/ocean-1920x1080.png"
+    ))
+    .ok()
+    .and_then(|b| crate::canvas::decode_png(&b));
+    let (w, h) = (960u32, 600u32);
+    let sharp = backdrop(wp.as_ref(), w, h);
+    let soft = blur(&sharp, w, h);
+    let th = Theme::with(ThemeKind::Dark, crate::tokens::Accent::Blue);
+    let mut shots = Vec::new();
+    for (name, style, card, dots, msg) in [
+        ("lock-solyra", LockStyle::Solyra, false, 6, None),
+        ("lock-centred", LockStyle::Classic, false, 0, None),
+        ("lock-corner", LockStyle::Corner, false, 0, None),
+        (
+            "lock-corner-signin",
+            LockStyle::Corner,
+            true,
+            3,
+            Some("Wrong password"),
+        ),
+    ] {
+        let mut buf = if style == LockStyle::Corner && !card {
+            sharp.clone()
+        } else {
+            soft.clone()
+        };
+        {
+            let mut cv = crate::canvas::Canvas::new_keep(&mut buf, w, h, 1);
+            let v = View {
+                theme: &th,
+                fonts: &fonts,
+                style,
+                clock: "09:41".into(),
+                date: "Friday 20 November".into(),
+                name: "Ada Lovelace",
+                dots,
+                caps: name == "lock-solyra",
+                checking: false,
+                message: msg,
+                card,
+            };
+            paint(&mut cv, &v);
+        }
+        shots.push(Shot {
+            name: name.into(),
+            w,
+            h,
+            rgba: flatten(&buf, w, h, Rgba::rgb(0, 0, 0)),
+        });
+    }
+    if let Some(dir) = std::env::var_os("SOLYRA_RENDER_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for s in &shots {
+            write_png(&dir, s);
+        }
+    }
+}
+
+#[test]
 fn island_previews_render() {
     let fonts = Fonts::load();
     let shots = island_shots(&fonts);

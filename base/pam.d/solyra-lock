@@ -1,0 +1,4 @@
+#%PAM-1.0
+# Solyra lock screen: the same checks as a console login.
+auth       include      login
+account    include      login
