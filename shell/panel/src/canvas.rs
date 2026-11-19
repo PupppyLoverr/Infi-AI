@@ -85,28 +85,145 @@ pub fn decode_png(bytes: &[u8]) -> Option<Icon> {
     })
 }
 
+/// A drawing surface. `width` and `height` are *logical* pixels: painters lay
+/// everything out in them. The buffer is `scale` times larger in each
+/// direction, and every primitive multiplies its coordinates, sizes and font
+/// size by `scale`, so shapes and text are redrawn crisply at the real
+/// resolution rather than stretched.
 pub struct Canvas<'a> {
     pub pixels: &'a mut [u8],
     pub width: u32,
     pub height: u32,
+    pub scale: i32,
+    /// Physical size and stride of the buffer.
+    pw: u32,
+    ph: u32,
     pub stride: usize,
 }
 
 impl<'a> Canvas<'a> {
-    pub fn new(pixels: &'a mut [u8], width: u32, height: u32) -> Self {
+    /// `pixels` must hold `width*scale` by `height*scale` BGRA pixels.
+    pub fn new(pixels: &'a mut [u8], width: u32, height: u32, scale: i32) -> Self {
+        let scale = scale.clamp(1, 4);
+        let (pw, ph) = (width * scale as u32, height * scale as u32);
+        assert!(
+            pixels.len() >= (pw * ph * 4) as usize,
+            "buffer too small for {pw}x{ph}"
+        );
         pixels.fill(0);
         Self {
             pixels,
             width,
             height,
-            stride: width as usize * 4,
+            scale,
+            pw,
+            ph,
+            stride: pw as usize * 4,
         }
+    }
+
+    // ---- scaled primitives: logical coordinates in, physical pixels out ----
+
+    fn s(&self) -> i32 {
+        self.scale
+    }
+
+    pub fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: Rgba) {
+        let s = self.s();
+        self.fill_rect_raw(x * s, y * s, w * s, h * s, color);
+    }
+
+    pub fn round_rect(&mut self, x: i32, y: i32, w: i32, h: i32, radius: f32, color: Rgba) {
+        let (s, sf) = (self.s(), self.s() as f32);
+        self.round_rect_raw(x * s, y * s, w * s, h * s, radius * sf, color);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn stroke_round_rect(
+        &mut self,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        radius: f32,
+        thickness: f32,
+        color: Rgba,
+    ) {
+        let (s, sf) = (self.s(), self.s() as f32);
+        self.stroke_round_rect_raw(
+            x * s,
+            y * s,
+            w * s,
+            h * s,
+            radius * sf,
+            thickness * sf,
+            color,
+        );
+    }
+
+    pub fn circle(&mut self, cx: f32, cy: f32, radius: f32, color: Rgba) {
+        let sf = self.s() as f32;
+        self.circle_raw(cx * sf, cy * sf, radius * sf, color);
+    }
+
+    pub fn ring(&mut self, cx: f32, cy: f32, radius: f32, thickness: f32, color: Rgba) {
+        let sf = self.s() as f32;
+        self.ring_raw(cx * sf, cy * sf, radius * sf, thickness * sf, color);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn arc(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        thickness: f32,
+        start_deg: f32,
+        end_deg: f32,
+        color: Rgba,
+    ) {
+        let sf = self.s() as f32;
+        self.arc_raw(
+            cx * sf,
+            cy * sf,
+            radius * sf,
+            thickness * sf,
+            start_deg,
+            end_deg,
+            color,
+        );
+    }
+
+    pub fn line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, thickness: f32, color: Rgba) {
+        let sf = self.s() as f32;
+        self.line_raw(x0 * sf, y0 * sf, x1 * sf, y1 * sf, thickness * sf, color);
+    }
+
+    /// Draw text with its baseline at (`x`, `baseline`); returns the advance
+    /// in logical pixels.
+    pub fn text(
+        &mut self,
+        font: Option<&FontRef<'_>>,
+        value: &str,
+        x: i32,
+        baseline: i32,
+        size: f32,
+        color: Rgba,
+    ) -> i32 {
+        let (s, sf) = (self.s(), self.s() as f32);
+        let adv = self.text_raw(font, value, x * s, baseline * s, size * sf, color);
+        (adv as f32 / sf).round() as i32
+    }
+
+    pub fn draw_icon(&mut self, x: i32, y: i32, box_px: i32, icon: &Icon) {
+        let s = self.s();
+        self.draw_icon_raw(x * s, y * s, box_px * s, icon);
     }
 
     /// Premultiplied Porter-Duff `source-over` into BGRA (`Argb8888` LE).
     #[inline]
     pub fn blend(&mut self, x: i32, y: i32, color: Rgba, coverage: f32) {
-        if x < 0 || y < 0 || x as u32 >= self.width || y as u32 >= self.height {
+        if x < 0 || y < 0 || x as u32 >= self.pw || y as u32 >= self.ph {
             return;
         }
         let cov = coverage.clamp(0.0, 1.0);
@@ -130,11 +247,11 @@ impl<'a> Canvas<'a> {
         self.pixels[off + 3] = (255.0 * sa + da * inv).round().clamp(0.0, 255.0) as u8;
     }
 
-    pub fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: Rgba) {
+    fn fill_rect_raw(&mut self, x: i32, y: i32, w: i32, h: i32, color: Rgba) {
         let x0 = x.max(0);
         let y0 = y.max(0);
-        let x1 = (x + w).min(self.width as i32);
-        let y1 = (y + h).min(self.height as i32);
+        let x1 = (x + w).min(self.pw as i32);
+        let y1 = (y + h).min(self.ph as i32);
         for py in y0..y1 {
             for px in x0..x1 {
                 self.blend(px, py, color, 1.0);
@@ -142,16 +259,16 @@ impl<'a> Canvas<'a> {
         }
     }
 
-    pub fn round_rect(&mut self, x: i32, y: i32, w: i32, h: i32, radius: f32, color: Rgba) {
+    fn round_rect_raw(&mut self, x: i32, y: i32, w: i32, h: i32, radius: f32, color: Rgba) {
         if w <= 0 || h <= 0 {
             return;
         }
         let r = radius.min(w as f32 * 0.5).min(h as f32 * 0.5).max(0.0);
         let (half_w, half_h) = (w as f32 * 0.5, h as f32 * 0.5);
         let (cx, cy) = (x as f32 + half_w, y as f32 + half_h);
-        for py in y.max(0)..(y + h).min(self.height as i32) {
+        for py in y.max(0)..(y + h).min(self.ph as i32) {
             let qy = (py as f32 + 0.5 - cy).abs() - (half_h - r);
-            for px in x.max(0)..(x + w).min(self.width as i32) {
+            for px in x.max(0)..(x + w).min(self.pw as i32) {
                 let qx = (px as f32 + 0.5 - cx).abs() - (half_w - r);
                 let sdf = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
                 let cov = (0.5 - sdf).clamp(0.0, 1.0);
@@ -163,7 +280,7 @@ impl<'a> Canvas<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn stroke_round_rect(
+    fn stroke_round_rect_raw(
         &mut self,
         x: i32,
         y: i32,
@@ -186,8 +303,8 @@ impl<'a> Canvas<'a> {
         let pad = (thickness.ceil() as i32) + 2;
         let x0 = (x - pad).max(0);
         let y0 = (y - pad).max(0);
-        let x1 = (x + w + pad).min(self.width as i32);
-        let y1 = (y + h + pad).min(self.height as i32);
+        let x1 = (x + w + pad).min(self.pw as i32);
+        let y1 = (y + h + pad).min(self.ph as i32);
 
         for py in y0..y1 {
             let qy = ((py as f32 + 0.5 - cy).abs()) - (half_h - r);
@@ -204,11 +321,11 @@ impl<'a> Canvas<'a> {
         }
     }
 
-    pub fn circle(&mut self, cx: f32, cy: f32, radius: f32, color: Rgba) {
+    fn circle_raw(&mut self, cx: f32, cy: f32, radius: f32, color: Rgba) {
         let x0 = (cx - radius - 2.0).floor().max(0.0) as i32;
         let y0 = (cy - radius - 2.0).floor().max(0.0) as i32;
-        let x1 = (cx + radius + 2.0).ceil().min(self.width as f32) as i32;
-        let y1 = (cy + radius + 2.0).ceil().min(self.height as f32) as i32;
+        let x1 = (cx + radius + 2.0).ceil().min(self.pw as f32) as i32;
+        let y1 = (cy + radius + 2.0).ceil().min(self.ph as f32) as i32;
         for py in y0..y1 {
             for px in x0..x1 {
                 let d = (px as f32 + 0.5 - cx).hypot(py as f32 + 0.5 - cy) - radius;
@@ -220,13 +337,13 @@ impl<'a> Canvas<'a> {
         }
     }
 
-    pub fn ring(&mut self, cx: f32, cy: f32, radius: f32, thickness: f32, color: Rgba) {
+    fn ring_raw(&mut self, cx: f32, cy: f32, radius: f32, thickness: f32, color: Rgba) {
         let half = thickness * 0.5;
         let pad = radius + half + 2.0;
         let x0 = (cx - pad).floor().max(0.0) as i32;
         let y0 = (cy - pad).floor().max(0.0) as i32;
-        let x1 = (cx + pad).ceil().min(self.width as f32) as i32;
-        let y1 = (cy + pad).ceil().min(self.height as f32) as i32;
+        let x1 = (cx + pad).ceil().min(self.pw as f32) as i32;
+        let y1 = (cy + pad).ceil().min(self.ph as f32) as i32;
         for py in y0..y1 {
             for px in x0..x1 {
                 let d = ((px as f32 + 0.5 - cx).hypot(py as f32 + 0.5 - cy) - radius).abs() - half;
@@ -240,7 +357,7 @@ impl<'a> Canvas<'a> {
 
     /// Anti-aliased arc segment (`start_rad` .. `end_rad`, clockwise from +X).
     #[allow(clippy::too_many_arguments)]
-    pub fn arc(
+    fn arc_raw(
         &mut self,
         cx: f32,
         cy: f32,
@@ -254,8 +371,8 @@ impl<'a> Canvas<'a> {
         let pad = radius + half + 2.0;
         let x0 = (cx - pad).floor().max(0.0) as i32;
         let y0 = (cy - pad).floor().max(0.0) as i32;
-        let x1 = (cx + pad).ceil().min(self.width as f32) as i32;
-        let y1 = (cy + pad).ceil().min(self.height as f32) as i32;
+        let x1 = (cx + pad).ceil().min(self.pw as f32) as i32;
+        let y1 = (cy + pad).ceil().min(self.ph as f32) as i32;
         let s = start_deg.to_radians();
         let e = end_deg.to_radians();
         let mid = 0.5 * (s + e);
@@ -286,12 +403,12 @@ impl<'a> Canvas<'a> {
 
     /// Anti-aliased capsule line segment.
     #[allow(clippy::too_many_arguments)]
-    pub fn line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, thickness: f32, color: Rgba) {
+    fn line_raw(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, thickness: f32, color: Rgba) {
         let half = thickness * 0.5;
         let min_x = (x0.min(x1) - half - 2.0).floor().max(0.0) as i32;
         let min_y = (y0.min(y1) - half - 2.0).floor().max(0.0) as i32;
-        let max_x = (x0.max(x1) + half + 2.0).ceil().min(self.width as f32) as i32;
-        let max_y = (y0.max(y1) + half + 2.0).ceil().min(self.height as f32) as i32;
+        let max_x = (x0.max(x1) + half + 2.0).ceil().min(self.pw as f32) as i32;
+        let max_y = (y0.max(y1) + half + 2.0).ceil().min(self.ph as f32) as i32;
         let vx = x1 - x0;
         let vy = y1 - y0;
         let len_sq = (vx * vx + vy * vy).max(0.0001);
@@ -312,7 +429,7 @@ impl<'a> Canvas<'a> {
         }
     }
 
-    pub fn text(
+    fn text_raw(
         &mut self,
         font: Option<&FontRef<'_>>,
         value: &str,
@@ -373,7 +490,7 @@ impl<'a> Canvas<'a> {
     }
 
     /// Area-averaged (box-filtered) RGBA icon blit for crisp downsampling.
-    pub fn draw_icon(&mut self, x: i32, y: i32, box_px: i32, icon: &Icon) {
+    fn draw_icon_raw(&mut self, x: i32, y: i32, box_px: i32, icon: &Icon) {
         if icon.width == 0 || icon.height == 0 || box_px <= 0 {
             return;
         }

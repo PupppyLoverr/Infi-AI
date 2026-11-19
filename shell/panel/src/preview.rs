@@ -154,10 +154,23 @@ fn shoot(
     h: u32,
     draw: impl FnOnce(&mut Canvas<'_>, &Theme),
 ) -> Shot {
+    shoot_scaled(name, kind, w, h, 1, draw)
+}
+
+/// Render at `scale`: the image is `scale` times the logical size.
+fn shoot_scaled(
+    name: &str,
+    kind: ThemeKind,
+    w: u32,
+    h: u32,
+    scale: u32,
+    draw: impl FnOnce(&mut Canvas<'_>, &Theme),
+) -> Shot {
     let th = Theme::for_kind(kind);
-    let mut buf = vec![0u8; (w * h * 4) as usize];
+    let (pw, ph) = (w * scale, h * scale);
+    let mut buf = vec![0u8; (pw * ph * 4) as usize];
     {
-        let mut cv = Canvas::new(&mut buf, w, h);
+        let mut cv = Canvas::new(&mut buf, w, h, scale as i32);
         draw(&mut cv, &th);
     }
     assert!(
@@ -170,9 +183,9 @@ fn shoot(
     };
     Shot {
         name: format!("{name}-{}", kind.as_str()),
-        w,
-        h,
-        rgba: flatten(&buf, w, h, backdrop),
+        w: pw,
+        h: ph,
+        rgba: flatten(&buf, pw, ph, backdrop),
     }
 }
 
@@ -546,6 +559,72 @@ fn render_all() -> Vec<Shot> {
         ));
     }
     shots
+}
+
+/// HiDPI: the same painter at 2x makes a 2x image whose hit regions are
+/// identical (they stay in logical pixels), and text is redrawn at the real
+/// resolution rather than stretched.
+#[test]
+fn two_x_renders_are_sharp_and_keep_logical_hit_regions() {
+    let fonts = Fonts::load();
+    let cat = sample_catalog();
+    let items = launcher::search("te", &cat, &[], true);
+    let mut regions = Vec::new();
+    let mut shots = Vec::new();
+    for scale in [1u32, 2] {
+        let s = shoot_scaled(
+            "launcher-hidpi",
+            ThemeKind::Dark,
+            LAUNCHER_W,
+            LAUNCHER_H,
+            scale,
+            |cv, th| {
+                let mut icons = HashMap::new();
+                regions.push(draw_launcher(
+                    cv, th, &fonts, "te", &items, 0, &mut icons, None,
+                ));
+            },
+        );
+        shots.push(s);
+    }
+    assert_eq!((shots[1].w, shots[1].h), (shots[0].w * 2, shots[0].h * 2));
+    let key = |r: &Vec<Region>| r.iter().map(|r| (r.x, r.y, r.w, r.h)).collect::<Vec<_>>();
+    assert_eq!(
+        key(&regions[0]),
+        key(&regions[1]),
+        "hit regions must not depend on scale"
+    );
+    // Sharpness: compare the real 2x render with the 1x render enlarged by
+    // pixel doubling. The layout is the same, so most pixels match; text and
+    // curves must differ, because the 2x render has real extra detail.
+    let (w1, w2) = (shots[0].w as usize, shots[1].w as usize);
+    let (h2, mut differing, mut total) = (shots[1].h as usize, 0usize, 0usize);
+    for y in 0..h2 {
+        for x in 0..w2 {
+            let a = &shots[0].rgba[((y / 2) * w1 + x / 2) * 4..][..4];
+            let b = &shots[1].rgba[(y * w2 + x) * 4..][..4];
+            total += 1;
+            let d: i32 = a
+                .iter()
+                .zip(b)
+                .map(|(p, q)| (*p as i32 - *q as i32).abs())
+                .sum();
+            if d > 24 {
+                differing += 1;
+            }
+        }
+    }
+    let frac = differing as f64 / total as f64;
+    assert!(
+        frac > 0.004,
+        "2x render has no extra detail (looks stretched): {frac:.4}"
+    );
+    assert!(frac < 0.25, "2x layout differs from 1x: {frac:.4}");
+    if let Some(dir) = std::env::var_os("SOLYRA_RENDER_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        write_png(&dir, &shots[1]);
+    }
 }
 
 #[test]

@@ -516,6 +516,21 @@ impl App {
         self.needs_redraw = true;
     }
 
+    /// The largest integer scale among the connected outputs (at least 1).
+    /// One shared scale keeps every surface sharp on the busiest display; on
+    /// a mixed setup a lower-scale display shows it downscaled by the
+    /// compositor. Fractional scales are rounded up by the compositor and
+    /// arrive here as the next integer.
+    fn output_scale(&self) -> u32 {
+        self.output_state
+            .outputs()
+            .filter_map(|o| self.output_state.info(&o))
+            .map(|i| i.scale_factor)
+            .max()
+            .unwrap_or(1)
+            .clamp(1, 4) as u32
+    }
+
     fn save_prefs(&mut self) {
         self.prefs.save();
         self.prefs_mtime = ShellPrefs::config_mtime();
@@ -658,16 +673,19 @@ impl App {
         let telem = read_telemetry();
         let th = self.theme();
         let agents_summary = self.agent_summary;
+        let scale = self.output_scale();
 
         if self.bar.configured && self.bar.width > 0 {
             let hover = self.hover_on(&self.bar.surface);
             let w = self.bar.width;
             let h = self.bar.height;
-            if let Ok((buffer, bytes)) =
-                self.pool
-                    .create_buffer(w as i32, h as i32, (w * 4) as i32, Format::Argb8888)
-            {
-                let mut cv = Canvas::new(bytes, w, h);
+            if let Ok((buffer, bytes)) = self.pool.create_buffer(
+                (w * scale) as i32,
+                (h * scale) as i32,
+                (w * scale * 4) as i32,
+                Format::Argb8888,
+            ) {
+                let mut cv = Canvas::new(bytes, w, h, scale as i32);
                 self.bar.regions = draw_bar(
                     &mut cv,
                     &th,
@@ -681,7 +699,13 @@ impl App {
                     &telem,
                     hover,
                 );
-                present(buffer, &self.bar.surface, w, h);
+                present(
+                    buffer,
+                    &self.bar.surface,
+                    w * scale,
+                    h * scale,
+                    scale as i32,
+                );
             }
         }
 
@@ -689,11 +713,13 @@ impl App {
             let hover = self.hover_on(&self.dock.surface);
             let w = self.dock.width;
             let h = self.dock.height;
-            if let Ok((buffer, bytes)) =
-                self.pool
-                    .create_buffer(w as i32, h as i32, (w * 4) as i32, Format::Argb8888)
-            {
-                let mut cv = Canvas::new(bytes, w, h);
+            if let Ok((buffer, bytes)) = self.pool.create_buffer(
+                (w * scale) as i32,
+                (h * scale) as i32,
+                (w * scale * 4) as i32,
+                Format::Argb8888,
+            ) {
+                let mut cv = Canvas::new(bytes, w, h, scale as i32);
                 let live = Live {
                     agents: agents_summary,
                     telem: &telem,
@@ -709,7 +735,13 @@ impl App {
                     hover,
                     &live,
                 );
-                present(buffer, &self.dock.surface, w, h);
+                present(
+                    buffer,
+                    &self.dock.surface,
+                    w * scale,
+                    h * scale,
+                    scale as i32,
+                );
             }
         }
 
@@ -725,14 +757,14 @@ impl App {
                             .map(|_| self.pointer_pos);
                         let (w, h) = (slot.width, slot.height);
                         if let Ok((buffer, bytes)) = self.pool.create_buffer(
-                            w as i32,
-                            h as i32,
-                            (w * 4) as i32,
+                            (w * scale) as i32,
+                            (h * scale) as i32,
+                            (w * scale * 4) as i32,
                             Format::Argb8888,
                         ) {
-                            let mut $cv = Canvas::new(bytes, w, h);
+                            let mut $cv = Canvas::new(bytes, w, h, scale as i32);
                             slot.regions = $draw;
-                            present(buffer, &slot.surface, w, h);
+                            present(buffer, &slot.surface, w * scale, h * scale, scale as i32);
                         }
                     }
                 }
@@ -1220,12 +1252,16 @@ impl App {
     }
 }
 
+/// Attach `buffer` (already `scale` times the logical size) and tell the
+/// compositor so, so it maps one buffer pixel to one device pixel.
 fn present(
     buffer: smithay_client_toolkit::shm::slot::Buffer,
     surface: &WlSurface,
     width: u32,
     height: u32,
+    scale: i32,
 ) {
+    surface.set_buffer_scale(scale);
     if buffer.attach_to(surface).is_ok() {
         surface.damage_buffer(0, 0, width as i32, height as i32);
         surface.commit();
@@ -1287,6 +1323,7 @@ impl CompositorHandler for App {
         _: &WlSurface,
         _: i32,
     ) {
+        self.needs_redraw = true;
     }
     fn transform_changed(
         &mut self,
@@ -1325,8 +1362,13 @@ impl OutputHandler for App {
     fn output_state(&mut self) -> &mut OutputState {
         &mut self.output_state
     }
-    fn new_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: WlOutput) {}
-    fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: WlOutput) {}
+    fn new_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: WlOutput) {
+        self.needs_redraw = true;
+    }
+    fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: WlOutput) {
+        // A display's scale or size changed: redraw at the new scale.
+        self.needs_redraw = true;
+    }
     fn output_destroyed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: WlOutput) {}
 }
 
