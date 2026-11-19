@@ -7,10 +7,12 @@
 //!   solyra-agent undo <run-id>            restore the workspace of a run
 //!   solyra-agent runs                     list runs that can be undone
 //!   solyra-agent install-hooks claude [--apply]
+//!   solyra-agent opencode [URL]           bridge `opencode serve` (default http://127.0.0.1:4096)
 
 mod events;
 mod hook;
 mod installer;
+mod opencode;
 mod sandbox;
 mod wrap;
 
@@ -37,10 +39,25 @@ fn main() -> ExitCode {
         Some("undo") => cmd_undo(&args[1..]),
         Some("runs") => cmd_runs(),
         Some("install-hooks") => installer::cmd(&args[1..]),
+        Some("opencode") => cmd_opencode(&args[1..]),
         _ => {
             eprintln!("{}", include_str!("main.rs").lines().take_while(|l| l.starts_with("//!")).map(|l| l.trim_start_matches("//!").trim_start_matches(' ')).collect::<Vec<_>>().join("\n"));
             ExitCode::from(2)
         }
+    }
+}
+
+/// Relay an opencode server's sessions to the notch until it goes away.
+fn cmd_opencode(args: &[String]) -> ExitCode {
+    let url = args.first().map(String::as_str).unwrap_or("http://127.0.0.1:4096");
+    let server = match opencode::Server::parse(url) {
+        Ok(s) => s,
+        Err(e) => return die(e),
+    };
+    let Some(root) = events::root_dir() else { return die("XDG_RUNTIME_DIR is not set") };
+    match opencode::run(server, root, wait_secs()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => die(format!("opencode at {url}: {e} (start it with `opencode serve --port 4096`)")),
     }
 }
 

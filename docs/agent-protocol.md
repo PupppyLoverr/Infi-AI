@@ -109,3 +109,35 @@ approval itself.
 In the agent card: Up/Down select a task, **A** approve once, **T** approve for
 this task, **D** deny, **Esc** closes the card without answering. Enter is
 deliberately unbound. `solyra-panel toggle-agents` and `Mod+Shift+A` open it.
+
+## opencode bridge (`solyra-agent opencode`)
+
+opencode runs as a local server (`opencode serve --port 4096`) with a typed
+event bus, so it is bridged by its API instead of screen-scraping:
+
+| opencode                                   | notch                                    |
+|--------------------------------------------|------------------------------------------|
+| session seen on `GET /global/event`        | `started` (agent `opencode`, interactive)|
+| `session.status` busy / idle / retry       | `status` working / idle / waiting        |
+| `todo.updated` (item in progress)          | `milestone` "Fix the parser (1/3 done)"  |
+| `permission.asked`                         | `approval_request` (what + patterns)     |
+| approve once / for the task / deny         | `POST /permission/{id}/reply` once / always / reject |
+| `question.asked` (with option labels)      | `question` with choices, one per question|
+| answered in opencode itself                | `approval_resolved` "elsewhere"          |
+| text typed to the agent in the notch       | `POST /session/{id}/prompt_async`        |
+| `session.error`                            | `milestone` "Error: …"                   |
+
+Replies carry `?directory=` from the global frame, so sessions in any project
+work. `OPENCODE_SERVER_PASSWORD` (opencode's HTTP Basic auth) is honoured.
+Verified against opencode 1.19.6: a live server, a real session, status
+changes and a prompt sent from the panel's message file (the model call itself
+failed for lack of credentials, and that error reached the notch). Permission
+and question round trips are covered by a test against a fake server, since
+no model could run in the build sandbox. Design notes taken from zeron's
+native opencode driver: the global bus, directory-scoped replies, visible
+retries.
+
+Start it with the server:
+
+    opencode serve --port 4096 &
+    solyra-agent opencode http://127.0.0.1:4096
