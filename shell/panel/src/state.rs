@@ -18,6 +18,8 @@ pub enum DockStyle {
     Solyra,
     Macos,
     Windows,
+    /// Icons only: no start cell, no agent shelf, a smaller card.
+    Minimal,
 }
 
 impl DockStyle {
@@ -26,6 +28,7 @@ impl DockStyle {
             Self::Solyra => "solyra",
             Self::Macos => "macos",
             Self::Windows => "windows",
+            Self::Minimal => "minimal",
         }
     }
 
@@ -34,6 +37,7 @@ impl DockStyle {
             Self::Solyra => "Solyra",
             Self::Macos => "Floating",
             Self::Windows => "Taskbar",
+            Self::Minimal => "Minimal",
         }
     }
 
@@ -42,6 +46,7 @@ impl DockStyle {
             "solyra" | "hybrid" => Some(Self::Solyra),
             "macos" | "mac" => Some(Self::Macos),
             "windows" | "win" | "taskbar" => Some(Self::Windows),
+            "minimal" => Some(Self::Minimal),
             _ => None,
         }
     }
@@ -158,6 +163,8 @@ pub enum ShellCmd {
     CloseOverlays,
     SetDock(DockStyle),
     SetWallpaper(WallpaperPreset),
+    /// Bring an auto-hidden dock back.
+    RevealDock,
     /// A user-chosen image. The path is validated before use.
     SetWallpaperFile {
         mode: WallpaperMode,
@@ -236,6 +243,9 @@ pub struct ShellPrefs {
     pub dnd_on: bool,
     pub volume: u8,
     pub brightness: u8,
+    /// Bar, notch, dock behaviour, clock, accent and lock style, owned by
+    /// Settings (`solyra_conf::look`). The panel only reads these.
+    pub look: solyra_conf::look::Look,
 }
 
 impl Default for ShellPrefs {
@@ -249,6 +259,7 @@ impl Default for ShellPrefs {
             dnd_on: false,
             volume: 76,
             brightness: 84,
+            look: solyra_conf::look::Look::default(),
         }
     }
 }
@@ -270,6 +281,7 @@ impl ShellPrefs {
         let Ok(raw) = std::fs::read_to_string(path) else {
             return prefs;
         };
+        prefs.look = solyra_conf::look::Look::from_conf(&raw);
         for line in raw.lines() {
             let Some((k, v)) = line.split_once('=') else {
                 continue;

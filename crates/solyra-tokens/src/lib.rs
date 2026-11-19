@@ -154,6 +154,105 @@ impl Theme {
             ThemeKind::Light => Self::light(),
         }
     }
+
+    /// The theme for `kind`, with `accent` replacing the default accent. The
+    /// selection colours follow the accent; approval stays amber so "working"
+    /// and "needs you" never look alike, whatever accent is chosen.
+    pub fn with(kind: ThemeKind, accent: Accent) -> Self {
+        let mut t = Self::for_kind(kind);
+        let (a, on) = accent.colors(kind);
+        t.accent = a;
+        t.on_accent = on;
+        t.agent_active = a;
+        let alpha_fill = if kind == ThemeKind::Dark { 44 } else { 30 };
+        t.selected_fill = Rgba::rgba(a.0, a.1, a.2, alpha_fill);
+        t.selected_border = Rgba::rgba(a.0, a.1, a.2, 150);
+        t
+    }
+
+    /// Fully opaque surfaces, for people who prefer no translucency.
+    pub fn opaque(mut self) -> Self {
+        self.surface.3 = 255;
+        self.bar.3 = 255;
+        self
+    }
+}
+
+/// Accent colours offered in Settings. Each has a dark-theme and a
+/// light-theme value tuned for contrast (tested below).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Accent {
+    Mauve,
+    Blue,
+    Teal,
+    Green,
+    Amber,
+    Rose,
+    Graphite,
+}
+
+impl Accent {
+    pub const ALL: [Accent; 7] = [
+        Accent::Mauve,
+        Accent::Blue,
+        Accent::Teal,
+        Accent::Green,
+        Accent::Amber,
+        Accent::Rose,
+        Accent::Graphite,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Mauve => "mauve",
+            Self::Blue => "blue",
+            Self::Teal => "teal",
+            Self::Green => "green",
+            Self::Amber => "amber",
+            Self::Rose => "rose",
+            Self::Graphite => "graphite",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Mauve => "Mauve",
+            Self::Blue => "Blue",
+            Self::Teal => "Teal",
+            Self::Green => "Green",
+            Self::Amber => "Amber",
+            Self::Rose => "Rose",
+            Self::Graphite => "Graphite",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|a| a.as_str() == raw.trim().to_ascii_lowercase())
+    }
+
+    /// (accent, text on accent) for a theme.
+    pub fn colors(self, kind: ThemeKind) -> (Rgba, Rgba) {
+        let dark_on = Rgba::rgb(0x14, 0x10, 0x18);
+        let white = Rgba::rgb(0xff, 0xff, 0xff);
+        match (self, kind) {
+            (Self::Mauve, ThemeKind::Dark) => (Rgba::rgb(0xb4, 0x8a, 0xad), dark_on),
+            (Self::Mauve, ThemeKind::Light) => (Rgba::rgb(0x8a, 0x4f, 0x80), white),
+            (Self::Blue, ThemeKind::Dark) => (Rgba::rgb(0x7a, 0xa7, 0xe8), dark_on),
+            (Self::Blue, ThemeKind::Light) => (Rgba::rgb(0x1f, 0x5f, 0xbf), white),
+            (Self::Teal, ThemeKind::Dark) => (Rgba::rgb(0x5f, 0xbf, 0xb4), dark_on),
+            (Self::Teal, ThemeKind::Light) => (Rgba::rgb(0x0f, 0x6e, 0x66), white),
+            (Self::Green, ThemeKind::Dark) => (Rgba::rgb(0x86, 0xc0, 0x7a), dark_on),
+            (Self::Green, ThemeKind::Light) => (Rgba::rgb(0x2f, 0x6e, 0x2a), white),
+            (Self::Amber, ThemeKind::Dark) => (Rgba::rgb(0xe0, 0xb0, 0x5a), dark_on),
+            (Self::Amber, ThemeKind::Light) => (Rgba::rgb(0x8a, 0x55, 0x00), white),
+            (Self::Rose, ThemeKind::Dark) => (Rgba::rgb(0xe0, 0x8a, 0x9a), dark_on),
+            (Self::Rose, ThemeKind::Light) => (Rgba::rgb(0xa8, 0x2f, 0x4f), white),
+            (Self::Graphite, ThemeKind::Dark) => (Rgba::rgb(0xb8, 0xb4, 0xbe), dark_on),
+            (Self::Graphite, ThemeKind::Light) => (Rgba::rgb(0x4a, 0x46, 0x52), white),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -266,6 +365,29 @@ mod tests {
     fn approval_is_distinct_from_active() {
         for (_, theme) in themes() {
             assert_ne!(theme.agent_approval, theme.agent_active);
+        }
+    }
+
+    #[test]
+    fn every_accent_keeps_on_accent_text_readable() {
+        for a in Accent::ALL {
+            for kind in [ThemeKind::Dark, ThemeKind::Light] {
+                let (bg, fg) = a.colors(kind);
+                let r = contrast_ratio(fg, bg);
+                assert!(r >= 4.5, "{a:?} {kind:?}: {r:.2}:1");
+            }
+            assert_eq!(Accent::parse(a.as_str()), Some(a));
+        }
+    }
+
+    #[test]
+    fn accent_never_replaces_the_approval_colour() {
+        for a in Accent::ALL {
+            for kind in [ThemeKind::Dark, ThemeKind::Light] {
+                let t = Theme::with(kind, a);
+                assert_eq!(t.agent_approval, Theme::for_kind(kind).agent_approval);
+                assert_eq!(t.accent, a.colors(kind).0);
+            }
         }
     }
 

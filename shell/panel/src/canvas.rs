@@ -537,6 +537,97 @@ impl<'a> Canvas<'a> {
     // -------------------------------------------------------- vector glyphs
 
     /// Solyra eclipse-star emblem centered at `(cx, cy)`.
+    /// The concave fillet that joins a notch to the top edge: fills the
+    /// `r`×`r` square at (`x`, `y`) except a quarter disc. `left` puts the
+    /// disc's centre on the square's left side (a fillet on the notch's left).
+    pub fn concave_corner(&mut self, x: f32, y: f32, r: f32, left: bool, color: Rgba) {
+        let sf = self.s() as f32;
+        let (x, y, r) = (x * sf, y * sf, r * sf);
+        let (ccx, ccy) = (if left { x } else { x + r }, y + r);
+        let (x0, y0) = (x.floor() as i32, y.floor() as i32);
+        let (x1, y1) = ((x + r).ceil() as i32, (y + r).ceil() as i32);
+        for py in y0.max(0)..y1.min(self.ph as i32) {
+            for px in x0.max(0)..x1.min(self.pw as i32) {
+                let (fx, fy) = (px as f32 + 0.5, py as f32 + 0.5);
+                if fx < x || fx > x + r || fy < y || fy > y + r {
+                    continue;
+                }
+                let d = (fx - ccx).hypot(fy - ccy);
+                let cov = (d - r + 0.5).clamp(0.0, 1.0);
+                if cov > 0.0 {
+                    self.blend(px, py, color, cov);
+                }
+            }
+        }
+    }
+
+    /// A rectangle whose top corners are square and bottom corners round:
+    /// the body of a notch hanging from the top edge.
+    pub fn notch_body(&mut self, x: i32, y: i32, w: i32, h: i32, r: f32, color: Rgba) {
+        let ri = r.ceil() as i32;
+        self.round_rect(x, y, w, h, r, color);
+        self.fill_rect(x, y, w, ri.min(h), color);
+    }
+
+    pub fn icon_note(&mut self, cx: f32, cy: f32, color: Rgba) {
+        self.circle(cx - 3.0, cy + 4.0, 2.6, color);
+        self.circle(cx + 4.0, cy + 2.5, 2.6, color);
+        self.line(cx - 0.6, cy + 4.0, cx - 0.6, cy - 5.0, 1.4, color);
+        self.line(cx + 6.4, cy + 2.5, cx + 6.4, cy - 6.5, 1.4, color);
+        self.line(cx - 0.6, cy - 5.0, cx + 6.4, cy - 6.5, 2.0, color);
+    }
+
+    pub fn icon_play(&mut self, cx: f32, cy: f32, size: f32, color: Rgba) {
+        let s = size * 0.5;
+        for i in 0..=(s * 2.0) as i32 {
+            let t = i as f32 / (s * 2.0);
+            let half = s * (1.0 - t);
+            self.line(
+                cx - s * 0.6 + t * s * 1.6,
+                cy - half,
+                cx - s * 0.6 + t * s * 1.6,
+                cy + half,
+                1.2,
+                color,
+            );
+        }
+    }
+
+    pub fn icon_pause(&mut self, cx: f32, cy: f32, size: f32, color: Rgba) {
+        let (w, h) = ((size * 0.22).max(2.0) as i32, size as i32);
+        self.round_rect(
+            cx as i32 - w - 2,
+            (cy - size / 2.0) as i32,
+            w,
+            h,
+            1.0,
+            color,
+        );
+        self.round_rect(cx as i32 + 2, (cy - size / 2.0) as i32, w, h, 1.0, color);
+    }
+
+    /// Skip forward (`forward`) or back: a triangle and a bar.
+    pub fn icon_skip(&mut self, cx: f32, cy: f32, size: f32, forward: bool, color: Rgba) {
+        let s = size * 0.45;
+        let dir = if forward { 1.0 } else { -1.0 };
+        for i in 0..=(s * 2.0) as i32 {
+            let t = i as f32 / (s * 2.0);
+            let half = s * (1.0 - t);
+            let x = cx - dir * s * 0.7 + dir * t * s * 1.3;
+            self.line(x, cy - half, x, cy + half, 1.2, color);
+        }
+        let bx = cx + dir * s * 0.8;
+        self.line(bx, cy - s, bx, cy + s, 1.8, color);
+    }
+
+    pub fn icon_bell(&mut self, cx: f32, cy: f32, color: Rgba) {
+        self.arc(cx, cy, 5.0, 1.5, 180.0, 360.0, color);
+        self.line(cx - 5.0, cy, cx - 5.5, cy + 4.0, 1.5, color);
+        self.line(cx + 5.0, cy, cx + 5.5, cy + 4.0, 1.5, color);
+        self.line(cx - 6.5, cy + 4.5, cx + 6.5, cy + 4.5, 1.5, color);
+        self.circle(cx, cy + 6.8, 1.4, color);
+    }
+
     pub fn icon_solyra(&mut self, cx: f32, cy: f32, r: f32, color: Rgba) {
         self.ring(cx, cy, r, 1.6, color);
         self.circle(cx + r * 0.28, cy - r * 0.25, r * 0.34, color);
@@ -732,6 +823,17 @@ impl<'a> Canvas<'a> {
                     let ly = cy - u * 0.9 + i as f32 * u * 0.9;
                     self.line(cx - u, ly, cx + u, ly, 1.4, ink);
                     self.circle(cx - u + 2.0 * u * k, ly, 2.2, ink);
+                }
+            }
+            "trash" => {
+                // A bin: lid, body, three ribs.
+                let (bw, bh) = ((u * 1.5) as i32, (u * 1.6) as i32);
+                let (bx, by) = (cx as i32 - bw / 2, cy as i32 - bh / 2 + 2);
+                self.fill_rect(bx - 2, by - 4, bw + 4, 2, ink);
+                self.stroke_round_rect(bx, by, bw, bh, 2.0, 1.5, ink);
+                for i in 1..3 {
+                    let rx = bx + i * bw / 3;
+                    self.fill_rect(rx, by + 3, 1, bh - 6, ink);
                 }
             }
             "wallpaper" => {

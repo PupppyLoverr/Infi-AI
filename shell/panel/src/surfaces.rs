@@ -7,8 +7,8 @@ use crate::agent::{Approval, Scope, Status, Summary as AgentSummary, TaskView, V
 use crate::canvas::{text_width, wrap_text, Canvas, Fonts, Icon, Rgba};
 use crate::launcher::{self, Action as LauncherAction, Item as LauncherItem, Kind as LauncherKind};
 use crate::state::{
-    dock_entries, focused_app_menus, load_app_icon, DockStyle, LaunchTarget, ShellCmd, ShellPrefs,
-    Telemetry, WallpaperPreset, WindowInfo,
+    focused_app_menus, load_app_icon, DockStyle, LaunchTarget, ShellCmd, ShellPrefs, Telemetry,
+    WallpaperPreset, WindowInfo,
 };
 use crate::tokens::{
     Theme, ThemeKind, R_CARD, R_CONTROL, R_OVERLAY, R_ROW, R_TILE, T_BODY, T_CAPTION, T_LABEL,
@@ -17,9 +17,6 @@ use crate::tokens::{
 
 pub const BAR_HEIGHT: u32 = 34;
 pub const NOTCH_WIDTH: i32 = 184;
-
-pub const DOCK_FLOAT_HEIGHT: u32 = 58;
-pub const TASKBAR_HEIGHT: u32 = 48;
 
 pub const LAUNCHER_W: u32 = 640;
 pub const LAUNCHER_H: u32 = 436;
@@ -85,24 +82,8 @@ pub enum HitAction {
         x0: i32,
         w: i32,
     },
-}
-
-pub fn floating_dock_width(style: DockStyle, wins: &[WindowInfo]) -> u32 {
-    let entries = dock_entries(wins);
-    match style {
-        DockStyle::Solyra => {
-            // Start (42) + divider (13) + N apps (42 each, 8 gap) + divider (13) + Agent (42) + 20 pad
-            let apps_w = entries.len() as i32 * 40 + (entries.len().saturating_sub(1) as i32) * 8;
-            (20 + 40 + 16 + apps_w + 16 + 40).max(220) as u32
-        }
-        DockStyle::Macos => {
-            // Launcher + N apps (44 each, 8 gap) + divider (16) + Trash (44) + 20 pad
-            let count = entries.len() as i32 + 1; // + Launchpad
-            let apps_w = count * 44 + (count - 1) * 8;
-            (20 + apps_w + 16 + 44).max(240) as u32
-        }
-        DockStyle::Windows => 1280,
-    }
+    /// Play/pause, next or previous on the playing media player.
+    Media(crate::media::Control),
 }
 
 // ----------------------------------------------------------------- Top Bar
@@ -166,7 +147,13 @@ pub fn draw_bar(
     x += app_w + 16;
 
     // Leave generous room before the center notch/island.
-    let center_reserved_half = if island_msg.is_some() { 196 } else { 112 };
+    // The notch/island is its own surface; keep the bar's middle clear for it.
+    let notch_on = prefs.look.notch != solyra_conf::look::NotchStyle::Off;
+    let center_reserved_half = if island_msg.is_some() || notch_on {
+        200
+    } else {
+        112
+    };
     let max_left_x = (w / 2) - center_reserved_half;
 
     // Workspace pills right after the app title/menus (clean & scannable).
@@ -246,8 +233,10 @@ pub fn draw_bar(
         }
     }
 
-    // Centre: Notch + Dynamic Island.
-    if let Some(message) = island_msg {
+    // Centre: with the notch off, a plain message pill in the bar itself.
+    if notch_on {
+        // Drawn by the island surface (island.rs).
+    } else if let Some(message) = island_msg {
         let tw = text_width(fonts.semibold.as_ref(), message, 12.0);
         let pill_w = (tw + 68).clamp(NOTCH_WIDTH + 36, 390);
         let left = (w - pill_w) / 2;
@@ -373,389 +362,6 @@ pub fn draw_bar(
             action: HitAction::Shell(ShellCmd::ToggleLauncher),
         });
     }
-
-    regions
-}
-
-// --------------------------------------------------------------- 3 Docks
-
-#[allow(clippy::too_many_arguments)]
-pub fn draw_dock(
-    cv: &mut Canvas<'_>,
-    th: &Theme,
-    fonts: &Fonts,
-    style: DockStyle,
-    wins: &[WindowInfo],
-    icons: &mut HashMap<String, Option<Icon>>,
-    hover: Option<(f64, f64)>,
-    live: &Live<'_>,
-) -> Vec<Region> {
-    match style {
-        DockStyle::Solyra => draw_dock_solyra(cv, th, fonts, wins, icons, hover, live.agents),
-        DockStyle::Macos => draw_dock_macos(cv, th, wins, icons, hover),
-        DockStyle::Windows => draw_dock_windows(cv, th, fonts, wins, icons, hover, live),
-    }
-}
-
-fn draw_dock_solyra(
-    cv: &mut Canvas<'_>,
-    th: &Theme,
-    fonts: &Fonts,
-    wins: &[WindowInfo],
-    icons: &mut HashMap<String, Option<Icon>>,
-    hover: Option<(f64, f64)>,
-    agents: AgentSummary,
-) -> Vec<Region> {
-    let w = cv.width as i32;
-    let h = cv.height as i32;
-    let mut regions = Vec::new();
-
-    // Tight surface geometry (matches `geometry-corner-radius 20` in niri).
-    card(cv, th, 0, 0, w, h, 20.0);
-
-    let mut x = 10;
-    let base_y = 8;
-    let cell = 42;
-
-    // 1. Start squircle (Solyra Launcher).
-    let start_hov = hover.is_some_and(|(hx, hy)| {
-        hx >= x as f64 && hx < (x + cell) as f64 && hy >= 4.0 && hy < (h - 4) as f64
-    });
-    let sy = if start_hov { base_y - 3 } else { base_y };
-    cv.draw_app_squircle(x, sy, cell, "start", None);
-    regions.push(Region {
-        x,
-        y: 0,
-        w: cell,
-        h,
-        action: HitAction::Shell(ShellCmd::ToggleLauncher),
-    });
-    x += cell + 8;
-
-    // Hairline divider.
-    cv.fill_rect(x, 14, 1, h - 28, th.tile_hover);
-    x += 8;
-
-    // 2. Pinned + running apps (one cell per app, Windows-style pill indicator).
-    let entries = dock_entries(wins);
-    for entry in &entries {
-        let is_hov = hover.is_some_and(|(hx, hy)| {
-            hx >= x as f64 && hx < (x + cell) as f64 && hy >= 2.0 && hy < (h - 2) as f64
-        });
-        let iy = if is_hov { base_y - 3 } else { base_y };
-        let sys_ic = load_app_icon(icons, &entry.app_id);
-        cv.draw_app_squircle(x, iy, cell, &entry.role, sys_ic);
-
-        if entry.window_count > 0 {
-            let bar_w = if entry.is_focused { 18 } else { 8 };
-            let bar_col = if entry.is_focused {
-                th.accent
-            } else {
-                th.text_med
-            };
-            cv.round_rect(x + (cell - bar_w) / 2, h - 5, bar_w, 3, 1.5, bar_col);
-        }
-
-        let action = match entry.window {
-            Some(id) => HitAction::FocusWindow(id),
-            None => HitAction::Launch(entry.command.clone()),
-        };
-        regions.push(Region {
-            x,
-            y: 0,
-            w: cell,
-            h,
-            action,
-        });
-        x += cell + 8;
-    }
-
-    // 3. Agent Space Shelf on the right.
-    cv.fill_rect(x, 14, 1, h - 28, th.tile_hover);
-    x += 8;
-    let ag_hov = hover.is_some_and(|(hx, _)| hx >= x as f64 && hx < (x + cell) as f64);
-    let ay = if ag_hov { base_y - 3 } else { base_y };
-    cv.draw_app_squircle(x, ay, cell, "agent", None);
-    // Badge only when a real task needs the human (amber, with a count) or is
-    // running (accent). No agent activity, no badge.
-    if agents.live > 0 {
-        let col = if agents.needs_attention() {
-            th.agent_approval
-        } else {
-            th.agent_active
-        };
-        let (bx, by) = ((x + cell - 5) as f32, (ay + 5) as f32);
-        cv.circle(bx, by, 6.0, Rgba::rgb(0x14, 0x11, 0x19));
-        cv.circle(bx, by, 4.6, col);
-        if agents.needs_attention() {
-            let n = (agents.waiting + agents.blocked).min(9).to_string();
-            cv.text(
-                fonts.semibold.as_ref(),
-                &n,
-                x + cell - 8,
-                ay + 9,
-                9.0,
-                th.on_accent,
-            );
-        }
-    }
-    regions.push(Region {
-        x,
-        y: 0,
-        w: cell,
-        h,
-        action: HitAction::Shell(ShellCmd::ToggleAgents),
-    });
-
-    regions
-}
-
-fn draw_dock_macos(
-    cv: &mut Canvas<'_>,
-    th: &Theme,
-    wins: &[WindowInfo],
-    icons: &mut HashMap<String, Option<Icon>>,
-    hover: Option<(f64, f64)>,
-) -> Vec<Region> {
-    let w = cv.width as i32;
-    let h = cv.height as i32;
-    let mut regions = Vec::new();
-
-    // Lighter frosted Sequoia glass rim + luminous dots under running apps.
-    card(cv, th, 0, 0, w, h, 20.0);
-
-    let mut x = 10;
-    let cell = 44;
-    let base_y = 6;
-
-    // Apps / Launchpad icon first, then core + running apps.
-    let entries = dock_entries(wins);
-    for (idx, entry) in entries.iter().enumerate() {
-        if idx == 1 {
-            // Insert Launchpad / Spotlight right after Finder/Files, like macOS.
-            let l_hov = hover.is_some_and(|(hx, _)| hx >= x as f64 && hx < (x + cell) as f64);
-            cv.draw_app_squircle(
-                x,
-                if l_hov { base_y - 3 } else { base_y },
-                cell,
-                "start",
-                None,
-            );
-            regions.push(Region {
-                x,
-                y: 0,
-                w: cell,
-                h,
-                action: HitAction::Shell(ShellCmd::ToggleLauncher),
-            });
-            x += cell + 8;
-        }
-
-        let is_hov = hover.is_some_and(|(hx, _)| hx >= x as f64 && hx < (x + cell) as f64);
-        let iy = if is_hov { base_y - 3 } else { base_y };
-        let sys_ic = load_app_icon(icons, &entry.app_id);
-        cv.draw_app_squircle(x, iy, cell, &entry.role, sys_ic);
-
-        if entry.window_count > 0 {
-            cv.circle(
-                x as f32 + cell as f32 * 0.5,
-                (h - 4) as f32,
-                2.2,
-                th.tile_hover,
-            );
-        }
-
-        let action = match entry.window {
-            Some(id) => HitAction::FocusWindow(id),
-            None => HitAction::Launch(entry.command.clone()),
-        };
-        regions.push(Region {
-            x,
-            y: 0,
-            w: cell,
-            h,
-            action,
-        });
-        x += cell + 8;
-    }
-
-    // Classic macOS full-height separator + Trash on the right.
-    cv.fill_rect(x, 10, 1, h - 20, th.tile_hover);
-    x += 8;
-    let t_hov = hover.is_some_and(|(hx, _)| hx >= x as f64 && hx < (x + cell) as f64);
-    cv.draw_app_squircle(
-        x,
-        if t_hov { base_y - 3 } else { base_y },
-        cell,
-        "trash",
-        None,
-    );
-    regions.push(Region {
-        x,
-        y: 0,
-        w: cell,
-        h,
-        action: HitAction::Launch(LaunchTarget::Shell(format!(
-            "{} trash:///",
-            crate::state::role_binary("files", "thunar")
-        ))),
-    });
-
-    regions
-}
-
-fn draw_dock_windows(
-    cv: &mut Canvas<'_>,
-    th: &Theme,
-    fonts: &Fonts,
-    wins: &[WindowInfo],
-    icons: &mut HashMap<String, Option<Icon>>,
-    hover: Option<(f64, f64)>,
-    live: &Live<'_>,
-) -> Vec<Region> {
-    let (telem, prefs) = (live.telem, live.prefs);
-    let w = cv.width as i32;
-    let h = cv.height as i32;
-    let mut regions = Vec::new();
-
-    // Full-width frosted Fluent taskbar.
-    cv.fill_rect(0, 0, w, h, th.bar);
-    cv.fill_rect(0, 0, w, 1, th.tile_hover);
-
-    // Left: Weather / Widgets pill (Image 3).
-    let w_hov = hover.is_some_and(|(hx, _)| hx >= 10.0 && hx < 142.0);
-    if w_hov {
-        cv.round_rect(10, 6, 132, 36, 8.0, th.tile);
-    }
-    cv.circle(26.0, 21.0, 5.5, Rgba::rgb(0xfb, 0xbf, 0x24));
-    cv.round_rect(25, 21, 13, 7, 3.5, Rgba::rgba(240, 244, 255, 235));
-    cv.text(fonts.semibold.as_ref(), "19°C", 46, 22, 11.5, th.text);
-    cv.text(
-        fonts.regular.as_ref(),
-        "Clear sky",
-        46,
-        35,
-        10.5,
-        th.text_dim,
-    );
-    regions.push(Region {
-        x: 10,
-        y: 4,
-        w: 132,
-        h: 40,
-        action: HitAction::Shell(ShellCmd::ToggleControl),
-    });
-
-    // Centre cluster: Start + Search pill + Pinned/Running apps.
-    let entries = dock_entries(wins);
-    let search_w = 188;
-    let total_w = 40 + 8 + search_w + 10 + (entries.len() as i32) * 44;
-    let mut cx = (w - total_w) / 2;
-
-    // Start button.
-    cv.draw_app_squircle(cx + 3, 7, 34, "start", None);
-    regions.push(Region {
-        x: cx,
-        y: 4,
-        w: 40,
-        h: 40,
-        action: HitAction::Shell(ShellCmd::ToggleLauncher),
-    });
-    cx += 48;
-
-    // Windows 11 "Type here to search" capsule.
-    let s_hov = hover.is_some_and(|(hx, _)| hx >= cx as f64 && hx < (cx + search_w) as f64);
-    cv.round_rect(
-        cx,
-        8,
-        search_w,
-        32,
-        16.0,
-        if s_hov { th.tile_hover } else { th.tile },
-    );
-    cv.stroke_round_rect(cx, 8, search_w, 32, 16.0, 1.0, th.tile_hover);
-    cv.icon_search(cx as f32 + 18.0, 24.0, 13.0, th.text_med);
-    cv.text(
-        fonts.regular.as_ref(),
-        "Search or ask…",
-        cx + 32,
-        28,
-        12.0,
-        th.text_dim,
-    );
-    regions.push(Region {
-        x: cx,
-        y: 6,
-        w: search_w,
-        h: 36,
-        action: HitAction::Shell(ShellCmd::ToggleLauncher),
-    });
-    cx += search_w + 10;
-
-    for entry in &entries {
-        let is_hov = hover.is_some_and(|(hx, _)| hx >= cx as f64 && hx < (cx + 40) as f64);
-        if is_hov || entry.is_focused {
-            cv.round_rect(
-                cx,
-                5,
-                40,
-                38,
-                8.0,
-                Rgba::rgba(255, 255, 255, if is_hov { 30 } else { 18 }),
-            );
-        }
-        let sys_ic = load_app_icon(icons, &entry.app_id);
-        cv.draw_app_squircle(cx + 4, 7, 32, &entry.role, sys_ic);
-        if entry.window_count > 0 {
-            let uw = if entry.is_focused { 16 } else { 6 };
-            cv.round_rect(cx + (40 - uw) / 2, h - 4, uw, 3, 1.5, th.accent);
-        }
-        let action = match entry.window {
-            Some(id) => HitAction::FocusWindow(id),
-            None => HitAction::Launch(entry.command.clone()),
-        };
-        regions.push(Region {
-            x: cx,
-            y: 4,
-            w: 40,
-            h: 40,
-            action,
-        });
-        cx += 44;
-    }
-
-    // Right tray + stacked clock/date.
-    let now = chrono::Local::now();
-    let t_str = now.format("%H:%M").to_string();
-    let d_str = now.format("%d/%m/%Y").to_string();
-    cv.text(fonts.semibold.as_ref(), &t_str, w - 58, 21, 11.5, th.text);
-    cv.text(
-        fonts.regular.as_ref(),
-        &d_str,
-        w - 74,
-        35,
-        10.2,
-        th.text_dim,
-    );
-    cv.icon_network(
-        (w - 134) as f32,
-        24.0,
-        12.5,
-        telem.network,
-        th.text,
-        th.text_dim,
-    );
-    cv.icon_volume((w - 112) as f32, 24.0, 12.5, prefs.volume, th.text);
-    if let Some(pct) = telem.battery_pct {
-        cv.icon_battery((w - 90) as f32, 24.0, pct, th.text_med, th.success);
-    }
-    regions.push(Region {
-        x: w - 150,
-        y: 4,
-        w: 142,
-        h: 40,
-        action: HitAction::Shell(ShellCmd::ToggleControl),
-    });
 
     regions
 }
@@ -1214,10 +820,15 @@ pub fn draw_control(
     let seg_y = dy + 20;
     let seg_w = w - 32;
     cv.round_rect(16, seg_y, seg_w, 34, R_ROW, th.field);
-    let item_w = (seg_w - 8) / 3;
-    for (i, style) in [DockStyle::Solyra, DockStyle::Macos, DockStyle::Windows]
-        .into_iter()
-        .enumerate()
+    let item_w = (seg_w - 8) / 4;
+    for (i, style) in [
+        DockStyle::Solyra,
+        DockStyle::Macos,
+        DockStyle::Windows,
+        DockStyle::Minimal,
+    ]
+    .into_iter()
+    .enumerate()
     {
         let ix = 20 + i as i32 * item_w;
         let active = prefs.dock_style == style;

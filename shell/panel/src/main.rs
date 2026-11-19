@@ -15,7 +15,10 @@
 
 mod agent;
 mod canvas;
+mod dock;
+mod island;
 mod launcher;
+mod media;
 mod notify;
 mod state;
 mod surfaces;
@@ -44,14 +47,13 @@ use smithay_client_toolkit::shm::slot::SlotPool;
 use smithay_client_toolkit::shm::{Shm, ShmHandler};
 use state::{
     apply_wallpaper, catalog_apps, read_island_file, read_telemetry, send_client_cmd, send_ipc,
-    spawn_ipc_listener, windows, workspaces, AppEntry, DockStyle, LaunchTarget, ShellCmd,
-    ShellPrefs, WindowInfo,
+    spawn_ipc_listener, windows, workspaces, AppEntry, LaunchTarget, ShellCmd, ShellPrefs,
+    WindowInfo,
 };
 use surfaces::{
-    draw_agents, draw_bar, draw_control, draw_dock, draw_island_card, draw_launcher,
-    floating_dock_width, AgentsView, HitAction, Live, Region, AGENTS_H, AGENTS_W, BAR_HEIGHT,
-    CONTROL_H, CONTROL_W, DOCK_FLOAT_HEIGHT, ISLAND_CARD_H, ISLAND_CARD_W, LAUNCHER_H, LAUNCHER_W,
-    TASKBAR_HEIGHT,
+    draw_agents, draw_bar, draw_control, draw_island_card, draw_launcher, AgentsView, HitAction,
+    Live, Region, AGENTS_H, AGENTS_W, BAR_HEIGHT, CONTROL_H, CONTROL_W, ISLAND_CARD_H,
+    ISLAND_CARD_W, LAUNCHER_H, LAUNCHER_W,
 };
 use tokens::Theme;
 use wayland_client::globals::registry_queue_init;
@@ -121,9 +123,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         BAR_HEIGHT,
         KeyboardInteractivity::None,
     );
-    let dock = make_dock_surface(&compositor, &layer_shell, &qh, prefs.dock_style, 320);
+    let dock_hidden = prefs.look.dock_autohide;
+    let dock_spec = dock::spec(prefs.dock_style, &[], prefs.look.dock_magnify, dock_hidden);
+    let dock = make_dock_surface(&compositor, &layer_shell, &qh, &dock_spec);
 
+    let waker: Arc<dyn Fn() + Send + Sync> = {
+        let (conn_wake, qh_wake) = (conn.clone(), qh.clone());
+        Arc::new(move || {
+            conn_wake.display().sync(&qh_wake, ());
+            let _ = conn_wake.flush();
+        })
+    };
     let cmd_queue: Arc<Mutex<Vec<ShellCmd>>> = Arc::new(Mutex::new(Vec::new()));
+    let media_slot: Arc<Mutex<Option<media::Media>>> = Arc::default();
+    {
+        let w = waker.clone();
+        media::spawn_watcher(media_slot.clone(), move || w());
+    }
     {
         let conn_wake = conn.clone();
         let qh_wake = qh.clone();
@@ -164,11 +180,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         pool,
         bar,
         dock,
-        dock_active_style: prefs.dock_style,
+        dock_spec,
+        dock_hidden,
+        dock_left_at: None,
+        waker: waker.clone(),
         launcher: None,
         control: None,
         island_card: None,
         agents: None,
+        island: None,
+        island_anim: island::Anim::new(island::target(
+            solyra_conf::look::NotchStyle::Notch,
+            &island::Content::Idle,
+            false,
+        )),
+        island_expanded: false,
+        island_last_frame: Instant::now(),
+        island_frame_only: false,
+        island_left_at: None,
+        media: media_slot,
         prefs_mtime: ShellPrefs::config_mtime(),
         agent_tasks: Vec::new(),
         agent_summary: agent::Summary::default(),
@@ -200,6 +230,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         last_sync: Instant::now() - Duration::from_secs(10),
     };
 
+    app.ensure_island();
+
     // Re-apply the saved wallpaper: the session config only starts a default.
     if app.prefs.wallpaper_file.is_some() || app.prefs.wallpaper != state::WallpaperPreset::Graphite
     {
@@ -211,7 +243,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         app.drain_commands();
         if app.needs_redraw {
             app.needs_redraw = false;
-            if app.needs_state_sync || app.last_sync.elapsed() >= Duration::from_millis(800) {
+            if !app.island_frame_only
+                && (app.needs_state_sync || app.last_sync.elapsed() >= Duration::from_millis(800))
+            {
                 app.needs_state_sync = false;
                 app.last_sync = Instant::now();
                 app.sync_compositor_state();
@@ -266,36 +300,41 @@ fn make_dock_surface(
     compositor: &CompositorState,
     layer_shell: &LayerShell,
     qh: &QueueHandle<App>,
-    style: DockStyle,
-    initial_w: u32,
+    spec: &dock::Spec,
 ) -> SurfaceSlot {
-    match style {
-        DockStyle::Solyra | DockStyle::Macos => make_layer_surface(
-            compositor,
-            layer_shell,
-            qh,
-            Layer::Top,
-            "solyra-dock",
-            Anchor::BOTTOM,
-            0,
-            (0, 0, 10, 0),
-            initial_w.max(220),
-            DOCK_FLOAT_HEIGHT,
-            KeyboardInteractivity::None,
-        ),
-        DockStyle::Windows => make_layer_surface(
-            compositor,
-            layer_shell,
-            qh,
-            Layer::Top,
-            "solyra-taskbar",
-            Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
-            TASKBAR_HEIGHT as i32,
-            (0, 0, 0, 0),
-            0,
-            TASKBAR_HEIGHT,
-            KeyboardInteractivity::None,
-        ),
+    let anchor = if spec.full_width {
+        Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT
+    } else {
+        Anchor::BOTTOM
+    };
+    let slot = make_layer_surface(
+        compositor,
+        layer_shell,
+        qh,
+        Layer::Top,
+        spec.namespace,
+        anchor,
+        spec.exclusive,
+        (0, 0, spec.bottom_margin, 0),
+        spec.width,
+        spec.height,
+        KeyboardInteractivity::None,
+    );
+    set_dock_input_region(compositor, &slot.surface, spec);
+    slot
+}
+
+/// A magnifying dock's surface is taller than its card; only the card takes
+/// the pointer, so clicks in the clear room above reach the window below.
+fn set_dock_input_region(compositor: &CompositorState, surface: &WlSurface, spec: &dock::Spec) {
+    if spec.namespace != "solyra-dock-magnify" {
+        surface.set_input_region(None);
+        return;
+    }
+    if let Ok(region) = smithay_client_toolkit::compositor::Region::new(compositor) {
+        let card_top = spec.height as i32 - dock::CARD_H;
+        region.add(0, card_top, spec.width as i32, dock::CARD_H);
+        surface.set_input_region(Some(region.wl_region()));
     }
 }
 
@@ -311,11 +350,26 @@ struct App {
 
     bar: SurfaceSlot,
     dock: SurfaceSlot,
-    dock_active_style: DockStyle,
+    dock_spec: dock::Spec,
+    /// Auto-hide has tucked the dock away.
+    dock_hidden: bool,
+    /// When the pointer last left the dock (auto-hide waits a moment).
+    dock_left_at: Option<Instant>,
+    /// Wakes the event loop from another thread.
+    waker: Arc<dyn Fn() + Send + Sync>,
     launcher: Option<SurfaceSlot>,
     control: Option<SurfaceSlot>,
     island_card: Option<SurfaceSlot>,
     agents: Option<SurfaceSlot>,
+    /// The notch / Dynamic Island surface (absent when the style is Off).
+    island: Option<SurfaceSlot>,
+    island_anim: island::Anim,
+    island_expanded: bool,
+    island_last_frame: Instant,
+    /// The next redraw is only an island animation frame.
+    island_frame_only: bool,
+    island_left_at: Option<Instant>,
+    media: Arc<Mutex<Option<media::Media>>>,
     /// The config file's mtime as we last read or wrote it.
     prefs_mtime: Option<std::time::SystemTime>,
 
@@ -359,7 +413,14 @@ struct App {
 
 impl App {
     fn theme(&self) -> Theme {
-        Theme::for_kind(self.prefs.theme)
+        let accent =
+            tokens::Accent::parse(&self.prefs.look.accent).unwrap_or(tokens::Accent::Mauve);
+        let t = Theme::with(self.prefs.theme, accent);
+        if self.prefs.look.opaque {
+            t.opaque()
+        } else {
+            t
+        }
     }
 
     fn drain_commands(&mut self) {
@@ -381,6 +442,10 @@ impl App {
         self.agents_error = None;
         self.reply_buf.clear();
         self.reply_mode = false;
+        if self.island_expanded {
+            self.island_expanded = false;
+            self.retarget_island();
+        }
     }
 
     fn open_overlay(
@@ -451,6 +516,15 @@ impl App {
                     ));
                 }
             }
+            ShellCmd::ToggleIsland if self.island.is_some() => {
+                self.island_expanded = !self.island_expanded;
+                self.island_left_at = None;
+                if !self.island_expanded {
+                    self.reply_mode = false;
+                    self.reply_buf.clear();
+                }
+                self.retarget_island();
+            }
             ShellCmd::ToggleIsland => {
                 if self.island_card.is_some() {
                     self.island_card = None;
@@ -492,7 +566,12 @@ impl App {
             ShellCmd::SetDock(style) => {
                 self.prefs.dock_style = style;
                 self.save_prefs();
-                self.apply_dock_style(style);
+                self.ensure_dock();
+            }
+            ShellCmd::RevealDock => {
+                self.dock_hidden = false;
+                self.dock_left_at = None;
+                self.ensure_dock();
             }
             ShellCmd::SetWallpaper(preset) => {
                 self.prefs.wallpaper = preset;
@@ -547,15 +626,12 @@ impl App {
         let wallpaper_changed = new.wallpaper != self.prefs.wallpaper
             || new.wallpaper_file != self.prefs.wallpaper_file
             || new.wallpaper_mode != self.prefs.wallpaper_mode;
-        let dock_changed = new.dock_style != self.prefs.dock_style;
         self.prefs = new;
+        self.ensure_island();
         if wallpaper_changed {
             self.apply_saved_wallpaper();
         }
-        if dock_changed {
-            let style = self.prefs.dock_style;
-            self.apply_dock_style(style);
-        }
+        self.ensure_dock();
         self.needs_redraw = true;
     }
 
@@ -577,12 +653,59 @@ impl App {
         }
     }
 
-    fn apply_dock_style(&mut self, style: DockStyle) {
-        if self.dock_active_style != style {
-            let wanted = floating_dock_width(style, &self.wins);
-            self.dock =
-                make_dock_surface(&self.compositor, &self.layer_shell, &self.qh, style, wanted);
-            self.dock_active_style = style;
+    /// Make the dock surface match the current style, magnification,
+    /// auto-hide state and app count: resize it, or recreate it when the
+    /// kind of surface changes.
+    fn ensure_dock(&mut self) {
+        let autohide = self.prefs.look.dock_autohide;
+        if !autohide {
+            self.dock_hidden = false;
+        }
+        let spec = dock::spec(
+            self.prefs.dock_style,
+            &self.wins,
+            self.prefs.look.dock_magnify,
+            self.dock_hidden && autohide,
+        );
+        if spec == self.dock_spec {
+            return;
+        }
+        let same_kind = spec.namespace == self.dock_spec.namespace
+            && spec.full_width == self.dock_spec.full_width
+            && spec.exclusive == self.dock_spec.exclusive
+            && spec.bottom_margin == self.dock_spec.bottom_margin;
+        if same_kind {
+            self.dock.layer.set_size(spec.width, spec.height);
+            self.dock.width = if spec.full_width {
+                self.dock.width
+            } else {
+                spec.width
+            };
+            self.dock.height = spec.height;
+            set_dock_input_region(&self.compositor, &self.dock.surface, &spec);
+            self.dock.layer.commit();
+        } else {
+            self.dock = make_dock_surface(&self.compositor, &self.layer_shell, &self.qh, &spec);
+        }
+        self.dock_spec = spec;
+        self.needs_redraw = true;
+    }
+
+    /// Auto-hide: tuck the dock away a moment after the pointer leaves it.
+    fn update_dock_autohide(&mut self) {
+        if !self.prefs.look.dock_autohide || self.dock_hidden {
+            return;
+        }
+        let over = self.pointer_surface.as_ref() == Some(&self.dock.surface);
+        let menus_open = self.launcher.is_some() || self.control.is_some();
+        if !over && !menus_open {
+            if let Some(t) = self.dock_left_at {
+                if t.elapsed() >= Duration::from_millis(700) {
+                    self.dock_hidden = true;
+                    self.dock_left_at = None;
+                    self.ensure_dock();
+                }
+            }
         }
     }
 
@@ -596,6 +719,108 @@ impl App {
         self.launcher_selected = self
             .launcher_selected
             .min(self.launcher_items.len().saturating_sub(1));
+    }
+
+    /// Create or remove the island surface to match the notch style.
+    fn ensure_island(&mut self) {
+        use solyra_conf::look::NotchStyle;
+        let want = self.prefs.look.notch != NotchStyle::Off;
+        match (want, self.island.is_some()) {
+            (true, false) => {
+                // Exclusive zone -1: sit at the very top, over the bar, ignoring
+                // its reserved space.
+                let slot = make_layer_surface(
+                    &self.compositor,
+                    &self.layer_shell,
+                    &self.qh,
+                    Layer::Overlay,
+                    "solyra-notch",
+                    Anchor::TOP,
+                    -1,
+                    (0, 0, 0, 0),
+                    island::SURF_W,
+                    island::SURF_H,
+                    KeyboardInteractivity::OnDemand,
+                );
+                self.island = Some(slot);
+                self.island_anim = island::Anim::new(island::target(
+                    self.prefs.look.notch,
+                    &self.island_content(),
+                    false,
+                ));
+                self.island_expanded = false;
+            }
+            (false, true) => {
+                self.island = None;
+                self.island_expanded = false;
+            }
+            _ => {}
+        }
+        self.retarget_island();
+    }
+
+    /// What the island shows, most important first: something waiting on
+    /// the human, a fresh message, what is playing, an agent at work.
+    fn island_content(&self) -> island::Content {
+        if let Some((i, t)) = self
+            .agent_tasks
+            .iter()
+            .enumerate()
+            .find(|(_, t)| t.pending.is_some())
+        {
+            let p = t.pending.as_ref().expect("filtered");
+            return island::Content::Attention(island::Ask {
+                task: i,
+                who: t.agent.clone().unwrap_or_else(|| t.name.clone()),
+                kind: p.kind,
+                text: p.action.clone(),
+                resource: p.resource.clone(),
+                reversible: p.reversible,
+                task_scope: p.scopes.contains(&agent::Scope::Task),
+                choices: p.choices.clone(),
+                sent: t.decision_sent.is_some(),
+            });
+        }
+        if let Some(msg) = &self.island_msg {
+            return island::Content::Message(msg.clone());
+        }
+        if let Some(m) = self.media.lock().ok().and_then(|m| m.clone()) {
+            if m.playing || !m.title.is_empty() {
+                return island::Content::Media(m);
+            }
+        }
+        let now = agent::now_secs();
+        if let Some(t) = self
+            .agent_tasks
+            .iter()
+            .find(|t| t.status == agent::Status::Running && !t.is_quiet(now))
+        {
+            return island::Content::Activity {
+                who: t.agent.clone().unwrap_or_else(|| t.name.clone()),
+                text: t
+                    .latest_milestone()
+                    .map(|m| m.text.clone())
+                    .unwrap_or_else(|| "Working".into()),
+            };
+        }
+        island::Content::Idle
+    }
+
+    /// Point the island's animation at where it should be now.
+    fn retarget_island(&mut self) {
+        if self.island.is_none() {
+            return;
+        }
+        let to = island::target(
+            self.prefs.look.notch,
+            &self.island_content(),
+            self.island_expanded,
+        );
+        if to != self.island_anim.to {
+            self.island_anim.to = to;
+            self.island_last_frame = Instant::now();
+        }
+        self.needs_redraw = true;
     }
 
     fn load_agents(&mut self) {
@@ -659,21 +884,28 @@ impl App {
             self.island_msg = None;
         }
 
-        if matches!(self.dock_active_style, DockStyle::Solyra | DockStyle::Macos) {
-            let wanted = floating_dock_width(self.dock_active_style, &self.wins);
-            if wanted != self.dock.width {
-                self.dock.width = wanted;
-                self.dock.layer.set_size(wanted, DOCK_FLOAT_HEIGHT);
-                self.dock.layer.commit();
+        self.update_dock_autohide();
+        self.ensure_dock();
+        if let Some(t) = self.island_left_at {
+            if self.island_expanded && t.elapsed() >= Duration::from_secs(4) && !self.reply_mode {
+                self.island_expanded = false;
+                self.island_left_at = None;
             }
         }
+        self.retarget_island();
     }
 
     fn redraw(&mut self, conn: &Connection) {
+        let scale = self.output_scale();
+        if std::mem::take(&mut self.island_frame_only) {
+            // An animation frame: only the island changes.
+            self.draw_island(scale);
+            let _ = conn.flush();
+            return;
+        }
         let telem = read_telemetry();
         let th = self.theme();
         let agents_summary = self.agent_summary;
-        let scale = self.output_scale();
 
         if self.bar.configured && self.bar.width > 0 {
             let hover = self.hover_on(&self.bar.surface);
@@ -725,15 +957,17 @@ impl App {
                     telem: &telem,
                     prefs: &self.prefs,
                 };
-                self.dock.regions = draw_dock(
+                self.dock.regions = dock::draw(
                     &mut cv,
                     &th,
                     &self.fonts,
-                    self.dock_active_style,
+                    self.prefs.dock_style,
                     &self.wins,
                     &mut self.icons,
                     hover,
                     &live,
+                    self.prefs.look.dock_magnify,
+                    self.dock_hidden && self.prefs.look.dock_autohide,
                 );
                 present(
                     buffer,
@@ -820,7 +1054,80 @@ impl App {
             hover
         ));
 
+        self.draw_island(scale);
         let _ = conn.flush();
+    }
+
+    fn draw_island(&mut self, scale: u32) {
+        let content = self.island_content();
+        let now = Instant::now();
+        let dt = now
+            .duration_since(self.island_last_frame)
+            .as_secs_f32()
+            .min(0.05);
+        self.island_last_frame = now;
+        let moving = self.island_anim.step(dt, self.prefs.look.reduced_motion);
+        let Some(slot) = self.island.as_mut() else {
+            return;
+        };
+        if !slot.configured || slot.width == 0 {
+            return;
+        }
+        let hover = self
+            .pointer_surface
+            .as_ref()
+            .filter(|s| *s == &slot.surface)
+            .map(|_| self.pointer_pos);
+        let (w, h) = (slot.width, slot.height);
+        let local = chrono::Local::now();
+        let clock = local.format(self.prefs.look.clock_format()).to_string();
+        let date = local.format("%A %-d %B").to_string();
+        let telem = read_telemetry();
+        let glance = island::Glance {
+            battery: telem.battery_pct,
+            network: telem.network.label().to_string(),
+            agents_running: self.agent_summary.live,
+            windows: self.wins.len(),
+        };
+        let typing = matches!(&content, island::Content::Attention(a) if a.kind == agent::AskKind::Question && a.choices.is_empty() && !a.sent);
+        let extra = island::Extra {
+            glance: &glance,
+            clock: &clock,
+            date: &date,
+            reply: &self.reply_buf,
+            typing,
+        };
+        let Ok((buffer, bytes)) = self.pool.create_buffer(
+            (w * scale) as i32,
+            (h * scale) as i32,
+            (w * scale * 4) as i32,
+            Format::Argb8888,
+        ) else {
+            return;
+        };
+        let mut cv = Canvas::new(bytes, w, h, scale as i32);
+        slot.regions = island::draw(
+            &mut cv,
+            &self.fonts,
+            self.prefs.look.notch,
+            &self.island_anim,
+            &content,
+            self.island_expanded,
+            &extra,
+            hover,
+        );
+        // Only the shape takes the pointer; the rest of the surface is clear
+        // and clicks there reach whatever is below.
+        let (ix, iy, iw, ih) = island::input_rect(&self.island_anim.cur);
+        if let Ok(region) = smithay_client_toolkit::compositor::Region::new(&self.compositor) {
+            region.add(ix - 10, iy, iw + 20, ih);
+            slot.surface.set_input_region(Some(region.wl_region()));
+        }
+        if moving {
+            // Ask for the next frame; `CompositorHandler::frame` redraws.
+            slot.surface.frame(&self.qh, slot.surface.clone());
+        }
+        present(buffer, &slot.surface, w * scale, h * scale, scale as i32);
     }
 
     fn hover_on(&self, surface: &WlSurface) -> Option<(f64, f64)> {
@@ -851,14 +1158,22 @@ impl App {
     }
 
     fn handle_click(&mut self, surface: &WlSurface, x: f64, y: f64) {
-        let Some(regions) = self.regions_for(surface) else {
-            return;
+        let on_island = self.island.as_ref().is_some_and(|s| &s.surface == surface);
+        let hit = if on_island {
+            // Island regions overlap (the whole shape, then its buttons):
+            // the most specific wins.
+            self.island
+                .as_ref()
+                .and_then(|s| island::pick(&s.regions, x, y))
+        } else {
+            self.regions_for(surface).and_then(|regions| {
+                regions
+                    .iter()
+                    .find(|r| r.contains(x, y))
+                    .map(|r| r.action.clone())
+            })
         };
-        let Some(hit) = regions
-            .iter()
-            .find(|r| r.contains(x, y))
-            .map(|r| r.action.clone())
-        else {
+        let Some(hit) = hit else {
             return;
         };
 
@@ -901,6 +1216,17 @@ impl App {
                 self.agents_selected = idx.min(self.agent_tasks.len().saturating_sub(1));
                 self.agents_error = None;
             }
+            HitAction::Choose { task, choice } if on_island => {
+                self.agents_selected = task;
+                let text = self
+                    .agent_tasks
+                    .get(task)
+                    .and_then(|t| t.pending.as_ref())
+                    .and_then(|p| p.choices.get(choice).cloned());
+                if let Some(text) = text {
+                    self.answer(&text);
+                }
+            }
             HitAction::Choose { task, choice } => {
                 self.agents_selected = task;
                 let text = self
@@ -910,6 +1236,17 @@ impl App {
                     .and_then(|p| p.choices.get(choice).cloned());
                 if let Some(text) = text {
                     self.answer(&text);
+                }
+            }
+            HitAction::Media(control) => {
+                if let Some(m) = self.media.lock().ok().and_then(|m| m.clone()) {
+                    media::control(m.bus, control);
+                }
+            }
+            HitAction::StartReply if on_island => {
+                // Typing in the island goes to the task it is showing.
+                if let island::Content::Attention(a) = self.island_content() {
+                    self.agents_selected = a.task;
                 }
             }
             HitAction::StartReply => {
@@ -1065,6 +1402,16 @@ impl App {
         if self.agents.is_some() {
             self.handle_agents_key(key);
             self.needs_redraw = true;
+            return;
+        }
+        if self.island_expanded && self.launcher.is_none() {
+            if let island::Content::Attention(a) = self.island_content() {
+                // The island shows one task: keys answer it (A/D/T, 1-9, or
+                // typing for a question).
+                self.agents_selected = a.task;
+                self.handle_agents_key(key);
+                self.retarget_island();
+            }
             return;
         }
         if self.launcher.is_none() {
@@ -1333,7 +1680,12 @@ impl CompositorHandler for App {
         _: wayland_client::protocol::wl_output::Transform,
     ) {
     }
-    fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlSurface, _: u32) {}
+    fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, surface: &WlSurface, _: u32) {
+        if self.island.as_ref().is_some_and(|s| &s.surface == surface) {
+            self.needs_redraw = true;
+            self.island_frame_only = true;
+        }
+    }
     fn surface_enter(
         &mut self,
         _: &Connection,
@@ -1382,6 +1734,7 @@ impl LayerShellHandler for App {
             &mut self.control,
             &mut self.island_card,
             &mut self.agents,
+            &mut self.island,
         ] {
             if slot.as_ref().is_some_and(|s| &s.layer == layer) {
                 *slot = None;
@@ -1417,6 +1770,7 @@ impl LayerShellHandler for App {
             &mut self.control,
             &mut self.island_card,
             &mut self.agents,
+            &mut self.island,
         ] {
             if let Some(s) = slot.as_mut().filter(|s| &s.layer == layer) {
                 apply(s);
@@ -1481,9 +1835,45 @@ impl PointerHandler for App {
                 PointerEventKind::Enter { .. } => {
                     self.pointer_surface = Some(event.surface.clone());
                     self.pointer_pos = event.position;
+                    if self
+                        .island
+                        .as_ref()
+                        .is_some_and(|s| s.surface == event.surface)
+                    {
+                        self.island_left_at = None;
+                    }
+                    if event.surface == self.dock.surface {
+                        self.dock_left_at = None;
+                        if self.dock_hidden {
+                            // Touching the edge strip brings an auto-hidden dock back.
+                            self.dock_hidden = false;
+                            self.ensure_dock();
+                        }
+                    }
                     self.needs_redraw = true;
                 }
                 PointerEventKind::Leave { .. } => {
+                    if self.island_expanded
+                        && self
+                            .island
+                            .as_ref()
+                            .is_some_and(|s| s.surface == event.surface)
+                    {
+                        self.island_left_at = Some(Instant::now());
+                        let wake = self.waker.clone();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(Duration::from_millis(4100));
+                            wake();
+                        });
+                    }
+                    if event.surface == self.dock.surface && self.prefs.look.dock_autohide {
+                        self.dock_left_at = Some(Instant::now());
+                        let wake = self.waker.clone();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(Duration::from_millis(750));
+                            wake();
+                        });
+                    }
                     self.pointer_surface = None;
                     self.needs_redraw = true;
                 }

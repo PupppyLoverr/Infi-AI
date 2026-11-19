@@ -4,6 +4,8 @@
 //! Each edits only the keys it owns, keeps everything else (including
 //! comments), and writes atomically so a reader never sees half a file.
 
+pub mod look;
+
 use std::path::{Path, PathBuf};
 
 /// `~/.config/solyra/<name>` (honouring `XDG_CONFIG_HOME`).
@@ -71,9 +73,15 @@ mod tests {
     fn keeps_foreign_keys_and_comments() {
         let out = merge(
             "# mine\nfoo=bar\ntheme=dark\nvolume=3\n",
-            &[("theme", Some("light".into())), ("brightness", Some("80".into()))],
+            &[
+                ("theme", Some("light".into())),
+                ("brightness", Some("80".into())),
+            ],
         );
-        assert_eq!(out, "# mine\nfoo=bar\ntheme=light\nvolume=3\nbrightness=80\n");
+        assert_eq!(
+            out,
+            "# mine\nfoo=bar\ntheme=light\nvolume=3\nbrightness=80\n"
+        );
     }
 
     #[test]

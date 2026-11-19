@@ -532,31 +532,35 @@ fn render_all() -> Vec<Shot> {
             );
         }));
         let summary = Summary::of(true, &tasks);
-        shots.push(shoot(
-            "dock-solyra",
-            kind,
-            340,
-            DOCK_FLOAT_HEIGHT,
-            |cv, th| {
-                let t = telem(None, NetworkState::Wired, false);
+        let dock_wins = [win(1, "foot", "x", true), win(2, "thunar", "y", false)];
+        for (name, style, magnify, hover) in [
+            ("dock-solyra", DockStyle::Solyra, false, None),
+            ("dock-floating", DockStyle::Macos, false, None),
+            (
+                "dock-floating-magnify",
+                DockStyle::Macos,
+                true,
+                Some(0.5f64),
+            ),
+            ("dock-minimal", DockStyle::Minimal, false, None),
+            ("dock-taskbar", DockStyle::Windows, false, None),
+        ] {
+            let spec = crate::dock::spec(style, &dock_wins, magnify, false);
+            let w = if spec.full_width { 1280 } else { spec.width };
+            shots.push(shoot(name, kind, w, spec.height, |cv, th| {
+                let t = telem(Some(64), NetworkState::Wireless, false);
                 let live = Live {
                     agents: summary,
                     telem: &t,
                     prefs: &prefs,
                 };
                 let mut icons = HashMap::new();
-                draw_dock(
-                    cv,
-                    th,
-                    &fonts,
-                    DockStyle::Solyra,
-                    &[win(1, "foot", "x", true)],
-                    &mut icons,
-                    None,
-                    &live,
+                let hover = hover.map(|f| (w as f64 * f, spec.height as f64 - 20.0));
+                crate::dock::draw(
+                    cv, th, &fonts, style, &dock_wins, &mut icons, hover, &live, magnify, false,
                 );
-            },
-        ));
+            }));
+        }
     }
     shots
 }
@@ -624,6 +628,101 @@ fn two_x_renders_are_sharp_and_keep_logical_hit_regions() {
         let dir = std::path::PathBuf::from(dir);
         std::fs::create_dir_all(&dir).unwrap();
         write_png(&dir, &shots[1]);
+    }
+}
+
+fn island_shots(fonts: &Fonts) -> Vec<Shot> {
+    use crate::island::{self, Anim, Ask, Content, Extra, Glance};
+    use solyra_conf::look::NotchStyle;
+    let glance = Glance {
+        battery: Some(82),
+        network: "Wi-Fi · connected".into(),
+        agents_running: 1,
+        windows: 3,
+    };
+    let ask = Ask {
+        task: 0,
+        who: "claude".into(),
+        kind: agent::AskKind::Permission,
+        text: "Run a shell command".into(),
+        resource: Some("cargo test --workspace".into()),
+        reversible: None,
+        task_scope: true,
+        choices: vec![],
+        sent: false,
+    };
+    let question = Ask {
+        kind: agent::AskKind::Question,
+        text: "Which branch should I push to?".into(),
+        choices: vec!["main".into(), "dev".into()],
+        resource: None,
+        ..ask.clone()
+    };
+    let media = crate::media::Media {
+        bus: "x".into(),
+        title: "Clair de Lune".into(),
+        artist: "Debussy".into(),
+        playing: true,
+    };
+    let cases: Vec<(&str, Content, bool)> = vec![
+        ("idle", Content::Idle, false),
+        ("idle-expanded", Content::Idle, true),
+        (
+            "activity",
+            Content::Activity {
+                who: "claude".into(),
+                text: "Running cargo test".into(),
+            },
+            false,
+        ),
+        ("attention", Content::Attention(ask.clone()), false),
+        ("attention-expanded", Content::Attention(ask), true),
+        ("question-expanded", Content::Attention(question), true),
+        ("media", Content::Media(media.clone()), false),
+        ("media-expanded", Content::Media(media), true),
+        (
+            "message-expanded",
+            Content::Message("Firefox · Download finished — report.pdf".into()),
+            true,
+        ),
+    ];
+    let mut out = Vec::new();
+    for style in [NotchStyle::Notch, NotchStyle::Island] {
+        for (name, content, expanded) in &cases {
+            let anim = Anim::new(island::target(style, content, *expanded));
+            let extra = Extra {
+                glance: &glance,
+                clock: "21:47",
+                date: "Thursday 19 November",
+                reply: "",
+                typing: false,
+            };
+            let tag = format!("island-{}-{name}", style.as_str());
+            out.push(shoot(
+                &tag,
+                ThemeKind::Dark,
+                island::SURF_W,
+                island::SURF_H,
+                |cv, _th| {
+                    island::draw(cv, fonts, style, &anim, content, *expanded, &extra, None);
+                },
+            ));
+        }
+    }
+    out
+}
+
+#[test]
+fn island_previews_render() {
+    let fonts = Fonts::load();
+    let shots = island_shots(&fonts);
+    assert_eq!(shots.len(), 18);
+    if let Some(dir) = std::env::var_os("SOLYRA_RENDER_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for s in &shots {
+            write_png(&dir, s);
+        }
     }
 }
 

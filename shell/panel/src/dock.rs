@@ -1,0 +1,645 @@
+//! The dock, in four variants, with optional magnification and auto-hide.
+//!
+//! * **Solyra** – a floating card: start cell, pinned and running apps, and an
+//!   agent shelf.
+//! * **Floating** – a macOS-style dock: apps, the launcher after the first
+//!   app, a separator and the trash; dots under running apps.
+//! * **Taskbar** – a Windows-style full-width bar: start, search, centred
+//!   apps with underlines, tray and clock on the right.
+//! * **Minimal** – apps only, small, nothing else.
+//!
+//! The floating variants can magnify icons under the pointer. Their surface is
+//! then taller than the card (the icons grow up into transparent space), and
+//! uses a namespace without compositor blur so that space stays clear.
+
+use std::collections::HashMap;
+
+use crate::canvas::{text_width, Canvas, Fonts, Icon, Rgba};
+use crate::state::{
+    dock_entries, load_app_icon, AppEntry, DockStyle, LaunchTarget, ShellCmd, WindowInfo,
+};
+use crate::surfaces::{HitAction, Live, Region};
+use crate::tokens::Theme;
+
+/// Height of the floating card itself.
+pub const CARD_H: i32 = 58;
+/// Extra room above the card for magnified icons.
+pub const MAGNIFY_ROOM: i32 = 30;
+/// Height of the Windows-style taskbar.
+pub const TASKBAR_H: u32 = 48;
+/// What is left of an auto-hidden dock: a strip at the screen edge that
+/// brings it back when the pointer touches it.
+pub const HIDDEN_H: u32 = 3;
+/// Strongest magnification (1.0 = none).
+const MAX_SCALE: f32 = 1.55;
+/// How far, in cells, the magnification reaches either side of the pointer.
+const REACH: f32 = 2.2;
+
+/// How the layer surface for the dock is set up.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Spec {
+    pub namespace: &'static str,
+    /// Full-width bar (anchored left and right) rather than a centred card.
+    pub full_width: bool,
+    pub exclusive: i32,
+    pub bottom_margin: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Item<'a> {
+    Start,
+    App(&'a AppEntry),
+    Agent,
+    Trash,
+    Separator,
+}
+
+struct Metrics {
+    cell: i32,
+    gap: i32,
+    pad: i32,
+}
+
+fn metrics(style: DockStyle) -> Metrics {
+    match style {
+        DockStyle::Minimal => Metrics {
+            cell: 38,
+            gap: 6,
+            pad: 10,
+        },
+        DockStyle::Macos => Metrics {
+            cell: 44,
+            gap: 8,
+            pad: 10,
+        },
+        _ => Metrics {
+            cell: 42,
+            gap: 8,
+            pad: 10,
+        },
+    }
+}
+
+fn items<'a>(style: DockStyle, entries: &'a [AppEntry]) -> Vec<Item<'a>> {
+    let mut v = Vec::new();
+    match style {
+        DockStyle::Solyra => {
+            v.push(Item::Start);
+            v.push(Item::Separator);
+            v.extend(entries.iter().map(Item::App));
+            v.push(Item::Separator);
+            v.push(Item::Agent);
+        }
+        DockStyle::Macos => {
+            for (i, e) in entries.iter().enumerate() {
+                v.push(Item::App(e));
+                if i == 0 {
+                    v.push(Item::Start);
+                }
+            }
+            if entries.is_empty() {
+                v.push(Item::Start);
+            }
+            v.push(Item::Separator);
+            v.push(Item::Trash);
+        }
+        DockStyle::Minimal => v.extend(entries.iter().map(Item::App)),
+        DockStyle::Windows => {}
+    }
+    v
+}
+
+fn base_width(style: DockStyle, wins: &[WindowInfo]) -> i32 {
+    let entries = dock_entries(wins);
+    let m = metrics(style);
+    let its = items(style, &entries);
+    let content: i32 = its
+        .iter()
+        .map(|i| match i {
+            Item::Separator => 1,
+            _ => m.cell,
+        })
+        .sum::<i32>()
+        + m.gap * (its.len() as i32 - 1).max(0);
+    content + m.pad * 2
+}
+
+/// The surface for `style`. `hidden` is the auto-hidden state.
+pub fn spec(style: DockStyle, wins: &[WindowInfo], magnify: bool, hidden: bool) -> Spec {
+    if style == DockStyle::Windows {
+        return Spec {
+            namespace: "solyra-taskbar",
+            full_width: true,
+            exclusive: if hidden { 0 } else { TASKBAR_H as i32 },
+            bottom_margin: 0,
+            width: 0,
+            height: if hidden { HIDDEN_H } else { TASKBAR_H },
+        };
+    }
+    let m = metrics(style);
+    let w = base_width(style, wins).max(120);
+    if hidden {
+        return Spec {
+            namespace: "solyra-dock-hidden",
+            full_width: false,
+            exclusive: 0,
+            bottom_margin: 0,
+            width: w as u32,
+            height: HIDDEN_H,
+        };
+    }
+    if magnify {
+        // Room for every icon to grow, centred.
+        let extra = ((MAX_SCALE - 1.0) * m.cell as f32 * 3.0).ceil() as i32;
+        Spec {
+            namespace: "solyra-dock-magnify",
+            full_width: false,
+            exclusive: 0,
+            bottom_margin: 10,
+            width: (w + extra) as u32,
+            height: (CARD_H + MAGNIFY_ROOM) as u32,
+        }
+    } else {
+        Spec {
+            namespace: "solyra-dock",
+            full_width: false,
+            exclusive: 0,
+            bottom_margin: 10,
+            width: w as u32,
+            height: CARD_H as u32,
+        }
+    }
+}
+
+/// Magnification for an icon whose centre is `dist` cells from the pointer.
+pub fn magnification(dist: f32) -> f32 {
+    if dist.abs() >= REACH {
+        return 1.0;
+    }
+    // Cosine falloff: smooth, 1 at the edge of reach, MAX at the pointer.
+    let t = (dist.abs() / REACH * std::f32::consts::PI).cos() * 0.5 + 0.5;
+    1.0 + (MAX_SCALE - 1.0) * t
+}
+
+/// Draw the dock into the whole surface. Returns hit regions.
+#[allow(clippy::too_many_arguments)]
+pub fn draw(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    fonts: &Fonts,
+    style: DockStyle,
+    wins: &[WindowInfo],
+    icons: &mut HashMap<String, Option<Icon>>,
+    hover: Option<(f64, f64)>,
+    live: &Live<'_>,
+    magnify: bool,
+    hidden: bool,
+) -> Vec<Region> {
+    if hidden {
+        // A clear strip: the pointer touching it brings the dock back.
+        return vec![Region {
+            x: 0,
+            y: 0,
+            w: cv.width as i32,
+            h: cv.height as i32,
+            action: HitAction::Shell(ShellCmd::RevealDock),
+        }];
+    }
+    match style {
+        DockStyle::Windows => draw_taskbar(cv, th, fonts, wins, icons, hover, live),
+        _ => draw_floating(cv, th, fonts, style, wins, icons, hover, live, magnify),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_floating(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    fonts: &Fonts,
+    style: DockStyle,
+    wins: &[WindowInfo],
+    icons: &mut HashMap<String, Option<Icon>>,
+    hover: Option<(f64, f64)>,
+    live: &Live<'_>,
+    magnify: bool,
+) -> Vec<Region> {
+    let w = cv.width as i32;
+    let h = cv.height as i32;
+    let m = metrics(style);
+    let entries = dock_entries(wins);
+    let its = items(style, &entries);
+    let card_y = h - CARD_H;
+    let base_w = base_width(style, wins);
+    let base_left = (w - base_w) / 2;
+
+    // Base (unmagnified) centre of every item, used to measure distance.
+    let mut centres = Vec::with_capacity(its.len());
+    let mut x = base_left + m.pad;
+    for it in &its {
+        let iw = if matches!(it, Item::Separator) {
+            1
+        } else {
+            m.cell
+        };
+        centres.push(x as f32 + iw as f32 / 2.0);
+        x += iw + m.gap;
+    }
+
+    // Pointer over the card (not the clear room above it) drives magnification.
+    let pointer_x = hover
+        .filter(|(_, hy)| *hy >= card_y as f64)
+        .map(|(hx, _)| hx as f32)
+        .filter(|_| magnify);
+
+    let sizes: Vec<i32> = its
+        .iter()
+        .zip(&centres)
+        .map(|(it, c)| match it {
+            Item::Separator => 1,
+            _ => match pointer_x {
+                Some(px) => {
+                    (m.cell as f32 * magnification((px - c) / m.cell as f32)).round() as i32
+                }
+                None => m.cell,
+            },
+        })
+        .collect();
+    let content: i32 = sizes.iter().sum::<i32>() + m.gap * (its.len() as i32 - 1).max(0);
+    let card_w = content + m.pad * 2;
+    let card_x = (w - card_w) / 2;
+
+    card(cv, th, card_x, card_y, card_w, CARD_H, 20.0);
+
+    let mut regions = Vec::new();
+    let mut x = card_x + m.pad;
+    let base_y = card_y + (CARD_H - m.cell) / 2 - 1;
+    for (it, size) in its.iter().zip(&sizes) {
+        if let Item::Separator = it {
+            cv.fill_rect(x, card_y + 12, 1, CARD_H - 24, th.tile_hover);
+            x += 1 + m.gap;
+            continue;
+        }
+        let s = *size;
+        let hov = hover
+            .is_some_and(|(hx, hy)| hy >= card_y as f64 && hx >= x as f64 && hx < (x + s) as f64);
+        // Bottom-aligned: magnified icons grow upward. Without magnification
+        // the hovered icon lifts a little.
+        let lift = if !magnify && hov { 3 } else { 0 };
+        let y = base_y + (m.cell - s) - lift;
+        let (role, app_id, action) = match it {
+            Item::Start => ("start", None, HitAction::Shell(ShellCmd::ToggleLauncher)),
+            Item::Agent => ("agent", None, HitAction::Shell(ShellCmd::ToggleAgents)),
+            Item::Trash => (
+                "trash",
+                None,
+                HitAction::Launch(LaunchTarget::Shell("solyra-open files trash:///".into())),
+            ),
+            Item::App(e) => (
+                e.role.as_str(),
+                Some(e.app_id.as_str()),
+                match e.window {
+                    Some(id) => HitAction::FocusWindow(id),
+                    None => HitAction::Launch(e.command.clone()),
+                },
+            ),
+            Item::Separator => unreachable!(),
+        };
+        let icon = app_id.and_then(|id| load_app_icon(icons, id));
+        cv.draw_app_squircle(x, y, s, role, icon);
+
+        if let Item::App(e) = it {
+            if e.window_count > 0 {
+                running_mark(cv, th, style, x, s, card_y, e.is_focused);
+            }
+            if hov && magnify {
+                tooltip(cv, th, fonts, &e.title, x + s / 2, y - 6, w);
+            }
+        }
+        if let Item::Agent = it {
+            agent_badge(cv, th, fonts, live, x, y, s);
+        }
+        regions.push(Region {
+            x,
+            y: card_y,
+            w: s,
+            h: CARD_H,
+            action,
+        });
+        x += s + m.gap;
+    }
+    regions
+}
+
+fn running_mark(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    style: DockStyle,
+    x: i32,
+    s: i32,
+    card_y: i32,
+    focused: bool,
+) {
+    let bottom = card_y + CARD_H;
+    match style {
+        // macOS: a small dot.
+        DockStyle::Macos | DockStyle::Minimal => {
+            let col = if focused { th.accent } else { th.text_med };
+            cv.circle(x as f32 + s as f32 / 2.0, (bottom - 4) as f32, 2.2, col);
+        }
+        // Solyra: a pill that widens for the focused app (shape, not only colour).
+        _ => {
+            let bw = if focused { 18 } else { 8 };
+            let col = if focused { th.accent } else { th.text_med };
+            cv.round_rect(x + (s - bw) / 2, bottom - 5, bw, 3, 1.5, col);
+        }
+    }
+}
+
+fn agent_badge(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    fonts: &Fonts,
+    live: &Live<'_>,
+    x: i32,
+    y: i32,
+    s: i32,
+) {
+    let agents = live.agents;
+    if agents.live == 0 {
+        return;
+    }
+    let col = if agents.needs_attention() {
+        th.agent_approval
+    } else {
+        th.agent_active
+    };
+    let (bx, by) = ((x + s - 5) as f32, (y + 5) as f32);
+    cv.circle(bx, by, 6.0, Rgba::rgb(0x14, 0x11, 0x19));
+    cv.circle(bx, by, 4.6, col);
+    if agents.needs_attention() {
+        let n = (agents.waiting + agents.blocked).min(9).to_string();
+        cv.text(
+            fonts.semibold.as_ref(),
+            &n,
+            x + s - 8,
+            y + 9,
+            9.0,
+            th.on_accent,
+        );
+    }
+}
+
+/// A label above a magnified icon, kept on screen.
+fn tooltip(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    fonts: &Fonts,
+    label: &str,
+    cx: i32,
+    bottom: i32,
+    w: i32,
+) {
+    if bottom < 18 {
+        return;
+    }
+    let tw = text_width(fonts.semibold.as_ref(), label, 11.0).min(180);
+    let bw = tw + 16;
+    let bx = (cx - bw / 2).clamp(2, (w - bw - 2).max(2));
+    let by = bottom - 20;
+    cv.round_rect(bx, by, bw, 18, 6.0, th.surface);
+    cv.stroke_round_rect(bx, by, bw, 18, 6.0, 1.0, th.hairline);
+    cv.text_truncated(
+        fonts.semibold.as_ref(),
+        label,
+        bx + 8,
+        by + 13,
+        11.0,
+        180,
+        th.text,
+    );
+}
+
+fn card(cv: &mut Canvas<'_>, th: &Theme, x: i32, y: i32, w: i32, h: i32, r: f32) {
+    cv.round_rect(x, y, w, h, r, th.surface);
+    cv.stroke_round_rect(x, y, w, h, r, 1.0, th.hairline);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_taskbar(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    fonts: &Fonts,
+    wins: &[WindowInfo],
+    icons: &mut HashMap<String, Option<Icon>>,
+    hover: Option<(f64, f64)>,
+    live: &Live<'_>,
+) -> Vec<Region> {
+    let (telem, prefs) = (live.telem, live.prefs);
+    let w = cv.width as i32;
+    let h = cv.height as i32;
+    let mut regions = Vec::new();
+
+    cv.fill_rect(0, 0, w, h, th.bar);
+    cv.fill_rect(0, 0, w, 1, th.hairline);
+
+    // Left: task view (the workspace overview), a real action.
+    let tv_hov = hover.is_some_and(|(hx, _)| hx >= 8.0 && hx < 44.0);
+    if tv_hov {
+        cv.round_rect(8, 6, 36, 36, 8.0, th.tile_hover);
+    }
+    for (dx, dy) in [(0, 0), (9, 0), (0, 9), (9, 9)] {
+        cv.round_rect(17 + dx, 15 + dy, 7, 7, 1.5, th.text_med);
+    }
+    regions.push(Region {
+        x: 8,
+        y: 4,
+        w: 36,
+        h: 40,
+        action: HitAction::Launch(LaunchTarget::Ipc("{\"Action\":{\"ToggleOverview\":{}}}")),
+    });
+
+    // Centre: start, search, apps.
+    let entries = dock_entries(wins);
+    let search_w = 188;
+    let total_w = 40 + 8 + search_w + 10 + (entries.len() as i32) * 44;
+    let mut cx = (w - total_w) / 2;
+    cv.draw_app_squircle(cx + 3, 7, 34, "start", None);
+    regions.push(Region {
+        x: cx,
+        y: 4,
+        w: 40,
+        h: 40,
+        action: HitAction::Shell(ShellCmd::ToggleLauncher),
+    });
+    cx += 48;
+
+    let s_hov = hover.is_some_and(|(hx, _)| hx >= cx as f64 && hx < (cx + search_w) as f64);
+    cv.round_rect(
+        cx,
+        8,
+        search_w,
+        32,
+        16.0,
+        if s_hov { th.tile_hover } else { th.tile },
+    );
+    cv.stroke_round_rect(cx, 8, search_w, 32, 16.0, 1.0, th.hairline);
+    cv.icon_search(cx as f32 + 18.0, 24.0, 13.0, th.text_med);
+    cv.text(
+        fonts.regular.as_ref(),
+        "Search",
+        cx + 32,
+        28,
+        12.0,
+        th.text_dim,
+    );
+    regions.push(Region {
+        x: cx,
+        y: 6,
+        w: search_w,
+        h: 36,
+        action: HitAction::Shell(ShellCmd::ToggleLauncher),
+    });
+    cx += search_w + 10;
+
+    for entry in &entries {
+        let is_hov = hover.is_some_and(|(hx, _)| hx >= cx as f64 && hx < (cx + 40) as f64);
+        if is_hov || entry.is_focused {
+            cv.round_rect(
+                cx,
+                5,
+                40,
+                38,
+                8.0,
+                if is_hov { th.tile_hover } else { th.tile },
+            );
+        }
+        let sys_ic = load_app_icon(icons, &entry.app_id);
+        cv.draw_app_squircle(cx + 4, 7, 32, &entry.role, sys_ic);
+        if entry.window_count > 0 {
+            let uw = if entry.is_focused { 16 } else { 6 };
+            let col = if entry.is_focused {
+                th.accent
+            } else {
+                th.text_dim
+            };
+            cv.round_rect(cx + (40 - uw) / 2, h - 4, uw, 3, 1.5, col);
+        }
+        let action = match entry.window {
+            Some(id) => HitAction::FocusWindow(id),
+            None => HitAction::Launch(entry.command.clone()),
+        };
+        regions.push(Region {
+            x: cx,
+            y: 4,
+            w: 40,
+            h: 40,
+            action,
+        });
+        cx += 44;
+    }
+
+    // Right: tray and stacked clock/date, honouring the clock settings.
+    let look = &prefs.look;
+    let now = chrono::Local::now();
+    let t_str = now.format(look.clock_format()).to_string();
+    let d_str = now.format("%d/%m/%Y").to_string();
+    let tw = text_width(fonts.semibold.as_ref(), &t_str, 11.5);
+    let dw = text_width(fonts.regular.as_ref(), &d_str, 10.2);
+    let col_w = tw.max(dw);
+    let clock_x = w - 14 - col_w;
+    cv.text(
+        fonts.semibold.as_ref(),
+        &t_str,
+        clock_x + col_w - tw,
+        21,
+        11.5,
+        th.text,
+    );
+    if look.show_date {
+        cv.text(
+            fonts.regular.as_ref(),
+            &d_str,
+            clock_x + col_w - dw,
+            35,
+            10.2,
+            th.text_dim,
+        );
+    }
+    let tray_x = clock_x - 82;
+    cv.icon_network(
+        (tray_x + 10) as f32,
+        24.0,
+        12.5,
+        telem.network,
+        th.text,
+        th.text_dim,
+    );
+    cv.icon_volume((tray_x + 32) as f32, 24.0, 12.5, prefs.volume, th.text);
+    if let Some(pct) = telem.battery_pct {
+        cv.icon_battery((tray_x + 56) as f32, 24.0, pct, th.text_med, th.success);
+    }
+    regions.push(Region {
+        x: tray_x - 6,
+        y: 4,
+        w: w - tray_x,
+        h: 40,
+        action: HitAction::Shell(ShellCmd::ToggleControl),
+    });
+    regions
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn magnification_peaks_at_the_pointer_and_fades_smoothly() {
+        assert!((magnification(0.0) - MAX_SCALE).abs() < 1e-4);
+        assert_eq!(magnification(REACH), 1.0);
+        assert_eq!(magnification(-5.0), 1.0);
+        let mut last = magnification(0.0);
+        for i in 1..=20 {
+            let v = magnification(i as f32 * REACH / 20.0);
+            assert!(v <= last + 1e-6, "monotonic");
+            last = v;
+        }
+    }
+
+    #[test]
+    fn specs_per_style() {
+        let wins = [];
+        let t = spec(DockStyle::Windows, &wins, true, false);
+        assert!(t.full_width && t.exclusive == TASKBAR_H as i32);
+        assert_eq!(
+            spec(DockStyle::Windows, &wins, false, true).exclusive,
+            0,
+            "a hidden taskbar reserves nothing"
+        );
+        let plain = spec(DockStyle::Solyra, &wins, false, false);
+        let mag = spec(DockStyle::Solyra, &wins, true, false);
+        assert_eq!(plain.namespace, "solyra-dock");
+        assert_eq!(
+            mag.namespace, "solyra-dock-magnify",
+            "no compositor blur over the clear room"
+        );
+        assert!(mag.width > plain.width && mag.height > plain.height);
+        assert_eq!(
+            spec(DockStyle::Minimal, &wins, false, true).height,
+            HIDDEN_H
+        );
+        assert!(spec(DockStyle::Minimal, &wins, false, false).width < plain.width);
+    }
+
+    #[test]
+    fn items_per_style() {
+        let e = vec![];
+        assert!(matches!(items(DockStyle::Minimal, &e)[..], []));
+        assert!(matches!(items(DockStyle::Solyra, &e)[0], Item::Start));
+        assert!(matches!(
+            items(DockStyle::Macos, &e).last(),
+            Some(Item::Trash)
+        ));
+    }
+}
