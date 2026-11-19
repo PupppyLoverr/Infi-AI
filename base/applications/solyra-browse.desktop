@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Solyra Browse
+Comment=A small web browser (Firefox is the default)
+Exec=solyra-browse
+Icon=web-browser
+Categories=Network;WebBrowser;

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["solyra-ui", "solyra-term", "solyra-settings"]
+members = ["solyra-ui", "solyra-term", "solyra-settings", "solyra-browse"]
 
 [workspace.package]
 edition = "2024"

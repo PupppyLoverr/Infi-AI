@@ -26,3 +26,4 @@ apps/**
 !apps/out/solyra-settings
 !apps/out/solyra-term
 !apps/out/solyra-agent
+!apps/out/solyra-browse
