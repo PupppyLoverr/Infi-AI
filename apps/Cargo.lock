@@ -3123,6 +3123,7 @@ version = "0.1.0"
 name = "solyra-ui"
 version = "0.1.0"
 dependencies = [
+ "solyra-conf",
  "solyra-tokens",
  "zgx",
 ]

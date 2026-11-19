@@ -119,10 +119,15 @@ pub fn draw_bar(
     let h = cv.height as i32;
     let mut regions = Vec::new();
 
-    // Translucent dark-tinted glass: lets niri's dual-kawase backdrop blur and
-    // the wallpaper hue shine through, just like macOS Sequoia.
-    cv.fill_rect(0, 0, w, h, th.bar);
-    cv.fill_rect(0, h - 1, w, 1, th.tile);
+    // The bar's material (Solid, See-through, Glass, Acrylic); blur and grain
+    // behind it are the compositor's (see material.rs).
+    let slab = crate::material::slab(
+        prefs.look.material(prefs.look.bar_material),
+        th.bar,
+        prefs.wall_tint,
+    );
+    crate::material::paint(cv, &slab, 0, 0, w, h, 0.0);
+    cv.fill_rect(0, h - 1, w, 1, slab.edge);
 
     use solyra_conf::look::BarStyle;
     let bar_style = prefs.look.bar;

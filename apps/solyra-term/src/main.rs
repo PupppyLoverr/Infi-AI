@@ -18,13 +18,15 @@ mod clear_tests;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let self_test = std::env::args().any(|a| a == "--self-test");
-    let theme = solyra_ui::current_theme();
+    let style = solyra_ui::current();
+    let theme = style.theme;
     Application::new()
         .window(WindowOptions {
             title: "Terminal".into(),
             width: 960.,
             height: 600.,
             min_size: Some((480., 300.)),
+            transparent: style.glass,
             ..Default::default()
         })
         .run(move |cx| {
@@ -145,14 +147,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 move || open_tab()
             });
 
-            cx.render(
+            cx.render(solyra_ui::scope(
+                &style,
                 column()
                     .w_full()
                     .h_full()
-                    .bg(solyra_ui::window_bg(&theme))
+                    .bg(style.content_bg())
                     .text_color(solyra_ui::color(theme.text))
-                    .child(row().items_center().child(strip.grow()).child(add)),
-            );
+                    .child(
+                        // The tabs component holds the strip and the active
+                        // terminal, so this row must take the window's height.
+                        row()
+                            .grow()
+                            .w_full()
+                            .items_start()
+                            .bg(style.sidebar_bg())
+                            .child(strip.grow().h_full())
+                            .child(add),
+                    ),
+            ));
 
             if self_test {
                 let window = cx.window.clone();

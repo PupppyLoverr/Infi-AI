@@ -19,6 +19,7 @@ mod dock;
 mod island;
 mod launcher;
 mod lock;
+mod material;
 mod media;
 mod menu;
 mod notify;
@@ -68,6 +69,10 @@ use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_client::protocol::wl_shm::Format;
 use wayland_client::protocol::wl_surface::WlSurface;
 use wayland_client::{Connection, Dispatch, QueueHandle, WEnum};
+use wayland_protocols::ext::background_effect::v1::client::{
+    ext_background_effect_manager_v1::{self, ExtBackgroundEffectManagerV1},
+    ext_background_effect_surface_v1::{self, ExtBackgroundEffectSurfaceV1},
+};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -119,13 +124,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let pool = SlotPool::new(8 * 1024 * 1024, &shm)?;
     let seat_state = SeatState::new(&globals, &qh);
 
-    let prefs = ShellPrefs::load();
+    let mut prefs = ShellPrefs::load();
+    prefs.compute_wall_tint();
+    let blur_mgr = globals
+        .bind::<ExtBackgroundEffectManagerV1, _, _>(&qh, 1..=1, ())
+        .ok();
+    let bar_material = prefs.look.material(prefs.look.bar_material);
+    let dock_material = prefs.look.material(prefs.look.dock_material);
     let bar = make_layer_surface(
         &compositor,
         &layer_shell,
         &qh,
         Layer::Top,
-        "solyra-bar",
+        &material::namespace("solyra-bar", bar_material),
         Anchor::TOP | Anchor::LEFT | Anchor::RIGHT,
         BAR_HEIGHT as i32,
         (0, 0, 0, 0),
@@ -135,7 +146,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     );
     let dock_hidden = prefs.look.dock_autohide;
     let dock_spec = dock::spec(prefs.dock_style, &[], prefs.look.dock_magnify, dock_hidden);
-    let dock = make_dock_surface(&compositor, &layer_shell, &qh, &dock_spec);
+    let dock = make_dock_surface(&compositor, &layer_shell, &qh, &dock_spec, dock_material);
 
     let waker: Arc<dyn Fn() + Send + Sync> = {
         let (conn_wake, qh_wake) = (conn.clone(), qh.clone());
@@ -180,6 +191,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mut app = App {
+        blur_mgr,
+        bar_material,
+        dock_material,
+        notch_material: material::Material::Solid,
         registry_state: RegistryState::new(&globals),
         output_state: OutputState::new(&globals, &qh),
         seat_state,
@@ -276,6 +291,48 @@ struct SurfaceSlot {
     height: u32,
     configured: bool,
     regions: Vec<Region>,
+    /// Blur-behind request (ext-background-effect), made on first use.
+    effect: Option<ExtBackgroundEffectSurfaceV1>,
+    /// The blur region last sent, to skip resending an unchanged one.
+    blur: Vec<(i32, i32, i32, i32)>,
+}
+
+impl Drop for SurfaceSlot {
+    fn drop(&mut self) {
+        if let Some(e) = self.effect.take() {
+            e.destroy();
+        }
+    }
+}
+
+/// Ask the compositor to blur behind exactly `rects` of this surface (empty:
+/// no blur). Takes effect with the surface's next commit. Without the
+/// protocol (another compositor) materials stay plain tints.
+fn set_blur(
+    mgr: Option<&ExtBackgroundEffectManagerV1>,
+    compositor: &CompositorState,
+    qh: &QueueHandle<App>,
+    slot: &mut SurfaceSlot,
+    rects: Vec<(i32, i32, i32, i32)>,
+) {
+    let Some(mgr) = mgr else {
+        return;
+    };
+    if rects == slot.blur && slot.effect.is_some() {
+        return;
+    }
+    let effect = slot
+        .effect
+        .get_or_insert_with(|| mgr.get_background_effect(&slot.surface, qh, ()));
+    if rects.is_empty() {
+        effect.set_blur_region(None);
+    } else if let Ok(region) = smithay_client_toolkit::compositor::Region::new(compositor) {
+        for &(x, y, w, h) in &rects {
+            region.add(x, y, w, h);
+        }
+        effect.set_blur_region(Some(region.wl_region()));
+    }
+    slot.blur = rects;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -307,6 +364,8 @@ fn make_layer_surface(
         height,
         configured: false,
         regions: Vec::new(),
+        effect: None,
+        blur: Vec::new(),
     }
 }
 
@@ -315,6 +374,7 @@ fn make_dock_surface(
     layer_shell: &LayerShell,
     qh: &QueueHandle<App>,
     spec: &dock::Spec,
+    mat: material::Material,
 ) -> SurfaceSlot {
     let anchor = if spec.full_width {
         Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT
@@ -326,7 +386,7 @@ fn make_dock_surface(
         layer_shell,
         qh,
         Layer::Top,
-        spec.namespace,
+        &material::namespace(spec.namespace, mat),
         anchor,
         spec.exclusive,
         (0, 0, spec.bottom_margin, 0),
@@ -353,6 +413,12 @@ fn set_dock_input_region(compositor: &CompositorState, surface: &WlSurface, spec
 }
 
 struct App {
+    blur_mgr: Option<ExtBackgroundEffectManagerV1>,
+    /// Materials the current bar/dock/notch surfaces were made with (their
+    /// namespaces carry it, so a change recreates the surface).
+    bar_material: material::Material,
+    dock_material: material::Material,
+    notch_material: material::Material,
     registry_state: RegistryState,
     output_state: OutputState,
     seat_state: SeatState,
@@ -661,10 +727,15 @@ impl App {
             return;
         }
         self.prefs_mtime = mtime;
-        let new = ShellPrefs::load();
+        let mut new = ShellPrefs::load();
         let wallpaper_changed = new.wallpaper != self.prefs.wallpaper
             || new.wallpaper_file != self.prefs.wallpaper_file
             || new.wallpaper_mode != self.prefs.wallpaper_mode;
+        if wallpaper_changed {
+            new.compute_wall_tint();
+        } else {
+            new.wall_tint = self.prefs.wall_tint;
+        }
         self.prefs = new;
         self.ensure_island();
         self.ensure_bar();
@@ -707,10 +778,12 @@ impl App {
             self.prefs.look.dock_magnify,
             self.dock_hidden && autohide,
         );
-        if spec == self.dock_spec {
+        let mat = self.prefs.look.material(self.prefs.look.dock_material);
+        if spec == self.dock_spec && mat == self.dock_material {
             return;
         }
-        let same_kind = spec.namespace == self.dock_spec.namespace
+        let same_kind = mat == self.dock_material
+            && spec.namespace == self.dock_spec.namespace
             && spec.full_width == self.dock_spec.full_width
             && spec.exclusive == self.dock_spec.exclusive
             && spec.bottom_margin == self.dock_spec.bottom_margin;
@@ -725,7 +798,9 @@ impl App {
             set_dock_input_region(&self.compositor, &self.dock.surface, &spec);
             self.dock.layer.commit();
         } else {
-            self.dock = make_dock_surface(&self.compositor, &self.layer_shell, &self.qh, &spec);
+            self.dock =
+                make_dock_surface(&self.compositor, &self.layer_shell, &self.qh, &spec, mat);
+            self.dock_material = mat;
         }
         self.dock_spec = spec;
         self.needs_redraw = true;
@@ -770,6 +845,25 @@ impl App {
         } else {
             (BAR_HEIGHT as i32, BAR_HEIGHT)
         };
+        let mat = self.prefs.look.material(self.prefs.look.bar_material);
+        if mat != self.bar_material {
+            self.bar = make_layer_surface(
+                &self.compositor,
+                &self.layer_shell,
+                &self.qh,
+                Layer::Top,
+                &material::namespace("solyra-bar", mat),
+                Anchor::TOP | Anchor::LEFT | Anchor::RIGHT,
+                zone,
+                (0, 0, 0, 0),
+                0,
+                h,
+                KeyboardInteractivity::None,
+            );
+            self.bar_material = mat;
+            self.needs_redraw = true;
+            return;
+        }
         if self.bar.height != h {
             self.bar.layer.set_exclusive_zone(zone);
             self.bar.layer.set_size(0, h);
@@ -846,6 +940,12 @@ impl App {
     fn ensure_island(&mut self) {
         use solyra_conf::look::NotchStyle;
         let want = self.prefs.look.notch != NotchStyle::Off;
+        let mat = self.prefs.look.material(self.prefs.look.notch_material);
+        if mat != self.notch_material {
+            // The namespace carries the material: make the surface anew.
+            self.island = None;
+            self.notch_material = mat;
+        }
         match (want, self.island.is_some()) {
             (true, false) => {
                 // Exclusive zone -1: sit at the very top, over the bar, ignoring
@@ -855,7 +955,7 @@ impl App {
                     &self.layer_shell,
                     &self.qh,
                     Layer::Overlay,
-                    "solyra-notch",
+                    &material::namespace("solyra-notch", mat),
                     Anchor::TOP,
                     -1,
                     (0, 0, 0, 0),
@@ -1056,6 +1156,13 @@ impl App {
                         hover,
                     )
                 };
+                let bar_shown = self.prefs.look.bar != solyra_conf::look::BarStyle::Hidden;
+                let rects = if bar_shown && material::blurs(self.bar_material) {
+                    vec![(0, 0, w as i32, h as i32)]
+                } else {
+                    Vec::new()
+                };
+                set_blur(self.blur_mgr.as_ref(), &self.compositor, &self.qh, &mut self.bar, rects);
                 present(
                     buffer,
                     &self.bar.surface,
@@ -1082,7 +1189,7 @@ impl App {
                     telem: &telem,
                     prefs: &self.prefs,
                 };
-                self.dock.regions = dock::draw(
+                let (regions, body) = dock::draw(
                     &mut cv,
                     &th,
                     &self.fonts,
@@ -1094,6 +1201,14 @@ impl App {
                     self.prefs.look.dock_magnify,
                     self.dock_hidden && self.prefs.look.dock_autohide,
                 );
+                self.dock.regions = regions;
+                let rects = match body {
+                    Some(b) if material::blurs(self.dock_material) => {
+                        material::blur_rects(b.x, b.y, b.w, b.h, b.r)
+                    }
+                    _ => Vec::new(),
+                };
+                set_blur(self.blur_mgr.as_ref(), &self.compositor, &self.qh, &mut self.dock, rects);
                 present(
                     buffer,
                     &self.dock.surface,
@@ -1251,6 +1366,7 @@ impl App {
             date: &date,
             reply: &self.reply_buf,
             typing,
+            material: self.notch_material,
         };
         let Ok((buffer, bytes)) = self.pool.create_buffer(
             (w * scale) as i32,
@@ -1278,6 +1394,12 @@ impl App {
             region.add(ix - 10, iy, iw + 20, ih);
             slot.surface.set_input_region(Some(region.wl_region()));
         }
+        let rects = if material::blurs(self.notch_material) {
+            island::blur_rects(self.prefs.look.notch, &self.island_anim.cur)
+        } else {
+            Vec::new()
+        };
+        set_blur(self.blur_mgr.as_ref(), &self.compositor, &self.qh, slot, rects);
         if moving {
             // Ask for the next frame; `CompositorHandler::frame` redraws.
             slot.surface.frame(&self.qh, slot.surface.clone());
@@ -2114,6 +2236,32 @@ impl Dispatch<WlKeyboard, ()> for App {
         {
             state.handle_evdev_key(key, ks == KeyState::Pressed);
         }
+    }
+}
+
+impl Dispatch<ExtBackgroundEffectManagerV1, ()> for App {
+    fn event(
+        _: &mut Self,
+        _: &ExtBackgroundEffectManagerV1,
+        _: ext_background_effect_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // `capabilities`: blur is the only one we use; if it is missing the
+        // compositor simply ignores our regions.
+    }
+}
+
+impl Dispatch<ExtBackgroundEffectSurfaceV1, ()> for App {
+    fn event(
+        _: &mut Self,
+        _: &ExtBackgroundEffectSurfaceV1,
+        _: ext_background_effect_surface_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
     }
 }
 

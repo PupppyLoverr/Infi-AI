@@ -65,9 +65,10 @@ fn write_request(r: &Request, path: &str) -> std::io::Result<()> {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let self_test = std::env::args().any(|a| a == "--self-test");
-    let theme = solyra_ui::current_theme();
+    let style = solyra_ui::current();
+    let theme = style.theme;
     Application::new()
-        .window(WindowOptions { title: "Welcome".into(), width: 640., height: 560., ..Default::default() })
+        .window(WindowOptions { title: "Welcome".into(), width: 640., height: 560., transparent: style.glass, ..Default::default() })
         .run(move |cx| {
             let rt = cx.ui.runtime.clone();
             let step = rt.signal(0usize);
@@ -185,13 +186,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }))
             };
 
-            cx.render(
+            cx.render(solyra_ui::scope(
+                &style,
                 column()
                     .w_full()
                     .h_full()
                     .p(32.)
                     .gap(16.)
-                    .bg(solyra_ui::window_bg(&theme))
+                    .bg(style.content_bg())
                     .text_color(solyra_ui::color(theme.text))
                     .child(body.grow())
                     .child(text_signal({
@@ -199,7 +201,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         move || m.get()
                     }).text_color(solyra_ui::color(theme.danger)))
                     .child(row().gap(8.).child(back).child(next)),
-            );
+            ));
 
             if self_test {
                 let window = cx.window.clone();

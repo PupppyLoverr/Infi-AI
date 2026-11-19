@@ -696,6 +696,7 @@ fn island_shots(fonts: &Fonts) -> Vec<Shot> {
                 date: "Thursday 19 November",
                 reply: "",
                 typing: false,
+                material: crate::material::Material::Solid,
             };
             let tag = format!("island-{}-{name}", style.as_str());
             out.push(shoot(
@@ -901,5 +902,266 @@ fn preview_matrix_renders_without_panicking() {
             write_png(&dir, s);
         }
         eprintln!("wrote {} previews to {}", shots.len(), dir.display());
+    }
+}
+
+/// What the compositor does behind a blurring material, approximated for
+/// previews: blurred backdrop, a saturation lift, and (Acrylic) fine grain.
+/// Values mirror the `.glass` / `.acrylic` layer rules in solyra-config.kdl.
+fn compositor_backdrop(
+    sharp: &[u8],
+    soft: &[u8],
+    w: u32,
+    m: crate::material::Material,
+    rects: &[(i32, i32, i32, i32)],
+    offset: (i32, i32),
+    out: &mut [u8],
+) {
+    use crate::material::Material;
+    let (sat, noise) = match m {
+        Material::Glass => (1.5f32, 0.0f32),
+        Material::Acrylic => (1.15, 0.06),
+        _ => return,
+    };
+    let _ = sharp;
+    for &(rx, ry, rw, rh) in rects {
+        for y in ry..ry + rh {
+            for x in rx..rx + rw {
+                let (gx, gy) = (x + offset.0, y + offset.1);
+                if gx < 0 || gy < 0 || gx >= w as i32 {
+                    continue;
+                }
+                let i = ((gy as u32 * w + gx as u32) * 4) as usize;
+                if i + 3 >= out.len() {
+                    continue;
+                }
+                let px = &soft[i..i + 3];
+                let l = 0.114 * px[0] as f32 + 0.587 * px[1] as f32 + 0.299 * px[2] as f32;
+                // Deterministic grain: a hash of the position.
+                let hash = ((gx as u32).wrapping_mul(73_856_093) ^ (gy as u32).wrapping_mul(19_349_663))
+                    % 1000;
+                let g = (hash as f32 / 1000.0 - 0.5) * 2.0 * noise * 255.0;
+                for c in 0..3 {
+                    let v = l + (px[c] as f32 - l) * sat + g;
+                    out[i + c] = v.clamp(0.0, 255.0) as u8;
+                }
+                out[i + 3] = 255;
+            }
+        }
+    }
+}
+
+/// Draw `surface` (premultiplied BGRA, `sw`×`sh`) over `out` at `at`.
+fn over(out: &mut [u8], w: u32, surface: &[u8], sw: u32, sh: u32, at: (i32, i32)) {
+    for y in 0..sh as i32 {
+        for x in 0..sw as i32 {
+            let (gx, gy) = (x + at.0, y + at.1);
+            if gx < 0 || gy < 0 || gx >= w as i32 {
+                continue;
+            }
+            let si = ((y as u32 * sw + x as u32) * 4) as usize;
+            let di = ((gy as u32 * w + gx as u32) * 4) as usize;
+            if di + 3 >= out.len() {
+                continue;
+            }
+            let a = surface[si + 3] as f32 / 255.0;
+            for c in 0..3 {
+                out[di + c] =
+                    (surface[si + c] as f32 + out[di + c] as f32 * (1.0 - a)).round().min(255.0) as u8;
+            }
+        }
+    }
+}
+
+/// A desktop scene (wallpaper, menu bar, notch or island, dock) in one
+/// material, so each material can be judged as a whole.
+fn material_scene(
+    fonts: &Fonts,
+    name: &str,
+    kind: ThemeKind,
+    wallpaper: &str,
+    bar_m: crate::material::Material,
+    dock_m: crate::material::Material,
+    notch_m: crate::material::Material,
+    dock_style: DockStyle,
+    notch: solyra_conf::look::NotchStyle,
+) -> Shot {
+    use crate::island::{self, Anim, Content, Extra, Glance};
+    use crate::lock::{backdrop, blur};
+    let (w, h) = (1280u32, 800u32);
+    let wp = std::fs::read(format!(
+        "{}/../../assets/wallpapers/{wallpaper}-1920x1080.png",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .ok()
+    .and_then(|b| crate::canvas::decode_png(&b));
+    let sharp = backdrop(wp.as_ref(), w, h);
+    let soft = blur(&blur(&sharp, w, h), w, h);
+    let mut out = sharp.clone();
+
+    let mut prefs = ShellPrefs::default();
+    prefs.theme = kind;
+    prefs.dock_style = dock_style;
+    prefs.look.bar_material = bar_m;
+    prefs.look.dock_material = dock_m;
+    prefs.look.notch_material = notch_m;
+    prefs.look.notch = notch;
+    prefs.wall_tint = wp.as_ref().and_then(crate::material::average);
+    let th = Theme::for_kind(kind);
+
+    // Bar.
+    let bh = BAR_HEIGHT;
+    let mut buf = vec![0u8; (w * bh * 4) as usize];
+    {
+        let mut cv = Canvas::new(&mut buf, w, bh, 1);
+        let t = telem(Some(64), NetworkState::Wireless, false);
+        draw_bar(
+            &mut cv,
+            &th,
+            fonts,
+            &[(1, true), (2, false), (3, false)],
+            &[win(1, "firefox", "Solyra — Firefox", true)],
+            None,
+            None,
+            None,
+            &prefs,
+            &t,
+            None,
+        );
+    }
+    if crate::material::blurs(bar_m) {
+        compositor_backdrop(&sharp, &soft, w, bar_m, &[(0, 0, w as i32, bh as i32)], (0, 0), &mut out);
+    }
+    over(&mut out, w, &buf, w, bh, (0, 0));
+
+    // Dock.
+    let wins = [
+        win(1, "firefox", "Firefox", true),
+        win(2, "foot", "Terminal", false),
+        win(3, "thunar", "Files", false),
+    ];
+    let spec = crate::dock::spec(dock_style, &wins, false, false);
+    let dw = if spec.full_width { w } else { spec.width };
+    let mut buf = vec![0u8; (dw * spec.height * 4) as usize];
+    let body;
+    {
+        let mut cv = Canvas::new(&mut buf, dw, spec.height, 1);
+        let t = telem(Some(64), NetworkState::Wireless, false);
+        let live = Live {
+            agents: Summary::of(true, &[]),
+            telem: &t,
+            prefs: &prefs,
+        };
+        let mut icons = HashMap::new();
+        body = crate::dock::draw(
+            &mut cv, &th, fonts, dock_style, &wins, &mut icons, None, &live, false, false,
+        )
+        .1;
+    }
+    let at = (
+        (w as i32 - dw as i32) / 2,
+        h as i32 - spec.height as i32 - spec.bottom_margin,
+    );
+    if let (Some(b), true) = (body, crate::material::blurs(dock_m)) {
+        let rects = crate::material::blur_rects(b.x, b.y, b.w, b.h, b.r);
+        compositor_backdrop(&sharp, &soft, w, dock_m, &rects, at, &mut out);
+    }
+    over(&mut out, w, &buf, dw, spec.height, at);
+
+    // Notch / island, showing what is playing.
+    if notch != solyra_conf::look::NotchStyle::Off {
+        let content = Content::Media(crate::media::Media {
+            bus: "x".into(),
+            title: "Clair de Lune".into(),
+            artist: "Debussy".into(),
+            playing: true,
+        });
+        let anim = Anim::new(island::target(notch, &content, false));
+        let glance = Glance {
+            battery: Some(64),
+            network: "Wi-Fi".into(),
+            agents_running: 0,
+            windows: 3,
+        };
+        let extra = Extra {
+            glance: &glance,
+            clock: "09:41",
+            date: "Thursday 19 November",
+            reply: "",
+            typing: false,
+            material: notch_m,
+        };
+        let (sw, sh) = (island::SURF_W, island::SURF_H);
+        let mut buf = vec![0u8; (sw * sh * 4) as usize];
+        {
+            let mut cv = Canvas::new(&mut buf, sw, sh, 1);
+            island::draw(&mut cv, fonts, notch, &anim, &content, false, &extra, None);
+        }
+        let at = ((w as i32 - sw as i32) / 2, 0);
+        if crate::material::blurs(notch_m) {
+            let rects = island::blur_rects(notch, &anim.cur);
+            compositor_backdrop(&sharp, &soft, w, notch_m, &rects, at, &mut out);
+        }
+        over(&mut out, w, &buf, sw, sh, at);
+    }
+
+    Shot {
+        name: format!("{name}-{}", kind.as_str()),
+        w,
+        h,
+        rgba: flatten(&out, w, h, Rgba::rgb(0, 0, 0)),
+    }
+}
+
+#[test]
+fn material_scenes_render() {
+    use crate::material::Material;
+    use solyra_conf::look::NotchStyle;
+    let fonts = Fonts::load();
+    let mut shots = Vec::new();
+    for kind in [ThemeKind::Dark, ThemeKind::Light] {
+        let wp = if kind == ThemeKind::Dark { "ocean" } else { "peach-light" };
+        for m in Material::ALL {
+            shots.push(material_scene(
+                &fonts,
+                &format!("material-{}", m.as_str()),
+                kind,
+                wp,
+                *m,
+                *m,
+                *m,
+                DockStyle::Macos,
+                NotchStyle::Notch,
+            ));
+        }
+        // Every dock and the island in the default (glass) look.
+        for (tag, dock) in [
+            ("solyra", DockStyle::Solyra),
+            ("taskbar", DockStyle::Windows),
+            ("minimal", DockStyle::Minimal),
+        ] {
+            shots.push(material_scene(
+                &fonts,
+                &format!("material-scene-{tag}"),
+                kind,
+                wp,
+                Material::Acrylic,
+                Material::Acrylic,
+                Material::Glass,
+                dock,
+                NotchStyle::Island,
+            ));
+        }
+    }
+    // Glass must differ from solid where the dock is: the backdrop shows.
+    let solid = &shots[0];
+    let glass = &shots[2];
+    assert_ne!(solid.rgba, glass.rgba);
+    if let Some(dir) = std::env::var_os("SOLYRA_RENDER_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for s in &shots {
+            write_png(&dir, s);
+        }
     }
 }

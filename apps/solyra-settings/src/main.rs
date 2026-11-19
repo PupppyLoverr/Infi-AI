@@ -73,7 +73,7 @@ fn heading(t: &str) -> View {
 }
 
 fn caption(t: impl Into<String>) -> View {
-    text(t.into()).text_size(12.).opacity(0.7)
+    text(t.into()).text_size(12.).opacity(0.7).text_wrap(true).w_full()
 }
 
 fn action(label: &str, on_click: impl Fn() + 'static) -> View {
@@ -121,7 +121,7 @@ fn conf_choice(
     column()
         .gap(6.)
         .child(text(label.to_string()))
-        .child(segmented(label.to_string(), sel, options.iter().map(|(_, l)| *l)))
+        .child(row().child(segmented(label.to_string(), sel, options.iter().map(|(_, l)| *l))))
 }
 
 /// A checkbox bound to a `shell.conf` flag (`1`/`0`).
@@ -141,7 +141,7 @@ fn conf_toggle(cx: &mut zgx::compose::Context, status: &Signal<String>, key: &'s
 
 fn scrolling(cx: &mut zgx::compose::Context, body: View) -> View {
     let offset = cx.runtime().signal(0f32);
-    scroll(offset).grow().child(body)
+    scroll(offset).grow().w_full().child(body.w_full().pr(12.))
 }
 
 fn appearance_page(status: Signal<String>) -> View {
@@ -149,6 +149,13 @@ fn appearance_page(status: Signal<String>) -> View {
         let conf = read(conf_path());
         let look = Look::from_conf(&conf);
         let theme_now = solyra_conf::get(&conf, "theme").unwrap_or("dark").to_string();
+        let app_glass = solyra_ui::current().glass || look.opaque;
+        static MATERIALS: [(&str, &str); 4] = [
+            ("solid", "Solid"),
+            ("clear", "See-through"),
+            ("glass", "Glass"),
+            ("acrylic", "Acrylic"),
+        ];
         static ACCENTS: [(&str, &str); 7] = [
             ("mauve", "Mauve"),
             ("blue", "Blue"),
@@ -163,7 +170,13 @@ fn appearance_page(status: Signal<String>) -> View {
             .child(heading("Appearance"))
             .child(conf_choice(cx, &status, "theme", "Theme", &[("dark", "Dark"), ("light", "Light")], &theme_now))
             .child(conf_choice(cx, &status, "accent", "Accent colour", &ACCENTS, &look.accent))
-            .child(conf_toggle(cx, &status, "opaque", "Solid surfaces (no translucency)", look.opaque))
+            .child(text("Materials").font_bold())
+            .child(caption("What the bar, dock and notch are made of. Glass blurs what is behind; Acrylic also takes the wallpaper's colour and adds a fine grain; See-through stays sharp."))
+            .child(conf_choice(cx, &status, "bar_material", "Menu bar", &MATERIALS, look.bar_material.as_str()))
+            .child(conf_choice(cx, &status, "dock_material", "Dock", &MATERIALS, look.dock_material.as_str()))
+            .child(conf_choice(cx, &status, "notch_material", "Notch", &MATERIALS, look.notch_material.as_str()))
+            .child(conf_toggle(cx, &status, "app_glass", "Frosted glass in Solyra apps", app_glass))
+            .child(conf_toggle(cx, &status, "opaque", "Solid surfaces everywhere (overrides the materials above)", look.opaque))
             .child(conf_toggle(cx, &status, "reduced_motion", "Reduce motion", look.reduced_motion))
             .child(caption("Changes apply to the shell at once and to Solyra apps the next time they open."));
         scrolling(cx, body)
@@ -719,13 +732,15 @@ fn page_index(name: &str) -> usize {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let self_test = std::env::args().any(|a| a == "--self-test");
-    let theme = solyra_ui::current_theme();
+    let style = solyra_ui::current();
+    let theme = style.theme;
     Application::new()
         .window(WindowOptions {
             title: "Settings".into(),
-            width: 860.,
-            height: 600.,
+            width: 880.,
+            height: 620.,
             min_size: Some((640., 420.)),
+            transparent: style.glass,
             ..Default::default()
         })
         .run(move |cx| {
@@ -735,22 +750,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let dialogs = cx.dialogs.clone();
             let tasks = cx.tasks.clone();
 
-            let sidebar =
-                PAGES
-                    .iter()
-                    .enumerate()
-                    .fold(column().gap(4.).p(10.).w(190.), |col, (i, name)| {
-                        let page = page.clone();
-                        col.child(
-                            button()
-                                .h(36.)
-                                .px(12.)
-                                .rounded(8.)
-                                .items_center()
-                                .child(text(name.to_string()))
-                                .on_click(move || page.put(i)),
-                        )
-                    });
+            let sidebar = PAGES.iter().enumerate().fold(
+                column()
+                    .gap(2.)
+                    .p(12.)
+                    .pt(18.)
+                    .w(200.)
+                    .h_full()
+                    .bg(style.sidebar_bg())
+                    .border_edges(zgx::scene::Insets { top: 0., right: 1., bottom: 0., left: 0. })
+                    .border_color(style.hairline())
+                    .child(
+                        text("Settings")
+                            .text_size(13.)
+                            .font_bold()
+                            .text_color(solyra_ui::color(theme.text_dim))
+                            .px(12.)
+                            .mb(8.),
+                    ),
+                |col, (i, name)| col.child(solyra_ui::sidebar_item(&style, name, i, page.clone())),
+            );
 
             let st = status.clone();
             let content = switch(
@@ -772,23 +791,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
             );
 
-            cx.render(
+            cx.render(solyra_ui::scope(
+                &style,
                 row()
                     .w_full()
                     .h_full()
-                    .bg(solyra_ui::window_bg(&theme))
                     .text_color(solyra_ui::color(theme.text))
                     .child(sidebar)
                     .child(
-                        column().grow().p(24.).gap(12.).child(content.grow()).child(
-                            text_signal({
-                                let s = status.clone();
-                                move || s.get()
-                            })
-                            .text_color(solyra_ui::color(theme.danger)),
-                        ),
+                        column()
+                            .grow()
+                            .h_full()
+                            .bg(style.content_bg())
+                            .p(28.)
+                            .gap(12.)
+                            .child(content.grow().w_full())
+                            .child(
+                                text_signal({
+                                    let s = status.clone();
+                                    move || s.get()
+                                })
+                                .text_color(solyra_ui::color(theme.danger)),
+                            ),
                     ),
-            );
+            ));
 
             if self_test {
                 let window = cx.window.clone();

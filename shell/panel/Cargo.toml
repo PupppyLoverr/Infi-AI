@@ -10,6 +10,7 @@ solyra-tokens = { path = "../../crates/solyra-tokens" }
 solyra-conf = { path = "../../crates/solyra-conf" }
 calloop = "0.14"
 wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 smithay-client-toolkit = { version = "0.20", default-features = false, features = ["calloop", "xkbcommon"] }
 ab_glyph = "0.2"
 png = "0.17"

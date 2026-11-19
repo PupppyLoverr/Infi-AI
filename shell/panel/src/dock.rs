@@ -19,6 +19,7 @@ use crate::state::{
     dock_entries, load_app_icon, AppEntry, DockStyle, LaunchTarget, ShellCmd, WindowInfo,
 };
 use crate::surfaces::{HitAction, Live, Region};
+use crate::material;
 use crate::tokens::Theme;
 
 /// Height of the floating card itself.
@@ -196,21 +197,49 @@ pub fn draw(
     live: &Live<'_>,
     magnify: bool,
     hidden: bool,
-) -> Vec<Region> {
+) -> (Vec<Region>, Option<Body>) {
     if hidden {
         // A clear strip: the pointer touching it brings the dock back.
-        return vec![Region {
-            x: 0,
-            y: 0,
-            w: cv.width as i32,
-            h: cv.height as i32,
-            action: HitAction::Shell(ShellCmd::RevealDock),
-        }];
+        return (
+            vec![Region {
+                x: 0,
+                y: 0,
+                w: cv.width as i32,
+                h: cv.height as i32,
+                action: HitAction::Shell(ShellCmd::RevealDock),
+            }],
+            None,
+        );
     }
     match style {
-        DockStyle::Windows => draw_taskbar(cv, th, fonts, wins, icons, hover, live),
+        DockStyle::Windows => {
+            let body = Body {
+                x: 0,
+                y: 0,
+                w: cv.width as i32,
+                h: cv.height as i32,
+                r: 0.0,
+            };
+            (draw_taskbar(cv, th, fonts, wins, icons, hover, live), Some(body))
+        }
         _ => draw_floating(cv, th, fonts, style, wins, icons, hover, live, magnify),
     }
+}
+
+/// The painted body of the dock (the card, or the whole taskbar): what the
+/// compositor blurs behind for Glass and Acrylic.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Body {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+    pub r: f32,
+}
+
+fn slab_for(live: &Live<'_>, base: crate::tokens::Rgba) -> material::Slab {
+    let look = &live.prefs.look;
+    material::slab(look.material(look.dock_material), base, live.prefs.wall_tint)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -224,7 +253,7 @@ fn draw_floating(
     hover: Option<(f64, f64)>,
     live: &Live<'_>,
     magnify: bool,
-) -> Vec<Region> {
+) -> (Vec<Region>, Option<Body>) {
     let w = cv.width as i32;
     let h = cv.height as i32;
     let m = metrics(style);
@@ -270,7 +299,15 @@ fn draw_floating(
     let card_w = content + m.pad * 2;
     let card_x = (w - card_w) / 2;
 
-    card(cv, th, card_x, card_y, card_w, CARD_H, 20.0);
+    let slab = slab_for(live, th.surface);
+    material::paint(cv, &slab, card_x, card_y, card_w, CARD_H, 20.0);
+    let body = Body {
+        x: card_x,
+        y: card_y,
+        w: card_w,
+        h: CARD_H,
+        r: 20.0,
+    };
 
     let mut regions = Vec::new();
     let mut x = card_x + m.pad;
@@ -329,7 +366,7 @@ fn draw_floating(
         });
         x += s + m.gap;
     }
-    regions
+    (regions, Some(body))
 }
 
 fn running_mark(
@@ -421,11 +458,6 @@ fn tooltip(
     );
 }
 
-fn card(cv: &mut Canvas<'_>, th: &Theme, x: i32, y: i32, w: i32, h: i32, r: f32) {
-    cv.round_rect(x, y, w, h, r, th.surface);
-    cv.stroke_round_rect(x, y, w, h, r, 1.0, th.hairline);
-}
-
 #[allow(clippy::too_many_arguments)]
 fn draw_taskbar(
     cv: &mut Canvas<'_>,
@@ -441,8 +473,9 @@ fn draw_taskbar(
     let h = cv.height as i32;
     let mut regions = Vec::new();
 
-    cv.fill_rect(0, 0, w, h, th.bar);
-    cv.fill_rect(0, 0, w, 1, th.hairline);
+    let slab = slab_for(live, th.bar);
+    material::paint(cv, &slab, 0, 0, w, h, 0.0);
+    cv.fill_rect(0, 0, w, 1, slab.edge);
 
     // Left: task view (the workspace overview), a real action.
     let tv_hov = hover.is_some_and(|(hx, _)| hx >= 8.0 && hx < 44.0);

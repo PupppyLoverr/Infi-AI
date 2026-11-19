@@ -158,6 +158,43 @@ fn unique_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
         .unwrap_or(first)
 }
 
+/// The line under the toolbar: what just happened, and clearing history.
+fn notice_row(b: &Browser, theme: &solyra_tokens::Theme) -> View {
+    let b = b.clone();
+    let theme = *theme;
+    row()
+        .px(12.)
+        .pb(6.)
+        .gap(8.)
+        .items_center()
+        .child(
+            text_signal({
+                let n = b.notice.clone();
+                move || n.get()
+            })
+            .text_color(solyra_ui::color(theme.danger))
+            .grow(),
+        )
+        .child(
+            button()
+                .px(10.)
+                .h(26.)
+                .rounded(6.)
+                .items_center()
+                .child(text("Clear history").text_size(12.))
+                .on_click({
+                    let b = b.clone();
+                    move || {
+                        let msg = match b.store.clear_history() {
+                            Ok(()) => "History cleared.".to_string(),
+                            Err(e) => format!("Could not clear history: {e}"),
+                        };
+                        b.notice.set(msg);
+                    }
+                }),
+        )
+}
+
 fn toolbar(b: &Browser, theme: &solyra_tokens::Theme) -> View {
     let btn = |label: &str, on: Box<dyn Fn()>| {
         button()
@@ -285,13 +322,15 @@ fn toolbar(b: &Browser, theme: &solyra_tokens::Theme) -> View {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let self_test = std::env::args().any(|a| a == "--self-test");
     let start_url = std::env::args().skip(1).find(|a| !a.starts_with("--"));
-    let theme = solyra_ui::current_theme();
+    let style = solyra_ui::current();
+    let theme = style.theme;
     Application::new()
         .window(WindowOptions {
             title: "Browse".into(),
             width: 1100.,
             height: 720.,
             min_size: Some((560., 360.)),
+            transparent: style.glass,
             ..Default::default()
         })
         .run(move |cx| {
@@ -330,54 +369,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     })),
                 },
+                // Each tab is its toolbar, a notice line and its page, so the
+                // page gets all the height left.
                 move |id, _cx| match panel_b.views.borrow().get(&id) {
-                    Some(w) => web_view(w).grow(),
+                    Some(w) => column()
+                        .grow()
+                        .w_full()
+                        .child(toolbar(&panel_b, &theme))
+                        .child(notice_row(&panel_b, &theme))
+                        .child(web_view(w).grow()),
                     None => text("closed"),
                 },
             );
 
-            cx.render(
+            cx.render(solyra_ui::scope(
+                &style,
                 column()
                     .w_full()
                     .h_full()
-                    .bg(solyra_ui::window_bg(&theme))
+                    .bg(style.content_bg())
                     .text_color(solyra_ui::color(theme.text))
-                    .child(strip)
-                    .child(toolbar(&b, &theme))
-                    .child(
-                        row()
-                            .px(12.)
-                            .pb(6.)
-                            .gap(8.)
-                            .items_center()
-                            .child(
-                                text_signal({
-                                    let n = b.notice.clone();
-                                    move || n.get()
-                                })
-                                .text_color(solyra_ui::color(theme.danger))
-                                .grow(),
-                            )
-                            .child(
-                                button()
-                                    .px(10.)
-                                    .h(26.)
-                                    .rounded(6.)
-                                    .items_center()
-                                    .child(text("Clear history").text_size(12.))
-                                    .on_click({
-                                        let b = b.clone();
-                                        move || {
-                                            let msg = match b.store.clear_history() {
-                                                Ok(()) => "History cleared.".to_string(),
-                                                Err(e) => format!("Could not clear history: {e}"),
-                                            };
-                                            b.notice.set(msg);
-                                        }
-                                    }),
-                            ),
-                    ),
-            );
+                    .child(strip.grow().w_full().bg(style.sidebar_bg()))
+,
+            ));
 
             if self_test {
                 let window = cx.window.clone();

@@ -577,6 +577,7 @@ dependencies = [
  "solyra-conf",
  "solyra-tokens",
  "wayland-client",
+ "wayland-protocols",
 ]
 
 [[package]]

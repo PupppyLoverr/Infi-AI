@@ -23,7 +23,6 @@ pub const SURF_W: u32 = 480;
 pub const SURF_H: u32 = 214;
 /// Concave fillet radius joining a notch to the top edge.
 const EAR: f32 = 9.0;
-const BLACK: Rgba = Rgba::rgb(0x00, 0x00, 0x00);
 
 /// What the island is showing.
 #[derive(Clone, Debug, PartialEq)]
@@ -196,6 +195,35 @@ pub struct Extra<'a> {
     pub date: &'a str,
     pub reply: &'a str,
     pub typing: bool,
+    /// What the shape is made of. Solid is the classic pure black.
+    pub material: crate::material::Material,
+}
+
+#[allow(clippy::too_many_arguments)]
+/// The shape's area as rectangles, for the compositor's blur region.
+pub fn blur_rects(style: NotchStyle, s: &Shape) -> Vec<(i32, i32, i32, i32)> {
+    let (x, y, w, h) = (
+        s.x().round() as i32,
+        s.y.round() as i32,
+        s.w.round() as i32,
+        s.h.round() as i32,
+    );
+    match style {
+        NotchStyle::Island => crate::material::blur_rects(x, y, w, h, s.r),
+        _ => {
+            // Square top (it hangs from the screen edge), rounded bottom:
+            // the lower half of a rounded rect twice as tall.
+            let r = s.r.min(w as f32 / 2.0).min(h as f32).max(0.0);
+            let full = crate::material::blur_rects(x, y - h, w, 2 * h, r);
+            full.into_iter()
+                .filter_map(|(rx, ry, rw, rh)| {
+                    let top = ry.max(y);
+                    let bot = (ry + rh).min(y + h);
+                    (bot > top).then_some((rx, top, rw, bot - top))
+                })
+                .collect()
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -220,12 +248,25 @@ pub fn draw(
         h.round() as i32,
     );
 
+    let slab = crate::material::slab(extra.material, crate::material::notch_base(extra.material), None);
+    let body = slab.fill;
     match style {
-        NotchStyle::Island => cv.round_rect(xi, yi, wi, hi, s.r, BLACK),
+        NotchStyle::Island => {
+            cv.round_rect(xi, yi, wi, hi, s.r, body);
+            if extra.material != crate::material::Material::Solid {
+                cv.stroke_round_rect(xi, yi, wi, hi, s.r, 1.0, slab.edge);
+            }
+        }
         _ => {
-            cv.notch_body(xi, 0, wi, hi, s.r, BLACK);
-            cv.concave_corner(x - EAR, 0.0, EAR, true, BLACK);
-            cv.concave_corner(x + w, 0.0, EAR, false, BLACK);
+            cv.notch_body(xi, 0, wi, hi, s.r, body);
+            cv.concave_corner(x - EAR, 0.0, EAR, true, body);
+            cv.concave_corner(x + w, 0.0, EAR, false, body);
+        }
+    }
+    if let Some(hl) = slab.highlight {
+        if style == NotchStyle::Island {
+            let inset = (s.r * 0.6).round() as i32;
+            cv.fill_rect(xi + inset, yi + 1, (wi - 2 * inset).max(0), 1, hl);
         }
     }
 

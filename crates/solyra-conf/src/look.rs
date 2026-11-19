@@ -61,6 +61,20 @@ choice! {
     } default Solyra
 }
 
+choice! {
+    /// What a shell surface is made of. Solid is an opaque fill; See-through
+    /// is a light tint with the desktop sharp behind it; Glass blurs what is
+    /// behind it and adds a lit edge; Acrylic blurs, takes its tint from the
+    /// wallpaper and adds a fine grain. Blur and grain are drawn by the
+    /// compositor (layer rules keyed on the surface's namespace suffix).
+    Material {
+        Solid = "solid" / "Solid",
+        Clear = "clear" / "See-through",
+        Glass = "glass" / "Glass",
+        Acrylic = "acrylic" / "Acrylic",
+    } default Glass
+}
+
 /// Everything appearance-related the shell reads from `shell.conf`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Look {
@@ -76,6 +90,9 @@ pub struct Look {
     pub reduced_motion: bool,
     pub opaque: bool,
     pub lock: LockStyle,
+    pub bar_material: Material,
+    pub dock_material: Material,
+    pub notch_material: Material,
     /// Accent name (`solyra_tokens::Accent::parse` understands it).
     pub accent: String,
 }
@@ -95,6 +112,9 @@ impl Default for Look {
             reduced_motion: false,
             opaque: false,
             lock: LockStyle::default(),
+            bar_material: Material::Glass,
+            dock_material: Material::Glass,
+            notch_material: Material::Solid,
             accent: "mauve".into(),
         }
     }
@@ -137,6 +157,15 @@ impl Look {
             lock: get(text, "lock_style")
                 .and_then(LockStyle::parse)
                 .unwrap_or(d.lock),
+            bar_material: get(text, "bar_material")
+                .and_then(Material::parse)
+                .unwrap_or(d.bar_material),
+            dock_material: get(text, "dock_material")
+                .and_then(Material::parse)
+                .unwrap_or(d.dock_material),
+            notch_material: get(text, "notch_material")
+                .and_then(Material::parse)
+                .unwrap_or(d.notch_material),
             accent: get(text, "accent").map(str::to_string).unwrap_or(d.accent),
         }
     }
@@ -157,8 +186,17 @@ impl Look {
             ("reduced_motion", b(self.reduced_motion)),
             ("opaque", b(self.opaque)),
             ("lock_style", Some(self.lock.as_str().into())),
+            ("bar_material", Some(self.bar_material.as_str().into())),
+            ("dock_material", Some(self.dock_material.as_str().into())),
+            ("notch_material", Some(self.notch_material.as_str().into())),
             ("accent", Some(self.accent.clone())),
         ]
+    }
+
+    /// The material a surface really uses: "Solid surfaces" (the
+    /// accessibility switch) overrides every per-surface choice.
+    pub fn material(&self, chosen: Material) -> Material {
+        if self.opaque { Material::Solid } else { chosen }
     }
 
     /// strftime pattern for the clock.
@@ -195,6 +233,9 @@ mod tests {
         l.clock_24h = false;
         l.lock = LockStyle::Corner;
         l.accent = "teal".into();
+        l.bar_material = Material::Acrylic;
+        l.dock_material = Material::Clear;
+        l.notch_material = Material::Glass;
         let text = crate::merge("theme=dark\n", &l.pairs());
         assert_eq!(Look::from_conf(&text), l);
         assert!(text.starts_with("theme=dark\n"), "foreign keys are kept");
@@ -233,5 +274,16 @@ mod tests {
         for v in LockStyle::ALL {
             assert_eq!(LockStyle::parse(v.as_str()), Some(*v));
         }
+        for v in Material::ALL {
+            assert_eq!(Material::parse(v.as_str()), Some(*v));
+        }
+    }
+
+    #[test]
+    fn solid_surfaces_switch_overrides_materials() {
+        let mut l = Look::default();
+        assert_eq!(l.material(l.bar_material), Material::Glass);
+        l.opaque = true;
+        assert_eq!(l.material(l.bar_material), Material::Solid);
     }
 }

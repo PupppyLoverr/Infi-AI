@@ -250,6 +250,9 @@ pub struct ShellPrefs {
     /// Bar, notch, dock behaviour, clock, accent and lock style, owned by
     /// Settings (`solyra_conf::look`). The panel only reads these.
     pub look: solyra_conf::look::Look,
+    /// The wallpaper's average colour (Acrylic's tint). Worked out by the
+    /// panel when the wallpaper changes; not stored.
+    pub wall_tint: Option<crate::tokens::Rgba>,
 }
 
 impl Default for ShellPrefs {
@@ -264,11 +267,28 @@ impl Default for ShellPrefs {
             volume: 76,
             brightness: 84,
             look: solyra_conf::look::Look::default(),
+            wall_tint: None,
         }
     }
 }
 
 impl ShellPrefs {
+    /// The image on the desktop now: the person's own file, else the preset.
+    pub fn wallpaper_image_path(&self) -> String {
+        self.wallpaper_file
+            .clone()
+            .unwrap_or_else(|| self.wallpaper.path())
+    }
+
+    /// Work out Acrylic's tint from the current wallpaper (PNG presets and
+    /// PNG files; other formats keep the theme colour).
+    pub fn compute_wall_tint(&mut self) {
+        self.wall_tint = std::fs::read(self.wallpaper_image_path())
+            .ok()
+            .and_then(|b| crate::canvas::decode_png(&b))
+            .and_then(|img| crate::material::average(&img));
+    }
+
     fn config_path() -> Option<PathBuf> {
         if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
             return Some(PathBuf::from(xdg).join("solyra/shell.conf"));

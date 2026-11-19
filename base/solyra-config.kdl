@@ -119,18 +119,18 @@ window-rule {
 // Each surface gets its own blur + shadow + radius, so the compositor clips
 // the effect to the rounded shape instead of a rectangle.
 
+// The bar, dock and notch blur only when their material asks for it: the
+// panel sends the exact shape with ext-background-effect (Glass, Acrylic) or
+// nothing (Solid, See-through). The namespace ends in the material's name.
 layer-rule {
-    match namespace="^solyra-bar$"
+    match namespace=r#"^solyra-bar(\..+)?$"#
     background-effect {
-        blur true
         xray false
-        noise 0.02
-        saturation 1.0
     }
 }
 
 layer-rule {
-    match namespace="^solyra-dock$"
+    match namespace=r#"^solyra-dock(\..+)?$"#
     geometry-corner-radius 20
     shadow {
         on
@@ -140,18 +140,32 @@ layer-rule {
         color "#00000090"
     }
     background-effect {
-        blur true
         xray false
-        saturation 1.0
     }
 }
 
 layer-rule {
-    match namespace="^solyra-taskbar$"
+    match namespace=r#"^solyra-(taskbar|dock-magnify|dock-hidden|notch)(\..+)?$"#
     background-effect {
-        blur true
         xray false
-        saturation 1.0
+    }
+}
+
+// Materials. Glass: clean blur with a little extra colour. Acrylic: a softer
+// colour lift plus fine grain (the panel adds the wallpaper-tinted layer).
+layer-rule {
+    match namespace=r#"\.glass$"#
+    background-effect {
+        saturation 1.5
+        noise 0.0
+    }
+}
+
+layer-rule {
+    match namespace=r#"\.acrylic$"#
+    background-effect {
+        saturation 1.15
+        noise 0.06
     }
 }
 
