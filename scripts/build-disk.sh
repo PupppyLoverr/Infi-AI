@@ -111,38 +111,47 @@ if [[ ! " $BLS_OPTIONS " =~ [[:space:]]ostree=(/ostree/[^[:space:]]+) ]] ||
   exit 1
 fi
 
-# Optional: boot straight into the desktop. This is a development-disk
-# convenience for VMs; the release image has no default password and no
-# autologin (PLAN.md, P6 setup wizard).
+# Development-disk conveniences (VM testing only). The release image has no
+# default password and no autologin (PLAN.md, P6 setup wizard).
+#   SOLYRA_AUTOLOGIN=1      greetd logs the "solyra" user straight into the
+#                           desktop (initial_session)
+#   SOLYRA_DEV_PASSWORD=pw  give "solyra" this password on first boot, so
+#                           sudo, the lock screen and a tty login work
+DEPLOY="$(find "$WORK/root/ostree/deploy/default/deploy" -mindepth 1 -maxdepth 1 -type d -print -quit)"
 if [[ "${SOLYRA_AUTOLOGIN:-0}" == "1" ]]; then
-  log "enabling development autologin on tty1"
-  DEPLOY="$(find "$WORK/root/ostree/deploy/default/deploy" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+  log "enabling development autologin (greetd initial_session)"
+  mkdir -p "$DEPLOY/etc/greetd"
+  {
+    cat "$DEPLOY/usr/etc/greetd/config.toml" 2>/dev/null || cat "$REPO_ROOT/base/greetd.toml"
+    printf '\n[initial_session]\ncommand = "/usr/bin/solyra-session --session"\nuser = "solyra"\n'
+  } > "$DEPLOY/etc/greetd/config.toml"
+  grep -q '^\[initial_session\]' "$DEPLOY/etc/greetd/config.toml"
+fi
+if [[ -n "${SOLYRA_DEV_PASSWORD:-}" ]]; then
+  log "setting a development password for solyra (first boot)"
+  command -v openssl >/dev/null || { echo "openssl missing" >&2; exit 1; }
+  HASH="$(openssl passwd -6 "$SOLYRA_DEV_PASSWORD")"
+  # systemd expands $VAR in ExecStart, so every $ in the hash is doubled.
+  HASH="${HASH//\$/\$\$}"
   UNIT_DIR="$DEPLOY/etc/systemd/system"
   mkdir -p "$UNIT_DIR/multi-user.target.wants"
-  cat > "$UNIT_DIR/solyra-autologin.service" <<'UNIT'
+  # The account is created by systemd-sysusers at boot, so the password is
+  # applied by a oneshot after it. Only the hash is stored.
+  cat > "$UNIT_DIR/solyra-dev-password.service" <<UNIT
 [Unit]
-Description=Solyra development session (autologin)
-After=systemd-user-sessions.service systemd-logind.service
-Conflicts=getty@tty1.service kmsconvt@tty1.service
+Description=Solyra development disk: set the solyra account password
+After=systemd-sysusers.service
+Before=greetd.service systemd-user-sessions.service
+ConditionPathExists=!/var/lib/solyra-dev-password.done
 
 [Service]
-User=solyra
-PAMName=login
-TTYPath=/dev/tty1
-StandardInput=tty-force
-StandardOutput=journal+console
-StandardError=journal+console
-Environment=XDG_SESSION_TYPE=wayland
-Environment=XDG_CURRENT_DESKTOP=Solyra
-ExecStartPre=+/usr/bin/install -d -m 0700 -o solyra -g solyra /var/home/solyra
-ExecStart=/usr/bin/solyra-session --session
+Type=oneshot
+ExecStart=/bin/sh -ec 'usermod -p '"'"'$HASH'"'"' solyra && touch /var/lib/solyra-dev-password.done'
 
 [Install]
 WantedBy=multi-user.target
 UNIT
-  ln -sf ../solyra-autologin.service "$UNIT_DIR/multi-user.target.wants/solyra-autologin.service"
-  ln -sf /dev/null "$UNIT_DIR/getty@tty1.service"
-  ln -sf /dev/null "$UNIT_DIR/kmsconvt@tty1.service"
+  ln -sf ../solyra-dev-password.service "$UNIT_DIR/multi-user.target.wants/solyra-dev-password.service"
 fi
 
 log "installing GRUB standalone EFI into the ESP"

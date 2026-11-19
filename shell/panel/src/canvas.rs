@@ -24,17 +24,6 @@ impl Rgba {
     pub fn with_alpha(self, a: u8) -> Self {
         Self(self.0, self.1, self.2, a)
     }
-
-    pub fn lerp(self, other: Self, t: f32) -> Self {
-        let t = t.clamp(0.0, 1.0);
-        let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
-        Self(
-            mix(self.0, other.0),
-            mix(self.1, other.1),
-            mix(self.2, other.2),
-            mix(self.3, other.3),
-        )
-    }
 }
 
 pub struct Fonts {
@@ -47,12 +36,16 @@ impl Fonts {
     pub fn load() -> Self {
         Self {
             regular: try_load_font(&[
+                "/usr/share/fonts/rsms-inter-fonts/Inter-Regular.otf",
+                "/usr/share/fonts/opentype/inter/Inter-Regular.otf",
                 "/usr/share/fonts/open-sans/OpenSans-Regular.ttf",
                 "/usr/share/fonts/adwaita-sans-fonts/AdwaitaSans-Regular.ttf",
                 "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             ]),
             semibold: try_load_font(&[
+                "/usr/share/fonts/rsms-inter-fonts/Inter-SemiBold.otf",
+                "/usr/share/fonts/opentype/inter/Inter-SemiBold.otf",
                 "/usr/share/fonts/open-sans/OpenSans-Semibold.ttf",
                 "/usr/share/fonts/open-sans/OpenSans-Bold.ttf",
                 "/usr/share/fonts/adwaita-sans-fonts/AdwaitaSans-Regular.ttf",
@@ -153,13 +146,6 @@ impl<'a> Canvas<'a> {
         self.pixels[off + 3] = (255.0 * sa + da * inv).round().clamp(0.0, 255.0) as u8;
     }
 
-    /// Overwrite pixel directly with premultiplied BGRA (used to punch out a
-    /// crisp shape inside an existing translucent bar).
-    #[inline]
-    pub fn set_opaque_blend(&mut self, x: i32, y: i32, color: Rgba, coverage: f32) {
-        self.blend(x, y, color, coverage);
-    }
-
     pub fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: Rgba) {
         let x0 = x.max(0);
         let y0 = y.max(0);
@@ -172,96 +158,21 @@ impl<'a> Canvas<'a> {
         }
     }
 
-    pub fn vgrad_rect(&mut self, x: i32, y: i32, w: i32, h: i32, top: Rgba, bottom: Rgba) {
-        if h <= 0 || w <= 0 {
-            return;
-        }
-        let denom = (h - 1).max(1) as f32;
-        for row in 0..h {
-            let c = top.lerp(bottom, row as f32 / denom);
-            self.fill_rect(x, y + row, w, 1, c);
-        }
-    }
-
     pub fn round_rect(&mut self, x: i32, y: i32, w: i32, h: i32, radius: f32, color: Rgba) {
-        self.vgrad_round_rect(x, y, w, h, radius, color, color);
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn vgrad_round_rect(
-        &mut self,
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
-        radius: f32,
-        top: Rgba,
-        bottom: Rgba,
-    ) {
         if w <= 0 || h <= 0 {
             return;
         }
         let r = radius.min(w as f32 * 0.5).min(h as f32 * 0.5).max(0.0);
-        let half_w = w as f32 * 0.5;
-        let half_h = h as f32 * 0.5;
-        let cx = x as f32 + half_w;
-        let cy = y as f32 + half_h;
-        let denom = (h - 1).max(1) as f32;
-
-        let x0 = x.max(0);
-        let y0 = y.max(0);
-        let x1 = (x + w).min(self.width as i32);
-        let y1 = (y + h).min(self.height as i32);
-
-        for py in y0..y1 {
-            let color = top.lerp(bottom, (py - y) as f32 / denom);
-            let qy = ((py as f32 + 0.5 - cy).abs()) - (half_h - r);
-            for px in x0..x1 {
-                let qx = ((px as f32 + 0.5 - cx).abs()) - (half_w - r);
-                let dist = (qx.max(0.0).hypot(qy.max(0.0))) + qx.max(qy).min(0.0) - r;
-                let cov = (0.5 - dist).clamp(0.0, 1.0);
+        let (half_w, half_h) = (w as f32 * 0.5, h as f32 * 0.5);
+        let (cx, cy) = (x as f32 + half_w, y as f32 + half_h);
+        for py in y.max(0)..(y + h).min(self.height as i32) {
+            let qy = (py as f32 + 0.5 - cy).abs() - (half_h - r);
+            for px in x.max(0)..(x + w).min(self.width as i32) {
+                let qx = (px as f32 + 0.5 - cx).abs() - (half_w - r);
+                let sdf = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
+                let cov = (0.5 - sdf).clamp(0.0, 1.0);
                 if cov > 0.0 {
                     self.blend(px, py, color, cov);
-                }
-            }
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn dgrad_round_rect(
-        &mut self,
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
-        radius: f32,
-        c0: Rgba,
-        c1: Rgba,
-    ) {
-        if w <= 0 || h <= 0 {
-            return;
-        }
-        let r = radius.min(w as f32 * 0.5).min(h as f32 * 0.5).max(0.0);
-        let half_w = w as f32 * 0.5;
-        let half_h = h as f32 * 0.5;
-        let cx = x as f32 + half_w;
-        let cy = y as f32 + half_h;
-        let denom = (w + h - 2).max(1) as f32;
-
-        let x0 = x.max(0);
-        let y0 = y.max(0);
-        let x1 = (x + w).min(self.width as i32);
-        let y1 = (y + h).min(self.height as i32);
-
-        for py in y0..y1 {
-            let qy = ((py as f32 + 0.5 - cy).abs()) - (half_h - r);
-            for px in x0..x1 {
-                let qx = ((px as f32 + 0.5 - cx).abs()) - (half_w - r);
-                let dist = (qx.max(0.0).hypot(qy.max(0.0))) + qx.max(qy).min(0.0) - r;
-                let cov = (0.5 - dist).clamp(0.0, 1.0);
-                if cov > 0.0 {
-                    let t = ((px - x) + (py - y)) as f32 / denom;
-                    self.blend(px, py, c0.lerp(c1, t), cov);
                 }
             }
         }
@@ -304,50 +215,6 @@ impl<'a> Canvas<'a> {
                 let cov = (0.5 - ring_dist).clamp(0.0, 1.0);
                 if cov > 0.0 {
                     self.blend(px, py, color, cov);
-                }
-            }
-        }
-    }
-
-    /// Glass card helper: translucent vertical gradient + 1px specular top-lit border.
-    #[allow(clippy::too_many_arguments)]
-    pub fn glass_card(
-        &mut self,
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
-        radius: f32,
-        top: Rgba,
-        bottom: Rgba,
-        rim_top: Rgba,
-        rim_bottom: Rgba,
-    ) {
-        self.vgrad_round_rect(x, y, w, h, radius, top, bottom);
-        // Top-lit inner specular rim (stronger at top, subtler at bottom).
-        if w <= 0 || h <= 0 {
-            return;
-        }
-        let r = radius.min(w as f32 * 0.5).min(h as f32 * 0.5).max(0.0);
-        let half_w = w as f32 * 0.5;
-        let half_h = h as f32 * 0.5;
-        let cx = x as f32 + half_w;
-        let cy = y as f32 + half_h;
-        let denom = (h - 1).max(1) as f32;
-        let x0 = x.max(0);
-        let y0 = y.max(0);
-        let x1 = (x + w).min(self.width as i32);
-        let y1 = (y + h).min(self.height as i32);
-        for py in y0..y1 {
-            let rim = rim_top.lerp(rim_bottom, (py - y) as f32 / denom);
-            let qy = ((py as f32 + 0.5 - cy).abs()) - (half_h - r);
-            for px in x0..x1 {
-                let qx = ((px as f32 + 0.5 - cx).abs()) - (half_w - r);
-                let sdf = (qx.max(0.0).hypot(qy.max(0.0))) + qx.max(qy).min(0.0) - r;
-                let ring_dist = (sdf + 0.5).abs() - 0.5;
-                let cov = (0.5 - ring_dist).clamp(0.0, 1.0);
-                if cov > 0.0 {
-                    self.blend(px, py, rim, cov);
                 }
             }
         }
@@ -435,15 +302,7 @@ impl<'a> Canvas<'a> {
 
     /// Anti-aliased capsule line segment.
     #[allow(clippy::too_many_arguments)]
-    pub fn line(
-        &mut self,
-        x0: f32,
-        y0: f32,
-        x1: f32,
-        y1: f32,
-        thickness: f32,
-        color: Rgba,
-    ) {
+    pub fn line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, thickness: f32, color: Rgba) {
         let half = thickness * 0.5;
         let min_x = (x0.min(x1) - half - 2.0).floor().max(0.0) as i32;
         let min_y = (y0.min(y1) - half - 2.0).floor().max(0.0) as i32;
@@ -467,59 +326,6 @@ impl<'a> Canvas<'a> {
                 }
             }
         }
-    }
-
-    /// Smooth Apple-style top-anchored notch with concave top-shoulder fillets,
-    /// anti-aliased rounded bottom corners, subtle edge rim, and optical lens.
-    pub fn draw_notch(&mut self, center_x: i32, body_w: i32, h: i32, ear_r: f32, bottom_r: f32) {
-        let half_w = body_w as f32 * 0.5;
-        let cx = center_x as f32;
-        let hf = h as f32;
-        let x0 = (cx - half_w - ear_r - 2.0).floor().max(0.0) as i32;
-        let x1 = (cx + half_w + ear_r + 2.0).ceil().min(self.width as f32) as i32;
-        let y1 = (hf + 2.0).ceil().min(self.height as f32) as i32;
-        let void = Rgba::rgb(0x06, 0x05, 0x09);
-        let rim = Rgba::rgba(0xff, 0xff, 0xff, 26);
-
-        for py in 0..y1 {
-            let yf = py as f32 + 0.5;
-            for px in x0..x1 {
-                let dx = (px as f32 + 0.5 - cx).abs();
-                let sdf = if yf < ear_r && dx > half_w {
-                    // Concave top-shoulder fillet centered at (half_w + ear_r, ear_r).
-                    let ex = half_w + ear_r - dx;
-                    let ey = ear_r - yf;
-                    ear_r - ex.hypot(ey)
-                } else {
-                    // Main notch body with rounded bottom corners.
-                    let qx = dx - (half_w - bottom_r);
-                    let qy = yf - (hf - bottom_r);
-                    if yf <= hf - bottom_r {
-                        dx - half_w
-                    } else {
-                        qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - bottom_r
-                    }
-                };
-
-                let fill_cov = (0.5 - sdf).clamp(0.0, 1.0);
-                if fill_cov > 0.0 {
-                    self.set_opaque_blend(px, py, void, fill_cov);
-                }
-                if py > 0 {
-                    let rim_cov = (0.5 - (sdf + 0.5).abs()).clamp(0.0, 1.0);
-                    if rim_cov > 0.0 {
-                        self.blend(px, py, rim, rim_cov);
-                    }
-                }
-            }
-        }
-
-        // Realistic multi-layer optical camera housing at the center of the notch.
-        let ly = (hf * 0.46).clamp(10.0, 15.0);
-        self.circle(cx, ly, 4.6, Rgba::rgb(0x13, 0x16, 0x20));
-        self.circle(cx, ly, 3.2, Rgba::rgb(0x0c, 0x18, 0x2c));
-        self.circle(cx, ly, 1.8, Rgba::rgb(0x18, 0x36, 0x62));
-        self.circle(cx - 0.8, ly - 0.8, 0.85, Rgba::rgba(0x7c, 0xc4, 0xff, 190));
     }
 
     pub fn text(
@@ -655,6 +461,46 @@ impl<'a> Canvas<'a> {
         self.arc(cx, base_y, size * 0.50, 1.45, -135.0, -45.0, color);
     }
 
+    /// Wi-Fi arcs when wireless, a plug-like bar when wired, struck through
+    /// when offline, so the state is not carried by colour alone.
+    pub fn icon_network(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        size: f32,
+        state: crate::state::NetworkState,
+        color: Rgba,
+        dim: Rgba,
+    ) {
+        use crate::state::NetworkState::*;
+        match state {
+            Wireless => self.icon_wifi(cx, cy, size, color),
+            Wired => {
+                let w = size * 0.8;
+                self.round_rect(
+                    (cx - w / 2.0).round() as i32,
+                    (cy - 3.0).round() as i32,
+                    w.round() as i32,
+                    6,
+                    1.5,
+                    color,
+                );
+                self.line(cx, cy + 3.0, cx, cy + size * 0.45, 1.5, color);
+            }
+            Offline => {
+                self.icon_wifi(cx, cy, size, dim);
+                self.line(
+                    cx - size * 0.5,
+                    cy - size * 0.4,
+                    cx + size * 0.5,
+                    cy + size * 0.5,
+                    1.6,
+                    color,
+                );
+            }
+        }
+    }
+
     pub fn icon_volume(&mut self, cx: f32, cy: f32, size: f32, level: u8, color: Rgba) {
         let lx = cx - size * 0.30;
         self.line(lx, cy - 2.2, lx, cy + 2.2, 2.2, color);
@@ -695,14 +541,6 @@ impl<'a> Canvas<'a> {
         self.circle(x as f32 + 2.8, y as f32 + 9.5, 1.7, color);
     }
 
-    pub fn icon_bluetooth(&mut self, cx: f32, cy: f32, color: Rgba) {
-        self.line(cx, cy - 5.5, cx, cy + 5.5, 1.4, color);
-        self.line(cx, cy - 5.5, cx + 3.6, cy - 2.5, 1.35, color);
-        self.line(cx + 3.6, cy - 2.5, cx - 3.4, cy + 2.8, 1.35, color);
-        self.line(cx, cy + 5.5, cx + 3.6, cy + 2.5, 1.35, color);
-        self.line(cx + 3.6, cy + 2.5, cx - 3.4, cy - 2.8, 1.35, color);
-    }
-
     pub fn icon_moon(&mut self, cx: f32, cy: f32, color: Rgba) {
         self.arc(cx + 0.5, cy, 4.8, 1.6, 55.0, 305.0, color);
     }
@@ -734,220 +572,77 @@ impl<'a> Canvas<'a> {
         self.line(cx, cy - 5.5, cx, cy - 0.5, 1.5, color);
     }
 
-    // ------------------------------------------------- cohesive squircle badges
+    // ------------------------------------------------------------ app tiles
 
-    /// Bespoke studio-grade squircle app icon (`size × size`), giving core OS
-    /// apps a unified macOS/Fluent material finish instead of mismatched legacy icons.
-    pub fn draw_app_squircle(&mut self, x: i32, y: i32, size: i32, role: &str, icon: Option<&Icon>) {
-        let r = (size as f32 * 0.26).round();
-        let cx = x as f32 + size as f32 * 0.5;
-        let cy = y as f32 + size as f32 * 0.5;
+    /// App tile (`size x size`): a flat dark rounded square. A real system
+    /// icon is used when one was found; otherwise a monochrome glyph for the
+    /// role, or the role's first letter. One style for every app, so the dock
+    /// and launcher read as one set.
+    pub fn draw_app_squircle(
+        &mut self,
+        x: i32,
+        y: i32,
+        size: i32,
+        role: &str,
+        icon: Option<&Icon>,
+    ) {
+        const TILE: Rgba = Rgba::rgb(0x2a, 0x24, 0x31);
+        const EDGE: Rgba = Rgba::rgba(255, 255, 255, 26);
+        const GLYPH: Rgba = Rgba::rgb(0xdc, 0xd6, 0xe2);
+        const ACCENT: Rgba = Rgba::rgb(0xb4, 0x8a, 0xad);
+        const ON_ACCENT: Rgba = Rgba::rgb(0x14, 0x10, 0x18);
+
         let s = size as f32;
+        let r = (s * 0.24).round();
+        let (cx, cy) = (x as f32 + s * 0.5, y as f32 + s * 0.5);
+        let start = role == "start";
+        self.round_rect(x, y, size, size, r, if start { ACCENT } else { TILE });
+        self.stroke_round_rect(x, y, size, size, r, 1.0, EDGE);
+        let ink = if start { ON_ACCENT } else { GLYPH };
 
+        if let (false, Some(ic)) = (start, icon) {
+            let pad = (s * 0.16).round() as i32;
+            self.draw_icon(x + pad, y + pad, size - pad * 2, ic);
+            return;
+        }
+        let u = s * 0.22; // glyph half-extent
         match role {
-            "start" => {
-                self.dgrad_round_rect(
-                    x,
-                    y,
-                    size,
-                    size,
-                    r,
-                    Rgba::rgb(0xc0, 0x84, 0xfc),
-                    Rgba::rgb(0x63, 0x66, 0xf1),
-                );
-                self.stroke_round_rect(x, y, size, size, r, 1.0, Rgba::rgba(255, 255, 255, 76));
-                let g = s * 0.25;
-                self.ring(cx, cy, g, 1.7, Rgba::rgb(255, 255, 255));
-                // Occulting disc: the Solyra eclipse, cut from the ring's right.
-                self.circle(cx + g * 0.42, cy - g * 0.34, g * 0.78, Rgba::rgb(0x8a, 0x6b, 0xf6));
-            }
+            "start" | "agent" => self.icon_solyra(cx, cy, u * 0.9, ink),
             "files" | "thunar" => {
-                self.dgrad_round_rect(
-                    x,
-                    y,
-                    size,
-                    size,
-                    r,
-                    Rgba::rgb(0x38, 0xbd, 0xf8),
-                    Rgba::rgb(0x25, 0x63, 0xeb),
-                );
-                self.stroke_round_rect(x, y, size, size, r, 1.0, Rgba::rgba(255, 255, 255, 70));
-                let fw = (s * 0.58).round() as i32;
-                let fh = (s * 0.40).round() as i32;
-                let fx = x + (size - fw) / 2;
-                let fy = y + (size - fh) / 2 + 3;
-                // Tab.
-                self.round_rect(fx, fy - 4, (fw as f32 * 0.42) as i32, 7, 3.0, Rgba::rgba(255, 255, 255, 235));
-                // Back panel, then a document peeking above the pocket.
-                self.vgrad_round_rect(fx, fy, fw, fh, 4.5, Rgba::rgb(0xff, 0xff, 0xff), Rgba::rgb(0xe3, 0xee, 0xfd));
-                let doc_w = (fw as f32 * 0.42) as i32;
-                let doc_x = fx + (fw - doc_w) / 2;
-                self.round_rect(doc_x, fy + 4, doc_w, (fh as f32 * 0.62) as i32, 2.5, Rgba::rgba(0xff, 0xff, 0xff, 240));
-                for i in 0..3 {
-                    self.round_rect(doc_x + 3, fy + 8 + i * 4, doc_w - 6, 1, 0.5, Rgba::rgba(0x25, 0x63, 0xeb, 120));
-                }
-                // Front pocket.
-                self.vgrad_round_rect(fx, fy + (fh as f32 * 0.42) as i32, fw, (fh as f32 * 0.58) as i32, 4.0,
-                                      Rgba::rgb(0xff, 0xff, 0xff), Rgba::rgb(0xdb, 0xea, 0xfe));
+                let (w, h) = ((u * 2.1) as i32, (u * 1.5) as i32);
+                let (fx, fy) = (cx as i32 - w / 2, cy as i32 - h / 2 + 1);
+                self.stroke_round_rect(fx, fy, w, h, 2.5, 1.5, ink);
+                self.round_rect(fx, fy - 3, w / 2, 4, 1.5, ink);
             }
             "terminal" | "foot" => {
-                self.dgrad_round_rect(
-                    x,
-                    y,
-                    size,
-                    size,
-                    r,
-                    Rgba::rgb(0x27, 0x23, 0x38),
-                    Rgba::rgb(0x11, 0x0e, 0x1a),
-                );
-                self.stroke_round_rect(x, y, size, size, r, 1.0, Rgba::rgba(255, 255, 255, 48));
-                // Crisp `>_` vector chevron + accent underscore.
-                let px = cx - s * 0.20;
-                let py = cy - s * 0.02;
-                let d = s * 0.13;
-                self.line(px - d * 0.5, py - d, px + d * 0.6, py, 2.0, Rgba::rgb(0xe9, 0xd5, 0xff));
-                self.line(px + d * 0.6, py, px - d * 0.5, py + d, 2.0, Rgba::rgb(0xe9, 0xd5, 0xff));
-                self.line(
-                    cx + s * 0.02,
-                    py + d,
-                    cx + s * 0.22,
-                    py + d,
-                    2.0,
-                    Rgba::rgb(0xc0, 0x84, 0xfc),
-                );
+                self.line(cx - u, cy - u * 0.7, cx - u * 0.1, cy, 1.7, ink);
+                self.line(cx - u * 0.1, cy, cx - u, cy + u * 0.7, 1.7, ink);
+                self.line(cx + u * 0.1, cy + u * 0.8, cx + u, cy + u * 0.8, 1.7, ink);
             }
-            "overview" | "workspaces" => {
-                self.dgrad_round_rect(
-                    x,
-                    y,
-                    size,
-                    size,
-                    r,
-                    Rgba::rgb(0x34, 0xd3, 0x99),
-                    Rgba::rgb(0x0d, 0x94, 0x88),
-                );
-                self.stroke_round_rect(x, y, size, size, r, 1.0, Rgba::rgba(255, 255, 255, 68));
-                let cell = (s * 0.21).round() as i32;
-                let gap = (s * 0.08).round() as i32;
-                let gx = x + (size - (cell * 2 + gap)) / 2;
-                let gy = y + (size - (cell * 2 + gap)) / 2;
-                self.round_rect(gx, gy, cell, cell, 2.5, Rgba::rgb(255, 255, 255));
-                self.round_rect(gx + cell + gap, gy, cell, cell, 2.5, Rgba::rgba(255, 255, 255, 195));
-                self.round_rect(gx, gy + cell + gap, cell, cell, 2.5, Rgba::rgba(255, 255, 255, 195));
-                self.round_rect(
-                    gx + cell + gap,
-                    gy + cell + gap,
-                    cell,
-                    cell,
-                    2.5,
-                    Rgba::rgba(255, 255, 255, 145),
-                );
-            }
-            "settings" | "control" => {
-                self.dgrad_round_rect(
-                    x,
-                    y,
-                    size,
-                    size,
-                    r,
-                    Rgba::rgb(0x64, 0x74, 0x8b),
-                    Rgba::rgb(0x33, 0x41, 0x55),
-                );
-                self.stroke_round_rect(x, y, size, size, r, 1.0, Rgba::rgba(255, 255, 255, 64));
-                let lw = (s * 0.44) as i32;
-                let lx = cx as i32 - lw / 2;
-                for (i, knob) in [0.30f32, 0.68, 0.45].iter().enumerate() {
-                    let ly = (cy + (i as f32 - 1.0) * s * 0.15) as i32;
-                    self.line(lx as f32, ly as f32, (lx + lw) as f32, ly as f32, 1.6, Rgba::rgba(248, 250, 252, 200));
-                    self.circle(lx as f32 + lw as f32 * knob, ly as f32, 2.6, Rgba::rgb(248, 250, 252));
+            "overview" => {
+                let q = (u * 0.8) as i32;
+                let (x0, y0) = (cx as i32 - q - 1, cy as i32 - q - 1);
+                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    self.round_rect(x0 + dx * (q + 2), y0 + dy * (q + 2), q, q, 1.5, ink);
                 }
             }
-            "agent" => {
-                self.dgrad_round_rect(
-                    x,
-                    y,
-                    size,
-                    size,
-                    r,
-                    Rgba::rgb(0xf4, 0x72, 0xb6),
-                    Rgba::rgb(0x93, 0x33, 0xea),
-                );
-                self.stroke_round_rect(x, y, size, size, r, 1.0, Rgba::rgba(255, 255, 255, 72));
-                self.ring(cx, cy, s * 0.22, 1.5, Rgba::rgba(255, 255, 255, 220));
-                self.circle(cx, cy, s * 0.09, Rgba::rgb(255, 255, 255));
-                self.circle(cx + s * 0.16, cy - s * 0.15, 2.0, Rgba::rgb(255, 255, 255));
+            "settings" => {
+                for (i, k) in [0.28f32, 0.62, 0.40].into_iter().enumerate() {
+                    let ly = cy - u * 0.9 + i as f32 * u * 0.9;
+                    self.line(cx - u, ly, cx + u, ly, 1.4, ink);
+                    self.circle(cx - u + 2.0 * u * k, ly, 2.2, ink);
+                }
             }
             "wallpaper" => {
-                self.dgrad_round_rect(
-                    x,
-                    y,
-                    size,
-                    size,
-                    r,
-                    Rgba::rgb(0xfb, 0x92, 0x3c),
-                    Rgba::rgb(0xdb, 0x27, 0x77),
-                );
-                self.stroke_round_rect(x, y, size, size, r, 1.0, Rgba::rgba(255, 255, 255, 72));
-                self.circle(cx - s * 0.10, cy - s * 0.10, s * 0.09, Rgba::rgb(255, 251, 235));
-                self.line(
-                    cx - s * 0.24,
-                    cy + s * 0.20,
-                    cx - s * 0.03,
-                    cy + s * 0.01,
-                    2.2,
-                    Rgba::rgb(255, 255, 255),
-                );
-                self.line(
-                    cx - s * 0.03,
-                    cy + s * 0.01,
-                    cx + s * 0.22,
-                    cy + s * 0.20,
-                    2.2,
-                    Rgba::rgb(255, 255, 255),
-                );
-            }
-            "trash" => {
-                self.vgrad_round_rect(
-                    x,
-                    y,
-                    size,
-                    size,
-                    r,
-                    Rgba::rgba(0x47, 0x55, 0x69, 220),
-                    Rgba::rgba(0x1e, 0x29, 0x3b, 235),
-                );
-                self.stroke_round_rect(x, y, size, size, r, 1.0, Rgba::rgba(255, 255, 255, 58));
-                let bw = (s * 0.38).round() as i32;
-                let bh = (s * 0.42).round() as i32;
-                let bx = x + (size - bw) / 2;
-                let by = y + (size - bh) / 2 + 2;
-                self.stroke_round_rect(bx, by, bw, bh, 2.5, 1.4, Rgba::rgb(226, 232, 240));
-                self.line(
-                    (bx - 2) as f32,
-                    (by - 2) as f32,
-                    (bx + bw + 2) as f32,
-                    (by - 2) as f32,
-                    1.5,
-                    Rgba::rgb(226, 232, 240),
-                );
+                self.ring(cx, cy, u * 0.9, 1.5, ink);
+                self.circle(cx + u * 0.25, cy - u * 0.2, u * 0.28, ink);
             }
             _ => {
-                self.vgrad_round_rect(
-                    x,
-                    y,
-                    size,
-                    size,
-                    r,
-                    Rgba::rgba(0x36, 0x30, 0x48, 225),
-                    Rgba::rgba(0x21, 0x1c, 0x2e, 235),
-                );
-                self.stroke_round_rect(x, y, size, size, r, 1.0, Rgba::rgba(255, 255, 255, 42));
-                if let Some(ic) = icon {
-                    let pad = (size as f32 * 0.16).round() as i32;
-                    self.draw_icon(x + pad, y + pad, size - pad * 2, ic);
-                } else {
-                    self.circle(cx, cy, s * 0.16, Rgba::rgb(0xc0, 0x84, 0xfc));
-                }
+                // Generic window: no real icon was found for this app.
+                let (w, h) = ((u * 2.1) as i32, (u * 1.7) as i32);
+                let (wx, wy) = (cx as i32 - w / 2, cy as i32 - h / 2);
+                self.stroke_round_rect(wx, wy, w, h, 2.5, 1.5, ink);
+                self.fill_rect(wx + 1, wy + 4, w - 2, 1, ink);
             }
         }
     }
@@ -963,4 +658,117 @@ pub fn text_width(font: Option<&FontRef<'_>>, value: &str, size: f32) -> i32 {
         .map(|c| scaled.h_advance(scaled.glyph_id(c)))
         .sum::<f32>()
         .round() as i32
+}
+
+/// Greedy word wrap. `measure` returns the pixel width of a string, so the
+/// logic is testable without a font. Over-long words are split by character;
+/// if the text needs more than `max_lines`, the last line ends in `…`.
+pub fn wrap_with(
+    text: &str,
+    max_w: i32,
+    max_lines: usize,
+    measure: impl Fn(&str) -> i32,
+) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut overflowed = false;
+
+    let push_line = |line: String, lines: &mut Vec<String>| -> bool {
+        if lines.len() >= max_lines {
+            return false;
+        }
+        lines.push(line);
+        true
+    };
+
+    'words: for word in text.split_whitespace() {
+        let candidate = if cur.is_empty() {
+            word.to_string()
+        } else {
+            format!("{cur} {word}")
+        };
+        if measure(&candidate) <= max_w {
+            cur = candidate;
+            continue;
+        }
+        if !cur.is_empty() && !push_line(std::mem::take(&mut cur), &mut lines) {
+            overflowed = true;
+            break 'words;
+        }
+        // `word` alone may still be too wide.
+        let mut piece = String::new();
+        for ch in word.chars() {
+            let mut next = piece.clone();
+            next.push(ch);
+            if measure(&next) > max_w && !piece.is_empty() {
+                if !push_line(std::mem::take(&mut piece), &mut lines) {
+                    overflowed = true;
+                    break 'words;
+                }
+                piece.push(ch);
+            } else {
+                piece = next;
+            }
+        }
+        cur = piece;
+    }
+    if !overflowed && !cur.is_empty() && !push_line(cur, &mut lines) {
+        overflowed = true;
+    }
+    if overflowed {
+        if let Some(last) = lines.last_mut() {
+            while !last.is_empty() && measure(&format!("{last}…")) > max_w {
+                last.pop();
+            }
+            last.push('…');
+        }
+    }
+    lines
+}
+
+pub fn wrap_text(
+    font: Option<&FontRef<'_>>,
+    text: &str,
+    size: f32,
+    max_w: i32,
+    max_lines: usize,
+) -> Vec<String> {
+    wrap_with(text, max_w, max_lines, |s| text_width(font, s, size))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn m(s: &str) -> i32 {
+        s.chars().count() as i32 * 10
+    }
+
+    #[test]
+    fn wraps_on_word_boundaries() {
+        let l = wrap_with("aaa bbb ccc ddd", 70, 5, m);
+        assert_eq!(l, vec!["aaa bbb", "ccc ddd"]);
+    }
+
+    #[test]
+    fn splits_a_word_wider_than_the_line() {
+        let l = wrap_with("abcdefghij", 40, 5, m);
+        assert_eq!(l, vec!["abcd", "efgh", "ij"]);
+    }
+
+    #[test]
+    fn truncates_with_an_ellipsis_that_still_fits() {
+        let l = wrap_with("one two three four five six", 70, 2, m);
+        assert_eq!(l.len(), 2);
+        let last = l.last().unwrap();
+        assert!(last.ends_with('…'));
+        assert!(m(last) <= 70, "{last:?} too wide");
+    }
+
+    #[test]
+    fn empty_and_exact_fit() {
+        assert!(wrap_with("   ", 100, 3, m).is_empty());
+        assert_eq!(wrap_with("abcd efgh", 90, 3, m), vec!["abcd efgh"]);
+        assert_eq!(wrap_with("a b", 100, 0, m), Vec::<String>::new());
+    }
 }

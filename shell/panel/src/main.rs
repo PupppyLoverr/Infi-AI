@@ -9,11 +9,19 @@
 //!   real keyboard search, Pinned Apps grid, and session footer.
 //! * **Control Centre** (`solyra-control`): quick toggles, sliders, live Dock
 //!   variant switcher, live Wallpaper switcher, and memory telemetry.
-//! * **Expanded Island** (`solyra-island`): interactive Agent Space popover.
+//! * **Expanded Island** (`solyra-island`): activity popover.
+//! * **Agent tasks** (`solyra-agents`): tasks and approval requests reported by
+//!   an agent runtime through the file protocol in `docs/agent-protocol.md`.
 
+mod agent;
 mod canvas;
+mod launcher;
 mod state;
 mod surfaces;
+mod tokens;
+
+#[cfg(test)]
+mod preview;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -34,15 +42,17 @@ use smithay_client_toolkit::shell::WaylandSurface;
 use smithay_client_toolkit::shm::slot::SlotPool;
 use smithay_client_toolkit::shm::{Shm, ShmHandler};
 use state::{
-    apply_wallpaper, read_island_file, read_telemetry, send_client_cmd, send_ipc,
-    spawn_ipc_listener, windows, workspaces, DockStyle, LaunchTarget, ShellCmd, ShellPrefs,
-    WindowInfo,
+    apply_wallpaper, catalog_apps, read_island_file, read_telemetry, send_client_cmd, send_ipc,
+    spawn_ipc_listener, windows, workspaces, AppEntry, DockStyle, LaunchTarget, ShellCmd,
+    ShellPrefs, WindowInfo,
 };
 use surfaces::{
-    draw_bar, draw_control, draw_dock, draw_island_card, draw_launcher, filtered_launcher_apps,
-    floating_dock_width, HitAction, Region, BAR_HEIGHT, CONTROL_H, CONTROL_W, DOCK_FLOAT_HEIGHT,
-    ISLAND_CARD_H, ISLAND_CARD_W, LAUNCHER_H, LAUNCHER_W, TASKBAR_HEIGHT,
+    draw_agents, draw_bar, draw_control, draw_dock, draw_island_card, draw_launcher,
+    floating_dock_width, AgentsView, HitAction, Live, Region, AGENTS_H, AGENTS_W, BAR_HEIGHT,
+    CONTROL_H, CONTROL_W, DOCK_FLOAT_HEIGHT, ISLAND_CARD_H, ISLAND_CARD_W, LAUNCHER_H, LAUNCHER_W,
+    TASKBAR_HEIGHT,
 };
+use tokens::Theme;
 use wayland_client::globals::registry_queue_init;
 use wayland_client::protocol::wl_callback::WlCallback;
 use wayland_client::protocol::wl_keyboard::{self, KeyState, WlKeyboard};
@@ -61,6 +71,7 @@ fn main() {
             "toggle-launcher" | "launcher" => Some("toggle-launcher".into()),
             "toggle-control" | "control" => Some("toggle-control".into()),
             "toggle-island" | "island" => Some("toggle-island".into()),
+            "toggle-agents" | "agents" => Some("toggle-agents".into()),
             "close" => Some("close".into()),
             "dock" => args.get(2).map(|v| format!("dock {v}")),
             "wallpaper" => args.get(2).map(|v| format!("wallpaper {v}")),
@@ -145,6 +156,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         launcher: None,
         control: None,
         island_card: None,
+        agents: None,
+        agent_tasks: Vec::new(),
+        agent_summary: agent::Summary::default(),
+        agent_attention: None,
+        agents_selected: 0,
+        agents_error: None,
+        catalog: Vec::new(),
+        launcher_items: Vec::new(),
         launcher_query: String::new(),
         launcher_selected: 0,
         shift_held: false,
@@ -274,7 +293,18 @@ struct App {
     launcher: Option<SurfaceSlot>,
     control: Option<SurfaceSlot>,
     island_card: Option<SurfaceSlot>,
+    agents: Option<SurfaceSlot>,
 
+    agent_tasks: Vec<agent::TaskView>,
+    agent_summary: agent::Summary,
+    /// "Approval needed · <task>" while a task waits on the human.
+    agent_attention: Option<String>,
+    agents_selected: usize,
+    agents_error: Option<String>,
+
+    /// Installed apps and commands, read when the launcher opens (not per key).
+    catalog: Vec<AppEntry>,
+    launcher_items: Vec<launcher::Item>,
     launcher_query: String,
     launcher_selected: usize,
     shift_held: bool,
@@ -298,6 +328,10 @@ struct App {
 }
 
 impl App {
+    fn theme(&self) -> Theme {
+        Theme::for_kind(self.prefs.theme)
+    }
+
     fn drain_commands(&mut self) {
         let cmds: Vec<ShellCmd> = if let Ok(mut q) = self.cmd_queue.lock() {
             std::mem::take(&mut *q)
@@ -309,11 +343,45 @@ impl App {
         }
     }
 
+    fn close_overlays(&mut self) {
+        self.launcher = None;
+        self.control = None;
+        self.island_card = None;
+        self.agents = None;
+        self.agents_error = None;
+    }
+
+    fn open_overlay(
+        &self,
+        namespace: &str,
+        anchor: Anchor,
+        margin: (i32, i32, i32, i32),
+        size: (u32, u32),
+        kb: KeyboardInteractivity,
+    ) -> SurfaceSlot {
+        make_layer_surface(
+            &self.compositor,
+            &self.layer_shell,
+            &self.qh,
+            Layer::Overlay,
+            namespace,
+            anchor,
+            0,
+            margin,
+            size.0,
+            size.1,
+            kb,
+        )
+    }
+
     fn apply_shell_cmd(&mut self, cmd: ShellCmd) {
         match cmd {
             ShellCmd::Notify(text) => {
                 if text.trim().is_empty() {
                     self.island_override = None;
+                } else if self.prefs.dnd_on {
+                    // Focus is on: hold plain messages. Agent approvals come
+                    // from the protocol, not from here, and are never muted.
                 } else {
                     self.island_override = Some((Instant::now(), text));
                 }
@@ -323,21 +391,16 @@ impl App {
                 if self.launcher.is_some() {
                     self.launcher = None;
                 } else {
-                    self.control = None;
-                    self.island_card = None;
+                    self.close_overlays();
+                    self.catalog = catalog_apps();
                     self.launcher_query.clear();
                     self.launcher_selected = 0;
-                    self.launcher = Some(make_layer_surface(
-                        &self.compositor,
-                        &self.layer_shell,
-                        &self.qh,
-                        Layer::Overlay,
+                    self.refresh_launcher_items();
+                    self.launcher = Some(self.open_overlay(
                         "solyra-launcher",
                         Anchor::empty(),
-                        0,
                         (0, 0, 0, 0),
-                        LAUNCHER_W,
-                        LAUNCHER_H,
+                        (LAUNCHER_W, LAUNCHER_H),
                         KeyboardInteractivity::Exclusive,
                     ));
                 }
@@ -346,19 +409,12 @@ impl App {
                 if self.control.is_some() {
                     self.control = None;
                 } else {
-                    self.launcher = None;
-                    self.island_card = None;
-                    self.control = Some(make_layer_surface(
-                        &self.compositor,
-                        &self.layer_shell,
-                        &self.qh,
-                        Layer::Overlay,
+                    self.close_overlays();
+                    self.control = Some(self.open_overlay(
                         "solyra-control",
                         Anchor::TOP | Anchor::RIGHT,
-                        0,
                         (8, 12, 0, 0),
-                        CONTROL_W,
-                        CONTROL_H,
+                        (CONTROL_W, CONTROL_H),
                         KeyboardInteractivity::OnDemand,
                     ));
                 }
@@ -367,28 +423,40 @@ impl App {
                 if self.island_card.is_some() {
                     self.island_card = None;
                 } else {
-                    self.launcher = None;
-                    self.control = None;
-                    self.island_card = Some(make_layer_surface(
-                        &self.compositor,
-                        &self.layer_shell,
-                        &self.qh,
-                        Layer::Overlay,
+                    self.close_overlays();
+                    self.island_card = Some(self.open_overlay(
                         "solyra-island",
                         Anchor::TOP,
-                        0,
                         (6, 0, 0, 0),
-                        ISLAND_CARD_W,
-                        ISLAND_CARD_H,
+                        (ISLAND_CARD_W, ISLAND_CARD_H),
                         KeyboardInteractivity::OnDemand,
                     ));
                 }
             }
-            ShellCmd::CloseOverlays => {
-                self.launcher = None;
-                self.control = None;
-                self.island_card = None;
+            ShellCmd::ToggleAgents => {
+                if self.agents.is_some() {
+                    self.close_overlays();
+                } else {
+                    self.close_overlays();
+                    self.load_agents();
+                    // First task that needs a decision, else the first task.
+                    self.agents_selected = self
+                        .agent_tasks
+                        .iter()
+                        .position(|t| t.pending.is_some() && t.decision_sent.is_none())
+                        .unwrap_or(0);
+                    // Exclusive: the approval keys (A/D/T) must reach this
+                    // card. It only opens when the user asks for it.
+                    self.agents = Some(self.open_overlay(
+                        "solyra-agents",
+                        Anchor::TOP,
+                        (6, 0, 0, 0),
+                        (AGENTS_W, AGENTS_H),
+                        KeyboardInteractivity::Exclusive,
+                    ));
+                }
             }
+            ShellCmd::CloseOverlays => self.close_overlays(),
             ShellCmd::SetDock(style) => {
                 self.prefs.dock_style = style;
                 self.prefs.save();
@@ -414,9 +482,46 @@ impl App {
         self.needs_redraw = true;
     }
 
+    fn refresh_launcher_items(&mut self) {
+        self.launcher_items = launcher::search(
+            &self.launcher_query,
+            &self.catalog,
+            &self.wins,
+            self.agent_summary.runtime_present,
+        );
+        self.launcher_selected = self
+            .launcher_selected
+            .min(self.launcher_items.len().saturating_sub(1));
+    }
+
+    fn load_agents(&mut self) {
+        let now = agent::now_secs();
+        let Some(root) = agent::root_dir() else {
+            self.agent_tasks.clear();
+            self.agent_summary = agent::Summary::default();
+            self.agent_attention = None;
+            return;
+        };
+        let snap = agent::load(&root, now);
+        for err in &snap.read_errors {
+            eprintln!("solyra-panel: agent protocol: {err}");
+        }
+        self.agent_summary = agent::Summary::of(snap.runtime_present, &snap.tasks);
+        self.agent_attention = snap
+            .tasks
+            .iter()
+            .find(|t| t.pending.is_some() && t.decision_sent.is_none())
+            .map(|t| format!("Approval needed · {}", t.name));
+        self.agent_tasks = snap.tasks;
+        self.agents_selected = self
+            .agents_selected
+            .min(self.agent_tasks.len().saturating_sub(1));
+    }
+
     fn sync_compositor_state(&mut self) {
         self.wins = windows();
         self.ws_list = workspaces();
+        self.load_agents();
 
         if let Some((t, ref msg)) = self.island_override {
             if t.elapsed() <= Duration::from_secs(state::ISLAND_TTL_SECS) {
@@ -427,6 +532,9 @@ impl App {
             }
         } else {
             self.island_msg = read_island_file();
+        }
+        if self.prefs.dnd_on {
+            self.island_msg = None;
         }
 
         if matches!(self.dock_active_style, DockStyle::Solyra | DockStyle::Macos) {
@@ -441,6 +549,8 @@ impl App {
 
     fn redraw(&mut self, conn: &Connection) {
         let telem = read_telemetry();
+        let th = self.theme();
+        let agents_summary = self.agent_summary;
 
         if self.bar.configured && self.bar.width > 0 {
             let hover = self.hover_on(&self.bar.surface);
@@ -453,10 +563,12 @@ impl App {
                 let mut cv = Canvas::new(bytes, w, h);
                 self.bar.regions = draw_bar(
                     &mut cv,
+                    &th,
                     &self.fonts,
                     &self.ws_list,
                     &self.wins,
                     self.island_msg.as_deref(),
+                    self.agent_attention.as_deref(),
                     &self.prefs,
                     &telem,
                     hover,
@@ -474,86 +586,97 @@ impl App {
                     .create_buffer(w as i32, h as i32, (w * 4) as i32, Format::Argb8888)
             {
                 let mut cv = Canvas::new(bytes, w, h);
+                let live = Live {
+                    agents: agents_summary,
+                    telem: &telem,
+                    prefs: &self.prefs,
+                };
                 self.dock.regions = draw_dock(
                     &mut cv,
+                    &th,
                     &self.fonts,
                     self.dock_active_style,
                     &self.wins,
                     &mut self.icons,
                     hover,
+                    &live,
                 );
                 present(buffer, &self.dock.surface, w, h);
             }
         }
 
-        if let Some(ref mut slot) = self.launcher {
-            if slot.configured && slot.width > 0 {
-                let hover = self
-                    .pointer_surface
-                    .as_ref()
-                    .filter(|s| *s == &slot.surface)
-                    .map(|_| self.pointer_pos);
-                let w = slot.width;
-                let h = slot.height;
-                if let Ok((buffer, bytes)) =
-                    self.pool
-                        .create_buffer(w as i32, h as i32, (w * 4) as i32, Format::Argb8888)
-                {
-                    let mut cv = Canvas::new(bytes, w, h);
-                    slot.regions = draw_launcher(
-                        &mut cv,
-                        &self.fonts,
-                        &self.launcher_query,
-                        self.launcher_selected,
-                        &mut self.icons,
-                        hover,
-                    );
-                    present(buffer, &slot.surface, w, h);
+        // Overlays: each draws into its own shm buffer.
+        macro_rules! overlay {
+            ($slot:expr, |$cv:ident, $hover:ident| $draw:expr) => {
+                if let Some(ref mut slot) = $slot {
+                    if slot.configured && slot.width > 0 {
+                        let $hover = self
+                            .pointer_surface
+                            .as_ref()
+                            .filter(|s| *s == &slot.surface)
+                            .map(|_| self.pointer_pos);
+                        let (w, h) = (slot.width, slot.height);
+                        if let Ok((buffer, bytes)) = self.pool.create_buffer(
+                            w as i32,
+                            h as i32,
+                            (w * 4) as i32,
+                            Format::Argb8888,
+                        ) {
+                            let mut $cv = Canvas::new(bytes, w, h);
+                            slot.regions = $draw;
+                            present(buffer, &slot.surface, w, h);
+                        }
+                    }
                 }
-            }
+            };
         }
 
-        if let Some(ref mut slot) = self.control {
-            if slot.configured && slot.width > 0 {
-                let hover = self
-                    .pointer_surface
-                    .as_ref()
-                    .filter(|s| *s == &slot.surface)
-                    .map(|_| self.pointer_pos);
-                let w = slot.width;
-                let h = slot.height;
-                if let Ok((buffer, bytes)) =
-                    self.pool
-                        .create_buffer(w as i32, h as i32, (w * 4) as i32, Format::Argb8888)
-                {
-                    let mut cv = Canvas::new(bytes, w, h);
-                    slot.regions =
-                        draw_control(&mut cv, &self.fonts, &self.prefs, &telem, hover);
-                    present(buffer, &slot.surface, w, h);
-                }
-            }
-        }
-
-        if let Some(ref mut slot) = self.island_card {
-            if slot.configured && slot.width > 0 {
-                let w = slot.width;
-                let h = slot.height;
-                if let Ok((buffer, bytes)) =
-                    self.pool
-                        .create_buffer(w as i32, h as i32, (w * 4) as i32, Format::Argb8888)
-                {
-                    let mut cv = Canvas::new(bytes, w, h);
-                    slot.regions = draw_island_card(
-                        &mut cv,
-                        &self.fonts,
-                        self.island_msg.as_deref(),
-                        &self.wins,
-                        &telem,
-                    );
-                    present(buffer, &slot.surface, w, h);
-                }
-            }
-        }
+        overlay!(self.launcher, |cv, hover| draw_launcher(
+            &mut cv,
+            &th,
+            &self.fonts,
+            &self.launcher_query,
+            &self.launcher_items,
+            self.launcher_selected,
+            &mut self.icons,
+            hover,
+        ));
+        overlay!(self.control, |cv, hover| draw_control(
+            &mut cv,
+            &th,
+            &self.fonts,
+            &self.prefs,
+            &telem,
+            agents_summary,
+            hover,
+        ));
+        overlay!(self.island_card, |cv, _hover| draw_island_card(
+            &mut cv,
+            &th,
+            &self.fonts,
+            self.island_msg.as_deref(),
+            &self.wins,
+            &telem,
+            agents_summary,
+        ));
+        let root_hint = agent::root_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "$XDG_RUNTIME_DIR/solyra-agent (XDG_RUNTIME_DIR is not set)".into());
+        let view = AgentsView {
+            runtime_present: agents_summary.runtime_present,
+            tasks: &self.agent_tasks,
+            selected: self.agents_selected,
+            now: agent::now_secs(),
+            root_hint: &root_hint,
+            error: self.agents_error.as_deref(),
+        };
+        overlay!(self.agents, |cv, hover| draw_agents(
+            &mut cv,
+            &th,
+            &self.fonts,
+            &view,
+            hover
+        ));
 
         let _ = conn.flush();
     }
@@ -566,26 +689,34 @@ impl App {
         }
     }
 
+    fn regions_for(&self, surface: &WlSurface) -> Option<&Vec<Region>> {
+        if surface == &self.bar.surface {
+            return Some(&self.bar.regions);
+        }
+        if surface == &self.dock.surface {
+            return Some(&self.dock.regions);
+        }
+        [
+            &self.launcher,
+            &self.control,
+            &self.island_card,
+            &self.agents,
+        ]
+        .into_iter()
+        .flatten()
+        .find(|s| &s.surface == surface)
+        .map(|s| &s.regions)
+    }
+
     fn handle_click(&mut self, surface: &WlSurface, x: f64, y: f64) {
-        let regions = if surface == &self.bar.surface {
-            &self.bar.regions
-        } else if surface == &self.dock.surface {
-            &self.dock.regions
-        } else if self.launcher.as_ref().is_some_and(|s| &s.surface == surface) {
-            &self.launcher.as_ref().unwrap().regions
-        } else if self.control.as_ref().is_some_and(|s| &s.surface == surface) {
-            &self.control.as_ref().unwrap().regions
-        } else if self
-            .island_card
-            .as_ref()
-            .is_some_and(|s| &s.surface == surface)
-        {
-            &self.island_card.as_ref().unwrap().regions
-        } else {
+        let Some(regions) = self.regions_for(surface) else {
             return;
         };
-
-        let Some(hit) = regions.iter().find(|r| r.contains(x, y)).map(|r| r.action.clone()) else {
+        let Some(hit) = regions
+            .iter()
+            .find(|r| r.contains(x, y))
+            .map(|r| r.action.clone())
+        else {
             return;
         };
 
@@ -597,34 +728,52 @@ impl App {
                 self.launcher = None;
             }
             HitAction::FocusWindow(id) => {
-                send_ipc(&format!("{{\"Action\":{{\"FocusWindow\":{{\"id\":{id}}}}}}}"));
+                send_ipc(&format!(
+                    "{{\"Action\":{{\"FocusWindow\":{{\"id\":{id}}}}}}}"
+                ));
                 self.launcher = None;
             }
             HitAction::Launch(target) => {
                 self.execute_launch(target);
                 self.launcher = None;
             }
+            HitAction::AgentRequest(text) => {
+                self.queue_agent_request(&text);
+                self.launcher = None;
+            }
             HitAction::Shell(cmd) => {
                 self.apply_shell_cmd(cmd);
             }
-            HitAction::ToggleWifi => {
-                self.prefs.wifi_on = !self.prefs.wifi_on;
-            }
-            HitAction::ToggleBt => {
-                self.prefs.bt_on = !self.prefs.bt_on;
-            }
             HitAction::ToggleDnd => {
                 self.prefs.dnd_on = !self.prefs.dnd_on;
+                self.prefs.save();
             }
+            HitAction::ToggleTheme => {
+                self.prefs.theme = match self.prefs.theme {
+                    tokens::ThemeKind::Dark => tokens::ThemeKind::Light,
+                    tokens::ThemeKind::Light => tokens::ThemeKind::Dark,
+                };
+                self.prefs.save();
+            }
+            HitAction::SelectTask(idx) => {
+                self.agents_selected = idx.min(self.agent_tasks.len().saturating_sub(1));
+                self.agents_error = None;
+            }
+            HitAction::Decide {
+                task,
+                verdict,
+                scope,
+            } => self.decide(task, verdict, scope),
             HitAction::SetVolumeFromX { x0, w } => {
                 let pct = (((x - x0 as f64) / w.max(1) as f64) * 100.0)
                     .round()
                     .clamp(0.0, 100.0) as u8;
                 self.prefs.volume = pct;
                 self.prefs.save();
-                let _ = std::process::Command::new("sh")
-                    .arg("-c")
-                    .arg(format!("wpctl set-volume @DEFAULT_AUDIO_SINK@ {}% >/dev/null 2>&1 &", pct))
+                let _ = std::process::Command::new("wpctl")
+                    .args(["set-volume", "@DEFAULT_AUDIO_SINK@", &format!("{pct}%")])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
                     .spawn();
             }
             HitAction::SetBrightnessFromX { x0, w } => {
@@ -633,10 +782,62 @@ impl App {
                     .clamp(15.0, 100.0) as u8;
                 self.prefs.brightness = pct;
                 self.prefs.save();
+                let _ = std::process::Command::new("brightnessctl")
+                    .args(["set", &format!("{pct}%")])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn();
             }
         }
         self.needs_state_sync = true;
         self.needs_redraw = true;
+    }
+
+    /// Say something in the island, even while Focus is on: this is the
+    /// direct result of something the user just did.
+    fn say(&mut self, text: String) {
+        self.island_override = Some((Instant::now(), text));
+    }
+
+    fn queue_agent_request(&mut self, text: &str) {
+        let Some(root) = agent::root_dir() else {
+            self.say("Could not queue request: XDG_RUNTIME_DIR is not set".into());
+            return;
+        };
+        match agent::submit_request(&root, text, agent::now_secs()) {
+            Ok(_) => self.say("Request queued for the agent runtime".into()),
+            Err(err) => self.say(format!("Could not queue request: {err}")),
+        }
+    }
+
+    fn decide(&mut self, task: usize, verdict: agent::Verdict, scope: agent::Scope) {
+        let Some(t) = self.agent_tasks.get(task) else {
+            return;
+        };
+        let Some(pending) = t.pending.as_ref().filter(|_| t.decision_sent.is_none()) else {
+            return;
+        };
+        let (task_id, request_id) = (t.id.clone(), pending.request_id.clone());
+        let Some(root) = agent::root_dir() else {
+            self.agents_error = Some("Decision not recorded: XDG_RUNTIME_DIR is not set".into());
+            return;
+        };
+        match agent::record_decision(
+            &root,
+            &task_id,
+            &request_id,
+            verdict,
+            scope,
+            agent::now_secs(),
+        ) {
+            Ok(()) => {
+                self.agents_error = None;
+                self.load_agents();
+            }
+            Err(err) => {
+                self.agents_error = Some(format!("Decision not recorded: {err}"));
+            }
+        }
     }
 
     fn execute_launch(&mut self, target: LaunchTarget) {
@@ -656,6 +857,27 @@ impl App {
         }
     }
 
+    fn run_launcher_item(&mut self, item: launcher::Item) {
+        match item.action {
+            launcher::Action::Launch(target) => {
+                self.launcher = None;
+                self.execute_launch(target);
+            }
+            launcher::Action::FocusWindow(id) => {
+                self.launcher = None;
+                send_ipc(&format!(
+                    "{{\"Action\":{{\"FocusWindow\":{{\"id\":{id}}}}}}}"
+                ));
+            }
+            launcher::Action::AgentRequest(text) => {
+                self.launcher = None;
+                self.queue_agent_request(&text);
+            }
+            // Stay open: the row explains why nothing happened.
+            launcher::Action::Unavailable => {}
+        }
+    }
+
     fn handle_evdev_key(&mut self, key: u32, pressed: bool) {
         // Track Shift state (left shift = 42, right shift = 54).
         if key == 42 || key == 54 {
@@ -665,51 +887,87 @@ impl App {
         if !pressed {
             return;
         }
-        // Escape closes any open overlay.
+        // Escape dismisses the topmost overlay and nothing else: it never
+        // answers an approval.
         if key == 1 {
             self.apply_shell_cmd(ShellCmd::CloseOverlays);
+            return;
+        }
+        if self.agents.is_some() {
+            self.handle_agents_key(key);
+            self.needs_redraw = true;
             return;
         }
         if self.launcher.is_none() {
             return;
         }
 
-        let items = filtered_launcher_apps(&self.launcher_query);
-        let max_idx = items.len().saturating_sub(1);
-
+        let max_idx = self.launcher_items.len().saturating_sub(1);
         match key {
             14 => {
-                // Backspace
                 self.launcher_query.pop();
                 self.launcher_selected = 0;
+                self.refresh_launcher_items();
             }
             28 | 96 => {
-                // Enter / KP_Enter
-                if let Some(app) = items.get(self.launcher_selected.min(max_idx)).cloned() {
-                    self.launcher = None;
-                    self.execute_launch(app.command);
-                } else if !self.launcher_query.trim().is_empty() {
-                    let q = self.launcher_query.clone();
-                    self.launcher = None;
-                    self.execute_launch(LaunchTarget::Shell(q));
+                // Enter runs exactly the highlighted row. With no rows there
+                // is nothing to run: a typed query is never executed as a
+                // shell command.
+                if let Some(item) = self
+                    .launcher_items
+                    .get(self.launcher_selected.min(max_idx))
+                    .cloned()
+                {
+                    self.run_launcher_item(item);
                 }
             }
             103 | 105 => {
-                // Up / Left
                 self.launcher_selected = self.launcher_selected.saturating_sub(1);
             }
             108 | 106 | 15 => {
-                // Down / Right / Tab
                 self.launcher_selected = (self.launcher_selected + 1).min(max_idx);
             }
             _ => {
                 if let Some(ch) = evdev_to_ascii(key, self.shift_held) {
                     self.launcher_query.push(ch);
                     self.launcher_selected = 0;
+                    self.refresh_launcher_items();
                 }
             }
         }
         self.needs_redraw = true;
+    }
+
+    fn handle_agents_key(&mut self, key: u32) {
+        let last = self.agent_tasks.len().saturating_sub(1);
+        match key {
+            103 => {
+                self.agents_selected = self.agents_selected.saturating_sub(1);
+                self.agents_error = None;
+            }
+            108 => {
+                self.agents_selected = (self.agents_selected + 1).min(last);
+                self.agents_error = None;
+            }
+            // A / D / T. Enter is deliberately unbound: an approval needs a
+            // deliberate key, not the one that also dismisses dialogs.
+            30 => self.decide(
+                self.agents_selected,
+                agent::Verdict::Approve,
+                agent::Scope::Once,
+            ),
+            20 => self.decide(
+                self.agents_selected,
+                agent::Verdict::Approve,
+                agent::Scope::Task,
+            ),
+            32 => self.decide(
+                self.agents_selected,
+                agent::Verdict::Deny,
+                agent::Scope::Once,
+            ),
+            _ => {}
+        }
     }
 }
 
@@ -729,7 +987,13 @@ fn evdev_to_ascii(key: u32, shift: bool) -> Option<char> {
     let ch = match key {
         2..=10 => (b'1' + (key - 2) as u8) as char,
         11 => '0',
-        12 => if shift { '_' } else { '-' },
+        12 => {
+            if shift {
+                '_'
+            } else {
+                '-'
+            }
+        }
         16 => 'q',
         17 => 'w',
         18 => 'e',
@@ -767,7 +1031,14 @@ fn evdev_to_ascii(key: u32, shift: bool) -> Option<char> {
 // --------------------------------------------------------- Wayland traits
 
 impl CompositorHandler for App {
-    fn scale_factor_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlSurface, _: i32) {}
+    fn scale_factor_changed(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &WlSurface,
+        _: i32,
+    ) {
+    }
     fn transform_changed(
         &mut self,
         _: &Connection,
@@ -777,8 +1048,22 @@ impl CompositorHandler for App {
     ) {
     }
     fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlSurface, _: u32) {}
-    fn surface_enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlSurface, _: &WlOutput) {}
-    fn surface_leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlSurface, _: &WlOutput) {}
+    fn surface_enter(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &WlSurface,
+        _: &WlOutput,
+    ) {
+    }
+    fn surface_leave(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &WlSurface,
+        _: &WlOutput,
+    ) {
+    }
 }
 
 impl ShmHandler for App {
@@ -801,14 +1086,15 @@ impl LayerShellHandler for App {
         if layer.wl_surface() == &self.bar.surface {
             std::process::exit(0);
         }
-        if self.launcher.as_ref().is_some_and(|s| &s.layer == layer) {
-            self.launcher = None;
-        }
-        if self.control.as_ref().is_some_and(|s| &s.layer == layer) {
-            self.control = None;
-        }
-        if self.island_card.as_ref().is_some_and(|s| &s.layer == layer) {
-            self.island_card = None;
+        for slot in [
+            &mut self.launcher,
+            &mut self.control,
+            &mut self.island_card,
+            &mut self.agents,
+        ] {
+            if slot.as_ref().is_some_and(|s| &s.layer == layer) {
+                *slot = None;
+            }
         }
     }
 
@@ -834,27 +1120,14 @@ impl LayerShellHandler for App {
             apply(&mut self.bar);
         } else if &self.dock.layer == layer {
             apply(&mut self.dock);
-        } else if let Some(ref mut s) = self.launcher {
-            if &s.layer == layer {
-                apply(s);
-            }
-        } else if let Some(ref mut s) = self.control {
-            if &s.layer == layer {
-                apply(s);
-            }
-        } else if let Some(ref mut s) = self.island_card {
-            if &s.layer == layer {
-                apply(s);
-            }
         }
-        // Check remaining overlays safely in case `else if` skipped them.
-        if let Some(ref mut s) = self.control {
-            if &s.layer == layer {
-                apply(s);
-            }
-        }
-        if let Some(ref mut s) = self.island_card {
-            if &s.layer == layer {
+        for slot in [
+            &mut self.launcher,
+            &mut self.control,
+            &mut self.island_card,
+            &mut self.agents,
+        ] {
+            if let Some(s) = slot.as_mut().filter(|s| &s.layer == layer) {
                 apply(s);
             }
         }

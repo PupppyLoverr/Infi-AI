@@ -14,8 +14,9 @@ A Linux desktop distribution built as a container image:
 - **Shell:** `solyra-panel` (`shell/panel`, pure Rust, ~1.5 MB). Five Wayland
   layer surfaces: bar, dock (three variants), launcher, control centre,
   expanded island.
-- **Look:** violet glass. Translucent surfaces over a blurred wallpaper, one
-  accent (`#c084fc` → `#818cf8`) that only means *active*.
+- **Look:** flat warm-neutral surfaces with hairlines; overlays faintly
+  translucent over a blurred wallpaper; one accent (`#B48AAD`) that only means
+  *active*.
 
 ## What works today
 
@@ -30,6 +31,12 @@ Verified by the harnesses below, not by inspection:
 | Glass | Bar, dock, launcher, control centre, island are translucent and blurred by the compositor |
 | Size | 3.0 GB deployed root before first boot (budget ≤ 4 GB) |
 | Idle RAM | ~341 MiB whole guest in a 1.8 GiB VM (budget ≤ 400 MiB) |
+
+Added since, covered by `cargo test` (not yet run on a live niri session): token
+module with light theme, grouped launcher, real battery/network readouts, agent
+task card and approvals over a file protocol (`agent-protocol.md`). The old
+control-centre Wi-Fi/Bluetooth toggles and the "Simulate Agent" button were
+removed because they did not act on the system.
 
 Not built yet: display manager, first-boot wizard, status-cluster popovers
 beyond the control centre, notifications, lock screen theming, snap zones,
@@ -143,6 +150,7 @@ solyra-panel notify "Agent · tidying Downloads"   # island message (10 s)
 solyra-panel toggle-launcher                       # Super+D / Super+Space
 solyra-panel toggle-control                        # Super+Shift+C
 solyra-panel toggle-island                         # Super+Shift+I
+solyra-panel toggle-agents                         # Super+Shift+A
 solyra-panel dock macos|windows|solyra             # switch dock variant
 solyra-panel wallpaper ocean|sunset|forest|graphite|violet
 solyra-panel close                                 # dismiss overlays

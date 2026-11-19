@@ -89,3 +89,30 @@ client that can be killed and restarted without touching the session.
   binary, no C dependencies).
 - Open: pointer input on the bar (workspace click, tray), which needs a seat
   and therefore keyboard interactivity `on-demand` on the panel surface.
+
+## ADR-0007: The shell stays a layer-shell client with tokens, not zgx (for now)
+
+First-party *apps* remain planned on zgx (ADR-0003). The shell does not use it
+yet because ADR-0006 still holds: zgx's desktop host creates `xdg_toplevel`
+windows and has no layer-shell role, and the repository contains no zgx code or
+dependency. This change adds no GPUI/GTK/Qt/web dependency; it improves
+`solyra-panel` in place.
+
+- What zgx needs before the panel can move: a layer-shell surface role (a winit
+  patch or dedicated backend) with exclusive-zone and keyboard-interactivity
+  control, plus an accessibility tree for the shell surfaces.
+- What carries over unchanged: `shell/panel/src/tokens.rs` is the semantic token
+  source (dark and light themes, contrast-tested). A zgx port should consume
+  the same roles rather than re-pick colours.
+- Consequence: the panel has no AccessKit tree, so screen readers cannot read
+  the shell. That is a known blocker, not a supported feature.
+
+## ADR-0008: Agent tasks reach the shell through a file protocol
+
+Until the runtime in `agent-platform.md` exists, the panel renders and answers
+agent work through append-only JSON-lines files under
+`$XDG_RUNTIME_DIR/solyra-agent/` (`agent-protocol.md`). Chosen because it needs
+no daemon, is inspectable with `cat`, and is testable with fixtures. A recorded
+approval is a message, not enforcement; enforcement is the sandbox's job (P5).
+Rejected: a D-Bus or socket API now, because its shape should follow the real
+runtime, and the file contract is small enough to replace.

@@ -34,13 +34,34 @@ ship an autologin service. To override shortcuts and appearance, copy
 Super+E opens Thunar, Super+D opens Fuzzel, and Super+Tab opens the workspace
 overview.
 
+## Get a ready-made disk (CI)
+
+The `disk` workflow builds the image, builds the disk, boots it headless once as
+a smoke test, and uploads `solyra.raw.zst` as the `solyra-disk` artifact
+(Actions -> latest `disk` run -> Artifacts, kept 14 days). Then:
+
+```sh
+sha256sum -c SHA256SUMS
+./run-vm.sh solyra.raw.zst        # needs QEMU, OVMF, zstd; KVM recommended
+```
+
+The development disk logs in automatically as `solyra` (password `solyra`). It
+is a test image, not a release: no Secure Boot, no installer, no updates tested.
+The smoke test proves boot to a serial login prompt only; the graphical desktop
+needs a GL-capable virtual GPU, which `run-vm.sh` configures (VirGL).
+
+Everyday programs in the image: Foot, Thunar, Firefox, Mousepad, NetworkManager
+(`nmtui` from the control centre), PipeWire/WirePlumber. Keys: Super+Enter
+terminal, Super+E files, Super+B browser, Super+D launcher, Super+Shift+A agent
+tasks.
+
 ## Known limits of this image
 
 - niri refuses software EGL renderers, so a VM needs a virtual GPU with 3D
   support (`-device virtio-vga-gl`, VirGL). With a plain `virtio-vga` the
   session starts and opens its Wayland socket but never draws a frame.
-- There is no display manager yet, so nothing starts the session at boot; the
-  session is started by hand or by a test unit.
+- Login is greetd with a text greeter (`agreety`); there is no graphical
+  greeter or first-boot wizard yet.
 - `systemd-oomd` and `systemd-resolved` log "Failed at step USER" during early
   boot on this image and need their system users checked.
 

@@ -1,0 +1,114 @@
+name: disk
+
+# Builds the Solyra development disk image, boots it once headless as a smoke
+# test, and publishes it as a downloadable artifact.
+#
+# What the smoke test proves: the disk boots under UEFI, the kernel and systemd
+# come up, and the serial console reaches a login prompt. It does NOT prove the
+# graphical desktop: niri needs a GL-capable virtual GPU, which a headless CI
+# runner does not have. Run the disk with scripts/run-vm.sh to see the desktop.
+on:
+  workflow_dispatch:
+  push:
+    branches: ['claude/**']
+
+jobs:
+  disk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          df -h / /mnt
+
+      - name: Build the compositor and the shell, run the shell tests
+        run: |
+          docker build -f comp/dev.Containerfile -t solyra-dev:ci comp/
+          mkdir -p comp/out shell/out
+          docker run --rm -v "$PWD/comp:/src" solyra-dev:ci sh -ec '
+            CARGO_PROFILE_RELEASE_STRIP=symbols CARGO_PROFILE_RELEASE_LTO=off \
+              cargo build --locked --release -p niri -j 3
+            install -m 755 target/release/niri out/niri'
+          docker run --rm -v "$PWD/shell:/shell" -w /shell/panel solyra-dev:ci sh -ec '
+            cargo test --locked
+            cargo build --locked --release
+            install -m 755 target/release/solyra-panel ../out/solyra-panel'
+
+      - name: Build the OS image and validate the session config
+        run: |
+          docker build -f base/Containerfile -t solyra-base:ci .
+          docker run --rm --entrypoint cat solyra-base:ci /etc/solyra/comp.kdl | cmp base/solyra-config.kdl -
+          docker run --rm solyra-base:ci /usr/bin/solyra-comp validate -c /etc/solyra/comp.kdl
+          docker image inspect solyra-base:ci --format 'image size: {{.Size}} bytes'
+          # Fail loudly if an expected program is missing from the image.
+          docker run --rm --entrypoint sh solyra-base:ci -ec '
+            for b in solyra-comp solyra-panel foot thunar firefox mousepad wpctl brightnessctl nmtui agreety swaylock; do
+              command -v "$b" >/dev/null || { echo "missing in image: $b"; exit 1; }
+            done
+            systemctl is-enabled greetd.service'
+
+      - name: Install disk tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xfsprogs dosfstools mtools grub-efi-amd64-bin skopeo \
+            qemu-system-x86 ovmf zstd openssl
+
+      - name: Build the disk
+        run: |
+          sudo env TMPDIR=/mnt SOLYRA_IMAGE=solyra-base:ci \
+            SOLYRA_AUTOLOGIN=1 SOLYRA_DEV_PASSWORD=solyra \
+            ./scripts/build-disk.sh /mnt/solyra.raw 8G
+          sudo chown "$USER" /mnt/solyra.raw
+          ls -lh /mnt/solyra.raw
+
+      - name: Boot smoke test (headless, serial console)
+        run: |
+          cp /usr/share/OVMF/OVMF_VARS_4M.fd /mnt/vars.fd
+          ACCEL="-accel tcg,thread=multi -cpu max"
+          if [ -w /dev/kvm ]; then ACCEL="-accel kvm -cpu host"; fi
+          # shellcheck disable=SC2086
+          qemu-system-x86_64 $ACCEL -m 3072 -smp 2 \
+            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+            -drive if=pflash,format=raw,file=/mnt/vars.fd \
+            -drive file=/mnt/solyra.raw,format=raw,if=virtio,snapshot=on \
+            -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
+            -device virtio-rng-pci -display none -serial file:/mnt/serial.log &
+          QPID=$!
+          ok=0
+          for _ in $(seq 1 90); do
+            sleep 10
+            if grep -q 'login:' /mnt/serial.log 2>/dev/null; then ok=1; break; fi
+            if grep -qE 'Kernel panic|emergency mode|Failed to mount /sysroot' /mnt/serial.log 2>/dev/null; then break; fi
+            kill -0 "$QPID" 2>/dev/null || break
+          done
+          kill "$QPID" 2>/dev/null || true
+          tail -n 60 /mnt/serial.log || true
+          if [ "$ok" != 1 ]; then echo "smoke test failed: no login prompt on the serial console"; exit 1; fi
+          echo "smoke test passed: reached a login prompt"
+
+      - name: Compress and checksum
+        run: |
+          zstd -T0 -6 --sparse /mnt/solyra.raw -o /mnt/solyra.raw.zst
+          cp scripts/run-vm.sh /mnt/run-vm.sh
+          ( cd /mnt && sha256sum solyra.raw.zst run-vm.sh > SHA256SUMS && cat SHA256SUMS )
+          ls -lh /mnt/solyra.raw.zst
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: solyra-disk
+          path: |
+            /mnt/solyra.raw.zst
+            /mnt/run-vm.sh
+            /mnt/SHA256SUMS
+          compression-level: 0
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-serial-log
+          path: /mnt/serial.log
+          if-no-files-found: ignore

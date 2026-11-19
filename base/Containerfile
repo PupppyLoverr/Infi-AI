@@ -32,6 +32,24 @@ RUN dnf -y install \
       foot fuzzel thunar swaylock swaybg dejavu-sans-mono-fonts \
  && dnf -y clean all
 
+# --- everyday desktop -------------------------------------------------------
+# A usable system, not just a compositor: login manager, audio, networking
+# tools, a browser and an editor. Sizes are measured in CI (budget <= 4 GB).
+#   greetd + agreety  text login; the dev disk adds an autologin initial_session
+#   wireplumber       `wpctl`, which the control centre volume slider drives
+#   NetworkManager-tui  `nmtui`, opened from the control centre network tile
+RUN dnf -y install \
+      greetd \
+      wireplumber pipewire-pulseaudio pipewire-alsa \
+      NetworkManager-wifi NetworkManager-tui \
+      brightnessctl \
+      firefox mousepad \
+      rsms-inter-fonts adwaita-icon-theme \
+      xdg-desktop-portal-gtk gvfs \
+ && dnf -y clean all
+# Optional pieces: skipped with a visible note rather than failing the build.
+RUN dnf -y install --skip-unavailable polkit-gnome 2>&1 | tail -3 ; dnf -y clean all
+
 # --- identity ----------------------------------------------------------------
 # Solyra's own identity lives in the image so every boot (disk, ISO, VM)
 # reports it. Codename "Perihelion" tracks PLAN.md.
@@ -77,6 +95,9 @@ COPY base/theme/foot.ini /etc/xdg/foot/foot.ini
 COPY base/theme/gtk-3.0/settings.ini /etc/gtk-3.0/settings.ini
 COPY base/theme/gtk-4.0/settings.ini /etc/gtk-4.0/settings.ini
 COPY base/solyra-config.kdl /etc/solyra/comp.kdl
+COPY base/greetd.toml /etc/greetd/config.toml
+# Log in on tty1 through greetd; the compositor session starts after login.
+RUN systemctl enable greetd.service && systemctl set-default graphical.target
 COPY base/solyra.desktop /usr/share/wayland-sessions/solyra.desktop
 RUN /usr/bin/solyra-comp validate -c /etc/solyra/comp.kdl
 

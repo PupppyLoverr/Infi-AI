@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::canvas::{decode_png, Icon, Rgba};
+use crate::tokens::ThemeKind;
 
 pub const ISLAND_TTL_SECS: u64 = 10;
 
@@ -31,8 +32,8 @@ impl DockStyle {
     pub fn label(self) -> &'static str {
         match self {
             Self::Solyra => "Solyra",
-            Self::Macos => "macOS",
-            Self::Windows => "Windows",
+            Self::Macos => "Floating",
+            Self::Windows => "Taskbar",
         }
     }
 
@@ -120,6 +121,7 @@ pub enum ShellCmd {
     ToggleLauncher,
     ToggleControl,
     ToggleIsland,
+    ToggleAgents,
     CloseOverlays,
     SetDock(DockStyle),
     SetWallpaper(WallpaperPreset),
@@ -158,16 +160,39 @@ pub enum LaunchTarget {
 pub struct Telemetry {
     pub mem_used_mib: u64,
     pub mem_total_mib: u64,
-    pub battery_pct: u8,
+    /// `None` when the machine has no battery. Never a placeholder number.
+    pub battery_pct: Option<u8>,
+    pub network: NetworkState,
+    /// A backlight device exists and `brightnessctl` can drive it.
+    pub brightness_controllable: bool,
+    /// `wpctl` is installed, so the volume slider reaches the audio server.
+    pub volume_controllable: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetworkState {
+    Wired,
+    Wireless,
+    Offline,
+}
+
+impl NetworkState {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Wired => "Wired · connected",
+            Self::Wireless => "Wi-Fi · connected",
+            Self::Offline => "Offline",
+        }
+    }
 }
 
 pub struct ShellPrefs {
     pub dock_style: DockStyle,
     pub wallpaper: WallpaperPreset,
-    pub wifi_on: bool,
-    pub bt_on: bool,
+    pub theme: ThemeKind,
+    /// Focus: while on, plain `notify` messages are held back. Agent
+    /// approvals are never muted.
     pub dnd_on: bool,
-    pub agent_ready: bool,
     pub volume: u8,
     pub brightness: u8,
 }
@@ -176,11 +201,9 @@ impl Default for ShellPrefs {
     fn default() -> Self {
         Self {
             dock_style: DockStyle::Solyra,
-            wallpaper: WallpaperPreset::Violet,
-            wifi_on: true,
-            bt_on: true,
+            wallpaper: WallpaperPreset::Graphite,
+            theme: ThemeKind::Dark,
             dnd_on: false,
-            agent_ready: true,
             volume: 76,
             brightness: 84,
         }
@@ -219,6 +242,11 @@ impl ShellPrefs {
                         prefs.wallpaper = w;
                     }
                 }
+                "theme" => {
+                    if let Some(t) = ThemeKind::parse(v) {
+                        prefs.theme = t;
+                    }
+                }
                 "volume" => {
                     if let Ok(n) = v.trim().parse::<u8>() {
                         prefs.volume = n.min(100);
@@ -243,9 +271,10 @@ impl ShellPrefs {
             let _ = std::fs::create_dir_all(parent);
         }
         let body = format!(
-            "dock_style={}\nwallpaper={}\nvolume={}\nbrightness={}\n",
+            "dock_style={}\nwallpaper={}\ntheme={}\nvolume={}\nbrightness={}\n",
             self.dock_style.as_str(),
             self.wallpaper.as_str(),
+            self.theme.as_str(),
             self.volume,
             self.brightness,
         );
@@ -323,6 +352,7 @@ fn parse_cmd_line(raw: &str) -> Option<ShellCmd> {
         "toggle-launcher" | "launcher" => Some(ShellCmd::ToggleLauncher),
         "toggle-control" | "control" => Some(ShellCmd::ToggleControl),
         "toggle-island" | "island" => Some(ShellCmd::ToggleIsland),
+        "toggle-agents" | "agents" => Some(ShellCmd::ToggleAgents),
         "close" => Some(ShellCmd::CloseOverlays),
         _ => None,
     }
@@ -377,7 +407,9 @@ pub fn niri_socket() -> Option<PathBuf> {
 pub fn ipc(request: &str) -> Option<String> {
     let path = niri_socket()?;
     let mut stream = UnixStream::connect(path).ok()?;
-    stream.set_read_timeout(Some(Duration::from_millis(350))).ok()?;
+    stream
+        .set_read_timeout(Some(Duration::from_millis(350)))
+        .ok()?;
     stream.write_all(request.as_bytes()).ok()?;
     stream.write_all(b"\n").ok()?;
     let mut reply = String::new();
@@ -404,7 +436,10 @@ pub fn workspaces() -> Vec<(u8, bool)> {
     if let Some(list) = list {
         for ws in list {
             let idx = ws.get("idx").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
-            let active = ws.get("is_active").and_then(|v| v.as_bool()).unwrap_or(false);
+            let active = ws
+                .get("is_active")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             if (1..=9).contains(&idx) {
                 out.push((idx, active));
             }
@@ -448,7 +483,10 @@ pub fn windows() -> Vec<WindowInfo> {
                 .and_then(|v| v.as_str())
                 .unwrap_or(&app_id)
                 .to_string();
-            let workspace_id = win.get("workspace_id").and_then(|v| v.as_u64()).unwrap_or(1);
+            let workspace_id = win
+                .get("workspace_id")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1);
             let is_focused = win
                 .get("is_focused")
                 .and_then(|v| v.as_bool())
@@ -627,7 +665,7 @@ pub fn catalog_apps() -> Vec<AppEntry> {
             app_id: files_bin.clone(),
             role: "files".into(),
             title: "Files".into(),
-            subtitle: "Thunar File Manager · Browse local & mounted storage".into(),
+            subtitle: "Browse local and mounted storage".into(),
             command: LaunchTarget::Shell(files_bin),
         },
         AppEntry {
@@ -637,7 +675,7 @@ pub fn catalog_apps() -> Vec<AppEntry> {
             app_id: term_bin.clone(),
             role: "terminal".into(),
             title: "Terminal".into(),
-            subtitle: "Foot Wayland Terminal · Fast GPU/shm shell".into(),
+            subtitle: "Command line shell".into(),
             command: LaunchTarget::Shell(term_bin),
         },
         AppEntry {
@@ -647,7 +685,7 @@ pub fn catalog_apps() -> Vec<AppEntry> {
             app_id: "solyra-overview".into(),
             role: "overview".into(),
             title: "Workspace Overview".into(),
-            subtitle: "Zoom out all columns and workspaces (Super+Tab)".into(),
+            subtitle: "Zoom out all columns and workspaces".into(),
             command: LaunchTarget::Ipc("{\"Action\":{\"ToggleOverview\":{}}}"),
         },
         AppEntry {
@@ -657,17 +695,27 @@ pub fn catalog_apps() -> Vec<AppEntry> {
             app_id: "solyra-control".into(),
             role: "settings".into(),
             title: "Control Centre".into(),
-            subtitle: "Switch dock variant, wallpaper, audio & display".into(),
+            subtitle: "Dock style, wallpaper, sound and appearance".into(),
             command: LaunchTarget::Internal(ShellCmd::ToggleControl),
         },
         AppEntry {
             window: None,
             window_count: 0,
             is_focused: false,
-            app_id: "solyra-agent".into(),
+            app_id: "solyra-agents".into(),
             role: "agent".into(),
-            title: "Agent Space".into(),
-            subtitle: "Switch to isolated Agent Workspace 7".into(),
+            title: "Agent tasks".into(),
+            subtitle: "Review agent progress and approval requests".into(),
+            command: LaunchTarget::Internal(ShellCmd::ToggleAgents),
+        },
+        AppEntry {
+            window: None,
+            window_count: 0,
+            is_focused: false,
+            app_id: "solyra-workspace-7".into(),
+            role: "overview".into(),
+            title: "Go to workspace 7".into(),
+            subtitle: "Plain workspace switch; not a sandbox".into(),
             command: LaunchTarget::Ipc(
                 "{\"Action\":{\"FocusWorkspace\":{\"reference\":{\"Index\":7}}}}",
             ),
@@ -679,7 +727,7 @@ pub fn catalog_apps() -> Vec<AppEntry> {
             app_id: "solyra-wall".into(),
             role: "wallpaper".into(),
             title: "Ocean Wallpaper".into(),
-            subtitle: "Switch desktop backdrop to deep Ocean aurora".into(),
+            subtitle: "Switch the desktop backdrop to Ocean".into(),
             command: LaunchTarget::Internal(ShellCmd::SetWallpaper(WallpaperPreset::Ocean)),
         },
         AppEntry {
@@ -688,8 +736,8 @@ pub fn catalog_apps() -> Vec<AppEntry> {
             is_focused: false,
             app_id: "solyra-dock-mac".into(),
             role: "settings".into(),
-            title: "Dock: macOS Sequoia Style".into(),
-            subtitle: "Floating glass dock with running dots & Trash".into(),
+            title: "Dock: macOS style".into(),
+            subtitle: "Floating dock with running indicators".into(),
             command: LaunchTarget::Internal(ShellCmd::SetDock(DockStyle::Macos)),
         },
         AppEntry {
@@ -698,8 +746,8 @@ pub fn catalog_apps() -> Vec<AppEntry> {
             is_focused: false,
             app_id: "solyra-dock-win".into(),
             role: "settings".into(),
-            title: "Dock: Windows 11 Taskbar".into(),
-            subtitle: "Full-width bottom bar with search pill & tray".into(),
+            title: "Dock: Taskbar style".into(),
+            subtitle: "Full-width bar along the bottom edge".into(),
             command: LaunchTarget::Internal(ShellCmd::SetDock(DockStyle::Windows)),
         },
         AppEntry {
@@ -709,7 +757,7 @@ pub fn catalog_apps() -> Vec<AppEntry> {
             app_id: "solyra-dock-sol".into(),
             role: "start".into(),
             title: "Dock: Solyra Hybrid".into(),
-            subtitle: "Floating capsule with Start mark & Agent shelf".into(),
+            subtitle: "Floating capsule with a start cell".into(),
             command: LaunchTarget::Internal(ShellCmd::SetDock(DockStyle::Solyra)),
         },
     ];
@@ -845,21 +893,181 @@ pub fn read_telemetry() -> Telemetry {
     let used_mib = total_kib.saturating_sub(avail_kib) / 1024;
     let total_mib = (total_kib / 1024).max(1);
 
-    let mut battery_pct = 96u8;
-    if let Ok(entries) = std::fs::read_dir("/sys/class/power_supply") {
-        for entry in entries.flatten() {
-            let cap = entry.path().join("capacity");
-            if let Ok(raw) = std::fs::read_to_string(cap) {
-                if let Ok(pct) = raw.trim().parse::<u8>() {
-                    battery_pct = pct.min(100);
-                    break;
-                }
-            }
-        }
-    }
     Telemetry {
         mem_used_mib: used_mib,
         mem_total_mib: total_mib,
-        battery_pct,
+        battery_pct: read_battery("/sys/class/power_supply"),
+        network: read_network("/sys/class/net"),
+        brightness_controllable: brightness_controllable(),
+        volume_controllable: on_path("wpctl"),
+    }
+}
+
+/// First real battery's charge. Mains adapters and USB supplies also expose
+/// `capacity` on some machines, so only `type == Battery` counts.
+pub fn read_battery(dir: &str) -> Option<u8> {
+    let mut names: Vec<_> = std::fs::read_dir(dir).ok()?.flatten().collect();
+    names.sort_by_key(|e| e.file_name());
+    for entry in names {
+        let path = entry.path();
+        let kind = std::fs::read_to_string(path.join("type")).unwrap_or_default();
+        if kind.trim() != "Battery" {
+            continue;
+        }
+        if let Ok(raw) = std::fs::read_to_string(path.join("capacity")) {
+            if let Ok(pct) = raw.trim().parse::<u8>() {
+                return Some(pct.min(100));
+            }
+        }
+    }
+    None
+}
+
+/// Link state only: an interface with carrier is "connected". This does not
+/// prove internet reachability and the UI must not say it does.
+pub fn read_network(dir: &str) -> NetworkState {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return NetworkState::Offline;
+    };
+    let mut best = NetworkState::Offline;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name == "lo" {
+            continue;
+        }
+        let up = std::fs::read_to_string(path.join("operstate"))
+            .map(|s| s.trim() == "up")
+            .unwrap_or(false);
+        if !up {
+            continue;
+        }
+        if path.join("wireless").exists() {
+            if best == NetworkState::Offline {
+                best = NetworkState::Wireless;
+            }
+        } else if path.join("device").exists() {
+            // Physical wired NIC; virtual bridges and veths have no device.
+            return NetworkState::Wired;
+        }
+    }
+    best
+}
+
+fn brightness_controllable() -> bool {
+    let has_backlight = std::fs::read_dir("/sys/class/backlight")
+        .map(|mut d| d.next().is_some())
+        .unwrap_or(false);
+    has_backlight && on_path("brightnessctl")
+}
+
+pub fn on_path(binary: &str) -> bool {
+    std::env::var_os("PATH")
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(binary).is_file()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("solyra-state-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn supply(root: &PathBuf, name: &str, kind: &str, capacity: Option<&str>) {
+        let d = root.join(name);
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("type"), format!("{kind}\n")).unwrap();
+        if let Some(c) = capacity {
+            fs::write(d.join("capacity"), format!("{c}\n")).unwrap();
+        }
+    }
+
+    #[test]
+    fn no_battery_is_none_not_a_placeholder() {
+        let root = scratch("nobat");
+        assert_eq!(read_battery(root.to_str().unwrap()), None);
+        supply(&root, "AC", "Mains", Some("100"));
+        assert_eq!(
+            read_battery(root.to_str().unwrap()),
+            None,
+            "mains is not a battery"
+        );
+        assert_eq!(read_battery("/definitely/not/here"), None);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn battery_reads_the_battery_and_clamps() {
+        let root = scratch("bat");
+        supply(&root, "AC", "Mains", Some("100"));
+        supply(&root, "BAT0", "Battery", Some("57"));
+        assert_eq!(read_battery(root.to_str().unwrap()), Some(57));
+        supply(&root, "BAT0", "Battery", Some("250"));
+        assert_eq!(read_battery(root.to_str().unwrap()), Some(100));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    fn iface(root: &PathBuf, name: &str, state: &str, wireless: bool, physical: bool) {
+        let d = root.join(name);
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("operstate"), format!("{state}\n")).unwrap();
+        if wireless {
+            fs::create_dir_all(d.join("wireless")).unwrap();
+        }
+        if physical {
+            fs::create_dir_all(d.join("device")).unwrap();
+        }
+    }
+
+    #[test]
+    fn network_state_from_link_state() {
+        let root = scratch("net");
+        let path = root.to_str().unwrap();
+        assert_eq!(read_network(path), NetworkState::Offline);
+        iface(&root, "lo", "up", false, false);
+        iface(&root, "veth0", "up", false, false);
+        assert_eq!(
+            read_network(path),
+            NetworkState::Offline,
+            "loopback/virtual do not count"
+        );
+        iface(&root, "wlan0", "down", true, true);
+        assert_eq!(read_network(path), NetworkState::Offline);
+        iface(&root, "wlan0", "up", true, true);
+        assert_eq!(read_network(path), NetworkState::Wireless);
+        iface(&root, "eth0", "up", false, true);
+        assert_eq!(read_network(path), NetworkState::Wired);
+        assert_eq!(read_network("/definitely/not/here"), NetworkState::Offline);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn cmd_lines_parse() {
+        assert!(matches!(
+            parse_cmd_line("toggle-agents"),
+            Some(ShellCmd::ToggleAgents)
+        ));
+        assert!(matches!(
+            parse_cmd_line("agents"),
+            Some(ShellCmd::ToggleAgents)
+        ));
+        assert!(
+            matches!(parse_cmd_line("notify hi there"), Some(ShellCmd::Notify(t)) if t == "hi there")
+        );
+        assert!(parse_cmd_line("rm -rf /").is_none());
+    }
+
+    #[test]
+    fn catalog_makes_no_isolation_claims() {
+        for app in catalog_apps() {
+            let text = format!("{} {}", app.title, app.subtitle).to_ascii_lowercase();
+            assert!(!text.contains("isolated"), "{text}");
+        }
     }
 }

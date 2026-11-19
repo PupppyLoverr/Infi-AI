@@ -36,7 +36,13 @@ The shell holds no state the compositor does not: workspace pills, running
 apps and window ids are all read from niri's IPC socket, refreshed once a
 second.
 
-Not built yet: menus in the bar, a status cluster (network, volume, battery),
+Also in the panel: a launcher with grouped, ranked results (apps, windows,
+commands, and an explicit "Ask an agent" row), a control centre that shows only
+state it can read (link state, battery if present, memory), and an agent tasks
+card with approvals driven by `docs/agent-protocol.md`
+(`solyra-panel toggle-agents`, `Mod+Shift+A`).
+
+Not built yet: app menus in the bar, a status cluster (network, volume, battery),
 the control centre, notifications beyond the island, the window switcher, and
 the agent shelf in the dock (it stays hidden until agent sessions exist).
 
@@ -65,6 +71,17 @@ solyra-panel notify "Build finished"  # a message in the island
 The panel finds niri's socket from `NIRI_SOCKET`, or the newest
 `niri.wayland-*.sock` in `XDG_RUNTIME_DIR`. It does not start at login yet:
 there is no display manager, and the shell still has no status cluster.
+
+## Test it
+
+```sh
+cd shell/panel
+cargo test --locked                      # logic, protocol, contrast, render smoke test
+SOLYRA_RENDER_DIR=/tmp/preview cargo test --locked preview   # also writes PNGs
+```
+
+The PNGs are flat-backdrop renders of each surface at scale 1, with no compositor
+blur: for layout and contrast review, not a screenshot of the desktop.
 
 ## Verify it
 

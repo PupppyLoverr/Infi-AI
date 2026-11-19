@@ -10,6 +10,9 @@ audit trail, and an MCP tool surface. That design carries over. What changes is
 the platform underneath it: `zeron` as the control plane, niri workspaces for
 Agent Space, and bootc for OS-level rollback.
 
+The shell side of approvals and task status is specified in
+`agent-protocol.md` and implemented in the panel; the runtime is not.
+
 ## Agent Space
 
 Agents work in a workspace set the human is not looking at.

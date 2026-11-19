@@ -18,6 +18,7 @@ jobs:
           test -f docs/apps.md
           test -f docs/setup.md
           test -f docs/agent-platform.md
+          test -f docs/agent-protocol.md
           test -f shell/README.md
       # Info-level findings in these legacy scripts are not gated until the
       # harness is rewired for the new layout (tests/drive/README.md).
@@ -45,6 +46,10 @@ jobs:
           docker run --rm -v "$PWD/shell:/shell" -w /shell/panel solyra-dev:ci \
             sh -ec 'cargo build --locked --release &&
                     install -m 755 target/release/solyra-panel ../out/solyra-panel'
+      - name: Test the shell panel
+        run: |
+          docker run --rm -v "$PWD/shell:/shell" -w /shell/panel solyra-dev:ci \
+            sh -ec 'cargo test --locked'
       - name: Build the desktop image and validate its config
         run: |
           docker build -f base/Containerfile -t solyra-base:ci .

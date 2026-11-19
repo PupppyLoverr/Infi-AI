@@ -1,8 +1,9 @@
 // Solyra OS — session config for solyra-comp (our niri fork).
 //
-// Look: warm violet glass. The shell's bar, dock, launcher and cards are
-// translucent layer surfaces; solyra-comp blurs the wallpaper behind them
-// (dual-kawase), so the design is real glass, not a painted gradient.
+// Look: calm warm-neutral surfaces, flat fills and hairlines, one muted accent
+// that only marks the active thing. Overlays (launcher, control centre, agent
+// card) are faintly translucent over a blurred wallpaper; the bar and dock are
+// nearly opaque. See docs/design-language.md.
 
 input {
     keyboard {
@@ -30,16 +31,16 @@ blur {
     passes 3
     offset 3.0
     noise 0.02
-    saturation 1.35
+    saturation 1.0
 }
 
 layout {
-    background-color "#0e0b16"
+    background-color "#121016"
     focus-ring { off; }
     border {
         width 1
-        active-gradient from="#c084fc" to="#818cf8" angle=135
-        inactive-color "#2f2a3d"
+        active-color "#b48aad"
+        inactive-color "#3a3342"
     }
     shadow {
         on
@@ -57,7 +58,7 @@ layout {
 }
 
 overview {
-    backdrop-color "#0e0b16"
+    backdrop-color "#121016"
 }
 
 screenshot-path "~/Pictures/Screenshots/Screenshot from %Y-%m-%d %H-%M-%S.png"
@@ -86,7 +87,7 @@ layer-rule {
         blur true
         xray false
         noise 0.02
-        saturation 1.2
+        saturation 1.0
     }
 }
 
@@ -103,7 +104,7 @@ layer-rule {
     background-effect {
         blur true
         xray false
-        saturation 1.25
+        saturation 1.0
     }
 }
 
@@ -112,7 +113,7 @@ layer-rule {
     background-effect {
         blur true
         xray false
-        saturation 1.2
+        saturation 1.0
     }
 }
 
@@ -129,13 +130,29 @@ layer-rule {
     background-effect {
         blur true
         xray false
-        saturation 1.3
+        saturation 1.0
     }
 }
 
 layer-rule {
     match namespace="^solyra-control$"
     geometry-corner-radius 20
+    shadow {
+        on
+        softness 50
+        spread 12
+        offset x=0 y=12
+        color "#000000a0"
+    }
+    background-effect {
+        blur true
+        xray false
+    }
+}
+
+layer-rule {
+    match namespace="^solyra-agents$"
+    geometry-corner-radius 22
     shadow {
         on
         softness 50
@@ -182,7 +199,8 @@ animations {
 
 // The shell: bar, dock, island. Clients, so killing one never takes the
 // session down; the compositor respawns nothing.
-spawn-at-startup "swaybg" "-i" "/usr/share/solyra/wallpapers/violet.png" "-m" "fill"
+spawn-at-startup "swaybg" "-i" "/usr/share/solyra/wallpapers/graphite.png" "-m" "fill"
+spawn-at-startup "/usr/libexec/polkit-gnome-authentication-agent-1"
 spawn-at-startup "solyra-panel"
 
 binds {
@@ -193,6 +211,7 @@ binds {
     Mod+Space hotkey-overlay-title="Open the Launcher" { spawn "solyra-panel" "toggle-launcher"; }
     Mod+Shift+C hotkey-overlay-title="Control Centre" { spawn "solyra-panel" "toggle-control"; }
     Mod+Shift+I hotkey-overlay-title="Dynamic Island" { spawn "solyra-panel" "toggle-island"; }
+    Mod+Shift+A hotkey-overlay-title="Agent tasks" { spawn "solyra-panel" "toggle-agents"; }
 
     // Sessions.
     Mod+Shift+E { quit; }
@@ -200,6 +219,9 @@ binds {
 
     Mod+Return hotkey-overlay-title="Open a Terminal" {
         spawn "foot";
+    }
+    Mod+B hotkey-overlay-title="Open the Browser" {
+        spawn "firefox";
     }
     Mod+E hotkey-overlay-title="Open Files" {
         spawn "thunar";

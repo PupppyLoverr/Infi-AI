@@ -240,12 +240,33 @@ every duration to zero.
 
 ---
 
-## 10. Status
+## 10. Implementation notes (verified in code)
+
+- Surfaces are flat (one fill plus a hairline); the accent is `#B48AAD` (light
+  `#8A4F80`) and marks only the active or selected thing. The app tiles are one
+  flat style; real system icons are used when found. There is no notch.
+- Colour, radii and type sizes live in `shell/panel/src/tokens.rs`; surfaces
+  read a `Theme` (dark or light, `theme=` in `shell.conf`) and carry no colour
+  literals except app-icon art and the always-black notch/island, which uses the
+  dark palette in both themes. The text roles are unit-tested for WCAG AA
+  (4.5:1) over both a black and a white backdrop.
+- **Correction to §5:** the compositor config enables backdrop blur
+  (`background-effect { blur true }`) and the shell paints glass assuming it.
+  Treat §5's "no blur" as superseded; depth rules (value steps, rim, hairline)
+  still apply when blur is unavailable.
+- Agent approval uses an amber role, not the accent: "working" and "needs a
+  decision" must not look alike. State is also carried by shape and label.
+- Not supported yet: HiDPI/fractional scaling (surfaces render at scale 1),
+  non-ASCII keyboard input in the launcher (raw evdev keys only), reduced
+  motion (the shell has no animations to reduce), screen readers.
+
+## 11. Status
 
 | Surface | State |
 | --- | --- |
 | Bar, notch, island, dock, window chrome, overview | **shipped** |
-| Menus, status cluster, control centre, launcher, notifications, lock, setup | planned |
+| Status cluster (real battery/network), control centre, launcher (grouped), agent tasks and approvals | **shipped** (not yet run on a live niri session) |
+| App menus, notifications beyond the island, lock, setup | planned |
 
 Planned surfaces have their metrics fixed here so they land consistent with
 what ships, rather than being designed twice.

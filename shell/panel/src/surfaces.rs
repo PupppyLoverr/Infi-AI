@@ -3,15 +3,20 @@
 
 use std::collections::HashMap;
 
-use crate::canvas::{text_width, Canvas, Fonts, Icon, Rgba};
+use crate::agent::{Approval, Scope, Status, Summary as AgentSummary, TaskView, Verdict};
+use crate::canvas::{text_width, wrap_text, Canvas, Fonts, Icon, Rgba};
+use crate::launcher::{self, Action as LauncherAction, Item as LauncherItem, Kind as LauncherKind};
 use crate::state::{
-    catalog_apps, dock_entries, focused_app_menus, load_app_icon, AppEntry, DockStyle,
-    LaunchTarget, ShellCmd, ShellPrefs, Telemetry, WallpaperPreset, WindowInfo,
+    dock_entries, focused_app_menus, load_app_icon, DockStyle, LaunchTarget, ShellCmd, ShellPrefs,
+    Telemetry, WallpaperPreset, WindowInfo,
+};
+use crate::tokens::{
+    Theme, ThemeKind, R_CARD, R_CONTROL, R_OVERLAY, R_ROW, R_TILE, T_BODY, T_CAPTION, T_LABEL,
+    T_META, T_TITLE,
 };
 
 pub const BAR_HEIGHT: u32 = 34;
 pub const NOTCH_WIDTH: i32 = 184;
-pub const NOTCH_HEIGHT: i32 = 27;
 
 pub const DOCK_FLOAT_HEIGHT: u32 = 58;
 pub const TASKBAR_HEIGHT: u32 = 48;
@@ -25,13 +30,12 @@ pub const CONTROL_H: u32 = 436;
 pub const ISLAND_CARD_W: u32 = 372;
 pub const ISLAND_CARD_H: u32 = 172;
 
-// Palette tokens (true RGB; Canvas converts to premultiplied BGRA).
-pub const ACCENT: Rgba = Rgba::rgb(0xc0, 0x84, 0xfc);
-pub const ACCENT_INDIGO: Rgba = Rgba::rgb(0x81, 0x8c, 0xf8);
-pub const ON_ACCENT: Rgba = Rgba::rgb(0x12, 0x0d, 0x1d);
-pub const TEXT: Rgba = Rgba::rgb(0xf3, 0xef, 0xfa);
-pub const TEXT_MED: Rgba = Rgba::rgba(0xe2, 0xdc, 0xf0, 205);
-pub const TEXT_DIM: Rgba = Rgba::rgba(0xa8, 0x9f, 0xbc, 195);
+/// Live, real state the docks reflect.
+pub struct Live<'a> {
+    pub agents: AgentSummary,
+    pub telem: &'a Telemetry,
+    pub prefs: &'a ShellPrefs,
+}
 
 #[derive(Clone, Debug)]
 pub struct Region {
@@ -57,11 +61,23 @@ pub enum HitAction {
     FocusWindow(u64),
     Launch(LaunchTarget),
     Shell(ShellCmd),
-    ToggleWifi,
-    ToggleBt,
     ToggleDnd,
-    SetVolumeFromX { x0: i32, w: i32 },
-    SetBrightnessFromX { x0: i32, w: i32 },
+    ToggleTheme,
+    AgentRequest(String),
+    SelectTask(usize),
+    Decide {
+        task: usize,
+        verdict: Verdict,
+        scope: Scope,
+    },
+    SetVolumeFromX {
+        x0: i32,
+        w: i32,
+    },
+    SetBrightnessFromX {
+        x0: i32,
+        w: i32,
+    },
 }
 
 pub fn floating_dock_width(style: DockStyle, wins: &[WindowInfo]) -> u32 {
@@ -87,36 +103,36 @@ pub fn floating_dock_width(style: DockStyle, wins: &[WindowInfo]) -> u32 {
 #[allow(clippy::too_many_arguments)]
 pub fn draw_bar(
     cv: &mut Canvas<'_>,
+    th: &Theme,
     fonts: &Fonts,
     ws_list: &[(u8, bool)],
     wins: &[WindowInfo],
     island_msg: Option<&str>,
+    attention: Option<&str>,
     prefs: &ShellPrefs,
     telem: &Telemetry,
     hover: Option<(f64, f64)>,
 ) -> Vec<Region> {
+    // A plain message wins the island; otherwise an agent that needs the
+    // human may use it. Approval pills are amber and click through to the
+    // agents card.
+    let is_attention = island_msg.is_none() && attention.is_some();
+    let island_msg = island_msg.or(attention);
     let w = cv.width as i32;
     let h = cv.height as i32;
     let mut regions = Vec::new();
 
     // Translucent dark-tinted glass: lets niri's dual-kawase backdrop blur and
     // the wallpaper hue shine through, just like macOS Sequoia.
-    cv.vgrad_rect(
-        0,
-        0,
-        w,
-        h,
-        Rgba::rgba(0x1c, 0x16, 0x2b, 132),
-        Rgba::rgba(0x13, 0x0f, 0x20, 158),
-    );
-    cv.fill_rect(0, h - 1, w, 1, Rgba::rgba(255, 255, 255, 24));
+    cv.fill_rect(0, 0, w, h, th.bar);
+    cv.fill_rect(0, h - 1, w, 1, th.tile);
 
     // Left: Solyra emblem button -> opens Launcher.
     let brand_hover = hover.is_some_and(|(hx, hy)| hx >= 6.0 && hx < 34.0 && hy < h as f64);
     if brand_hover {
-        cv.round_rect(6, 5, 26, 24, 6.0, Rgba::rgba(255, 255, 255, 28));
+        cv.round_rect(6, 5, 26, 24, 6.0, th.tile_hover);
     }
-    cv.icon_solyra(19.0, 17.0, 6.2, ACCENT);
+    cv.icon_solyra(19.0, 17.0, 6.2, th.accent);
     regions.push(Region {
         x: 4,
         y: 0,
@@ -128,7 +144,7 @@ pub fn draw_bar(
     // Focused App Name (Semibold) + macOS-style contextual menu bar items.
     let (app_name, menus) = focused_app_menus(wins);
     let mut x = 38;
-    let app_w = cv.text(fonts.semibold.as_ref(), &app_name, x, 22, 13.0, TEXT);
+    let app_w = cv.text(fonts.semibold.as_ref(), &app_name, x, 22, 13.0, th.text);
     regions.push(Region {
         x: x - 4,
         y: 4,
@@ -151,18 +167,14 @@ pub fn draw_bar(
             hx >= x as f64 && hx < (x + 20) as f64 && hy >= 7.0 && hy < 27.0
         });
         if active {
-            cv.dgrad_round_rect(x, 9, 20, 16, 8.0, ACCENT, ACCENT_INDIGO);
+            cv.round_rect(x, 9, 20, 16, 8.0, th.accent);
         } else {
-            let bg = if is_hov {
-                Rgba::rgba(255, 255, 255, 48)
-            } else {
-                Rgba::rgba(255, 255, 255, 24)
-            };
+            let bg = if is_hov { th.tile_hover } else { th.tile };
             cv.round_rect(x, 9, 20, 16, 8.0, bg);
         }
         let label = idx.to_string();
         let tw = text_width(fonts.semibold.as_ref(), &label, 11.0);
-        let fg = if active { ON_ACCENT } else { TEXT_MED };
+        let fg = if active { th.on_accent } else { th.text_med };
         cv.text(
             fonts.semibold.as_ref(),
             &label,
@@ -184,8 +196,14 @@ pub fn draw_bar(
     // Contextual menu labels if space permits before the notch.
     x += 8;
     if x + 48 < max_left_x {
-        cv.fill_rect(x - 5, 10, 1, 14, Rgba::rgba(255, 255, 255, 26));
-        for &menu in menus {
+        cv.fill_rect(x - 5, 10, 1, 14, th.tile);
+        // Only labels that do something real are drawn. File/Edit/Go/Shell
+        // used to open the launcher, which is not what those names promise;
+        // per-app menus need a protocol we do not have yet.
+        for &menu in menus
+            .iter()
+            .filter(|m| matches!(**m, "View" | "Window" | "Help"))
+        {
             let mw = text_width(fonts.regular.as_ref(), menu, 12.2);
             if x + mw + 12 > max_left_x {
                 break;
@@ -194,9 +212,9 @@ pub fn draw_bar(
                 hx >= (x - 4) as f64 && hx < (x + mw + 4) as f64 && hy >= 5.0 && hy < 29.0
             });
             if m_hov {
-                cv.round_rect(x - 5, 5, mw + 10, 24, 5.0, Rgba::rgba(255, 255, 255, 28));
+                cv.round_rect(x - 5, 5, mw + 10, 24, 5.0, th.tile_hover);
             }
-            cv.text(fonts.regular.as_ref(), menu, x, 22, 12.2, TEXT_MED);
+            cv.text(fonts.regular.as_ref(), menu, x, 22, 12.2, th.text_med);
             let act = match menu {
                 "Window" | "View" => {
                     HitAction::Launch(LaunchTarget::Ipc("{\"Action\":{\"ToggleOverview\":{}}}"))
@@ -204,7 +222,7 @@ pub fn draw_bar(
                 "Help" => {
                     HitAction::Launch(LaunchTarget::Ipc("{\"Action\":{\"ShowHotkeyOverlay\":{}}}"))
                 }
-                _ => HitAction::Shell(ShellCmd::ToggleLauncher),
+                _ => unreachable!("filtered above"),
             };
             regions.push(Region {
                 x: x - 4,
@@ -222,19 +240,18 @@ pub fn draw_bar(
         let tw = text_width(fonts.semibold.as_ref(), message, 12.0);
         let pill_w = (tw + 68).clamp(NOTCH_WIDTH + 36, 390);
         let left = (w - pill_w) / 2;
-        cv.vgrad_round_rect(
-            left,
-            3,
-            pill_w,
-            28,
-            14.0,
-            Rgba::rgb(0x09, 0x08, 0x10),
-            Rgba::rgb(0x05, 0x04, 0x09),
-        );
-        cv.stroke_round_rect(left, 3, pill_w, 28, 14.0, 1.0, Rgba::rgba(0xc0, 0x84, 0xfc, 110));
-        // Glowing activity dot on left + live mini waveform bars on right.
-        cv.circle(left as f32 + 16.0, 17.0, 4.0, ACCENT);
-        cv.circle(left as f32 + 16.0, 17.0, 7.0, Rgba::rgba(0xc0, 0x84, 0xfc, 45));
+        cv.round_rect(left, 3, pill_w, 28, 14.0, Rgba::rgb(0x09, 0x08, 0x10));
+        // The island is always near-black, in both themes, so its content
+        // uses the dark palette. The attention text itself says "needs
+        // approval": the amber dot only reinforces it.
+        let pd = Theme::dark();
+        let dot = if is_attention {
+            pd.agent_approval
+        } else {
+            pd.agent_active
+        };
+        cv.stroke_round_rect(left, 3, pill_w, 28, 14.0, 1.0, dot);
+        cv.circle(left as f32 + 16.0, 17.0, 4.0, dot);
         cv.text_truncated(
             fonts.semibold.as_ref(),
             message,
@@ -242,21 +259,20 @@ pub fn draw_bar(
             21,
             12.0,
             pill_w - 64,
-            TEXT,
+            pd.text,
         );
-        let wx = left + pill_w - 24;
-        cv.round_rect(wx, 13, 3, 8, 1.5, ACCENT);
-        cv.round_rect(wx + 5, 10, 3, 14, 1.5, ACCENT_INDIGO);
-        cv.round_rect(wx + 10, 14, 3, 6, 1.5, ACCENT);
         regions.push(Region {
             x: left,
             y: 0,
             w: pill_w,
             h,
-            action: HitAction::Shell(ShellCmd::ToggleIsland),
+            action: HitAction::Shell(if is_attention {
+                ShellCmd::ToggleAgents
+            } else {
+                ShellCmd::ToggleIsland
+            }),
         });
     } else {
-        cv.draw_notch(w / 2, NOTCH_WIDTH, NOTCH_HEIGHT, 8.0, 13.0);
         regions.push(Region {
             x: (w - NOTCH_WIDTH) / 2 - 8,
             y: 0,
@@ -275,9 +291,16 @@ pub fn draw_bar(
 
     let mut rx = w - 14;
     rx -= clock_w;
-    cv.text(fonts.semibold.as_ref(), &clock_str, rx, 22, 12.8, TEXT);
+    cv.text(fonts.semibold.as_ref(), &clock_str, rx, 22, 12.8, th.text);
     let clock_start = rx - date_w - 8;
-    cv.text(fonts.regular.as_ref(), &date_str, clock_start, 22, 12.0, TEXT_MED);
+    cv.text(
+        fonts.regular.as_ref(),
+        &date_str,
+        clock_start,
+        22,
+        12.0,
+        th.text_med,
+    );
     regions.push(Region {
         x: clock_start - 4,
         y: 4,
@@ -298,23 +321,21 @@ pub fn draw_bar(
         status_w,
         24,
         8.0,
-        if status_hov {
-            Rgba::rgba(255, 255, 255, 38)
-        } else {
-            Rgba::rgba(255, 255, 255, 18)
-        },
+        if status_hov { th.tile_hover } else { th.tile },
     );
-    let wifi_col = if prefs.wifi_on { TEXT } else { TEXT_DIM };
-    cv.icon_wifi(status_x as f32 + 15.0, 17.0, 14.5, wifi_col);
-    cv.icon_volume(status_x as f32 + 39.0, 17.0, 14.5, prefs.volume, TEXT);
-    cv.icon_battery(
-        status_x as f32 + 65.0,
+    cv.icon_network(
+        status_x as f32 + 15.0,
         17.0,
-        telem.battery_pct,
-        TEXT_MED,
-        Rgba::rgb(0x4a, 0xde, 0x80),
+        14.5,
+        telem.network,
+        th.text,
+        th.text_dim,
     );
-    cv.icon_control_centre(status_x as f32 + 91.0, 17.0, TEXT);
+    cv.icon_volume(status_x as f32 + 39.0, 17.0, 14.5, prefs.volume, th.text);
+    if let Some(pct) = telem.battery_pct {
+        cv.icon_battery(status_x as f32 + 65.0, 17.0, pct, th.text_med, th.success);
+    }
+    cv.icon_control_centre(status_x as f32 + 91.0, 17.0, th.text);
     regions.push(Region {
         x: status_x,
         y: 4,
@@ -330,9 +351,9 @@ pub fn draw_bar(
             hx >= search_x as f64 && hx < (search_x + 24) as f64 && hy >= 5.0 && hy < 29.0
         });
         if s_hov {
-            cv.round_rect(search_x, 5, 24, 24, 7.0, Rgba::rgba(255, 255, 255, 34));
+            cv.round_rect(search_x, 5, 24, 24, 7.0, th.tile_hover);
         }
-        cv.icon_search(search_x as f32 + 12.0, 17.0, 13.5, TEXT_MED);
+        cv.icon_search(search_x as f32 + 12.0, 17.0, 13.5, th.text_med);
         regions.push(Region {
             x: search_x,
             y: 4,
@@ -347,43 +368,39 @@ pub fn draw_bar(
 
 // --------------------------------------------------------------- 3 Docks
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_dock(
     cv: &mut Canvas<'_>,
+    th: &Theme,
     fonts: &Fonts,
     style: DockStyle,
     wins: &[WindowInfo],
     icons: &mut HashMap<String, Option<Icon>>,
     hover: Option<(f64, f64)>,
+    live: &Live<'_>,
 ) -> Vec<Region> {
     match style {
-        DockStyle::Solyra => draw_dock_solyra(cv, wins, icons, hover),
-        DockStyle::Macos => draw_dock_macos(cv, wins, icons, hover),
-        DockStyle::Windows => draw_dock_windows(cv, fonts, wins, icons, hover),
+        DockStyle::Solyra => draw_dock_solyra(cv, th, fonts, wins, icons, hover, live.agents),
+        DockStyle::Macos => draw_dock_macos(cv, th, wins, icons, hover),
+        DockStyle::Windows => draw_dock_windows(cv, th, fonts, wins, icons, hover, live),
     }
 }
 
 fn draw_dock_solyra(
     cv: &mut Canvas<'_>,
+    th: &Theme,
+    fonts: &Fonts,
     wins: &[WindowInfo],
     icons: &mut HashMap<String, Option<Icon>>,
     hover: Option<(f64, f64)>,
+    agents: AgentSummary,
 ) -> Vec<Region> {
     let w = cv.width as i32;
     let h = cv.height as i32;
     let mut regions = Vec::new();
 
     // Tight surface geometry (matches `geometry-corner-radius 20` in niri).
-    cv.glass_card(
-        0,
-        0,
-        w,
-        h,
-        20.0,
-        Rgba::rgba(0x22, 0x1c, 0x33, 158),
-        Rgba::rgba(0x14, 0x10, 0x21, 188),
-        Rgba::rgba(255, 255, 255, 70),
-        Rgba::rgba(255, 255, 255, 20),
-    );
+    card(cv, th, 0, 0, w, h, 20.0);
 
     let mut x = 10;
     let base_y = 8;
@@ -405,7 +422,7 @@ fn draw_dock_solyra(
     x += cell + 8;
 
     // Hairline divider.
-    cv.fill_rect(x, 14, 1, h - 28, Rgba::rgba(255, 255, 255, 32));
+    cv.fill_rect(x, 14, 1, h - 28, th.tile_hover);
     x += 8;
 
     // 2. Pinned + running apps (one cell per app, Windows-style pill indicator).
@@ -421,9 +438,9 @@ fn draw_dock_solyra(
         if entry.window_count > 0 {
             let bar_w = if entry.is_focused { 18 } else { 8 };
             let bar_col = if entry.is_focused {
-                ACCENT
+                th.accent
             } else {
-                Rgba::rgba(0xe9, 0xd5, 0xff, 210)
+                th.text_med
             };
             cv.round_rect(x + (cell - bar_w) / 2, h - 5, bar_w, 3, 1.5, bar_col);
         }
@@ -443,20 +460,40 @@ fn draw_dock_solyra(
     }
 
     // 3. Agent Space Shelf on the right.
-    cv.fill_rect(x, 14, 1, h - 28, Rgba::rgba(255, 255, 255, 32));
+    cv.fill_rect(x, 14, 1, h - 28, th.tile_hover);
     x += 8;
     let ag_hov = hover.is_some_and(|(hx, _)| hx >= x as f64 && hx < (x + cell) as f64);
     let ay = if ag_hov { base_y - 3 } else { base_y };
     cv.draw_app_squircle(x, ay, cell, "agent", None);
-    // Live emerald readiness badge on top-right of Agent squircle.
-    cv.circle((x + cell - 5) as f32, (ay + 5) as f32, 4.5, Rgba::rgb(0x14, 0x10, 0x21));
-    cv.circle((x + cell - 5) as f32, (ay + 5) as f32, 3.0, Rgba::rgb(0x34, 0xd3, 0x99));
+    // Badge only when a real task needs the human (amber, with a count) or is
+    // running (accent). No agent activity, no badge.
+    if agents.live > 0 {
+        let col = if agents.needs_attention() {
+            th.agent_approval
+        } else {
+            th.agent_active
+        };
+        let (bx, by) = ((x + cell - 5) as f32, (ay + 5) as f32);
+        cv.circle(bx, by, 6.0, Rgba::rgb(0x14, 0x11, 0x19));
+        cv.circle(bx, by, 4.6, col);
+        if agents.needs_attention() {
+            let n = (agents.waiting + agents.blocked).min(9).to_string();
+            cv.text(
+                fonts.semibold.as_ref(),
+                &n,
+                x + cell - 8,
+                ay + 9,
+                9.0,
+                th.on_accent,
+            );
+        }
+    }
     regions.push(Region {
         x,
         y: 0,
         w: cell,
         h,
-        action: HitAction::Shell(ShellCmd::ToggleIsland),
+        action: HitAction::Shell(ShellCmd::ToggleAgents),
     });
 
     regions
@@ -464,6 +501,7 @@ fn draw_dock_solyra(
 
 fn draw_dock_macos(
     cv: &mut Canvas<'_>,
+    th: &Theme,
     wins: &[WindowInfo],
     icons: &mut HashMap<String, Option<Icon>>,
     hover: Option<(f64, f64)>,
@@ -473,17 +511,7 @@ fn draw_dock_macos(
     let mut regions = Vec::new();
 
     // Lighter frosted Sequoia glass rim + luminous dots under running apps.
-    cv.glass_card(
-        0,
-        0,
-        w,
-        h,
-        20.0,
-        Rgba::rgba(0x38, 0x30, 0x4f, 138),
-        Rgba::rgba(0x1e, 0x19, 0x2e, 168),
-        Rgba::rgba(255, 255, 255, 88),
-        Rgba::rgba(255, 255, 255, 28),
-    );
+    card(cv, th, 0, 0, w, h, 20.0);
 
     let mut x = 10;
     let cell = 44;
@@ -495,7 +523,13 @@ fn draw_dock_macos(
         if idx == 1 {
             // Insert Launchpad / Spotlight right after Finder/Files, like macOS.
             let l_hov = hover.is_some_and(|(hx, _)| hx >= x as f64 && hx < (x + cell) as f64);
-            cv.draw_app_squircle(x, if l_hov { base_y - 3 } else { base_y }, cell, "start", None);
+            cv.draw_app_squircle(
+                x,
+                if l_hov { base_y - 3 } else { base_y },
+                cell,
+                "start",
+                None,
+            );
             regions.push(Region {
                 x,
                 y: 0,
@@ -516,7 +550,7 @@ fn draw_dock_macos(
                 x as f32 + cell as f32 * 0.5,
                 (h - 4) as f32,
                 2.2,
-                Rgba::rgba(255, 255, 255, 230),
+                th.tile_hover,
             );
         }
 
@@ -535,10 +569,16 @@ fn draw_dock_macos(
     }
 
     // Classic macOS full-height separator + Trash on the right.
-    cv.fill_rect(x, 10, 1, h - 20, Rgba::rgba(255, 255, 255, 42));
+    cv.fill_rect(x, 10, 1, h - 20, th.tile_hover);
     x += 8;
     let t_hov = hover.is_some_and(|(hx, _)| hx >= x as f64 && hx < (x + cell) as f64);
-    cv.draw_app_squircle(x, if t_hov { base_y - 3 } else { base_y }, cell, "trash", None);
+    cv.draw_app_squircle(
+        x,
+        if t_hov { base_y - 3 } else { base_y },
+        cell,
+        "trash",
+        None,
+    );
     regions.push(Region {
         x,
         y: 0,
@@ -555,35 +595,38 @@ fn draw_dock_macos(
 
 fn draw_dock_windows(
     cv: &mut Canvas<'_>,
+    th: &Theme,
     fonts: &Fonts,
     wins: &[WindowInfo],
     icons: &mut HashMap<String, Option<Icon>>,
     hover: Option<(f64, f64)>,
+    live: &Live<'_>,
 ) -> Vec<Region> {
+    let (telem, prefs) = (live.telem, live.prefs);
     let w = cv.width as i32;
     let h = cv.height as i32;
     let mut regions = Vec::new();
 
     // Full-width frosted Fluent taskbar.
-    cv.vgrad_rect(
-        0,
-        0,
-        w,
-        h,
-        Rgba::rgba(0x1b, 0x17, 0x29, 178),
-        Rgba::rgba(0x12, 0x0f, 0x1d, 204),
-    );
-    cv.fill_rect(0, 0, w, 1, Rgba::rgba(255, 255, 255, 38));
+    cv.fill_rect(0, 0, w, h, th.bar);
+    cv.fill_rect(0, 0, w, 1, th.tile_hover);
 
     // Left: Weather / Widgets pill (Image 3).
     let w_hov = hover.is_some_and(|(hx, _)| hx >= 10.0 && hx < 142.0);
     if w_hov {
-        cv.round_rect(10, 6, 132, 36, 8.0, Rgba::rgba(255, 255, 255, 24));
+        cv.round_rect(10, 6, 132, 36, 8.0, th.tile);
     }
     cv.circle(26.0, 21.0, 5.5, Rgba::rgb(0xfb, 0xbf, 0x24));
     cv.round_rect(25, 21, 13, 7, 3.5, Rgba::rgba(240, 244, 255, 235));
-    cv.text(fonts.semibold.as_ref(), "19°C", 46, 22, 11.5, TEXT);
-    cv.text(fonts.regular.as_ref(), "Clear sky", 46, 35, 10.5, TEXT_DIM);
+    cv.text(fonts.semibold.as_ref(), "19°C", 46, 22, 11.5, th.text);
+    cv.text(
+        fonts.regular.as_ref(),
+        "Clear sky",
+        46,
+        35,
+        10.5,
+        th.text_dim,
+    );
     regions.push(Region {
         x: 10,
         y: 4,
@@ -617,15 +660,18 @@ fn draw_dock_windows(
         search_w,
         32,
         16.0,
-        if s_hov {
-            Rgba::rgba(255, 255, 255, 36)
-        } else {
-            Rgba::rgba(255, 255, 255, 22)
-        },
+        if s_hov { th.tile_hover } else { th.tile },
     );
-    cv.stroke_round_rect(cx, 8, search_w, 32, 16.0, 1.0, Rgba::rgba(255, 255, 255, 34));
-    cv.icon_search(cx as f32 + 18.0, 24.0, 13.0, TEXT_MED);
-    cv.text(fonts.regular.as_ref(), "Search or ask…", cx + 32, 28, 12.0, TEXT_DIM);
+    cv.stroke_round_rect(cx, 8, search_w, 32, 16.0, 1.0, th.tile_hover);
+    cv.icon_search(cx as f32 + 18.0, 24.0, 13.0, th.text_med);
+    cv.text(
+        fonts.regular.as_ref(),
+        "Search or ask…",
+        cx + 32,
+        28,
+        12.0,
+        th.text_dim,
+    );
     regions.push(Region {
         x: cx,
         y: 6,
@@ -651,7 +697,7 @@ fn draw_dock_windows(
         cv.draw_app_squircle(cx + 4, 7, 32, &entry.role, sys_ic);
         if entry.window_count > 0 {
             let uw = if entry.is_focused { 16 } else { 6 };
-            cv.round_rect(cx + (40 - uw) / 2, h - 4, uw, 3, 1.5, ACCENT);
+            cv.round_rect(cx + (40 - uw) / 2, h - 4, uw, 3, 1.5, th.accent);
         }
         let action = match entry.window {
             Some(id) => HitAction::FocusWindow(id),
@@ -671,17 +717,27 @@ fn draw_dock_windows(
     let now = chrono::Local::now();
     let t_str = now.format("%H:%M").to_string();
     let d_str = now.format("%d/%m/%Y").to_string();
-    cv.text(fonts.semibold.as_ref(), &t_str, w - 58, 21, 11.5, TEXT);
-    cv.text(fonts.regular.as_ref(), &d_str, w - 74, 35, 10.2, TEXT_DIM);
-    cv.icon_wifi((w - 134) as f32, 24.0, 12.5, TEXT);
-    cv.icon_volume((w - 112) as f32, 24.0, 12.5, 75, TEXT);
-    cv.icon_battery(
-        (w - 90) as f32,
-        24.0,
-        96,
-        TEXT_MED,
-        Rgba::rgb(0x4a, 0xde, 0x80),
+    cv.text(fonts.semibold.as_ref(), &t_str, w - 58, 21, 11.5, th.text);
+    cv.text(
+        fonts.regular.as_ref(),
+        &d_str,
+        w - 74,
+        35,
+        10.2,
+        th.text_dim,
     );
+    cv.icon_network(
+        (w - 134) as f32,
+        24.0,
+        12.5,
+        telem.network,
+        th.text,
+        th.text_dim,
+    );
+    cv.icon_volume((w - 112) as f32, 24.0, 12.5, prefs.volume, th.text);
+    if let Some(pct) = telem.battery_pct {
+        cv.icon_battery((w - 90) as f32, 24.0, pct, th.text_med, th.success);
+    }
     regions.push(Region {
         x: w - 150,
         y: 4,
@@ -695,25 +751,42 @@ fn draw_dock_windows(
 
 // ------------------------------------------------------ Spotlight Launcher
 
-pub fn filtered_launcher_apps(query: &str) -> Vec<AppEntry> {
-    let all = catalog_apps();
-    let q = query.trim().to_ascii_lowercase();
-    if q.is_empty() {
-        return all;
-    }
-    all.into_iter()
-        .filter(|a| {
-            a.title.to_ascii_lowercase().contains(&q)
-                || a.subtitle.to_ascii_lowercase().contains(&q)
-                || a.app_id.to_ascii_lowercase().contains(&q)
-        })
-        .collect()
+/// Flat overlay card: one fill, one hairline.
+fn card(cv: &mut Canvas<'_>, th: &Theme, x: i32, y: i32, w: i32, h: i32, r: f32) {
+    cv.round_rect(x, y, w, h, r, th.surface);
+    cv.stroke_round_rect(x, y, w, h, r, 1.0, th.hairline);
 }
 
+fn hovered(hover: Option<(f64, f64)>, x: i32, y: i32, w: i32, h: i32) -> bool {
+    hover.is_some_and(|(hx, hy)| {
+        hx >= x as f64 && hx < (x + w) as f64 && hy >= y as f64 && hy < (y + h) as f64
+    })
+}
+
+/// Top of the result list and the space reserved under it for the footer.
+const LIST_TOP: i32 = 74;
+const FOOTER_H: i32 = 50;
+
+pub fn launcher_list_height() -> i32 {
+    LAUNCHER_H as i32 - LIST_TOP - FOOTER_H
+}
+
+fn row_verb(item: &LauncherItem) -> &'static str {
+    match item.kind {
+        LauncherKind::Application => "Open ⏎",
+        LauncherKind::Window => "Switch ⏎",
+        LauncherKind::Command => "Run ⏎",
+        LauncherKind::Agent => "Queue ⏎",
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn draw_launcher(
     cv: &mut Canvas<'_>,
+    th: &Theme,
     fonts: &Fonts,
     query: &str,
+    items: &[LauncherItem],
     selected: usize,
     icons: &mut HashMap<String, Option<Icon>>,
     hover: Option<(f64, f64)>,
@@ -722,41 +795,29 @@ pub fn draw_launcher(
     let h = cv.height as i32;
     let mut regions = Vec::new();
 
-    cv.glass_card(
-        0,
-        0,
-        w,
-        h,
-        22.0,
-        Rgba::rgba(0x1f, 0x19, 0x30, 198),
-        Rgba::rgba(0x13, 0x0f, 0x20, 222),
-        Rgba::rgba(255, 255, 255, 78),
-        Rgba::rgba(255, 255, 255, 22),
-    );
+    card(cv, th, 0, 0, w, h, R_OVERLAY);
 
-    // Search capsule at top.
-    cv.round_rect(18, 16, w - 36, 48, 14.0, Rgba::rgba(0x0c, 0x09, 0x15, 165));
-    cv.stroke_round_rect(18, 16, w - 36, 48, 14.0, 1.0, Rgba::rgba(0xc0, 0x84, 0xfc, 92));
-    cv.icon_search(42.0, 40.0, 16.0, ACCENT);
-
+    // Search field.
+    cv.round_rect(18, 16, w - 36, 48, R_TILE, th.field);
+    cv.stroke_round_rect(18, 16, w - 36, 48, R_TILE, 1.0, th.selected_border);
+    cv.icon_search(42.0, 40.0, 16.0, th.accent);
     if query.is_empty() {
         cv.text(
             fonts.regular.as_ref(),
-            "Search applications, workspaces, or ask an agent…",
+            "Search apps, windows and commands",
             62,
             45,
             14.0,
-            TEXT_DIM,
+            th.text_dim,
         );
-        cv.fill_rect(62, 30, 2, 20, ACCENT);
+        cv.fill_rect(62, 30, 2, 20, th.accent);
     } else {
-        let qw = cv.text(fonts.regular.as_ref(), query, 62, 45, 14.5, TEXT);
-        cv.fill_rect(64 + qw, 30, 2, 20, ACCENT);
+        let max_w = w - 62 - 90;
+        let qw = cv.text_truncated(fonts.regular.as_ref(), query, 62, 45, 14.5, max_w, th.text);
+        cv.fill_rect(64 + qw, 30, 2, 20, th.accent);
     }
-
-    // `ESC` badge at right of search box.
-    cv.round_rect(w - 68, 28, 38, 24, 6.0, Rgba::rgba(255, 255, 255, 20));
-    cv.text(fonts.mono.as_ref(), "esc", w - 59, 44, 11.0, TEXT_DIM);
+    cv.round_rect(w - 68, 28, 38, 24, 6.0, th.tile);
+    cv.text(fonts.mono.as_ref(), "esc", w - 59, 44, 11.0, th.text_dim);
     regions.push(Region {
         x: w - 68,
         y: 28,
@@ -765,141 +826,137 @@ pub fn draw_launcher(
         action: HitAction::Shell(ShellCmd::CloseOverlays),
     });
 
-    let items = filtered_launcher_apps(query);
-    let sel = selected.min(items.len().saturating_sub(1));
+    let list_h = launcher_list_height();
+    let only_agent_row = !launcher::has_direct_match(items) && !items.is_empty();
 
-    let mut list_y;
-
-    if query.trim().is_empty() {
-        // Image-2 style PINNED APPS 4-column hero grid!
-        cv.text(fonts.semibold.as_ref(), "PINNED APPS", 24, 92, 10.8, TEXT_DIM);
-        let pinned_count = items.len().min(4);
-        let tile_w = (w - 48 - 3 * 12) / 4;
-        let tile_h = 88;
-        for (i, app) in items.iter().take(pinned_count).enumerate() {
-            let tx = 24 + i as i32 * (tile_w + 12);
-            let ty = 102;
-            let is_hov = hover.is_some_and(|(hx, hy)| {
-                hx >= tx as f64
-                    && hx < (tx + tile_w) as f64
-                    && hy >= ty as f64
-                    && hy < (ty + tile_h) as f64
-            });
-            let is_sel = sel == i;
-            let bg = if is_sel {
-                Rgba::rgba(0xc0, 0x84, 0xfc, 48)
-            } else if is_hov {
-                Rgba::rgba(255, 255, 255, 28)
-            } else {
-                Rgba::rgba(255, 255, 255, 14)
-            };
-            cv.round_rect(tx, ty, tile_w, tile_h, 14.0, bg);
-            if is_sel {
-                cv.stroke_round_rect(
-                    tx,
-                    ty,
-                    tile_w,
-                    tile_h,
-                    14.0,
-                    1.0,
-                    Rgba::rgba(0xc0, 0x84, 0xfc, 130),
-                );
-            }
-            let sys_ic = load_app_icon(icons, &app.app_id);
-            cv.draw_app_squircle(tx + (tile_w - 40) / 2, ty + 12, 40, &app.role, sys_ic);
-            let tw = text_width(fonts.semibold.as_ref(), &app.title, 12.0);
+    if items.is_empty() {
+        let (title, body) = if query.trim().is_empty() {
+            (
+                "Nothing to show",
+                "No applications were found on this system.".to_string(),
+            )
+        } else {
+            (
+                "No matches",
+                "Apps, open windows and commands are searched. Files are not.".to_string(),
+            )
+        };
+        cv.text(
+            fonts.semibold.as_ref(),
+            title,
+            28,
+            LIST_TOP + 34,
+            T_TITLE,
+            th.text,
+        );
+        for (i, line) in wrap_text(fonts.regular.as_ref(), &body, T_LABEL, w - 56, 2)
+            .iter()
+            .enumerate()
+        {
             cv.text(
-                fonts.semibold.as_ref(),
-                &app.title,
-                tx + (tile_w - tw) / 2,
-                ty + 72,
-                12.0,
-                TEXT,
+                fonts.regular.as_ref(),
+                line,
+                28,
+                LIST_TOP + 58 + i as i32 * 18,
+                T_LABEL,
+                th.text_dim,
             );
-            regions.push(Region {
-                x: tx,
-                y: ty,
-                w: tile_w,
-                h: tile_h,
-                action: HitAction::Launch(app.command.clone()),
-            });
         }
-
-        cv.text(
-            fonts.semibold.as_ref(),
-            "COMMANDS & CUSTOMISATION",
-            24,
-            212,
-            10.8,
-            TEXT_DIM,
-        );
-        list_y = 222;
-        for (offset, app) in items.iter().skip(4).take(4).enumerate() {
-            let idx = 4 + offset;
-            draw_launcher_row(cv, fonts, icons, &mut regions, w, list_y, app, sel == idx, hover);
-            list_y += 40;
-        }
-    } else if items.is_empty() {
-        cv.text(
-            fonts.semibold.as_ref(),
-            "No matching applications",
-            28,
-            128,
-            14.0,
-            TEXT,
-        );
-        cv.text(
-            fonts.regular.as_ref(),
-            "Press Enter to run in Terminal, or Esc to dismiss.",
-            28,
-            150,
-            12.5,
-            TEXT_DIM,
-        );
     } else {
-        cv.text(fonts.semibold.as_ref(), "RESULTS", 24, 92, 10.8, TEXT_DIM);
-        list_y = 102;
-        for (idx, app) in items.iter().take(7).enumerate() {
-            draw_launcher_row(cv, fonts, icons, &mut regions, w, list_y, app, sel == idx, hover);
-            list_y += 42;
+        let sel = selected.min(items.len() - 1);
+        let first = launcher::first_visible(items, sel, list_h);
+        let mut y = LIST_TOP;
+        for row in launcher::rows_from(items, first, list_h) {
+            if let Some(kind) = row.heading {
+                cv.text(
+                    fonts.semibold.as_ref(),
+                    kind.heading(),
+                    24,
+                    y + 15,
+                    T_CAPTION,
+                    th.text_dim,
+                );
+                y += launcher::HEADING_H;
+            }
+            draw_launcher_row(
+                cv,
+                th,
+                fonts,
+                icons,
+                &mut regions,
+                w,
+                y,
+                &items[row.index],
+                row.index == sel,
+                hover,
+            );
+            y += launcher::ROW_H;
+        }
+        if only_agent_row {
+            // The only thing offered is an agent request. Say so, so Enter
+            // is never mistaken for "launch the thing I typed".
+            let note = "No app, window or command matches. Enter only queues a request.";
+            cv.text_truncated(
+                fonts.regular.as_ref(),
+                note,
+                24,
+                LIST_TOP + list_h - 6,
+                T_META,
+                w - 48,
+                th.text_dim,
+            );
         }
     }
 
-    // Bottom session footer (Windows 11 Start + Solyra blend).
-    let fy = h - 46;
-    cv.fill_rect(18, fy, w - 36, 1, Rgba::rgba(255, 255, 255, 22));
-    cv.dgrad_round_rect(24, fy + 10, 26, 26, 13.0, ACCENT, ACCENT_INDIGO);
-    cv.text(fonts.semibold.as_ref(), "S", 33, fy + 28, 12.5, ON_ACCENT);
-    cv.text(fonts.semibold.as_ref(), "solyra", 58, fy + 27, 12.5, TEXT);
+    // Footer: key hints on the left, session actions on the right.
+    let fy = h - FOOTER_H;
+    cv.fill_rect(18, fy, w - 36, 1, th.separator);
     cv.text(
-        fonts.regular.as_ref(),
-        "· Solyra OS 0.1 (Perihelion)",
-        104,
-        fy + 27,
-        12.0,
-        TEXT_DIM,
+        fonts.mono.as_ref(),
+        "↑↓ move   ⏎ run   esc close",
+        24,
+        fy + 29,
+        11.0,
+        th.text_dim,
     );
 
-    // Lock & Power actions on bottom-right.
-    cv.round_rect(w - 140, fy + 9, 54, 28, 8.0, Rgba::rgba(255, 255, 255, 18));
-    cv.icon_lock((w - 126) as f32, (fy + 23) as f32, TEXT_MED);
-    cv.text(fonts.regular.as_ref(), "Lock", w - 114, fy + 27, 11.5, TEXT_MED);
+    cv.round_rect(w - 150, fy + 10, 56, 30, R_CONTROL, th.tile);
+    cv.icon_lock((w - 138) as f32, (fy + 25) as f32, th.text_med);
+    cv.text(
+        fonts.regular.as_ref(),
+        "Lock",
+        w - 126,
+        fy + 29,
+        T_META,
+        th.text_med,
+    );
     regions.push(Region {
-        x: w - 140,
-        y: fy + 9,
-        w: 54,
-        h: 28,
+        x: w - 150,
+        y: fy + 10,
+        w: 56,
+        h: 30,
         action: HitAction::Launch(LaunchTarget::Shell("swaylock".into())),
     });
 
-    cv.round_rect(w - 78, fy + 9, 54, 28, 8.0, Rgba::rgba(255, 255, 255, 18));
-    cv.icon_power((w - 51) as f32, (fy + 23) as f32, Rgba::rgb(0xf8, 0x71, 0x71));
+    cv.round_rect(w - 88, fy + 10, 68, 30, R_CONTROL, th.tile);
+    cv.icon_power((w - 76) as f32, (fy + 25) as f32, th.danger);
+    cv.text(
+        fonts.regular.as_ref(),
+        "Log out",
+        w - 64,
+        fy + 29,
+        T_META,
+        th.text_med,
+    );
+    // niri asks for confirmation itself; we do not skip it.
     regions.push(Region {
-        x: w - 78,
-        y: fy + 9,
-        w: 54,
-        h: 28,
-        action: HitAction::Launch(LaunchTarget::Ipc("{\"Action\":{\"Quit\":{\"skip_confirmation\":true}}}")),
+        x: w - 88,
+        y: fy + 10,
+        w: 68,
+        h: 30,
+        action: HitAction::Launch(LaunchTarget::Ipc(
+            "{\"Action\":{\"Quit\":{\"skip_confirmation\":false}}}",
+        )),
     });
 
     regions
@@ -908,93 +965,154 @@ pub fn draw_launcher(
 #[allow(clippy::too_many_arguments)]
 fn draw_launcher_row(
     cv: &mut Canvas<'_>,
+    th: &Theme,
     fonts: &Fonts,
     icons: &mut HashMap<String, Option<Icon>>,
     regions: &mut Vec<Region>,
     w: i32,
     y: i32,
-    app: &AppEntry,
+    item: &LauncherItem,
     selected: bool,
     hover: Option<(f64, f64)>,
 ) {
-    let rx = 20;
-    let rw = w - 40;
-    let rh = 38;
-    let is_hov = hover.is_some_and(|(hx, hy)| {
-        hx >= rx as f64 && hx < (rx + rw) as f64 && hy >= y as f64 && hy < (y + rh) as f64
-    });
+    let (rx, rw, rh) = (16, w - 32, launcher::ROW_H - 2);
+    let runnable = item.is_runnable();
     if selected {
-        cv.round_rect(rx, y, rw, rh, 10.0, Rgba::rgba(0xc0, 0x84, 0xfc, 52));
-        cv.stroke_round_rect(rx, y, rw, rh, 10.0, 1.0, Rgba::rgba(0xc0, 0x84, 0xfc, 120));
-    } else if is_hov {
-        cv.round_rect(rx, y, rw, rh, 10.0, Rgba::rgba(255, 255, 255, 24));
+        cv.round_rect(rx, y, rw, rh, R_ROW, th.selected_fill);
+        cv.stroke_round_rect(rx, y, rw, rh, R_ROW, 1.0, th.selected_border);
+    } else if runnable && hovered(hover, rx, y, rw, rh) {
+        cv.round_rect(rx, y, rw, rh, R_ROW, th.tile_hover);
     }
 
-    let sys_ic = load_app_icon(icons, &app.app_id);
-    cv.draw_app_squircle(rx + 8, y + 5, 28, &app.role, sys_ic);
-    let tw = cv.text(fonts.semibold.as_ref(), &app.title, rx + 44, y + 24, 13.0, TEXT);
+    let sys_ic = load_app_icon(icons, &item.app_id);
+    cv.draw_app_squircle(rx + 8, y + 4, 28, &item.role, sys_ic);
+    let title_col = if runnable { th.text } else { th.text_dim };
+    let badge_w = if selected { 72 } else { 0 };
+    let text_w = rw - 52 - badge_w - 8;
+    let tw = cv.text_truncated(
+        fonts.semibold.as_ref(),
+        &item.title,
+        rx + 44,
+        y + 17,
+        T_BODY,
+        text_w,
+        title_col,
+    );
+    let _ = tw;
     cv.text_truncated(
         fonts.regular.as_ref(),
-        &app.subtitle,
-        rx + 54 + tw,
-        y + 24,
-        12.0,
-        rw - (tw + 130),
-        TEXT_DIM,
+        &item.subtitle,
+        rx + 44,
+        y + 32,
+        T_META,
+        text_w,
+        th.text_dim,
     );
+
     if selected {
-        cv.round_rect(rx + rw - 58, y + 8, 48, 22, 6.0, Rgba::rgba(255, 255, 255, 26));
-        cv.text(fonts.mono.as_ref(), "Open ⏎", rx + rw - 52, y + 23, 10.8, TEXT);
+        let label = if runnable {
+            row_verb(item)
+        } else {
+            "Unavailable"
+        };
+        let bw = if runnable { 64 } else { 84 };
+        cv.round_rect(rx + rw - bw - 8, y + 8, bw, 22, 6.0, th.tile_hover);
+        cv.text(
+            fonts.mono.as_ref(),
+            label,
+            rx + rw - bw - 2,
+            y + 23,
+            10.8,
+            th.text,
+        );
     }
-    regions.push(Region {
-        x: rx,
-        y,
-        w: rw,
-        h: rh,
-        action: HitAction::Launch(app.command.clone()),
-    });
+
+    if runnable {
+        let action = match &item.action {
+            LauncherAction::Launch(t) => HitAction::Launch(t.clone()),
+            LauncherAction::FocusWindow(id) => HitAction::FocusWindow(*id),
+            LauncherAction::AgentRequest(q) => HitAction::AgentRequest(q.clone()),
+            LauncherAction::Unavailable => return,
+        };
+        regions.push(Region {
+            x: rx,
+            y,
+            w: rw,
+            h: rh,
+            action,
+        });
+    }
 }
 
 // --------------------------------------------------------- Control Centre
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_control(
     cv: &mut Canvas<'_>,
+    th: &Theme,
     fonts: &Fonts,
     prefs: &ShellPrefs,
     telem: &Telemetry,
+    agents: AgentSummary,
     hover: Option<(f64, f64)>,
 ) -> Vec<Region> {
     let w = cv.width as i32;
     let h = cv.height as i32;
     let mut regions = Vec::new();
 
-    cv.glass_card(
-        0,
-        0,
-        w,
-        h,
-        20.0,
-        Rgba::rgba(0x21, 0x1b, 0x33, 196),
-        Rgba::rgba(0x13, 0x0f, 0x20, 224),
-        Rgba::rgba(255, 255, 255, 80),
-        Rgba::rgba(255, 255, 255, 24),
-    );
+    card(cv, th, 0, 0, w, h, R_CARD);
 
-    // 1. 2x2 Quick Toggle Bento Grid.
+    // 1. Status tiles. Network is read-only: Solyra reads link state, it does
+    //    not manage connections yet, so the tile is not a button.
     let tile_w = (w - 32 - 10) / 2;
     let tile_h = 54;
-    let tiles = [
-        ("Wi-Fi", if prefs.wifi_on { "Solyra-5G" } else { "Off" }, prefs.wifi_on, HitAction::ToggleWifi),
-        ("Bluetooth", if prefs.bt_on { "On" } else { "Off" }, prefs.bt_on, HitAction::ToggleBt),
+    let agent_sub = if !agents.runtime_present {
+        "No runtime".to_string()
+    } else if agents.waiting > 0 {
+        format!("{} need approval", agents.waiting)
+    } else if agents.live > 0 {
+        format!("{} running", agents.live)
+    } else {
+        "Idle".to_string()
+    };
+    let tiles: [(&str, String, bool, Option<HitAction>); 4] = [
         (
-            "Agent Space",
-            "WS 7 · Ready",
-            prefs.agent_ready,
-            HitAction::Launch(LaunchTarget::Ipc(
-                "{\"Action\":{\"FocusWorkspace\":{\"reference\":{\"Index\":7}}}}",
-            )),
+            "Network",
+            telem.network.label().to_string(),
+            false,
+            crate::state::on_path("nmtui").then(|| {
+                HitAction::Launch(LaunchTarget::Shell(format!(
+                    "{} -e nmtui",
+                    crate::state::role_binary("terminal", "foot")
+                )))
+            }),
         ),
-        ("Focus", if prefs.dnd_on { "Muted" } else { "Off" }, prefs.dnd_on, HitAction::ToggleDnd),
+        (
+            "Agents",
+            agent_sub,
+            agents.live > 0,
+            Some(HitAction::Shell(ShellCmd::ToggleAgents)),
+        ),
+        (
+            "Focus",
+            if prefs.dnd_on {
+                "Holding notices".into()
+            } else {
+                "Off".to_string()
+            },
+            prefs.dnd_on,
+            Some(HitAction::ToggleDnd),
+        ),
+        (
+            "Appearance",
+            if prefs.theme == ThemeKind::Dark {
+                "Dark".into()
+            } else {
+                "Light".to_string()
+            },
+            false,
+            Some(HitAction::ToggleTheme),
+        ),
     ];
 
     for (i, (title, sub, active, act)) in tiles.into_iter().enumerate() {
@@ -1002,62 +1120,56 @@ pub fn draw_control(
         let row = (i / 2) as i32;
         let tx = 16 + col * (tile_w + 10);
         let ty = 16 + row * (tile_h + 10);
-        let is_hov = hover.is_some_and(|(hx, hy)| {
-            hx >= tx as f64
-                && hx < (tx + tile_w) as f64
-                && hy >= ty as f64
-                && hy < (ty + tile_h) as f64
-        });
+        let is_hov = act.is_some() && hovered(hover, tx, ty, tile_w, tile_h);
         if active {
-            cv.dgrad_round_rect(
-                tx,
-                ty,
-                tile_w,
-                tile_h,
-                14.0,
-                Rgba::rgba(0xc0, 0x84, 0xfc, 220),
-                Rgba::rgba(0x81, 0x8c, 0xf8, 220),
-            );
+            cv.round_rect(tx, ty, tile_w, tile_h, R_TILE, th.accent);
         } else {
             cv.round_rect(
                 tx,
                 ty,
                 tile_w,
                 tile_h,
-                14.0,
-                Rgba::rgba(255, 255, 255, if is_hov { 34 } else { 20 }),
+                R_TILE,
+                if is_hov { th.tile_hover } else { th.tile },
             );
         }
-        let fg = if active { ON_ACCENT } else { TEXT };
-        let fg_sub = if active {
-            Rgba::rgba(0x14, 0x10, 0x20, 200)
-        } else {
-            TEXT_DIM
-        };
-        let icx = tx as f32 + 22.0;
-        let icy = ty as f32 + 27.0;
+        let fg = if active { th.on_accent } else { th.text };
+        let fg_sub = if active { th.on_accent } else { th.text_dim };
+        let (icx, icy) = (tx as f32 + 22.0, ty as f32 + 27.0);
         match i {
-            0 => cv.icon_wifi(icx, icy, 14.0, fg),
-            1 => cv.icon_bluetooth(icx, icy, fg),
-            2 => cv.icon_solyra(icx, icy, 6.0, fg),
-            _ => cv.icon_moon(icx, icy, fg),
+            0 => cv.icon_network(icx, icy, 14.0, telem.network, fg, fg_sub),
+            1 => cv.icon_solyra(icx, icy, 6.0, fg),
+            2 => cv.icon_moon(icx, icy, fg),
+            _ => cv.icon_sun(icx, icy, fg),
         }
-        cv.text(fonts.semibold.as_ref(), title, tx + 40, ty + 24, 12.2, fg);
-        cv.text(fonts.regular.as_ref(), sub, tx + 40, ty + 40, 11.0, fg_sub);
-        regions.push(Region {
-            x: tx,
-            y: ty,
-            w: tile_w,
-            h: tile_h,
-            action: act,
-        });
+        cv.text(fonts.semibold.as_ref(), title, tx + 40, ty + 23, 12.2, fg);
+        cv.text_truncated(
+            fonts.regular.as_ref(),
+            &sub,
+            tx + 40,
+            ty + 40,
+            T_CAPTION + 0.4,
+            tile_w - 48,
+            fg_sub,
+        );
+        if let Some(action) = act {
+            regions.push(Region {
+                x: tx,
+                y: ty,
+                w: tile_w,
+                h: tile_h,
+                action,
+            });
+        }
     }
 
-    // 2. Display & Sound Sliders card.
+    // 2. Sliders. A slider that cannot do anything on this machine says so
+    //    instead of moving.
     let sy = 148;
-    cv.round_rect(16, sy, w - 32, 96, 14.0, Rgba::rgba(255, 255, 255, 16));
+    cv.round_rect(16, sy, w - 32, 96, R_TILE, th.tile);
     draw_slider_row(
         cv,
+        th,
         fonts,
         &mut regions,
         28,
@@ -1066,9 +1178,11 @@ pub fn draw_control(
         "Display",
         prefs.brightness,
         true,
+        telem.brightness_controllable,
     );
     draw_slider_row(
         cv,
+        th,
         fonts,
         &mut regions,
         28,
@@ -1077,14 +1191,22 @@ pub fn draw_control(
         "Sound",
         prefs.volume,
         false,
+        telem.volume_controllable,
     );
 
-    // 3. Live Dock Style Segmented Switcher (Solyra | macOS | Windows).
+    // 3. Dock style.
     let dy = 258;
-    cv.text(fonts.semibold.as_ref(), "DOCK STYLE", 20, dy + 12, 10.5, TEXT_DIM);
+    cv.text(
+        fonts.semibold.as_ref(),
+        "DOCK STYLE",
+        20,
+        dy + 12,
+        T_CAPTION,
+        th.text_dim,
+    );
     let seg_y = dy + 20;
     let seg_w = w - 32;
-    cv.round_rect(16, seg_y, seg_w, 34, 10.0, Rgba::rgba(0x0a, 0x08, 0x12, 160));
+    cv.round_rect(16, seg_y, seg_w, 34, R_ROW, th.field);
     let item_w = (seg_w - 8) / 3;
     for (i, style) in [DockStyle::Solyra, DockStyle::Macos, DockStyle::Windows]
         .into_iter()
@@ -1093,7 +1215,7 @@ pub fn draw_control(
         let ix = 20 + i as i32 * item_w;
         let active = prefs.dock_style == style;
         if active {
-            cv.dgrad_round_rect(ix, seg_y + 3, item_w, 28, 8.0, ACCENT, ACCENT_INDIGO);
+            cv.round_rect(ix, seg_y + 3, item_w, 28, R_CONTROL, th.accent);
         }
         let label = style.label();
         let tw = text_width(fonts.semibold.as_ref(), label, 11.8);
@@ -1103,7 +1225,7 @@ pub fn draw_control(
             ix + (item_w - tw) / 2,
             seg_y + 21,
             11.8,
-            if active { ON_ACCENT } else { TEXT_MED },
+            if active { th.on_accent } else { th.text_med },
         );
         regions.push(Region {
             x: ix,
@@ -1114,14 +1236,21 @@ pub fn draw_control(
         });
     }
 
-    // 4. Live Wallpaper Swatches.
+    // 4. Wallpaper.
     let wy = 328;
-    cv.text(fonts.semibold.as_ref(), "WALLPAPER", 20, wy + 12, 10.5, TEXT_DIM);
+    cv.text(
+        fonts.semibold.as_ref(),
+        "WALLPAPER",
+        20,
+        wy + 12,
+        T_CAPTION,
+        th.text_dim,
+    );
     let mut sx = 28;
     for preset in WallpaperPreset::ALL {
         let active = prefs.wallpaper == preset;
         if active {
-            cv.ring(sx as f32, (wy + 32) as f32, 13.5, 2.0, TEXT);
+            cv.ring(sx as f32, (wy + 32) as f32, 13.5, 2.0, th.text);
         }
         cv.circle(sx as f32, (wy + 32) as f32, 10.0, preset.swatch());
         regions.push(Region {
@@ -1138,30 +1267,40 @@ pub fn draw_control(
         prefs.wallpaper.label(),
         w - 82,
         wy + 36,
-        11.8,
-        TEXT_MED,
+        T_LABEL,
+        th.text_med,
     );
 
-    // 5. Live RAM telemetry footer.
+    // 5. Real telemetry footer.
     let my = 386;
-    cv.fill_rect(16, my, w - 32, 1, Rgba::rgba(255, 255, 255, 20));
-    let mem_label = format!(
+    cv.fill_rect(16, my, w - 32, 1, th.separator);
+    let mut label = format!(
         "Memory · {} / {} MiB",
         telem.mem_used_mib, telem.mem_total_mib
     );
-    cv.text(fonts.regular.as_ref(), &mem_label, 20, my + 24, 11.5, TEXT_MED);
+    if let Some(pct) = telem.battery_pct {
+        label = format!("Battery {pct}% · {label}");
+    }
+    cv.text_truncated(
+        fonts.regular.as_ref(),
+        &label,
+        20,
+        my + 24,
+        T_META,
+        w - 40 - 110,
+        th.text_med,
+    );
     let bar_w = 96;
     let bx = w - 20 - bar_w;
-    cv.round_rect(bx, my + 15, bar_w, 8, 4.0, Rgba::rgba(255, 255, 255, 24));
-    let ratio = (telem.mem_used_mib as f32 / telem.mem_total_mib as f32).clamp(0.06, 1.0);
-    cv.dgrad_round_rect(
+    cv.round_rect(bx, my + 15, bar_w, 8, 4.0, th.tile_hover);
+    let ratio = (telem.mem_used_mib as f32 / telem.mem_total_mib as f32).clamp(0.02, 1.0);
+    cv.round_rect(
         bx,
         my + 15,
         (bar_w as f32 * ratio).round() as i32,
         8,
         4.0,
-        ACCENT,
-        ACCENT_INDIGO,
+        th.accent,
     );
 
     regions
@@ -1170,6 +1309,7 @@ pub fn draw_control(
 #[allow(clippy::too_many_arguments)]
 fn draw_slider_row(
     cv: &mut Canvas<'_>,
+    th: &Theme,
     fonts: &Fonts,
     regions: &mut Vec<Region>,
     x: i32,
@@ -1178,33 +1318,55 @@ fn draw_slider_row(
     label: &str,
     pct: u8,
     is_brightness: bool,
+    available: bool,
 ) {
-    cv.text(fonts.semibold.as_ref(), label, x, y + 10, 11.5, TEXT_MED);
-    let pct_str = format!("{pct}%");
-    let pw = text_width(fonts.regular.as_ref(), &pct_str, 11.0);
-    cv.text(fonts.regular.as_ref(), &pct_str, x + w - pw, y + 10, 11.0, TEXT_DIM);
+    cv.text(
+        fonts.semibold.as_ref(),
+        label,
+        x,
+        y + 10,
+        T_META,
+        th.text_med,
+    );
+    let right = if available {
+        format!("{pct}%")
+    } else {
+        "Not available on this device".to_string()
+    };
+    let pw = text_width(fonts.regular.as_ref(), &right, T_META);
+    cv.text(
+        fonts.regular.as_ref(),
+        &right,
+        x + w - pw,
+        y + 10,
+        T_META,
+        th.text_dim,
+    );
 
     let ty = y + 16;
-    let th = 18;
-    cv.round_rect(x, ty, w, th, 9.0, Rgba::rgba(0x0b, 0x08, 0x13, 165));
+    let th_px = 18;
+    cv.round_rect(x, ty, w, th_px, 9.0, th.field);
+    if !available {
+        return;
+    }
     let fill_w = ((w as f32) * (pct.clamp(8, 100) as f32 / 100.0)).round() as i32;
-    cv.dgrad_round_rect(x, ty, fill_w, th, 9.0, Rgba::rgb(0xe9, 0xd5, 0xff), ACCENT);
+    cv.round_rect(x, ty, fill_w, th_px, 9.0, th.accent);
     if is_brightness {
-        cv.icon_sun(x as f32 + 11.0, ty as f32 + 9.0, ON_ACCENT);
+        cv.icon_sun(x as f32 + 11.0, ty as f32 + 9.0, th.on_accent);
         regions.push(Region {
             x,
             y: ty - 4,
             w,
-            h: th + 8,
+            h: th_px + 8,
             action: HitAction::SetBrightnessFromX { x0: x, w },
         });
     } else {
-        cv.icon_volume(x as f32 + 12.0, ty as f32 + 9.0, 11.0, pct, ON_ACCENT);
+        cv.icon_volume(x as f32 + 12.0, ty as f32 + 9.0, 11.0, pct, th.on_accent);
         regions.push(Region {
             x,
             y: ty - 4,
             w,
-            h: th + 8,
+            h: th_px + 8,
             action: HitAction::SetVolumeFromX { x0: x, w },
         });
     }
@@ -1214,83 +1376,539 @@ fn draw_slider_row(
 
 pub fn draw_island_card(
     cv: &mut Canvas<'_>,
+    th: &Theme,
     fonts: &Fonts,
     island_msg: Option<&str>,
     wins: &[WindowInfo],
     telem: &Telemetry,
+    agents: AgentSummary,
 ) -> Vec<Region> {
     let w = cv.width as i32;
     let h = cv.height as i32;
     let mut regions = Vec::new();
 
-    cv.glass_card(
-        0,
-        0,
-        w,
-        h,
-        22.0,
-        Rgba::rgba(0x0c, 0x0a, 0x15, 236),
-        Rgba::rgba(0x07, 0x06, 0x0d, 246),
-        Rgba::rgba(0xc0, 0x84, 0xfc, 96),
-        Rgba::rgba(255, 255, 255, 24),
-    );
+    card(cv, th, 0, 0, w, h, R_OVERLAY);
 
     cv.draw_app_squircle(18, 18, 36, "agent", None);
-    cv.text(fonts.semibold.as_ref(), "Dynamic Island", 64, 33, 13.5, TEXT);
-    let status = island_msg.unwrap_or("Agent Space idle · Workspace 7 isolated");
-    cv.text_truncated(fonts.regular.as_ref(), status, 64, 51, 11.8, w - 84, TEXT_DIM);
+    cv.text(
+        fonts.semibold.as_ref(),
+        "Activity",
+        64,
+        33,
+        T_TITLE,
+        th.text,
+    );
+    let status = match island_msg {
+        Some(m) => m.to_string(),
+        None if !agents.runtime_present => "No agent runtime connected".to_string(),
+        None if agents.waiting > 0 => format!("{} approval request(s) waiting", agents.waiting),
+        None if agents.live > 0 => format!("{} agent task(s) running", agents.live),
+        None => "Agents idle".to_string(),
+    };
+    cv.text_truncated(
+        fonts.regular.as_ref(),
+        &status,
+        64,
+        51,
+        T_LABEL,
+        w - 84,
+        th.text_dim,
+    );
 
-    // Telemetry strip.
-    cv.round_rect(18, 68, w - 36, 40, 10.0, Rgba::rgba(255, 255, 255, 16));
+    cv.round_rect(18, 68, w - 36, 40, R_ROW, th.tile);
     let summary = format!(
         "{} open windows  ·  {} MiB RAM used",
         wins.len(),
         telem.mem_used_mib
     );
-    cv.text(fonts.regular.as_ref(), &summary, 30, 93, 12.0, TEXT_MED);
+    cv.text(
+        fonts.regular.as_ref(),
+        &summary,
+        30,
+        93,
+        T_LABEL,
+        th.text_med,
+    );
 
-    // Action buttons.
     let btn_w = (w - 36 - 10) / 2;
-    cv.dgrad_round_rect(18, 120, btn_w, 34, 10.0, ACCENT, ACCENT_INDIGO);
-    let t1 = "Simulate Agent";
-    let tw1 = text_width(fonts.semibold.as_ref(), t1, 12.0);
+    cv.round_rect(18, 120, btn_w, 34, R_ROW, th.accent);
+    let t1 = "Agent tasks";
+    let tw1 = text_width(fonts.semibold.as_ref(), t1, T_LABEL);
     cv.text(
         fonts.semibold.as_ref(),
         t1,
         18 + (btn_w - tw1) / 2,
         141,
-        12.0,
-        ON_ACCENT,
+        T_LABEL,
+        th.on_accent,
     );
     regions.push(Region {
         x: 18,
         y: 120,
         w: btn_w,
         h: 34,
-        action: HitAction::Shell(ShellCmd::Notify("Agent · Organising ~/Downloads".into())),
+        action: HitAction::Shell(ShellCmd::ToggleAgents),
     });
 
     let bx2 = 18 + btn_w + 10;
-    cv.round_rect(bx2, 120, btn_w, 34, 10.0, Rgba::rgba(255, 255, 255, 24));
-    let t2 = "Open Agent Space";
-    let tw2 = text_width(fonts.semibold.as_ref(), t2, 12.0);
+    cv.round_rect(bx2, 120, btn_w, 34, R_ROW, th.tile);
+    let t2 = "Workspaces";
+    let tw2 = text_width(fonts.semibold.as_ref(), t2, T_LABEL);
     cv.text(
         fonts.semibold.as_ref(),
         t2,
         bx2 + (btn_w - tw2) / 2,
         141,
-        12.0,
-        TEXT,
+        T_LABEL,
+        th.text,
     );
     regions.push(Region {
         x: bx2,
         y: 120,
         w: btn_w,
         h: 34,
-        action: HitAction::Launch(LaunchTarget::Ipc(
-            "{\"Action\":{\"FocusWorkspace\":{\"reference\":{\"Index\":7}}}}",
-        )),
+        action: HitAction::Launch(LaunchTarget::Ipc("{\"Action\":{\"ToggleOverview\":{}}}")),
     });
+
+    regions
+}
+
+// ------------------------------------------------------------ Agent tasks
+
+pub const AGENTS_W: u32 = 460;
+pub const AGENTS_H: u32 = 520;
+
+/// Everything the agents card draws, borrowed from the app.
+pub struct AgentsView<'a> {
+    pub runtime_present: bool,
+    pub tasks: &'a [TaskView],
+    pub selected: usize,
+    pub now: u64,
+    pub root_hint: &'a str,
+    /// Set when a decision could not be recorded; shown until the next action.
+    pub error: Option<&'a str>,
+}
+
+fn status_glyph(cv: &mut Canvas<'_>, th: &Theme, status: Status, cx: f32, cy: f32) {
+    // Shape and label carry the state; colour only reinforces it.
+    match status {
+        Status::Running => {
+            cv.circle(cx, cy, 5.0, th.agent_active);
+        }
+        Status::WaitingApproval => {
+            cv.ring(cx, cy, 5.5, 2.0, th.agent_approval);
+            cv.circle(cx, cy, 1.8, th.agent_approval);
+        }
+        Status::Blocked => {
+            cv.round_rect(cx as i32 - 5, cy as i32 - 5, 10, 10, 2.0, th.warning);
+        }
+        Status::Finished => {
+            cv.line(cx - 4.5, cy, cx - 1.5, cy + 3.5, 2.0, th.success);
+            cv.line(cx - 1.5, cy + 3.5, cx + 5.0, cy - 4.0, 2.0, th.success);
+        }
+        Status::Failed => {
+            cv.line(cx - 4.0, cy - 4.0, cx + 4.0, cy + 4.0, 2.0, th.danger);
+            cv.line(cx - 4.0, cy + 4.0, cx + 4.0, cy - 4.0, 2.0, th.danger);
+        }
+    }
+}
+
+fn ago(now: u64, ts: u64) -> String {
+    let s = now.saturating_sub(ts);
+    match s {
+        0..=59 => format!("{s}s ago"),
+        60..=3599 => format!("{}m ago", s / 60),
+        _ => format!("{}h ago", s / 3600),
+    }
+}
+
+fn reversible_line(a: &Approval) -> (&'static str, &'static str) {
+    match a.reversible {
+        Some(true) => ("Can be undone:", "Yes, as reported by the agent"),
+        Some(false) => ("Can be undone:", "No. Solyra cannot reverse this"),
+        None => ("Can be undone:", "Not reported by the agent"),
+    }
+}
+
+const TASK_ROW_H: i32 = 54;
+const DETAIL_TOP: i32 = 330;
+
+pub fn draw_agents(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    fonts: &Fonts,
+    view: &AgentsView<'_>,
+    hover: Option<(f64, f64)>,
+) -> Vec<Region> {
+    let w = cv.width as i32;
+    let h = cv.height as i32;
+    let mut regions = Vec::new();
+
+    card(cv, th, 0, 0, w, h, R_OVERLAY);
+
+    cv.text(
+        fonts.semibold.as_ref(),
+        "Agent tasks",
+        22,
+        36,
+        15.0,
+        th.text,
+    );
+    let sub = if !view.runtime_present {
+        "No runtime connected".to_string()
+    } else if view.tasks.is_empty() {
+        "No tasks".to_string()
+    } else {
+        format!("{} task(s)", view.tasks.len())
+    };
+    cv.text(fonts.regular.as_ref(), &sub, 22, 55, T_META, th.text_dim);
+    cv.round_rect(w - 68, 22, 38, 24, 6.0, th.tile);
+    cv.text(fonts.mono.as_ref(), "esc", w - 59, 38, 11.0, th.text_dim);
+    regions.push(Region {
+        x: w - 68,
+        y: 22,
+        w: 38,
+        h: 24,
+        action: HitAction::Shell(ShellCmd::CloseOverlays),
+    });
+    cv.fill_rect(18, 66, w - 36, 1, th.separator);
+
+    if !view.runtime_present || view.tasks.is_empty() {
+        let (title, lines): (&str, Vec<String>) = if !view.runtime_present {
+            (
+                "No agent runtime is connected",
+                vec![
+                    "Tasks appear here when an agent runtime reports them.".into(),
+                    format!("Watching {}", view.root_hint),
+                    "Protocol: docs/agent-protocol.md".into(),
+                ],
+            )
+        } else {
+            (
+                "No tasks right now",
+                vec![
+                    "Start one from the launcher: type a request and choose “Ask an agent”.".into(),
+                ],
+            )
+        };
+        cv.text(fonts.semibold.as_ref(), title, 22, 110, T_TITLE, th.text);
+        let mut y = 134;
+        for line in &lines {
+            for l in wrap_text(fonts.regular.as_ref(), line, T_LABEL, w - 44, 3) {
+                cv.text(fonts.regular.as_ref(), &l, 22, y, T_LABEL, th.text_dim);
+                y += 18;
+            }
+            y += 4;
+        }
+        return regions;
+    }
+
+    // Task list (top half).
+    let sel = view.selected.min(view.tasks.len() - 1);
+    let list_h = DETAIL_TOP - 72;
+    let visible = (list_h / TASK_ROW_H).max(1) as usize;
+    let first = sel.saturating_sub(visible - 1);
+    for (slot, idx) in (first..view.tasks.len()).take(visible).enumerate() {
+        let t = &view.tasks[idx];
+        let y = 72 + slot as i32 * TASK_ROW_H;
+        let (rx, rw, rh) = (14, w - 28, TASK_ROW_H - 4);
+        if idx == sel {
+            cv.round_rect(rx, y, rw, rh, R_ROW, th.selected_fill);
+            cv.stroke_round_rect(rx, y, rw, rh, R_ROW, 1.0, th.selected_border);
+        } else if hovered(hover, rx, y, rw, rh) {
+            cv.round_rect(rx, y, rw, rh, R_ROW, th.tile_hover);
+        }
+        status_glyph(cv, th, t.status, rx as f32 + 20.0, y as f32 + 17.0);
+        cv.text_truncated(
+            fonts.semibold.as_ref(),
+            &t.name,
+            rx + 38,
+            y + 21,
+            T_BODY,
+            rw - 150,
+            th.text,
+        );
+        let label = if t.is_quiet(view.now) {
+            format!(
+                "{} · quiet {}",
+                t.status.label(),
+                ago(view.now, t.last_ts).replace(" ago", "")
+            )
+        } else {
+            t.status.label().to_string()
+        };
+        let lw = text_width(fonts.regular.as_ref(), &label, T_META);
+        cv.text(
+            fonts.regular.as_ref(),
+            &label,
+            rx + rw - lw - 10,
+            y + 21,
+            T_META,
+            th.text_med,
+        );
+        let line2 = t
+            .latest_milestone()
+            .map(|m| m.text.as_str())
+            .or(t.detail.as_deref())
+            .unwrap_or("No activity reported yet");
+        cv.text_truncated(
+            fonts.regular.as_ref(),
+            line2,
+            rx + 38,
+            y + 38,
+            T_META,
+            rw - 50,
+            th.text_dim,
+        );
+        regions.push(Region {
+            x: rx,
+            y,
+            w: rw,
+            h: rh,
+            action: HitAction::SelectTask(idx),
+        });
+    }
+    if view.tasks.len() > first + visible {
+        let more = format!("+{} more", view.tasks.len() - first - visible);
+        cv.text(
+            fonts.regular.as_ref(),
+            &more,
+            22,
+            DETAIL_TOP - 8,
+            T_META,
+            th.text_dim,
+        );
+    }
+
+    // Detail (bottom half).
+    cv.fill_rect(18, DETAIL_TOP - 2, w - 36, 1, th.separator);
+    let t = &view.tasks[sel];
+    let mut y = DETAIL_TOP + 20;
+
+    if let Some(ap) = &t.pending {
+        cv.text(
+            fonts.semibold.as_ref(),
+            "APPROVAL REQUESTED",
+            22,
+            y,
+            T_CAPTION,
+            th.agent_approval,
+        );
+        y += 20;
+        for l in wrap_text(fonts.semibold.as_ref(), &ap.action, T_BODY, w - 44, 2) {
+            cv.text(fonts.semibold.as_ref(), &l, 22, y, T_BODY, th.text);
+            y += 18;
+        }
+        let field = |cv: &mut Canvas<'_>, y: &mut i32, k: &str, v: &str| {
+            let kw = cv.text(fonts.regular.as_ref(), k, 22, *y, T_META, th.text_dim);
+            cv.text_truncated(
+                fonts.regular.as_ref(),
+                v,
+                22 + kw + 6,
+                *y,
+                T_META,
+                w - 44 - kw - 6,
+                th.text_med,
+            );
+            *y += 16;
+        };
+        field(
+            cv,
+            &mut y,
+            "Affects:",
+            ap.resource
+                .as_deref()
+                .unwrap_or("Not reported by the agent"),
+        );
+        if let Some(reason) = &ap.reason {
+            field(cv, &mut y, "Why:", reason);
+        }
+        let (k, v) = reversible_line(ap);
+        field(cv, &mut y, k, v);
+
+        let by = h - 78;
+        if let Some((verdict, scope)) = t.decision_sent {
+            let msg = match (verdict, scope) {
+                (Verdict::Approve, Scope::Once) => "Sent: approved once. Waiting for the runtime.",
+                (Verdict::Approve, Scope::Task) => {
+                    "Sent: approved for this task. Waiting for the runtime."
+                }
+                (Verdict::Deny, _) => "Sent: denied. Waiting for the runtime.",
+            };
+            cv.round_rect(18, by, w - 36, 34, R_ROW, th.tile);
+            cv.text_truncated(
+                fonts.regular.as_ref(),
+                msg,
+                30,
+                by + 21,
+                T_LABEL,
+                w - 60,
+                th.text,
+            );
+        } else {
+            // Deny sits first and is not visually subordinate: no pressure.
+            let gap = 8;
+            let can_task = ap.scopes.contains(&Scope::Task);
+            let n = if can_task { 3 } else { 2 };
+            let bw = (w - 36 - gap * (n - 1)) / n;
+            let mut bx = 18;
+            let mut button =
+                |cv: &mut Canvas<'_>, label: &str, key: &str, action: HitAction, primary: bool| {
+                    if primary {
+                        cv.round_rect(bx, by, bw, 34, R_ROW, th.accent);
+                    } else {
+                        cv.round_rect(
+                            bx,
+                            by,
+                            bw,
+                            34,
+                            R_ROW,
+                            if hovered(hover, bx, by, bw, 34) {
+                                th.tile_hover
+                            } else {
+                                th.tile
+                            },
+                        );
+                        cv.stroke_round_rect(bx, by, bw, 34, R_ROW, 1.0, th.separator);
+                    }
+                    let fg = if primary { th.on_accent } else { th.text };
+                    let full = format!("{label} ({key})");
+                    let tw = text_width(fonts.semibold.as_ref(), &full, T_LABEL);
+                    cv.text(
+                        fonts.semibold.as_ref(),
+                        &full,
+                        bx + (bw - tw).max(0) / 2,
+                        by + 21,
+                        T_LABEL,
+                        fg,
+                    );
+                    regions.push(Region {
+                        x: bx,
+                        y: by,
+                        w: bw,
+                        h: 34,
+                        action,
+                    });
+                    bx += bw + gap;
+                };
+            button(
+                cv,
+                "Deny",
+                "D",
+                HitAction::Decide {
+                    task: sel,
+                    verdict: Verdict::Deny,
+                    scope: Scope::Once,
+                },
+                false,
+            );
+            button(
+                cv,
+                "Approve once",
+                "A",
+                HitAction::Decide {
+                    task: sel,
+                    verdict: Verdict::Approve,
+                    scope: Scope::Once,
+                },
+                false,
+            );
+            if can_task {
+                button(
+                    cv,
+                    "This task",
+                    "T",
+                    HitAction::Decide {
+                        task: sel,
+                        verdict: Verdict::Approve,
+                        scope: Scope::Task,
+                    },
+                    false,
+                );
+            }
+        }
+        let note = "Records your answer for the agent runtime. This is not a sandbox.";
+        cv.text_truncated(
+            fonts.regular.as_ref(),
+            note,
+            22,
+            h - 20,
+            T_CAPTION,
+            w - 44,
+            th.text_dim,
+        );
+    } else {
+        if let Some(obj) = &t.objective {
+            cv.text(
+                fonts.semibold.as_ref(),
+                "OBJECTIVE",
+                22,
+                y,
+                T_CAPTION,
+                th.text_dim,
+            );
+            y += 16;
+            for l in wrap_text(fonts.regular.as_ref(), obj, T_LABEL, w - 44, 2) {
+                cv.text(fonts.regular.as_ref(), &l, 22, y, T_LABEL, th.text);
+                y += 17;
+            }
+            y += 4;
+        }
+        let env = t
+            .environment
+            .as_deref()
+            .unwrap_or("Environment not reported by the agent");
+        cv.text(
+            fonts.semibold.as_ref(),
+            "RUNS IN",
+            22,
+            y,
+            T_CAPTION,
+            th.text_dim,
+        );
+        y += 16;
+        cv.text_truncated(fonts.regular.as_ref(), env, 22, y, T_LABEL, w - 44, th.text);
+        y += 22;
+        if let Some(d) = &t.detail {
+            let head = match t.status {
+                Status::Failed => "ERROR",
+                Status::Blocked => "BLOCKED ON",
+                _ => "SUMMARY",
+            };
+            cv.text(fonts.semibold.as_ref(), head, 22, y, T_CAPTION, th.text_dim);
+            y += 16;
+            for l in wrap_text(fonts.regular.as_ref(), d, T_LABEL, w - 44, 3) {
+                cv.text(fonts.regular.as_ref(), &l, 22, y, T_LABEL, th.text);
+                y += 17;
+            }
+        }
+        let skipped = t.malformed_lines + t.unknown_events;
+        if skipped > 0 {
+            let note = format!("{skipped} event(s) in this task's log could not be read.");
+            cv.text_truncated(
+                fonts.regular.as_ref(),
+                &note,
+                22,
+                h - 20,
+                T_CAPTION,
+                w - 44,
+                th.warning,
+            );
+        }
+    }
+
+    if let Some(err) = view.error {
+        cv.round_rect(18, h - 124, w - 36, 28, R_CONTROL, th.tile);
+        cv.text_truncated(
+            fonts.regular.as_ref(),
+            err,
+            28,
+            h - 105,
+            T_META,
+            w - 56,
+            th.danger,
+        );
+    }
 
     regions
 }

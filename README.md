@@ -34,6 +34,10 @@ and [the roadmap](PLAN.md).
 
 The previous implementation (CosmosOS v1–v6) is preserved on the `cosmos-legacy` branch.
 
+A development disk is built by the `disk` GitHub Actions workflow; see
+[base/README.md](base/README.md#get-a-ready-made-disk-ci) for downloading and
+running it in a VM.
+
 ## Layout
 
 ```
