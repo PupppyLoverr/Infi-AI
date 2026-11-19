@@ -16,9 +16,12 @@ mod system;
 mod wallpaper;
 
 use apps::Role;
+use solyra_conf::look::Look;
 
-const PAGES: [&str; 8] = [
+const PAGES: [&str; 10] = [
     "Appearance",
+    "Desktop",
+    "Lock Screen",
     "Background",
     "Sound",
     "Network",
@@ -95,56 +98,145 @@ fn original_tool(label: &str, cmd: &'static [&'static str], status: Signal<Strin
     if installed { view } else { view.opacity(0.4) }
 }
 
+/// A segmented choice bound to a `shell.conf` key: shows the stored value and
+/// writes the new one when the person picks another.
+fn conf_choice(
+    cx: &mut zgx::compose::Context,
+    status: &Signal<String>,
+    key: &'static str,
+    label: &str,
+    options: &'static [(&'static str, &'static str)],
+    current: &str,
+) -> View {
+    let rt = cx.runtime();
+    let sel = rt.signal(options.iter().position(|(v, _)| *v == current).unwrap_or(0));
+    let (s, st) = (sel.clone(), status.clone());
+    let last = Rc::new(RefCell::new(None::<usize>));
+    cx.retain(rt.effect(move || {
+        let v = s.get();
+        if last.borrow_mut().replace(v).is_some_and(|p| p != v) {
+            save_conf(&[(key, Some(options[v.min(options.len() - 1)].0.into()))], &st);
+        }
+    }));
+    column()
+        .gap(6.)
+        .child(text(label.to_string()))
+        .child(segmented(label.to_string(), sel, options.iter().map(|(_, l)| *l)))
+}
+
+/// A checkbox bound to a `shell.conf` flag (`1`/`0`).
+fn conf_toggle(cx: &mut zgx::compose::Context, status: &Signal<String>, key: &'static str, label: &str, on: bool) -> View {
+    let rt = cx.runtime();
+    let val = rt.signal(on);
+    let (v2, st) = (val.clone(), status.clone());
+    let last = Rc::new(RefCell::new(None::<bool>));
+    cx.retain(rt.effect(move || {
+        let v = v2.get();
+        if last.borrow_mut().replace(v).is_some_and(|p| p != v) {
+            save_conf(&[(key, Some(if v { "1" } else { "0" }.into()))], &st);
+        }
+    }));
+    checkbox(label.to_string(), val)
+}
+
+fn scrolling(cx: &mut zgx::compose::Context, body: View) -> View {
+    let offset = cx.runtime().signal(0f32);
+    scroll(offset).grow().child(body)
+}
+
 fn appearance_page(status: Signal<String>) -> View {
     component(move |cx| {
-        let rt = cx.runtime();
         let conf = read(conf_path());
-        let theme_sel = rt.signal(usize::from(
-            solyra_conf::get(&conf, "theme") == Some("light"),
-        ));
-        let dock_sel = rt.signal(match solyra_conf::get(&conf, "dock_style") {
-            Some("macos") => 1,
-            Some("windows") => 2,
-            _ => 0,
-        });
-        {
-            let (t, s) = (theme_sel.clone(), status.clone());
-            let last = Rc::new(RefCell::new(None::<usize>));
-            cx.retain(rt.effect(move || {
-                let v = t.get();
-                if last.borrow_mut().replace(v).is_some_and(|p| p != v) {
-                    save_conf(
-                        &[("theme", Some(if v == 1 { "light" } else { "dark" }.into()))],
-                        &s,
-                    );
-                }
-            }));
-        }
-        {
-            let (d, s) = (dock_sel.clone(), status.clone());
-            let last = Rc::new(RefCell::new(None::<usize>));
-            cx.retain(rt.effect(move || {
-                let v = d.get();
-                if last.borrow_mut().replace(v).is_some_and(|p| p != v) {
-                    let name = ["solyra", "macos", "windows"][v.min(2)];
-                    save_conf(&[("dock_style", Some(name.into()))], &s);
-                }
-            }));
-        }
-        column()
-            .gap(14.)
+        let look = Look::from_conf(&conf);
+        let theme_now = solyra_conf::get(&conf, "theme").unwrap_or("dark").to_string();
+        static ACCENTS: [(&str, &str); 7] = [
+            ("mauve", "Mauve"),
+            ("blue", "Blue"),
+            ("teal", "Teal"),
+            ("green", "Green"),
+            ("amber", "Amber"),
+            ("rose", "Rose"),
+            ("graphite", "Graphite"),
+        ];
+        let body = column()
+            .gap(16.)
             .child(heading("Appearance"))
-            .child(text("Theme"))
-            .child(segmented("Theme", theme_sel, ["Dark", "Light"]))
-            .child(caption(
-                "Applies to the shell now and to Solyra apps the next time they open.",
+            .child(conf_choice(cx, &status, "theme", "Theme", &[("dark", "Dark"), ("light", "Light")], &theme_now))
+            .child(conf_choice(cx, &status, "accent", "Accent colour", &ACCENTS, &look.accent))
+            .child(conf_toggle(cx, &status, "opaque", "Solid surfaces (no translucency)", look.opaque))
+            .child(conf_toggle(cx, &status, "reduced_motion", "Reduce motion", look.reduced_motion))
+            .child(caption("Changes apply to the shell at once and to Solyra apps the next time they open."));
+        scrolling(cx, body)
+    })
+}
+
+fn desktop_page(status: Signal<String>) -> View {
+    component(move |cx| {
+        let look = Look::from_conf(&read(conf_path()));
+        let body = column()
+            .gap(16.)
+            .child(heading("Desktop"))
+            .child(text("Top bar").font_bold())
+            .child(conf_choice(
+                cx,
+                &status,
+                "bar_style",
+                "Style",
+                &[("menubar", "Menu bar"), ("compact", "Compact"), ("hidden", "Hidden")],
+                look.bar.as_str(),
             ))
-            .child(text("Dock"))
-            .child(segmented(
-                "Dock style",
-                dock_sel,
-                ["Centered", "Floating", "Taskbar"],
+            .child(conf_toggle(cx, &status, "show_workspaces", "Show workspaces in the menu bar", look.show_workspaces))
+            .child(conf_toggle(cx, &status, "clock_24h", "24-hour clock", look.clock_24h))
+            .child(conf_toggle(cx, &status, "show_seconds", "Show seconds", look.show_seconds))
+            .child(conf_toggle(cx, &status, "show_date", "Show the date", look.show_date))
+            .child(text("Notch").font_bold())
+            .child(conf_choice(
+                cx,
+                &status,
+                "notch_style",
+                "Live activity area",
+                &[("notch", "Notch"), ("island", "Dynamic Island"), ("off", "Off")],
+                look.notch.as_str(),
             ))
+            .child(caption("Shows approvals, agent progress, notifications and what is playing. Click it to expand."))
+            .child(text("Dock").font_bold())
+            .child(conf_choice(
+                cx,
+                &status,
+                "dock_style",
+                "Style",
+                &[("solyra", "Solyra"), ("macos", "Floating"), ("windows", "Taskbar"), ("minimal", "Minimal")],
+                look.dock.as_str(),
+            ))
+            .child(conf_toggle(cx, &status, "dock_magnify", "Magnify icons under the pointer (floating docks)", look.dock_magnify))
+            .child(conf_toggle(cx, &status, "dock_autohide", "Hide the dock until the pointer reaches the bottom edge", look.dock_autohide));
+        scrolling(cx, body)
+    })
+}
+
+fn lock_page(status: Signal<String>) -> View {
+    component(move |cx| {
+        let look = Look::from_conf(&read(conf_path()));
+        let st = status.clone();
+        column()
+            .gap(16.)
+            .child(heading("Lock Screen"))
+            .child(conf_choice(
+                cx,
+                &status,
+                "lock_style",
+                "Layout",
+                &[("solyra", "Solyra"), ("classic", "Centred"), ("corner", "Clock corner")],
+                look.lock.as_str(),
+            ))
+            .child(caption("Solyra: time and password in the middle. Centred: date and time at the top, your picture and password below. Clock corner: a large clock in the lower left; any key shows the sign-in card."))
+            .child(caption("The lock screen uses your wallpaper and accent colour, and the clock settings from Desktop."))
+            .child(action("Lock now", move || {
+                if let Err(e) = system::launch(&["solyra-panel", "lock"]) {
+                    st.put(format!("Could not lock: {e}"));
+                }
+            }))
+            .child(caption("Super+Ctrl+L locks at any time. If the lock screen ever fails, Super+Alt+L opens swaylock so you can always unlock."))
     })
 }
 
@@ -606,6 +698,25 @@ fn about_page() -> View {
         )))
 }
 
+/// `--page <name>` opens a page directly (the menu bar's "About This Computer"
+/// uses `--page about`). Names match the sidebar, case-insensitively, with
+/// spaces or dashes.
+fn start_page() -> usize {
+    let args: Vec<String> = std::env::args().collect();
+    let Some(name) = args.iter().position(|a| a == "--page").and_then(|i| args.get(i + 1)) else {
+        return 0;
+    };
+    page_index(name)
+}
+
+fn page_index(name: &str) -> usize {
+    let want = name.to_ascii_lowercase().replace(['-', '_'], " ");
+    PAGES
+        .iter()
+        .position(|p| p.to_ascii_lowercase() == want)
+        .unwrap_or(0)
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let self_test = std::env::args().any(|a| a == "--self-test");
     let theme = solyra_ui::current_theme();
@@ -619,7 +730,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .run(move |cx| {
             let rt = cx.ui.runtime.clone();
-            let page = rt.signal(0usize);
+            let page = rt.signal(start_page());
             let status = rt.signal(String::new());
             let dialogs = cx.dialogs.clone();
             let tasks = cx.tasks.clone();
@@ -649,12 +760,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
                 move |i, _cx| match i {
                     0 => appearance_page(st.clone()),
-                    1 => background_page(st.clone(), dialogs.clone(), tasks.clone()),
-                    2 => sound_page(st.clone()),
-                    3 => network_page(st.clone()),
-                    4 => default_apps_page(st.clone()),
-                    5 => agents_page(st.clone()),
-                    6 => display_page(st.clone()),
+                    1 => desktop_page(st.clone()),
+                    2 => lock_page(st.clone()),
+                    3 => background_page(st.clone(), dialogs.clone(), tasks.clone()),
+                    4 => sound_page(st.clone()),
+                    5 => network_page(st.clone()),
+                    6 => default_apps_page(st.clone()),
+                    7 => agents_page(st.clone()),
+                    8 => display_page(st.clone()),
                     _ => about_page(),
                 },
             );
