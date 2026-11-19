@@ -22,6 +22,8 @@ jobs:
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          # /mnt is root-owned on the runner; the later steps write there as the runner user.
+          sudo chown "$USER" /mnt
           df -h / /mnt
 
       - name: Build the compositor and the shell, run the shell tests
