@@ -64,6 +64,7 @@ animations {
 
 // The shell: bar, island, and dock. A client, so killing it never takes the
 // session down; the compositor respawns nothing, the session just loses chrome.
+spawn-at-startup "swaybg" "-i" "/usr/share/solyra/wallpapers/violet.png" "-m" "fill"
 spawn-at-startup "solyra-panel"
 
 binds {

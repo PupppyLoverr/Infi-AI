@@ -12,3 +12,7 @@ shell/**
 !shell/out/
 !shell/out/solyra-panel
 shell/panel/target
+!assets/
+assets/**
+!assets/wallpapers/
+!assets/wallpapers/violet-1920x1080.png

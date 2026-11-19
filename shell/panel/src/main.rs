@@ -15,6 +15,7 @@
 //! Everything goes through niri's IPC socket, so the shell owns no state the
 //! compositor does not.
 
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
@@ -61,7 +62,6 @@ const PILL: (u8, u8, u8) = (0x24, 0x1f, 0x2a);
 const ON_ACCENT: (u8, u8, u8) = (0x14, 0x10, 0x18);
 const VOID: (u8, u8, u8) = (0x07, 0x06, 0x0a);
 const LENS: (u8, u8, u8) = (0x1b, 0x27, 0x33);
-const DOCK_BG: (u8, u8, u8) = (0x1e, 0x1a, 0x24);
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -157,6 +157,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         running: Vec::new(),
         pinned: pinned_apps(),
         island: None,
+        icons: HashMap::new(),
         font: load_font(),
         needs_redraw: true,
     };
@@ -283,6 +284,7 @@ struct App {
     running: Vec<AppEntry>,
     pinned: Vec<AppEntry>,
     island: Option<String>,
+    icons: HashMap<String, Option<Icon>>,
     font: Option<FontRef<'static>>,
     needs_redraw: bool,
 }
@@ -323,7 +325,7 @@ impl App {
         canvas.fill(0);
         let mut regions = Vec::new();
 
-        fill(canvas, stride, 0, 0, width, height, BG);
+        vgrad(canvas, stride, 0, 0, width, height, (0x18, 0x14, 0x1d), BG);
         fill(canvas, stride, 0, height as i32 - 1, width, 1, HAIRLINE);
 
         // Reserved notch: a void with a fake lens, so hardware with and
@@ -408,9 +410,10 @@ impl App {
         canvas.fill(0);
         let mut regions = Vec::new();
 
-        // Floating card: 8 px inset, 16 px radius.
-        round_rect(canvas, stride, 0, 8, width as i32, height as i32 - 8, 16, DOCK_BG);
-        fill(canvas, stride, 10, 8, width.saturating_sub(20), 1, (0x2c, 0x26, 0x33));
+        // Floating card: 8 px inset, 16 px radius, soft vertical gradient.
+        vgrad_round(canvas, stride, 0, 8, width as i32, height as i32 - 8, 16,
+                    (0x26, 0x21, 0x2e), (0x19, 0x16, 0x1f));
+        fill(canvas, stride, 12, 9, width.saturating_sub(24), 1, (0x3a, 0x33, 0x44));
 
         let mut x = 10;
         // Start cell.
@@ -436,12 +439,31 @@ impl App {
             if x + CELL > width as i32 - 10 {
                 break;
             }
-            let tint = tint_for(index);
-            round_rect(canvas, stride, x, 15, CELL, CELL, 10, tint);
-            if let Some(font) = self.font.as_ref() {
-                let glyph = app.glyph();
-                let w = text_width(font, &glyph, 13.0);
-                text(canvas, stride, width, height, font, &glyph, x + (CELL - w) / 2, 38, 13.0, (0xf2, 0xee, 0xf6));
+            let hovered = self.pointer_surface.as_ref() == Some(&self.dock.surface)
+                && self.pointer_pos.0 >= x as f64
+                && self.pointer_pos.0 < (x + CELL) as f64
+                && self.pointer_pos.1 >= 15.0
+                && self.pointer_pos.1 < (15 + CELL) as f64;
+            let base = if hovered { (0x3a, 0x32, 0x45) } else { (0x2a, 0x25, 0x33) };
+            round_rect(canvas, stride, x, 15, CELL, CELL, 10, base);
+            if hovered {
+                round_rect(canvas, stride, x, 15, CELL, 2, 1, ACCENT);
+            }
+            let _ = index;
+            if !self.icons.contains_key(&app.app_id) {
+                let loaded = icon_for(&app.app_id);
+                self.icons.insert(app.app_id.clone(), loaded);
+            }
+            let icon = self.icons.get(&app.app_id).and_then(|i| i.as_ref());
+            match icon {
+                Some(icon) => draw_icon(canvas, stride, x + 5, 20, CELL - 10, icon),
+                None => {
+                    if let Some(font) = self.font.as_ref() {
+                        let glyph = app.glyph();
+                        let w = text_width(font, &glyph, 13.0);
+                        text(canvas, stride, width, height, font, &glyph, x + (CELL - w) / 2, 38, 13.0, (0xf2, 0xee, 0xf6));
+                    }
+                }
             }
             if *running {
                 round_rect(canvas, stride, x + 11, height as i32 - 6, CELL - 22, 2, 1, ACCENT);
@@ -502,18 +524,6 @@ impl App {
     }
 }
 
-fn tint_for(index: usize) -> (u8, u8, u8) {
-    const TINTS: [(u8, u8, u8); 6] = [
-        (0x3b, 0x6e, 0xa5),
-        (0x6b, 0x5b, 0x95),
-        (0xa4, 0x68, 0x5f),
-        (0x4f, 0x8a, 0x7b),
-        (0xb4, 0x8a, 0xad),
-        (0x8a, 0x8f, 0x99),
-    ];
-    TINTS[index % TINTS.len()]
-}
-
 fn dock_width(running: &[AppEntry], pinned: &[AppEntry]) -> u32 {
     let running_ids: Vec<&str> = running.iter().map(|a| a.app_id.as_str()).collect();
     let extra = pinned
@@ -522,6 +532,117 @@ fn dock_width(running: &[AppEntry], pinned: &[AppEntry]) -> u32 {
         .count();
     let cells = 1 + running.len() + extra;
     (20 + cells as i32 * CELL + (cells as i32 - 1) * GAP).max(120) as u32
+}
+
+
+// ------------------------------------------------------------------- icons
+
+/// An RGBA icon decoded from the system icon theme.
+struct Icon {
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+}
+
+const ICON_DIRS: &[&str] = &[
+    "/usr/share/icons/hicolor/48x48/apps",
+    "/usr/share/icons/hicolor/64x64/apps",
+    "/usr/share/icons/hicolor/128x128/apps",
+    "/usr/share/icons/Adwaita/48x48/apps",
+    "/usr/share/icons/Adwaita/64x64/apps",
+];
+
+/// Find an icon for an app id. Desktop files are the authority when they
+/// exist; otherwise a few naming conventions cover the common cases.
+fn icon_for(app_id: &str) -> Option<Icon> {
+    let mut names: Vec<String> = Vec::new();
+    if let Ok(entry) = std::fs::read_to_string(format!("/usr/share/applications/{app_id}.desktop")) {
+        for line in entry.lines() {
+            if let Some(icon) = line.strip_prefix("Icon=") {
+                names.push(icon.trim().to_string());
+                break;
+            }
+        }
+    }
+    names.push(app_id.to_string());
+    names.push(format!("org.xfce.{app_id}"));
+    let mut capitalised = app_id.to_string();
+    if let Some(first) = capitalised.get_mut(0..1) {
+        first.make_ascii_uppercase();
+    }
+    names.push(capitalised);
+
+    for name in names {
+        for dir in ICON_DIRS {
+            let path = format!("{dir}/{name}.png");
+            if let Ok(bytes) = std::fs::read(&path) {
+                if let Some(icon) = decode_png(&bytes) {
+                    return Some(icon);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn decode_png(bytes: &[u8]) -> Option<Icon> {
+    let decoder = png::Decoder::new(bytes);
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).ok()?;
+    buf.truncate(info.buffer_size());
+    let mut rgba = Vec::with_capacity((info.width * info.height * 4) as usize);
+    match info.color_type {
+        png::ColorType::Rgba => rgba = buf,
+        png::ColorType::Rgb => {
+            for px in buf.chunks(3) {
+                rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
+            }
+        }
+        _ => return None,
+    }
+    Some(Icon { width: info.width, height: info.height, pixels: rgba })
+}
+
+/// Draw an icon into a square box with bilinear sampling and alpha blending.
+fn draw_icon(pixels: &mut [u8], stride: usize, x: i32, y: i32, box_px: i32, icon: &Icon) {
+    if icon.width == 0 || icon.height == 0 {
+        return;
+    }
+    let scale_x = icon.width as f32 / box_px as f32;
+    let scale_y = icon.height as f32 / box_px as f32;
+    for dy in 0..box_px {
+        for dx in 0..box_px {
+            let sx = (dx as f32 + 0.5) * scale_x - 0.5;
+            let sy = (dy as f32 + 0.5) * scale_y - 0.5;
+            let (x0, y0) = (sx.floor().max(0.0) as u32, sy.floor().max(0.0) as u32);
+            let (x1, y1) = ((x0 + 1).min(icon.width - 1), (y0 + 1).min(icon.height - 1));
+            let fx = (sx - x0 as f32).clamp(0.0, 1.0);
+            let fy = (sy - y0 as f32).clamp(0.0, 1.0);
+            let mut sample = [0f32; 4];
+            for (ix, iy, weight) in [
+                (x0, y0, (1.0 - fx) * (1.0 - fy)),
+                (x1, y0, fx * (1.0 - fy)),
+                (x0, y1, (1.0 - fx) * fy),
+                (x1, y1, fx * fy),
+            ] {
+                let offset = ((iy * icon.width + ix) * 4) as usize;
+                for channel in 0..4 {
+                    sample[channel] += icon.pixels[offset + channel] as f32 * weight;
+                }
+            }
+            let alpha = sample[3] / 255.0;
+            if alpha <= 0.004 {
+                continue;
+            }
+            let color = (sample[0] as u8, sample[1] as u8, sample[2] as u8);
+            let px = x + dx;
+            let py = y + dy;
+            if px >= 0 && py >= 0 {
+                blend(pixels, stride, px as usize, py as usize, color, alpha);
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------- niri IPC
@@ -721,6 +842,64 @@ fn blend(pixels: &mut [u8], stride: usize, x: usize, y: usize, color: (u8, u8, u
     pixels[offset + 3] = 255;
 }
 
+#[allow(clippy::too_many_arguments)]
+fn vgrad(
+    pixels: &mut [u8],
+    stride: usize,
+    x: i32,
+    y: i32,
+    w: u32,
+    h: u32,
+    top: (u8, u8, u8),
+    bottom: (u8, u8, u8),
+) {
+    for row in 0..h as i32 {
+        let t = row as f32 / (h.max(2) as f32 - 1.0);
+        let color = (
+            (top.0 as f32 + (bottom.0 as f32 - top.0 as f32) * t).round() as u8,
+            (top.1 as f32 + (bottom.1 as f32 - top.1 as f32) * t).round() as u8,
+            (top.2 as f32 + (bottom.2 as f32 - top.2 as f32) * t).round() as u8,
+        );
+        fill(pixels, stride, x, y + row, w, 1, color);
+    }
+}
+
+/// A rounded rectangle filled with a vertical gradient.
+#[allow(clippy::too_many_arguments)]
+fn vgrad_round(
+    pixels: &mut [u8],
+    stride: usize,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    radius: i32,
+    top: (u8, u8, u8),
+    bottom: (u8, u8, u8),
+) {
+    for row in 0..h {
+        let t = row as f32 / (h.max(2) as f32 - 1.0);
+        let color = (
+            (top.0 as f32 + (bottom.0 as f32 - top.0 as f32) * t).round() as u8,
+            (top.1 as f32 + (bottom.1 as f32 - top.1 as f32) * t).round() as u8,
+            (top.2 as f32 + (bottom.2 as f32 - top.2 as f32) * t).round() as u8,
+        );
+        let dy = (radius - row).max(row - (h - radius - 1)).max(0);
+        for col in 0..w {
+            let dx = (radius - col).max(col - (w - radius - 1)).max(0);
+            let distance = ((dx * dx + dy * dy) as f32).sqrt();
+            let coverage = if distance <= radius as f32 {
+                1.0
+            } else {
+                (radius as f32 + 0.5 - distance).clamp(0.0, 1.0)
+            };
+            if coverage > 0.0 {
+                blend(pixels, stride, (x + col) as usize, (y + row) as usize, color, coverage);
+            }
+        }
+    }
+}
+
 fn fill(pixels: &mut [u8], stride: usize, x: i32, y: i32, w: u32, h: u32, color: (u8, u8, u8)) {
     for row in y..y + h as i32 {
         for col in x..x + w as i32 {
@@ -914,6 +1093,7 @@ impl PointerHandler for App {
                 }
                 PointerEventKind::Motion { .. } => {
                     self.pointer_pos = event.position;
+                    self.needs_redraw = true;
                 }
                 PointerEventKind::Press { button, .. } if *button == 0x110 => {
                     let surface = event.surface.clone();
