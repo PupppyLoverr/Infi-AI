@@ -81,7 +81,8 @@ jobs:
 
       - name: Self-test the zgx apps in the image (headless Wayland, software Vulkan)
         run: |
-          docker run --rm --entrypoint sh solyra-base:ci -ec '
+          mkdir -p "$RUNNER_TEMP/shots"
+          docker run --rm -v "$RUNNER_TEMP/shots:/shots" --entrypoint sh solyra-base:ci -ec '
             dnf -y install weston >/dev/null
             mkdir -p /tmp/xr && chmod 700 /tmp/xr
             export XDG_RUNTIME_DIR=/tmp/xr
@@ -91,7 +92,86 @@ jobs:
             for app in solyra-settings solyra-term solyra-browse solyra-setup; do
               echo "== $app --self-test"
               timeout 90 $app --self-test
-            done'
+            done
+            kill %1 || true
+            # Screenshots: a pixman-rendered kiosk session, one app at a time.
+            shoot() {
+              name=$1; shift
+              weston --backend=headless --renderer=pixman --shell=kiosk --debug \
+                --socket=wl-shot --width=1100 --height=700 >/tmp/weston-shot.log 2>&1 &
+              W=$!
+              sleep 3
+              WAYLAND_DISPLAY=wl-shot SHELL=/bin/bash timeout 60 "$@" >/tmp/$name.log 2>&1 &
+              A=$!
+              sleep 12
+              ( cd /shots && WAYLAND_DISPLAY=wl-shot timeout 15 weston-screenshooter >/dev/null 2>&1 || true
+                f=$(ls -t wayland-screenshot*.png 2>/dev/null | head -1)
+                [ -n "$f" ] && mv "$f" "$name.png" )
+              kill $A $W 2>/dev/null || true
+              wait $A $W 2>/dev/null || true
+            }
+            export HOME=/tmp/shot-home
+            mkdir -p $HOME/.config/solyra
+            printf "theme=dark\naccent=blue\n" > $HOME/.config/solyra/shell.conf
+            shoot settings-appearance solyra-settings
+            shoot settings-desktop solyra-settings --page desktop
+            shoot settings-lock solyra-settings --page "lock screen"
+            shoot terminal solyra-term
+            shoot browse solyra-browse about:blank
+            printf "theme=light\naccent=teal\n" > $HOME/.config/solyra/shell.conf
+            shoot settings-light solyra-settings
+            shoot setup solyra-setup
+            ls -l /shots'
+          # The terminal must show its shell, not an empty pane: rows below
+          # the tab strip may not all be one colour.
+          python3 - "$RUNNER_TEMP/shots/terminal.png" <<'PY'
+          import os, sys, zlib, struct
+          if not os.path.exists(sys.argv[1]):
+              print("::warning::no terminal screenshot (weston-screenshooter missing?); blank-pane check skipped")
+              sys.exit(0)
+          data = open(sys.argv[1], 'rb').read()
+          w, h = struct.unpack('>II', data[16:24])
+          bitdepth, ctype = data[24], data[25]
+          idat = b''
+          i = 8
+          while i < len(data):
+              n = struct.unpack('>I', data[i:i+4])[0]
+              t = data[i+4:i+8]
+              if t == b'IDAT':
+                  idat += data[i+8:i+8+n]
+              i += 12 + n
+          raw = zlib.decompress(idat)
+          bpp = {2: 3, 6: 4}[ctype]
+          stride = w * bpp
+          rows, prev, p = [], bytearray(stride), 0
+          for y in range(h):
+              f = raw[p]; line = bytearray(raw[p+1:p+1+stride]); p += 1 + stride
+              for x in range(stride):
+                  a = line[x-bpp] if x >= bpp else 0
+                  b = prev[x]; c = prev[x-bpp] if x >= bpp else 0
+                  if f == 1: line[x] = (line[x] + a) & 255
+                  elif f == 2: line[x] = (line[x] + b) & 255
+                  elif f == 3: line[x] = (line[x] + (a + b) // 2) & 255
+                  elif f == 4:
+                      pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                      pr = a if pa <= pb and pa <= pc else (b if pb <= pc else c)
+                      line[x] = (line[x] + pr) & 255
+              rows.append(bytes(line)); prev = line
+          body = set()
+          for y in range(60, min(h, 160)):
+              r = rows[y]
+              for x in range(0, stride, bpp):
+                  body.add(r[x:x+3])
+          print(f"terminal screenshot {w}x{h}: {len(body)} colours under the tab strip")
+          sys.exit(0 if len(body) > 2 else 'terminal pane is blank: the shell is not visible')
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: app-screenshots
+          path: ${{ runner.temp }}/shots/*.png
+          if-no-files-found: ignore
 
       - name: Install disk tooling
         run: |
@@ -131,6 +211,26 @@ jobs:
           tail -n 60 /mnt/serial.log || true
           if [ "$ok" != 1 ]; then echo "smoke test failed: no login prompt on the serial console"; exit 1; fi
           echo "smoke test passed: reached a login prompt"
+
+      - name: VMware disk (.vmdk + .vmx), checked against the raw disk
+        run: |
+          sudo apt-get install -y qemu-utils
+          mkdir -p /mnt/vmware
+          qemu-img convert -p -f raw -O vmdk \
+            -o subformat=monolithicSparse,adapter_type=lsilogic,hwversion=4 \
+            /mnt/solyra.raw /mnt/vmware/solyra.vmdk
+          # Every byte of the vmdk must read back as the raw disk.
+          qemu-img compare -f raw -F vmdk /mnt/solyra.raw /mnt/vmware/solyra.vmdk
+          cp base/vmware/solyra.vmx base/vmware/README.txt /mnt/vmware/
+          ( cd /mnt/vmware && sha256sum solyra.vmdk solyra.vmx > SHA256SUMS && cat SHA256SUMS )
+          ls -lh /mnt/vmware
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: solyra-vmware
+          path: /mnt/vmware/
+          compression-level: 6
+          retention-days: 14
 
       - name: Compress and checksum
         run: |
