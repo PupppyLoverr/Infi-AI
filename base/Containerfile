@@ -85,6 +85,7 @@ RUN systemd-sysusers --dry-run /usr/lib/sysusers.d/10-solyra.conf
 # input, so the default session stays clean until it does (shell/README.md).
 COPY comp/out/niri /usr/bin/solyra-comp
 COPY base/solyra-session /usr/bin/solyra-session
+COPY base/solyra-open /usr/bin/solyra-open
 COPY shell/out/solyra-panel /usr/bin/solyra-panel
 # zgx apps (apps/): built in CI by the dev container into apps/out/.
 COPY apps/out/solyra-settings /usr/bin/solyra-settings
@@ -93,7 +94,7 @@ COPY apps/out/solyra-term /usr/bin/solyra-term
 COPY apps/out/solyra-agent /usr/bin/solyra-agent
 COPY base/profile.d/solyra-agent.sh /etc/profile.d/solyra-agent.sh
 COPY base/applications/ /usr/share/applications/
-RUN chmod +x /usr/bin/solyra-session /usr/bin/solyra-panel /usr/bin/solyra-settings /usr/bin/solyra-term /usr/bin/solyra-agent && \
+RUN chmod +x /usr/bin/solyra-session /usr/bin/solyra-open /usr/bin/solyra-panel /usr/bin/solyra-settings /usr/bin/solyra-term /usr/bin/solyra-agent && \
     ln -s solyra-comp /usr/bin/niri
 COPY assets/wallpapers/violet-1920x1080.png /usr/share/solyra/wallpapers/violet.png
 COPY assets/wallpapers/ocean-1920x1080.png /usr/share/solyra/wallpapers/ocean.png

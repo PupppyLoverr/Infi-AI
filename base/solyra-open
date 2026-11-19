@@ -1,0 +1,42 @@
+#!/bin/sh
+# solyra-open <terminal|files|browser> [args...]
+#
+# Opens whichever program is chosen for a role in Settings -> Default apps
+# (~/.config/solyra/defaults.toml, then /etc/solyra/defaults.toml). The
+# original program is the fallback: if the chosen one is missing, or exits
+# with an error within three seconds of starting, the original opens instead.
+# Nothing is ever left without a working terminal, file manager or browser.
+role=${1:-}
+[ $# -gt 0 ] && shift
+case $role in
+  terminal) original=foot ;;
+  files)    original=thunar ;;
+  browser)  original=firefox ;;
+  *) echo "usage: solyra-open terminal|files|browser [args...]" >&2; exit 2 ;;
+esac
+
+chosen=
+for f in "${XDG_CONFIG_HOME:-$HOME/.config}/solyra/defaults.toml" /etc/solyra/defaults.toml; do
+  [ -r "$f" ] || continue
+  line=$(sed -n "s/^[[:space:]]*${role}[[:space:]]*=[[:space:]]*\"\{0,1\}\([A-Za-z0-9._-]*\)\"\{0,1\}.*/\1/p" "$f" | head -n 1)
+  if [ -n "$line" ]; then chosen=${line%.desktop}; break; fi
+done
+
+if [ -z "$chosen" ] || [ "$chosen" = "$original" ] || ! command -v "$chosen" >/dev/null 2>&1; then
+  exec "$original" "$@"
+fi
+
+"$chosen" "$@" &
+pid=$!
+i=0
+while [ "$i" -lt 30 ]; do
+  if ! kill -0 "$pid" 2>/dev/null; then
+    wait "$pid"
+    rc=$?
+    [ "$rc" -ne 0 ] && exec "$original" "$@"
+    exit 0
+  fi
+  sleep 0.1
+  i=$((i + 1))
+done
+exit 0

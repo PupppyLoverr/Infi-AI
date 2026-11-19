@@ -372,10 +372,17 @@ pub fn reduce(id: &str, events: &str, decisions: &str) -> TaskView {
                     _ => None,
                 };
                 match next {
-                    Some(n) if !matches!(
-                        view.status,
-                        Status::WaitingApproval | Status::Finished | Status::Failed | Status::Blocked
-                    ) => view.status = n,
+                    Some(n)
+                        if !matches!(
+                            view.status,
+                            Status::WaitingApproval
+                                | Status::Finished
+                                | Status::Failed
+                                | Status::Blocked
+                        ) =>
+                    {
+                        view.status = n
+                    }
                     Some(_) => {}
                     None => view.unknown_events += 1,
                 }
@@ -979,11 +986,23 @@ mod tests {
     fn status_events_switch_between_working_and_idle_but_not_over_a_question() {
         let s = |st: &str| format!(r#"{{"ts":2,"type":"status","state":"{st}"}}"#);
         let start = r#"{"ts":1,"type":"started","name":"x"}"#;
-        assert_eq!(reduce("t", &ev(&[start, &s("idle")]), "").status, Status::Idle);
-        assert_eq!(reduce("t", &ev(&[start, &s("idle"), &s("working")]), "").status, Status::Running);
+        assert_eq!(
+            reduce("t", &ev(&[start, &s("idle")]), "").status,
+            Status::Idle
+        );
+        assert_eq!(
+            reduce("t", &ev(&[start, &s("idle"), &s("working")]), "").status,
+            Status::Running
+        );
         let q = r#"{"ts":2,"type":"question","request_id":"q","text":"?"}"#;
-        assert_eq!(reduce("t", &ev(&[start, q, &s("idle")]), "").status, Status::WaitingApproval);
-        assert_eq!(reduce("t", &ev(&[start, &s("sideways")]), "").unknown_events, 1);
+        assert_eq!(
+            reduce("t", &ev(&[start, q, &s("idle")]), "").status,
+            Status::WaitingApproval
+        );
+        assert_eq!(
+            reduce("t", &ev(&[start, &s("sideways")]), "").unknown_events,
+            1
+        );
     }
 
     #[test]

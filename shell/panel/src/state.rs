@@ -733,7 +733,7 @@ pub fn dock_entries(wins: &[WindowInfo]) -> Vec<AppEntry> {
             role: "files".into(),
             title: "Files".into(),
             subtitle: "Browse folders and drives".into(),
-            command: LaunchTarget::Shell(files_bin),
+            command: LaunchTarget::Shell("solyra-open files".into()),
         },
         AppEntry {
             window: None,
@@ -743,7 +743,7 @@ pub fn dock_entries(wins: &[WindowInfo]) -> Vec<AppEntry> {
             role: "terminal".into(),
             title: "Terminal".into(),
             subtitle: "Command line shell".into(),
-            command: LaunchTarget::Shell(term_bin),
+            command: LaunchTarget::Shell("solyra-open terminal".into()),
         },
         AppEntry {
             window: None,
@@ -806,7 +806,7 @@ pub fn catalog_apps() -> Vec<AppEntry> {
             role: "files".into(),
             title: "Files".into(),
             subtitle: "Browse local and mounted storage".into(),
-            command: LaunchTarget::Shell(files_bin),
+            command: LaunchTarget::Shell("solyra-open files".into()),
         },
         AppEntry {
             window: None,
@@ -816,7 +816,7 @@ pub fn catalog_apps() -> Vec<AppEntry> {
             role: "terminal".into(),
             title: "Terminal".into(),
             subtitle: "Command line shell".into(),
-            command: LaunchTarget::Shell(term_bin),
+            command: LaunchTarget::Shell("solyra-open terminal".into()),
         },
         AppEntry {
             window: None,

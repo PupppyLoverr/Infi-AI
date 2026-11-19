@@ -1091,12 +1091,8 @@ pub fn draw_control(
             "Network",
             telem.network.label().to_string(),
             false,
-            crate::state::on_path("nmtui").then(|| {
-                HitAction::Launch(LaunchTarget::Shell(format!(
-                    "{} -e nmtui",
-                    crate::state::role_binary("terminal", "foot")
-                )))
-            }),
+            crate::state::on_path("nmtui")
+                .then(|| HitAction::Launch(LaunchTarget::Shell(format!("{} -e nmtui", "foot")))),
         ),
         (
             "Agents",
