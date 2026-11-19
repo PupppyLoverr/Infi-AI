@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use crate::agent::{Approval, Scope, Status, Summary as AgentSummary, TaskView, Verdict};
 use crate::canvas::{text_width, wrap_text, Canvas, Fonts, Icon, Rgba};
 use crate::launcher::{self, Action as LauncherAction, Item as LauncherItem, Kind as LauncherKind};
+use crate::menu::MenuId;
 use crate::state::{
     focused_app_menus, load_app_icon, DockStyle, LaunchTarget, ShellCmd, ShellPrefs, Telemetry,
     WallpaperPreset, WindowInfo,
@@ -82,6 +83,10 @@ pub enum HitAction {
         x0: i32,
         w: i32,
     },
+    /// Open a menu-bar menu.
+    OpenMenu(MenuId),
+    /// First click on an item that needs confirming (shut down, restart).
+    ArmMenuItem(usize),
     /// Play/pause, next or previous on the playing media player.
     Media(crate::media::Control),
 }
@@ -119,7 +124,19 @@ pub fn draw_bar(
     cv.fill_rect(0, 0, w, h, th.bar);
     cv.fill_rect(0, h - 1, w, 1, th.tile);
 
-    // Left: Solyra emblem button -> opens Launcher.
+    use solyra_conf::look::BarStyle;
+    let bar_style = prefs.look.bar;
+    let menubar = bar_style == BarStyle::MenuBar;
+    let notch_on = prefs.look.notch != solyra_conf::look::NotchStyle::Off;
+    let center_reserved_half = if island_msg.is_some() || notch_on {
+        200
+    } else {
+        112
+    };
+    let max_left_x = (w / 2) - center_reserved_half;
+
+    // Left: the Solyra mark. In the menu bar it opens the system menu (like
+    // the Apple menu); in the compact bar, the launcher.
     let brand_hover = hover.is_some_and(|(hx, hy)| hx >= 6.0 && hx < 34.0 && hy < h as f64);
     if brand_hover {
         cv.round_rect(6, 5, 26, 24, 6.0, th.tile_hover);
@@ -130,106 +147,90 @@ pub fn draw_bar(
         y: 0,
         w: 30,
         h,
-        action: HitAction::Shell(ShellCmd::ToggleLauncher),
-    });
-
-    // Focused App Name (Semibold) + macOS-style contextual menu bar items.
-    let (app_name, menus) = focused_app_menus(wins);
-    let mut x = 38;
-    let app_w = cv.text(fonts.semibold.as_ref(), &app_name, x, 22, 13.0, th.text);
-    regions.push(Region {
-        x: x - 4,
-        y: 4,
-        w: app_w + 8,
-        h: 26,
-        action: HitAction::Launch(LaunchTarget::Ipc("{\"Action\":{\"ToggleOverview\":{}}}")),
-    });
-    x += app_w + 16;
-
-    // Leave generous room before the center notch/island.
-    // The notch/island is its own surface; keep the bar's middle clear for it.
-    let notch_on = prefs.look.notch != solyra_conf::look::NotchStyle::Off;
-    let center_reserved_half = if island_msg.is_some() || notch_on {
-        200
-    } else {
-        112
-    };
-    let max_left_x = (w / 2) - center_reserved_half;
-
-    // Workspace pills right after the app title/menus (clean & scannable).
-    for &(idx, active) in ws_list {
-        if x + 22 > max_left_x {
-            break;
-        }
-        let is_hov = hover.is_some_and(|(hx, hy)| {
-            hx >= x as f64 && hx < (x + 20) as f64 && hy >= 7.0 && hy < 27.0
-        });
-        if active {
-            cv.round_rect(x, 9, 20, 16, 8.0, th.accent);
+        action: if menubar {
+            HitAction::OpenMenu(MenuId::Solyra)
         } else {
-            let bg = if is_hov { th.tile_hover } else { th.tile };
-            cv.round_rect(x, 9, 20, 16, 8.0, bg);
-        }
-        let label = idx.to_string();
-        let tw = text_width(fonts.semibold.as_ref(), &label, 11.0);
-        let fg = if active { th.on_accent } else { th.text_med };
-        cv.text(
-            fonts.semibold.as_ref(),
-            &label,
-            x + (20 - tw) / 2,
-            21,
-            11.0,
-            fg,
-        );
-        regions.push(Region {
-            x: x - 2,
-            y: 4,
-            w: 24,
-            h: 26,
-            action: HitAction::Workspace(idx),
-        });
-        x += 25;
-    }
+            HitAction::Shell(ShellCmd::ToggleLauncher)
+        },
+    });
+    let mut x = 40;
 
-    // Contextual menu labels if space permits before the notch.
-    x += 8;
-    if x + 48 < max_left_x {
-        cv.fill_rect(x - 5, 10, 1, 14, th.tile);
-        // Only labels that do something real are drawn. File/Edit/Go/Shell
-        // used to open the launcher, which is not what those names promise;
-        // per-app menus need a protocol we do not have yet.
-        for &menu in menus
-            .iter()
-            .filter(|m| matches!(**m, "View" | "Window" | "Help"))
-        {
-            let mw = text_width(fonts.regular.as_ref(), menu, 12.2);
-            if x + mw + 12 > max_left_x {
+    if menubar {
+        // The focused app's name, bold, then the menu titles.
+        let (app_name, _) = focused_app_menus(wins);
+        let aw = text_width(fonts.semibold.as_ref(), &app_name, 13.0);
+        if hovered(hover, x - 6, 4, aw + 12, 26) {
+            cv.round_rect(x - 6, 5, aw + 12, 24, 5.0, th.tile_hover);
+        }
+        cv.text(fonts.semibold.as_ref(), &app_name, x, 22, 13.0, th.text);
+        regions.push(Region {
+            x: x - 6,
+            y: 0,
+            w: aw + 12,
+            h,
+            action: HitAction::OpenMenu(MenuId::App),
+        });
+        x += aw + 18;
+        for id in MenuId::TITLES {
+            let t = id.title();
+            let mw = text_width(fonts.regular.as_ref(), t, 13.0);
+            if x + mw + 8 > max_left_x {
                 break;
             }
-            let m_hov = hover.is_some_and(|(hx, hy)| {
-                hx >= (x - 4) as f64 && hx < (x + mw + 4) as f64 && hy >= 5.0 && hy < 29.0
-            });
-            if m_hov {
-                cv.round_rect(x - 5, 5, mw + 10, 24, 5.0, th.tile_hover);
+            if hovered(hover, x - 6, 4, mw + 12, 26) {
+                cv.round_rect(x - 6, 5, mw + 12, 24, 5.0, th.tile_hover);
             }
-            cv.text(fonts.regular.as_ref(), menu, x, 22, 12.2, th.text_med);
-            let act = match menu {
-                "Window" | "View" => {
-                    HitAction::Launch(LaunchTarget::Ipc("{\"Action\":{\"ToggleOverview\":{}}}"))
-                }
-                "Help" => {
-                    HitAction::Launch(LaunchTarget::Ipc("{\"Action\":{\"ShowHotkeyOverlay\":{}}}"))
-                }
-                _ => unreachable!("filtered above"),
-            };
+            cv.text(fonts.regular.as_ref(), t, x, 22, 13.0, th.text);
             regions.push(Region {
-                x: x - 4,
-                y: 4,
-                w: mw + 8,
-                h: 26,
-                action: act,
+                x: x - 6,
+                y: 0,
+                w: mw + 12,
+                h,
+                action: HitAction::OpenMenu(id),
             });
-            x += mw + 14;
+            x += mw + 18;
+        }
+        x += 4;
+    }
+
+    // Workspace pills (optional in the menu bar, always in the compact bar).
+    if prefs.look.show_workspaces || !menubar {
+        for &(idx, active) in ws_list {
+            if x + 22 > max_left_x {
+                break;
+            }
+            let is_hov = hovered(hover, x, 7, 20, 20);
+            if active {
+                cv.round_rect(x, 9, 20, 16, 8.0, th.accent);
+            } else {
+                cv.round_rect(
+                    x,
+                    9,
+                    20,
+                    16,
+                    8.0,
+                    if is_hov { th.tile_hover } else { th.tile },
+                );
+            }
+            let label = idx.to_string();
+            let tw = text_width(fonts.semibold.as_ref(), &label, 11.0);
+            let fg = if active { th.on_accent } else { th.text_med };
+            cv.text(
+                fonts.semibold.as_ref(),
+                &label,
+                x + (20 - tw) / 2,
+                21,
+                11.0,
+                fg,
+            );
+            regions.push(Region {
+                x: x - 2,
+                y: 4,
+                w: 24,
+                h: 26,
+                action: HitAction::Workspace(idx),
+            });
+            x += 25;
         }
     }
 
@@ -284,8 +285,12 @@ pub fn draw_bar(
 
     // Right cluster: Clock & Date, Status Capsule (Wi-Fi, Sound, Battery, Control Centre), Search.
     let now = chrono::Local::now();
-    let clock_str = now.format("%H:%M").to_string();
-    let date_str = now.format("%a %b %-d").to_string();
+    let clock_str = now.format(prefs.look.clock_format()).to_string();
+    let date_str = if prefs.look.show_date {
+        now.format("%a %b %-d").to_string()
+    } else {
+        String::new()
+    };
     let clock_w = text_width(fonts.semibold.as_ref(), &clock_str, 12.8);
     let date_w = text_width(fonts.regular.as_ref(), &date_str, 12.0);
 

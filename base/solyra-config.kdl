@@ -253,7 +253,11 @@ binds {
 
     // Sessions.
     Mod+Shift+E { quit; }
-    Mod+Ctrl+L { spawn "swaylock"; }
+    // Solyra's lock screen; swaylock if it cannot start.
+    Mod+Ctrl+L hotkey-overlay-title="Lock the Screen" { spawn-sh "solyra-panel lock || swaylock"; }
+    // Recovery: if a lock screen ever dies, the session stays locked; this
+    // starts swaylock on top so you can still unlock.
+    Mod+Alt+L allow-when-locked=true { spawn "swaylock"; }
 
     // These read Settings -> Default apps; the original app is the fallback.
     Mod+Return hotkey-overlay-title="Open a Terminal" {

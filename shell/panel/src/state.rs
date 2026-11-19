@@ -165,6 +165,10 @@ pub enum ShellCmd {
     SetWallpaper(WallpaperPreset),
     /// Bring an auto-hidden dock back.
     RevealDock,
+    /// Lock the screen (Solyra's lock screen, swaylock if it cannot start).
+    Lock,
+    /// Turn dock auto-hide on or off.
+    ToggleDockAutohide,
     /// A user-chosen image. The path is validated before use.
     SetWallpaperFile {
         mode: WallpaperMode,
@@ -448,6 +452,7 @@ fn parse_cmd_line(raw: &str) -> Option<ShellCmd> {
         "toggle-island" | "island" => Some(ShellCmd::ToggleIsland),
         "toggle-agents" | "agents" => Some(ShellCmd::ToggleAgents),
         "close" => Some(ShellCmd::CloseOverlays),
+        "lock" => Some(ShellCmd::Lock),
         _ => None,
     }
 }

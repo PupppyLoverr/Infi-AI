@@ -713,6 +713,104 @@ fn island_shots(fonts: &Fonts) -> Vec<Shot> {
 }
 
 #[test]
+fn menu_bar_and_menus_render() {
+    use crate::menu::{self, AppCtx, MenuId, Title};
+    let fonts = Fonts::load();
+    let mut shots = Vec::new();
+    for kind in [ThemeKind::Dark, ThemeKind::Light] {
+        let mut prefs = ShellPrefs::default();
+        prefs.theme = kind;
+        let mut regions = Vec::new();
+        shots.push(shoot("bar-menubar", kind, 1280, BAR_HEIGHT, |cv, th| {
+            let t = telem(Some(57), NetworkState::Wireless, true);
+            regions = draw_bar(
+                cv,
+                th,
+                &fonts,
+                &[(1, true), (2, false), (3, false)],
+                &[win(1, "foot", "x", true)],
+                None,
+                None,
+                None,
+                &prefs,
+                &t,
+                None,
+            );
+        }));
+        let titles: Vec<Title> = regions
+            .iter()
+            .filter_map(|r| match r.action {
+                HitAction::OpenMenu(id) => Some(Title {
+                    id,
+                    x: r.x + 6,
+                    w: r.w - 12,
+                }),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            titles.iter().any(|t| t.id == MenuId::Window),
+            "menu titles are clickable"
+        );
+        let app = AppCtx {
+            name: "Terminal",
+            launch: Some("solyra-open terminal".into()),
+            has_window: true,
+        };
+        for (id, armed) in [(MenuId::Solyra, Some(7)), (MenuId::Window, None)] {
+            let title = titles.iter().copied().find(|t| t.id == id).unwrap();
+            let entries = menu::entries(id, &app, kind == ThemeKind::Dark);
+            shots.push(shoot(
+                &format!("menu-{}", id.title().to_lowercase()),
+                kind,
+                640,
+                420,
+                |cv, th| {
+                    menu::draw(
+                        cv,
+                        th,
+                        &fonts,
+                        title,
+                        &titles,
+                        &entries,
+                        BAR_HEIGHT as i32,
+                        armed,
+                        Some((80.0, 120.0)),
+                    );
+                },
+            ));
+        }
+        let mut compact = ShellPrefs::default();
+        compact.theme = kind;
+        compact.look.bar = solyra_conf::look::BarStyle::Compact;
+        compact.look.clock_24h = false;
+        shots.push(shoot("bar-compact", kind, 1280, BAR_HEIGHT, |cv, th| {
+            let t = telem(None, NetworkState::Wired, false);
+            draw_bar(
+                cv,
+                th,
+                &fonts,
+                &[(1, true), (2, false)],
+                &[],
+                None,
+                None,
+                None,
+                &compact,
+                &t,
+                None,
+            );
+        }));
+    }
+    if let Some(dir) = std::env::var_os("SOLYRA_RENDER_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for s in &shots {
+            write_png(&dir, s);
+        }
+    }
+}
+
+#[test]
 fn island_previews_render() {
     let fonts = Fonts::load();
     let shots = island_shots(&fonts);

@@ -19,6 +19,7 @@ mod dock;
 mod island;
 mod launcher;
 mod media;
+mod menu;
 mod notify;
 mod state;
 mod surfaces;
@@ -188,6 +189,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         control: None,
         island_card: None,
         agents: None,
+        menu: None,
+        menu_open: None,
+        menu_armed: None,
         island: None,
         island_anim: island::Anim::new(island::target(
             solyra_conf::look::NotchStyle::Notch,
@@ -231,6 +235,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     app.ensure_island();
+    app.ensure_bar();
 
     // Re-apply the saved wallpaper: the session config only starts a default.
     if app.prefs.wallpaper_file.is_some() || app.prefs.wallpaper != state::WallpaperPreset::Graphite
@@ -362,6 +367,11 @@ struct App {
     island_card: Option<SurfaceSlot>,
     agents: Option<SurfaceSlot>,
     /// The notch / Dynamic Island surface (absent when the style is Off).
+    /// An open menu-bar menu: a full-screen transparent overlay.
+    menu: Option<SurfaceSlot>,
+    menu_open: Option<menu::MenuId>,
+    /// An item waiting for its confirming second click.
+    menu_armed: Option<usize>,
     island: Option<SurfaceSlot>,
     island_anim: island::Anim,
     island_expanded: bool,
@@ -440,6 +450,9 @@ impl App {
         self.island_card = None;
         self.agents = None;
         self.agents_error = None;
+        self.menu = None;
+        self.menu_open = None;
+        self.menu_armed = None;
         self.reply_buf.clear();
         self.reply_mode = false;
         if self.island_expanded {
@@ -568,6 +581,23 @@ impl App {
                 self.save_prefs();
                 self.ensure_dock();
             }
+            ShellCmd::Lock => {
+                self.close_overlays();
+                spawn_lock();
+            }
+            ShellCmd::ToggleDockAutohide => {
+                let on = !self.prefs.look.dock_autohide;
+                self.prefs.look.dock_autohide = on;
+                self.dock_hidden = on;
+                if let Some(path) = solyra_conf::config_path("shell.conf") {
+                    let _ = solyra_conf::update(
+                        &path,
+                        &[("dock_autohide", Some(if on { "1" } else { "0" }.into()))],
+                    );
+                    self.prefs_mtime = ShellPrefs::config_mtime();
+                }
+                self.ensure_dock();
+            }
             ShellCmd::RevealDock => {
                 self.dock_hidden = false;
                 self.dock_left_at = None;
@@ -628,6 +658,7 @@ impl App {
             || new.wallpaper_mode != self.prefs.wallpaper_mode;
         self.prefs = new;
         self.ensure_island();
+        self.ensure_bar();
         if wallpaper_changed {
             self.apply_saved_wallpaper();
         }
@@ -722,6 +753,87 @@ impl App {
     }
 
     /// Create or remove the island surface to match the notch style.
+    /// Hidden bar: a 1 px transparent strip that reserves nothing.
+    fn ensure_bar(&mut self) {
+        let hidden = self.prefs.look.bar == solyra_conf::look::BarStyle::Hidden;
+        let (zone, h) = if hidden {
+            (0, 1)
+        } else {
+            (BAR_HEIGHT as i32, BAR_HEIGHT)
+        };
+        if self.bar.height != h {
+            self.bar.layer.set_exclusive_zone(zone);
+            self.bar.layer.set_size(0, h);
+            self.bar.height = h;
+            self.bar.layer.commit();
+            self.needs_redraw = true;
+        }
+    }
+
+    fn open_menu(&mut self, id: menu::MenuId) {
+        if self.menu_open == Some(id) {
+            self.close_overlays();
+            return;
+        }
+        if self.menu.is_none() {
+            self.close_overlays();
+            // Full screen, above everything, over the bar: a click anywhere
+            // outside the menu closes it.
+            self.menu = Some(make_layer_surface(
+                &self.compositor,
+                &self.layer_shell,
+                &self.qh,
+                Layer::Overlay,
+                "solyra-menu",
+                Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
+                -1,
+                (0, 0, 0, 0),
+                0,
+                0,
+                KeyboardInteractivity::Exclusive,
+            ));
+        }
+        self.menu_open = Some(id);
+        self.menu_armed = None;
+        self.needs_redraw = true;
+    }
+
+    fn menu_titles(&self) -> Vec<menu::Title> {
+        self.bar
+            .regions
+            .iter()
+            .filter_map(|r| match r.action {
+                HitAction::OpenMenu(id) => Some(menu::Title {
+                    id,
+                    x: r.x + 6,
+                    w: r.w - 12,
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn menu_app_ctx(&self) -> (String, Option<String>, bool) {
+        let (name, _) = state::focused_app_menus(&self.wins);
+        let focused = self.wins.iter().find(|w| w.is_focused);
+        let launch = focused.and_then(|w| {
+            let role = state::role_for_app_id(&w.app_id);
+            match role.as_str() {
+                "terminal" => Some("solyra-open terminal".to_string()),
+                "files" => Some("solyra-open files".to_string()),
+                _ if !w.app_id.is_empty()
+                    && w.app_id
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)) =>
+                {
+                    Some(w.app_id.clone())
+                }
+                _ => None,
+            }
+        });
+        (name, launch, focused.is_some())
+    }
+
     fn ensure_island(&mut self) {
         use solyra_conf::look::NotchStyle;
         let want = self.prefs.look.notch != NotchStyle::Off;
@@ -918,19 +1030,23 @@ impl App {
                 Format::Argb8888,
             ) {
                 let mut cv = Canvas::new(bytes, w, h, scale as i32);
-                self.bar.regions = draw_bar(
-                    &mut cv,
-                    &th,
-                    &self.fonts,
-                    &self.ws_list,
-                    &self.wins,
-                    self.island_msg.as_deref(),
-                    self.agent_attention.as_deref(),
-                    self.agent_activity.as_deref(),
-                    &self.prefs,
-                    &telem,
-                    hover,
-                );
+                self.bar.regions = if self.prefs.look.bar == solyra_conf::look::BarStyle::Hidden {
+                    Vec::new()
+                } else {
+                    draw_bar(
+                        &mut cv,
+                        &th,
+                        &self.fonts,
+                        &self.ws_list,
+                        &self.wins,
+                        self.island_msg.as_deref(),
+                        self.agent_attention.as_deref(),
+                        self.agent_activity.as_deref(),
+                        &self.prefs,
+                        &telem,
+                        hover,
+                    )
+                };
                 present(
                     buffer,
                     &self.bar.surface,
@@ -1054,6 +1170,36 @@ impl App {
             hover
         ));
 
+        if let (Some(id), Some(slot)) = (self.menu_open, self.menu.as_ref()) {
+            let _ = slot;
+            let titles = self.menu_titles();
+            let (name, launch, has_window) = self.menu_app_ctx();
+            let app = menu::AppCtx {
+                name: &name,
+                launch,
+                has_window,
+            };
+            let entries = menu::entries(id, &app, self.prefs.theme == tokens::ThemeKind::Dark);
+            let title = titles
+                .iter()
+                .copied()
+                .find(|t| t.id == id)
+                .unwrap_or(menu::Title { id, x: 12, w: 20 });
+            let bar_h = self.bar.height as i32;
+            let armed = self.menu_armed;
+            overlay!(self.menu, |cv, hover| menu::draw(
+                &mut cv,
+                &th,
+                &self.fonts,
+                title,
+                &titles,
+                &entries,
+                bar_h,
+                armed,
+                hover
+            ));
+        }
+
         self.draw_island(scale);
         let _ = conn.flush();
     }
@@ -1159,6 +1305,7 @@ impl App {
 
     fn handle_click(&mut self, surface: &WlSurface, x: f64, y: f64) {
         let on_island = self.island.as_ref().is_some_and(|s| &s.surface == surface);
+        let on_menu = self.menu.as_ref().is_some_and(|s| &s.surface == surface);
         let hit = if on_island {
             // Island regions overlap (the whole shape, then its buttons):
             // the most specific wins.
@@ -1238,6 +1385,15 @@ impl App {
                     self.answer(&text);
                 }
             }
+            HitAction::OpenMenu(id) => {
+                self.open_menu(id);
+                return;
+            }
+            HitAction::ArmMenuItem(i) => {
+                self.menu_armed = Some(i);
+                self.needs_redraw = true;
+                return;
+            }
             HitAction::Media(control) => {
                 if let Some(m) = self.media.lock().ok().and_then(|m| m.clone()) {
                     media::control(m.bus, control);
@@ -1287,6 +1443,10 @@ impl App {
                     .stderr(std::process::Stdio::null())
                     .spawn();
             }
+        }
+        if on_menu && self.menu.is_some() {
+            // A menu item ran: the menu closes, as menus do.
+            self.close_overlays();
         }
         self.needs_state_sync = true;
         self.needs_redraw = true;
@@ -1601,6 +1761,21 @@ impl App {
 
 /// Attach `buffer` (already `scale` times the logical size) and tell the
 /// compositor so, so it maps one buffer pixel to one device pixel.
+/// Start the lock screen in its own process (a crash there must never take
+/// the shell down, and the compositor keeps the session locked if it dies).
+/// Falls back to swaylock if Solyra's lock screen cannot start.
+fn spawn_lock() {
+    let exe = std::env::current_exe().unwrap_or_else(|_| "solyra-panel".into());
+    let ok = std::process::Command::new(&exe)
+        .arg("lock")
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .is_ok();
+    if !ok {
+        let _ = std::process::Command::new("swaylock").spawn();
+    }
+}
+
 fn present(
     buffer: smithay_client_toolkit::shm::slot::Buffer,
     surface: &WlSurface,
@@ -1735,6 +1910,7 @@ impl LayerShellHandler for App {
             &mut self.island_card,
             &mut self.agents,
             &mut self.island,
+            &mut self.menu,
         ] {
             if slot.as_ref().is_some_and(|s| &s.layer == layer) {
                 *slot = None;
@@ -1771,6 +1947,7 @@ impl LayerShellHandler for App {
             &mut self.island_card,
             &mut self.agents,
             &mut self.island,
+            &mut self.menu,
         ] {
             if let Some(s) = slot.as_mut().filter(|s| &s.layer == layer) {
                 apply(s);
@@ -1879,6 +2056,25 @@ impl PointerHandler for App {
                 }
                 PointerEventKind::Motion { .. } => {
                     self.pointer_pos = event.position;
+                    if self
+                        .menu
+                        .as_ref()
+                        .is_some_and(|s| s.surface == event.surface)
+                    {
+                        let (px, py) = event.position;
+                        let over = self.menu.as_ref().and_then(|s| {
+                            s.regions
+                                .iter()
+                                .find(|r| r.contains(px, py))
+                                .map(|r| r.action.clone())
+                        });
+                        if let Some(HitAction::OpenMenu(id)) = over {
+                            if self.menu_open != Some(id) {
+                                self.menu_open = Some(id);
+                                self.menu_armed = None;
+                            }
+                        }
+                    }
                     self.needs_redraw = true;
                 }
                 PointerEventKind::Press { button, .. } if *button == 0x110 => {
