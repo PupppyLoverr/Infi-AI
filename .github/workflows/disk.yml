@@ -175,9 +175,15 @@ jobs:
 
       - name: Install disk tooling
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xfsprogs dosfstools mtools grub-efi-amd64-bin skopeo \
-            qemu-system-x86 ovmf zstd openssl
+          # Ubuntu's mirrors sometimes drop connections: retry, then retry the
+          # whole install once more after a pause.
+          APT="-o Acquire::Retries=5 -o Acquire::http::Timeout=60"
+          pkgs="xfsprogs dosfstools mtools grub-efi-amd64-bin skopeo qemu-system-x86 qemu-utils ovmf zstd openssl"
+          for attempt in 1 2 3; do
+            if sudo apt-get $APT update && sudo apt-get $APT install -y --fix-missing $pkgs; then break; fi
+            [ "$attempt" = 3 ] && exit 1
+            echo "apt failed (attempt $attempt), retrying in 60 s"; sleep 60
+          done
 
       - name: Build the disk
         run: |
@@ -214,7 +220,6 @@ jobs:
 
       - name: VMware disk (.vmdk + .vmx), checked against the raw disk
         run: |
-          sudo apt-get install -y qemu-utils
           mkdir -p /mnt/vmware
           qemu-img convert -p -f raw -O vmdk \
             -o subformat=monolithicSparse,adapter_type=lsilogic,hwversion=4 \
