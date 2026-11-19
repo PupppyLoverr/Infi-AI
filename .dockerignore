@@ -16,3 +16,7 @@ shell/panel/target
 assets/**
 !assets/wallpapers/
 !assets/wallpapers/violet-1920x1080.png
+!assets/wallpapers/graphite-1920x1080.png
+!assets/wallpapers/forest-1920x1080.png
+!assets/wallpapers/sunset-1920x1080.png
+!assets/wallpapers/ocean-1920x1080.png

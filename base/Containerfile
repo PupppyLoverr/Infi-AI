@@ -69,6 +69,11 @@ COPY shell/out/solyra-panel /usr/bin/solyra-panel
 RUN chmod +x /usr/bin/solyra-session /usr/bin/solyra-panel && \
     ln -s solyra-comp /usr/bin/niri
 COPY assets/wallpapers/violet-1920x1080.png /usr/share/solyra/wallpapers/violet.png
+COPY assets/wallpapers/ocean-1920x1080.png /usr/share/solyra/wallpapers/ocean.png
+COPY assets/wallpapers/sunset-1920x1080.png /usr/share/solyra/wallpapers/sunset.png
+COPY assets/wallpapers/forest-1920x1080.png /usr/share/solyra/wallpapers/forest.png
+COPY assets/wallpapers/graphite-1920x1080.png /usr/share/solyra/wallpapers/graphite.png
+COPY base/theme/foot.ini /etc/xdg/foot/foot.ini
 COPY base/solyra-config.kdl /etc/solyra/comp.kdl
 COPY base/solyra.desktop /usr/share/wayland-sessions/solyra.desktop
 RUN /usr/bin/solyra-comp validate -c /etc/solyra/comp.kdl
