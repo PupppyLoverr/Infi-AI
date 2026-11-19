@@ -125,6 +125,19 @@ bash .amp/in/orb-backup/glass-test.sh     # captures bar/dock/launcher/control
 Those harnesses live in `.amp/in` (gitignored) because they depend on host
 tooling; port them to `tests/` if they should be permanent.
 
+## Added after the first handoff (see git log for detail)
+
+- `crates/solyra-tokens`, `crates/solyra-conf`: shared by the panel and apps.
+- `apps/`: zgx apps (`solyra-settings`, `solyra-term`, `solyra-browse`,
+  `solyra-setup`), self-tested in CI under headless Wayland.
+- `agent/`: `solyra-agent` (Claude Code permission hook, Codex status hook, PTY
+  wrapper, bubblewrap sandbox with snapshot undo). Protocol in
+  `docs/agent-protocol.md`.
+- Panel: HiDPI (integer scales), notifications (org.freedesktop.Notifications),
+  custom wallpapers, agent questions/replies in the notch.
+- CI: `.github/workflows/disk.yml` builds everything, boots the disk headless
+  to a login prompt, and uploads `solyra.raw.zst`.
+
 ## Known gaps and traps
 
 - **No display manager.** Nothing starts a session at boot unless the dev

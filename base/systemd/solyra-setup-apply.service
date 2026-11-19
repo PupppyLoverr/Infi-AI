@@ -1,0 +1,8 @@
+[Unit]
+Description=Apply the first-boot setup request (create the account)
+ConditionPathExists=!/var/lib/solyra/setup-done
+
+[Service]
+Type=oneshot
+Environment=SOLYRA_SETUP_UID=1000
+ExecStart=/usr/bin/solyra-setup-apply

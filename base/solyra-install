@@ -1,0 +1,37 @@
+#!/bin/bash
+# solyra-install: install Solyra OS to a disk with bootc.
+#
+#   sudo solyra-install /dev/nvme0n1
+#
+# This ERASES the whole disk. It refuses a disk that holds the running system
+# or has mounted partitions, shows what it found, and asks you to type the
+# device name to confirm. It wraps `bootc install to-disk` and adds nothing
+# else; it does not set a user (use the first-boot setup, or create one after).
+# Status: unverified end to end; see docs/setup.md.
+set -euo pipefail
+
+dev="${1:-}"
+if [[ -z "$dev" ]]; then
+  echo "usage: sudo solyra-install /dev/DISK" >&2
+  echo "disks:" >&2
+  lsblk -dno NAME,SIZE,MODEL,TYPE | awk '$NF=="disk"' >&2
+  exit 2
+fi
+[[ $EUID -eq 0 ]] || { echo "run as root (sudo)" >&2; exit 1; }
+[[ -b "$dev" ]] || { echo "$dev is not a block device" >&2; exit 1; }
+[[ "$(lsblk -dno TYPE "$dev")" == "disk" ]] || { echo "$dev is not a whole disk (give /dev/sda, not /dev/sda1)" >&2; exit 1; }
+
+# Refuse a disk that backs the running system or has anything mounted.
+if lsblk -no MOUNTPOINTS "$dev" | grep -q '[^[:space:]]'; then
+  echo "$dev has mounted partitions; unmount them first. Mounted:" >&2
+  lsblk -o NAME,SIZE,MOUNTPOINTS "$dev" >&2
+  exit 1
+fi
+
+echo "About to ERASE and install Solyra OS on:"
+lsblk -o NAME,SIZE,MODEL,FSTYPE,LABEL "$dev"
+echo
+read -r -p "Type the device name ($dev) to continue: " answer
+[[ "$answer" == "$dev" ]] || { echo "not confirmed; nothing was changed" >&2; exit 1; }
+
+exec bootc install to-disk --wipe "$dev"

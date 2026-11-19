@@ -7,15 +7,20 @@ cheapest insurance while zgx is at 0.1.
 
 ## Inventory
 
-| Role | Ships today | Solyra replacement | Status |
+| Role | Original (always installed) | Solyra app (zgx) | Status |
 | --- | --- | --- | --- |
-| Terminal | Foot | `solyra-term` (zgx) | Not started |
-| Files | Thunar | `solyra-files` (zgx) | Not started |
-| Launcher | Fuzzel | `solyra-launch` (shell) | Panel spike only |
-| Settings | none | `solyra-settings` (zgx) | Not started |
-| System monitor | none | `solyra-monitor` (zgx) | Not started |
-| Text editor | none | `solyra-edit` (zgx) | Not started |
-| Browser | none | `solyra-browse` chrome over WebKitGTK | Not started |
+| Terminal | Foot | `solyra-term` | Built: tabs, clear regression tests. Self-tested in CI; not yet driven by a person in a VM |
+| Browser | Firefox | `solyra-browse` | Built over zgx's WebKitGTK view: tabs, address bar, bookmarks, history, downloads. Same caveat |
+| Settings | the system tools (`nmtui`, `pavucontrol`, ...) | `solyra-settings` | Built: appearance, background, sound, network, default apps, agents, display, about |
+| Files | Thunar | none yet | Thunar only |
+| Launcher | Fuzzel | built into `solyra-panel` | Shipped |
+| First-boot setup | none | `solyra-setup` | Experimental, not started by default (docs/setup.md) |
+
+The originals are never removed. `solyra-open terminal|files|browser` (used by
+Super+Return, Super+E, Super+B and the dock) reads Settings -> Default apps and
+falls back to the original if the chosen app is missing or exits with an error
+within three seconds. The image default for every role is the original; a
+person switches a role to the Solyra app in Settings.
 
 Foot, Thunar, Fuzzel, and swaylock are installed in `base/Containerfile`
 today. There is no settings app yet, which is why the setup wizard in

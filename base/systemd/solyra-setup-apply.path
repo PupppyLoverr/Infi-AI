@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for the first-boot setup request
+ConditionPathExists=!/var/lib/solyra/setup-done
+
+[Path]
+PathExists=/var/lib/solyra/setup-request.json
+
+[Install]
+WantedBy=multi-user.target

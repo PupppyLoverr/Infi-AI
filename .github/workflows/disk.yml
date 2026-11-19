@@ -55,7 +55,11 @@ jobs:
             export CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_PROFILE_DEV_DEBUG=0
             cargo test --locked
             cargo build --locked --release -j 3
-            for b in solyra-settings solyra-term solyra-browse; do install -m 755 target/release/$b out/$b; done
+            for b in solyra-settings solyra-term solyra-browse solyra-setup; do install -m 755 target/release/$b out/$b; done
+            cd /repo/crates/solyra-setup-core
+            cargo test --locked
+            cargo build --locked --release
+            install -m 755 target/release/solyra-setup-apply /repo/apps/out/solyra-setup-apply
             cd /repo/agent
             cargo test --locked
             cargo build --locked --release
@@ -70,7 +74,7 @@ jobs:
           docker image inspect solyra-base:ci --format 'image size: {{.Size}} bytes'
           # Fail loudly if an expected program is missing from the image.
           docker run --rm --entrypoint sh solyra-base:ci -ec '
-            for b in solyra-comp solyra-panel solyra-agent solyra-settings solyra-term solyra-browse bwrap foot thunar firefox mousepad wpctl brightnessctl nmtui agreety swaylock; do
+            for b in solyra-comp solyra-panel solyra-agent solyra-settings solyra-term solyra-browse solyra-setup solyra-setup-apply solyra-install bwrap foot thunar firefox mousepad wpctl brightnessctl nmtui agreety swaylock; do
               command -v "$b" >/dev/null || { echo "missing in image: $b"; exit 1; }
             done
             systemctl is-enabled greetd.service'
@@ -84,7 +88,7 @@ jobs:
             weston --backend=headless --socket=wl-ci --width=1280 --height=800 >/tmp/weston.log 2>&1 &
             sleep 4
             export WAYLAND_DISPLAY=wl-ci VK_ICD_FILENAMES=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -1)
-            for app in solyra-settings solyra-term solyra-browse; do
+            for app in solyra-settings solyra-term solyra-browse solyra-setup; do
               echo "== $app --self-test"
               timeout 90 $app --self-test
             done'

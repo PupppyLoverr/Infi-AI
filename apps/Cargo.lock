@@ -3083,6 +3083,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "solyra-setup"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "solyra-conf",
+ "solyra-setup-core",
+ "solyra-tokens",
+ "solyra-ui",
+ "zgx",
+ "zgx-components",
+ "zgx-desktop",
+]
+
+[[package]]
+name = "solyra-setup-core"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "solyra-term"
 version = "0.1.0"
 dependencies = [

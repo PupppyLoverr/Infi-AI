@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["solyra-ui", "solyra-term", "solyra-settings", "solyra-browse"]
+members = ["solyra-ui", "solyra-term", "solyra-settings", "solyra-browse", "solyra-setup"]
 
 [workspace.package]
 edition = "2024"
@@ -15,6 +15,7 @@ zgx-terminal = { git = "https://github.com/zeronsh/zgx", rev = "699ae02edf13db06
 solyra-tokens = { path = "../crates/solyra-tokens" }
 solyra-ui = { path = "solyra-ui" }
 solyra-conf = { path = "../crates/solyra-conf" }
+solyra-setup-core = { path = "../crates/solyra-setup-core" }
 
 # A dependency's [patch] never reaches an app, so the app repeats zgx's own
 # (docs/getting-started.md in zeronsh/zgx): Wayland popups, AccessKit fixes.

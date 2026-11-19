@@ -118,7 +118,10 @@ fi
 #   SOLYRA_DEV_PASSWORD=pw  give "solyra" this password on first boot, so
 #                           sudo, the lock screen and a tty login work
 DEPLOY="$(find "$WORK/root/ostree/deploy/default/deploy" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+VAR_DIR="$WORK/root/ostree/deploy/default/var"
 if [[ "${SOLYRA_AUTOLOGIN:-0}" == "1" ]]; then
+  # A development disk is already set up: skip the first-boot wizard.
+  mkdir -p "$VAR_DIR/lib/solyra" && : > "$VAR_DIR/lib/solyra/setup-done"
   log "enabling development autologin (greetd initial_session)"
   mkdir -p "$DEPLOY/etc/greetd"
   {

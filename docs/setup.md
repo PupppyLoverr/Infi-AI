@@ -77,3 +77,21 @@ anything we cannot license:
 - A settings app to revisit these choices later (`docs/apps.md`).
 - A Flatpak-capable image: `flatpak` is not installed yet, and Flathub must be
   configured as a remote at first use, not baked in.
+
+
+## Status of what exists (experimental)
+
+- `solyra-setup` (zgx wizard) collects a name, user name, password and computer
+  name, validates them, and writes a mode-0600 request file.
+- `solyra-setup-apply` (root; run by `solyra-setup-apply.service`, which only
+  runs while `/var/lib/solyra/setup-done` is absent) validates the request
+  again, refuses links and loosely-permissioned files, deletes the request
+  before acting, runs `useradd`, `chpasswd` (password on stdin, never in argv)
+  and `hostnamectl`, and writes the done marker only if all succeeded.
+  Both are unit-tested; the helper's refusals are exercised with `--dry-run`.
+- **Not wired in:** nothing starts the wizard on a fresh install yet. That needs
+  a login flow for the very first boot (greetd would have to autologin a
+  temporary setup user only until setup is done), which is not built. The
+  development disk skips setup entirely (it creates `setup-done`).
+- `solyra-install /dev/DISK` wraps `bootc install to-disk` with disk checks and
+  a typed confirmation. It has not been run end to end, and there is no ISO.

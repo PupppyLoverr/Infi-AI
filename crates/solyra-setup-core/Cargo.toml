@@ -1,0 +1,13 @@
+[package]
+name = "solyra-setup-core"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "First-boot setup: request validation and the privileged helper that applies it"
+
+[dependencies]
+serde_json = "1"
+
+[[bin]]
+name = "solyra-setup-apply"
+path = "src/bin/solyra-setup-apply.rs"
