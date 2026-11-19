@@ -19,6 +19,36 @@ Nothing in the panel simulates an agent. With no runtime directory the UI says
 - The panel never creates the runtime directory. Its absence is the "no
   runtime" signal.
 
+## Version 2: questions, messages, status
+
+v2 adds what the notch needs to talk to agents. Everything in v1 still holds.
+The runtime pieces live in `agent/` (`solyra-agent`).
+
+- `question` event: `request_id`, `text`, `choices?` (up to 8). Shown as a
+  question; answered with a decision line `{"decision":"answer","text":"..."}`.
+  The runtime closes it with `question_resolved`.
+- `status` event: `state` is `working` or `idle`; `detected:true` marks a
+  guess from terminal activity rather than the agent's own report. It never
+  overrides an open question, a blocker, or a finished/failed task.
+- `started` may carry `agent` (the program's name) and `interactive: true`,
+  meaning the agent runs under `solyra-agent wrap` and can receive text.
+- `messages/<id>.jsonl`: lines `{"ts","text","source"}` written by the panel;
+  `wrap` types each into the agent's terminal followed by Enter. Text is
+  stripped of control characters and capped at 2000 characters by the sender.
+- `grants/<id>.txt`: tools approved "for this task" (hook-side, one per line).
+
+### Hooks
+
+`solyra-agent hook claude` reads Claude Code's hook JSON on stdin.
+`PermissionRequest` becomes an `approval_request` and the hook **waits for the
+panel** (default 120 s), then prints Claude's allow/deny decision. If nobody
+answers, or no panel is running, it prints nothing and Claude asks in the
+terminal as usual: the hook never approves on its own. `solyra-agent
+install-hooks claude` shows and, with `--apply`, writes the hook entries into
+`~/.claude/settings.json` (backup kept, idempotent). Codex's `notify` hook is
+supported for status only. These contracts follow the tools' documentation and
+are not verified against live installs in CI.
+
 ## Layout
 
 ```text

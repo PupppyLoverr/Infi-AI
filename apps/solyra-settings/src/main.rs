@@ -17,12 +17,13 @@ mod wallpaper;
 
 use apps::Role;
 
-const PAGES: [&str; 7] = [
+const PAGES: [&str; 8] = [
     "Appearance",
     "Background",
     "Sound",
     "Network",
     "Default apps",
+    "Agents",
     "Display",
     "About",
 ];
@@ -489,6 +490,84 @@ fn default_apps_page(status: Signal<String>) -> View {
     })
 }
 
+fn agent_conf_path() -> Option<PathBuf> {
+    solyra_conf::config_path("agent.conf")
+}
+
+fn agents_page(status: Signal<String>) -> View {
+    component(move |cx| {
+        let rt = cx.runtime();
+        let conf = read(agent_conf_path());
+        let wrap = rt.signal(solyra_conf::get(&conf, "wrap") != Some("0"));
+        {
+            let (wrap, s) = (wrap.clone(), status.clone());
+            let last = Rc::new(RefCell::new(None::<bool>));
+            cx.retain(rt.effect(move || {
+                let v = wrap.get();
+                if last.borrow_mut().replace(v).is_some_and(|p| p != v) {
+                    let Some(path) = agent_conf_path() else {
+                        s.put("Cannot find your config folder (HOME is not set).".into());
+                        return;
+                    };
+                    match solyra_conf::update(
+                        &path,
+                        &[("wrap", Some(if v { "1" } else { "0" }.into()))],
+                    ) {
+                        Ok(()) => s.put("Open a new terminal for this to take effect.".into()),
+                        Err(e) => s.put(format!("Could not save {}: {e}", path.display())),
+                    }
+                }
+            }));
+        }
+        let preview = rt.signal(String::new());
+        let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+            .map(|d| PathBuf::from(d).join("solyra-agent/tasks").is_dir())
+            .unwrap_or(false);
+        let have_agent = system::on_path("solyra-agent");
+        let (p1, s1) = (preview.clone(), status.clone());
+        let (p2, s2) = (preview.clone(), status.clone());
+        column()
+            .gap(14.)
+            .child(heading("Agents"))
+            .child(text(if runtime {
+                "An agent is reporting to Solyra right now."
+            } else {
+                "No agent has reported yet. Agents appear in the notch when they start."
+            }))
+            .child(checkbox("Show agents in the notch and let me reply from there", wrap))
+            .child(caption("Runs Claude Code, Codex, Gemini, OpenCode and Aider in your terminal through solyra-agent. They behave as before; Solyra only adds a status report and lets you type to them. Bypass once with `command claude`."))
+            .child(text("Claude Code approvals"))
+            .child(caption("Adds hooks to ~/.claude/settings.json so permission prompts also appear in the notch. If you do not answer, Claude asks in the terminal as usual. A backup is kept."))
+            .child(
+                row()
+                    .gap(8.)
+                    .child(action("Preview the change", move || {
+                        match system::run_capture("solyra-agent", &["install-hooks", "claude"]) {
+                            Ok(t) => {
+                                p1.put(t);
+                                s1.put(String::new());
+                            }
+                            Err(e) => s1.put(e),
+                        }
+                    }))
+                    .child(action("Install hooks", move || {
+                        match system::run_capture("solyra-agent", &["install-hooks", "claude", "--apply"]) {
+                            Ok(t) => {
+                                p2.put(t.lines().last().unwrap_or("Done.").to_string());
+                                s2.put(String::new());
+                            }
+                            Err(e) => s2.put(e),
+                        }
+                    })),
+            )
+            .child(if have_agent { caption("") } else { caption("solyra-agent is not installed on this system.") })
+            .child(text_signal({
+                let p = preview.clone();
+                move || p.get()
+            }).text_size(11.))
+    })
+}
+
 fn display_page(status: Signal<String>) -> View {
     let outputs = std::process::Command::new("niri")
         .args(["msg", "outputs"])
@@ -574,7 +653,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     2 => sound_page(st.clone()),
                     3 => network_page(st.clone()),
                     4 => default_apps_page(st.clone()),
-                    5 => display_page(st.clone()),
+                    5 => agents_page(st.clone()),
+                    6 => display_page(st.clone()),
                     _ => about_page(),
                 },
             );

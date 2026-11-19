@@ -25,3 +25,4 @@ apps/**
 !apps/out/
 !apps/out/solyra-settings
 !apps/out/solyra-term
+!apps/out/solyra-agent

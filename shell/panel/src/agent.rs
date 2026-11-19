@@ -40,6 +40,8 @@ const MAX_FIELD_CHARS: usize = 400;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
     Running,
+    /// Alive and waiting for the human's next instruction.
+    Idle,
     WaitingApproval,
     Blocked,
     Finished,
@@ -50,6 +52,7 @@ impl Status {
     pub fn label(self) -> &'static str {
         match self {
             Self::Running => "Working",
+            Self::Idle => "Idle",
             Self::WaitingApproval => "Needs you",
             Self::Blocked => "Blocked",
             Self::Finished => "Finished",
@@ -67,8 +70,9 @@ impl Status {
             Self::WaitingApproval => 0,
             Self::Blocked => 1,
             Self::Running => 2,
-            Self::Failed => 3,
-            Self::Finished => 4,
+            Self::Idle => 3,
+            Self::Failed => 4,
+            Self::Finished => 5,
         }
     }
 }
@@ -358,6 +362,22 @@ pub fn reduce(id: &str, events: &str, decisions: &str) -> TaskView {
                     if view.status == Status::WaitingApproval {
                         view.status = Status::Running;
                     }
+                }
+            }
+            "status" => {
+                // Working or idle. Never overrides a question or a terminal state.
+                let next = match ev.get("state").and_then(Value::as_str) {
+                    Some("working") => Some(Status::Running),
+                    Some("idle") => Some(Status::Idle),
+                    _ => None,
+                };
+                match next {
+                    Some(n) if !matches!(
+                        view.status,
+                        Status::WaitingApproval | Status::Finished | Status::Failed | Status::Blocked
+                    ) => view.status = n,
+                    Some(_) => {}
+                    None => view.unknown_events += 1,
                 }
             }
             "blocked" => {
@@ -953,6 +973,17 @@ mod tests {
         assert!(raw.contains("keep going") && raw.contains("solyra-panel"));
         assert!(send_message(&root, "../x", "hi", 6).is_err());
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn status_events_switch_between_working_and_idle_but_not_over_a_question() {
+        let s = |st: &str| format!(r#"{{"ts":2,"type":"status","state":"{st}"}}"#);
+        let start = r#"{"ts":1,"type":"started","name":"x"}"#;
+        assert_eq!(reduce("t", &ev(&[start, &s("idle")]), "").status, Status::Idle);
+        assert_eq!(reduce("t", &ev(&[start, &s("idle"), &s("working")]), "").status, Status::Running);
+        let q = r#"{"ts":2,"type":"question","request_id":"q","text":"?"}"#;
+        assert_eq!(reduce("t", &ev(&[start, q, &s("idle")]), "").status, Status::WaitingApproval);
+        assert_eq!(reduce("t", &ev(&[start, &s("sideways")]), "").unknown_events, 1);
     }
 
     #[test]

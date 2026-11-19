@@ -1510,6 +1510,9 @@ fn status_glyph(cv: &mut Canvas<'_>, th: &Theme, status: Status, cx: f32, cy: f3
         Status::Running => {
             cv.circle(cx, cy, 5.0, th.agent_active);
         }
+        Status::Idle => {
+            cv.ring(cx, cy, 4.5, 1.6, th.text_dim);
+        }
         Status::WaitingApproval => {
             cv.ring(cx, cy, 5.5, 2.0, th.agent_approval);
             cv.circle(cx, cy, 1.8, th.agent_approval);

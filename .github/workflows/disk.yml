@@ -50,7 +50,11 @@ jobs:
             export CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_PROFILE_DEV_DEBUG=0
             cargo test --locked
             cargo build --locked --release -j 3
-            for b in solyra-settings solyra-term; do install -m 755 target/release/$b out/$b; done'
+            for b in solyra-settings solyra-term; do install -m 755 target/release/$b out/$b; done
+            cd /repo/agent
+            cargo test --locked
+            cargo build --locked --release
+            install -m 755 target/release/solyra-agent /repo/apps/out/solyra-agent'
           ls -l apps/out
 
       - name: Build the OS image and validate the session config
@@ -61,7 +65,7 @@ jobs:
           docker image inspect solyra-base:ci --format 'image size: {{.Size}} bytes'
           # Fail loudly if an expected program is missing from the image.
           docker run --rm --entrypoint sh solyra-base:ci -ec '
-            for b in solyra-comp solyra-panel foot thunar firefox mousepad wpctl brightnessctl nmtui agreety swaylock; do
+            for b in solyra-comp solyra-panel solyra-agent solyra-settings solyra-term bwrap foot thunar firefox mousepad wpctl brightnessctl nmtui agreety swaylock; do
               command -v "$b" >/dev/null || { echo "missing in image: $b"; exit 1; }
             done
             systemctl is-enabled greetd.service'

@@ -47,6 +47,7 @@ RUN dnf -y install \
       rsms-inter-fonts adwaita-icon-theme \
       xdg-desktop-portal-gtk gvfs \
       mesa-vulkan-drivers vulkan-loader fontconfig \
+      bubblewrap \
  && dnf -y clean all
 # Optional pieces: skipped with a visible note rather than failing the build.
 RUN dnf -y install --skip-unavailable polkit-gnome 2>&1 | tail -3 ; dnf -y clean all
@@ -88,8 +89,11 @@ COPY shell/out/solyra-panel /usr/bin/solyra-panel
 # zgx apps (apps/): built in CI by the dev container into apps/out/.
 COPY apps/out/solyra-settings /usr/bin/solyra-settings
 COPY apps/out/solyra-term /usr/bin/solyra-term
+# Agent runtime pieces (agent/): hooks, terminal wrapper, level-1 sandbox.
+COPY apps/out/solyra-agent /usr/bin/solyra-agent
+COPY base/profile.d/solyra-agent.sh /etc/profile.d/solyra-agent.sh
 COPY base/applications/ /usr/share/applications/
-RUN chmod +x /usr/bin/solyra-session /usr/bin/solyra-panel /usr/bin/solyra-settings /usr/bin/solyra-term && \
+RUN chmod +x /usr/bin/solyra-session /usr/bin/solyra-panel /usr/bin/solyra-settings /usr/bin/solyra-term /usr/bin/solyra-agent && \
     ln -s solyra-comp /usr/bin/niri
 COPY assets/wallpapers/violet-1920x1080.png /usr/share/solyra/wallpapers/violet.png
 COPY assets/wallpapers/ocean-1920x1080.png /usr/share/solyra/wallpapers/ocean.png

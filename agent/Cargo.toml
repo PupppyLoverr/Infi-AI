@@ -1,0 +1,15 @@
+[package]
+name = "solyra-agent"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Solyra agent runtime pieces: hooks, terminal wrapper, level-1 sandbox with undo"
+
+[dependencies]
+serde_json = "1"
+libc = "0.2"
+toml = { version = "0.8", default-features = false, features = ["parse"] }
+
+[profile.release]
+strip = true
+lto = "thin"

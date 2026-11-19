@@ -110,6 +110,18 @@ pub fn run(program: &str, args: &[&str]) -> Result<(), String> {
     }
 }
 
+/// Run a program and return its stdout, or its stderr as the error.
+pub fn run_capture(program: &str, args: &[&str]) -> Result<String, String> {
+    match Command::new(program).args(args).output() {
+        Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).into_owned()),
+        Ok(o) => Err(format!(
+            "{program}: {}",
+            String::from_utf8_lossy(&o.stderr).trim()
+        )),
+        Err(e) => Err(format!("{program}: {e}")),
+    }
+}
+
 pub fn on_path(bin: &str) -> bool {
     std::env::var_os("PATH")
         .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
