@@ -22,10 +22,10 @@ use crate::state::{
 use crate::surfaces::{HitAction, Live, Region};
 use crate::tokens::Theme;
 
-/// Height of the floating card itself (macOS dock ~52–54).
-pub const CARD_H: i32 = 52;
+/// Height of the floating card itself (macOS Liquid Glass dock ~56px).
+pub const CARD_H: i32 = 56;
 /// Corner radius of the floating glass pill.
-const DOCK_R: f32 = 18.0;
+const DOCK_R: f32 = 19.0;
 /// Extra room above the card for magnified icons.
 pub const MAGNIFY_ROOM: i32 = 30;
 /// Height of the Windows-style taskbar.
@@ -64,9 +64,9 @@ enum Item<'a> {
 }
 
 /// Width of the Solyra weather chip (sun glyph plus a short reading).
-const WEATHER_W: i32 = 76;
-/// Width of the Solyra clock chip. Fits `12:59:59 PM`.
-const CLOCK_W: i32 = 108;
+const WEATHER_W: i32 = 46;
+/// Width of the Solyra clock chip. Snugly fits `09:41` / `12:59 PM`.
+const CLOCK_W: i32 = 54;
 
 fn item_span(it: &Item<'_>, cell: i32) -> i32 {
     match it {
@@ -114,20 +114,20 @@ struct Metrics {
 fn metrics(style: DockStyle) -> Metrics {
     match style {
         DockStyle::Minimal => Metrics {
-            cell: 36,
-            gap: 5,
+            cell: 38,
+            gap: 6,
             pad: 12,
         },
-        // macOS dock: ~40 px icons, a tight gap, padding that lets the glass
-        // pill read as a capsule rather than a chunky card.
+        // macOS Liquid Glass dock: 42px sculpted squircles with airy spacing
+        // inside a luminous glass pill.
         DockStyle::Macos | DockStyle::Solyra => Metrics {
-            cell: 40,
-            gap: 5,
-            pad: 14,
+            cell: 42,
+            gap: 7,
+            pad: 12,
         },
         DockStyle::Windows => Metrics {
             cell: 40,
-            gap: 5,
+            gap: 6,
             pad: 14,
         },
     }
@@ -359,20 +359,29 @@ fn draw_floating(
         r: DOCK_R,
     };
 
+    let dark = th.surface.0 < 128;
     let mut regions = Vec::new();
     let mut x = card_x + m.pad;
-    // Bias icons up so a running dot can sit in the padding under them.
-    let base_y = card_y + (CARD_H - m.cell) / 2 - 2;
+    // Slightly upward optical alignment so running dots + glass reflection breathe cleanly.
+    let base_y = card_y + (CARD_H - m.cell) / 2 - 3;
     let weather = weather_label();
     let clock = chrono::Local::now()
         .format(live.prefs.look.clock_format())
         .to_string();
     for (it, size) in its.iter().zip(&sizes) {
         if let Item::Separator = it {
-            let sep_h = 22;
+            let sep_h = 28;
             let sep_y = card_y + (CARD_H - sep_h) / 2;
             let sw = *size;
-            cv.fill_rect(x + (sw - 1) / 2, sep_y, 1, sep_h, th.hairline);
+            let sx = x + (sw - 1) / 2;
+            let mid = if dark {
+                Rgba::rgba(255, 255, 255, 62)
+            } else {
+                Rgba::rgba(0, 0, 0, 34)
+            };
+            let end = Rgba::rgba(mid.0, mid.1, mid.2, 8);
+            cv.fill_rect_vgrad(sx, sep_y, 1, sep_h / 2, end, mid);
+            cv.fill_rect_vgrad(sx, sep_y + sep_h / 2, 1, sep_h - sep_h / 2, mid, end);
             x += sw + m.gap;
             continue;
         }
@@ -386,14 +395,15 @@ fn draw_floating(
         match it {
             Item::Weather => {
                 let cy = (card_y + CARD_H / 2) as f32;
-                cv.icon_sun(x as f32 + 12.0, cy, th.text);
+                let wx = x + 4;
+                cv.icon_sun(wx as f32 + 7.0, cy, th.text);
                 cv.text_truncated(
-                    fonts.semibold.as_ref(),
+                    fonts.medium.as_ref(),
                     &weather,
-                    x + 24,
+                    wx + 18,
                     card_y + CARD_H / 2 + 5,
                     12.5,
-                    (s - 28).max(8),
+                    (s - 22).max(8),
                     th.text,
                 );
                 regions.push(Region {
@@ -406,7 +416,7 @@ fn draw_floating(
             }
             Item::Clock => {
                 let size = 13.0;
-                let max_w = (s - 8).max(8);
+                let max_w = (s - 6).max(8);
                 let tw = text_width(fonts.semibold.as_ref(), &clock, size).min(max_w);
                 cv.text_truncated(
                     fonts.semibold.as_ref(),
@@ -446,6 +456,10 @@ fn draw_floating(
                     ),
                     Item::Separator | Item::Weather | Item::Clock => unreachable!(),
                 };
+                // Subtle glass-shelf reflection beneath each sculpted dock squircle.
+                let floor_y = (y + s + 1).min(card_y + CARD_H - 4);
+                cv.draw_dock_reflection(x, floor_y, s, role);
+
                 let icon = app_id.and_then(|id| load_app_icon(icons, id));
                 cv.draw_app_squircle(x, y, s, role, icon, fonts);
 
@@ -475,15 +489,20 @@ fn draw_floating(
 }
 
 fn running_mark(cv: &mut Canvas<'_>, th: &Theme, x: i32, s: i32, card_y: i32, focused: bool) {
-    // A small dot under the icon. The frontmost app is a touch larger and
-    // uses the accent, so state is not colour alone and the mark stays a dot.
+    // Crisp luminous dot under running apps, inspired by macOS Liquid Glass dock.
     let bottom = card_y + CARD_H;
     let cx = x as f32 + s as f32 / 2.0;
-    let cy = (bottom - 4) as f32;
+    let cy = (bottom - 5) as f32;
     if focused {
-        cv.circle(cx, cy, 1.7, th.accent);
+        cv.circle(
+            cx,
+            cy,
+            3.0,
+            Rgba::rgba(th.accent.0, th.accent.1, th.accent.2, 64),
+        );
+        cv.circle(cx, cy, 1.8, th.accent);
     } else {
-        cv.circle(cx, cy, 1.25, th.text);
+        cv.circle(cx, cy, 1.5, Rgba::rgba(th.text.0, th.text.1, th.text.2, 224));
     }
 }
 
@@ -506,8 +525,8 @@ fn agent_badge(
         th.agent_active
     };
     let (bx, by) = ((x + s - 5) as f32, (y + 5) as f32);
-    cv.circle(bx, by, 6.0, Rgba::rgb(0x14, 0x11, 0x19));
-    cv.circle(bx, by, 4.6, col);
+    cv.circle(bx, by, 6.2, Rgba::rgb(0x12, 0x13, 0x15));
+    cv.circle(bx, by, 4.7, col);
     if agents.needs_attention() {
         let n = (agents.waiting + agents.blocked).min(9).to_string();
         cv.text(
@@ -531,21 +550,30 @@ fn tooltip(
     bottom: i32,
     w: i32,
 ) {
-    if bottom < 18 {
+    if bottom < 22 {
         return;
     }
-    let tw = text_width(fonts.semibold.as_ref(), label, 11.0).min(180);
-    let bw = tw + 16;
+    let tw = text_width(fonts.medium.as_ref(), label, 11.5).min(180);
+    let bw = tw + 18;
     let bx = (cx - bw / 2).clamp(2, (w - bw - 2).max(2));
-    let by = bottom - 20;
-    cv.round_rect(bx, by, bw, 18, 6.0, th.surface);
-    cv.stroke_round_rect(bx, by, bw, 18, 6.0, 1.0, th.hairline);
+    let by = bottom - 22;
+    cv.round_rect(bx, by, bw, 20, 7.0, th.surface);
+    cv.round_rect_glass_rim(
+        bx,
+        by,
+        bw,
+        20,
+        7.0,
+        Rgba::rgba(255, 255, 255, 76),
+        Rgba::rgba(255, 255, 255, 28),
+        Rgba::rgba(0, 0, 0, 28),
+    );
     cv.text_truncated(
-        fonts.semibold.as_ref(),
+        fonts.medium.as_ref(),
         label,
-        bx + 8,
-        by + 13,
-        11.0,
+        bx + 9,
+        by + 14,
+        11.5,
         180,
         th.text,
     );
@@ -564,11 +592,36 @@ fn draw_taskbar(
     let (telem, prefs) = (live.telem, live.prefs);
     let w = cv.width as i32;
     let h = cv.height as i32;
+    let dark = th.surface.0 < 128;
     let mut regions = Vec::new();
 
     let slab = slab_for(live, th.bar);
-    material::paint(cv, &slab, 0, 0, w, h, 0.0);
-    cv.fill_rect(0, 0, w, 1, slab.edge);
+    if dark && slab.fill.3 < 150 {
+        // Windows 11 dark taskbar uses smoked Acrylic/Mica density so white
+        // Search, glyphs, and tray clock stay razor-sharp over bright sand.
+        cv.fill_rect_vgrad(
+            0,
+            0,
+            w,
+            h,
+            Rgba::rgba(22, 24, 28, 174),
+            Rgba::rgba(16, 18, 22, 194),
+        );
+    } else {
+        material::paint(cv, &slab, 0, 0, w, h, 0.0);
+    }
+    // Crisp Windows 11 Acrylic/Mica top hairline catch-light.
+    cv.fill_rect(
+        0,
+        0,
+        w,
+        1,
+        if dark {
+            Rgba::rgba(255, 255, 255, 52)
+        } else {
+            Rgba::rgba(255, 255, 255, 190)
+        },
+    );
 
     // Left: task view (the workspace overview), a real action.
     let tv_hov = hover.is_some_and(|(hx, _)| hx >= 8.0 && hx < 44.0);
@@ -576,7 +629,7 @@ fn draw_taskbar(
         cv.round_rect(8, 6, 36, 36, 8.0, th.tile_hover);
     }
     for (dx, dy) in [(0, 0), (9, 0), (0, 9), (9, 9)] {
-        cv.round_rect(17 + dx, 15 + dy, 7, 7, 1.5, th.text_med);
+        cv.round_rect(17 + dx, 15 + dy, 7, 7, 1.8, th.text_med);
     }
     regions.push(Region {
         x: 8,
@@ -586,10 +639,10 @@ fn draw_taskbar(
         action: HitAction::Launch(LaunchTarget::Ipc("{\"Action\":{\"ToggleOverview\":{}}}")),
     });
 
-    // Centre: start, a quiet search pill, apps.
+    // Centre: Windows 11 calm centred start mark, frosted search pill, apps.
     let entries = dock_entries(wins);
-    let search_w = 160;
-    let search_h = 28;
+    let search_w = 176;
+    let search_h = 30;
     let search_y = (h - search_h) / 2;
     let total_w = 40 + 8 + search_w + 10 + (entries.len() as i32) * 44;
     let mut cx = (w - total_w) / 2;
@@ -604,23 +657,50 @@ fn draw_taskbar(
     cx += 48;
 
     let s_hov = hover.is_some_and(|(hx, _)| hx >= cx as f64 && hx < (cx + search_w) as f64);
-    cv.round_rect(
+    let pill_r = search_h as f32 / 2.0;
+    let (pill_top, pill_bot) = if dark {
+        (
+            Rgba::rgba(255, 255, 255, if s_hov { 34 } else { 22 }),
+            Rgba::rgba(255, 255, 255, if s_hov { 24 } else { 14 }),
+        )
+    } else {
+        (
+            Rgba::rgba(255, 255, 255, if s_hov { 225 } else { 196 }),
+            Rgba::rgba(246, 248, 252, if s_hov { 215 } else { 184 }),
+        )
+    };
+    cv.round_rect_vgrad(cx, search_y, search_w, search_h, pill_r, pill_top, pill_bot);
+    cv.round_rect_glass_rim(
         cx,
         search_y,
         search_w,
         search_h,
-        search_h as f32 / 2.0,
-        if s_hov { th.tile_hover } else { th.tile },
+        pill_r,
+        if dark {
+            Rgba::rgba(255, 255, 255, 52)
+        } else {
+            Rgba::rgba(255, 255, 255, 220)
+        },
+        if dark {
+            Rgba::rgba(255, 255, 255, 22)
+        } else {
+            Rgba::rgba(0, 0, 0, 18)
+        },
+        if dark {
+            Rgba::rgba(255, 255, 255, 16)
+        } else {
+            Rgba::rgba(0, 0, 0, 24)
+        },
     );
     let search_cy = search_y as f32 + search_h as f32 / 2.0;
-    cv.icon_search(cx as f32 + 16.0, search_cy, 12.0, th.text_dim);
+    cv.icon_search(cx as f32 + 16.0, search_cy, 12.5, th.text_med);
     cv.text(
-        fonts.regular.as_ref(),
+        fonts.medium.as_ref(),
         "Search",
-        cx + 28,
-        search_y + 18,
-        12.0,
-        th.text_dim,
+        cx + 30,
+        search_y + 19,
+        12.2,
+        th.text_med,
     );
     regions.push(Region {
         x: cx,
@@ -642,6 +722,18 @@ fn draw_taskbar(
                 8.0,
                 if is_hov { th.tile_hover } else { th.tile },
             );
+            if entry.is_focused {
+                cv.round_rect_glass_rim(
+                    cx,
+                    5,
+                    40,
+                    38,
+                    8.0,
+                    Rgba::rgba(255, 255, 255, if dark { 42 } else { 180 }),
+                    Rgba::rgba(255, 255, 255, if dark { 18 } else { 90 }),
+                    Rgba::rgba(0, 0, 0, 20),
+                );
+            }
         }
         let sys_ic = load_app_icon(icons, &entry.app_id);
         cv.draw_app_squircle(cx + 4, 7, 32, &entry.role, sys_ic, fonts);
@@ -674,10 +766,10 @@ fn draw_taskbar(
     let weather = weather_label();
     let t_str = now.format(look.clock_format()).to_string();
     let d_str = now.format("%d/%m/%Y").to_string();
-    let time_px = 13.5;
+    let time_px = 13.0;
     let tw = text_width(fonts.semibold.as_ref(), &t_str, time_px);
     let dw = if look.show_date {
-        text_width(fonts.regular.as_ref(), &d_str, 11.0)
+        text_width(fonts.medium.as_ref(), &d_str, 10.8)
     } else {
         0
     };
@@ -694,24 +786,24 @@ fn draw_taskbar(
     );
     if look.show_date {
         cv.text(
-            fonts.regular.as_ref(),
+            fonts.medium.as_ref(),
             &d_str,
             clock_x + col_w - dw,
             36,
-            11.0,
+            10.8,
             th.text_dim,
         );
     }
-    let ww = text_width(fonts.semibold.as_ref(), &weather, 12.5).min(72);
-    let weather_w = 22 + ww;
+    let ww = text_width(fonts.medium.as_ref(), &weather, 12.2).min(60);
+    let weather_w = 20 + ww;
     let wx = clock_x - 14 - weather_w;
-    cv.icon_sun((wx + 8) as f32, 24.0, th.text);
+    cv.icon_sun((wx + 7) as f32, 24.0, th.text);
     cv.text_truncated(
-        fonts.semibold.as_ref(),
+        fonts.medium.as_ref(),
         &weather,
-        wx + 18,
+        wx + 17,
         28,
-        12.5,
+        12.2,
         ww,
         th.text,
     );

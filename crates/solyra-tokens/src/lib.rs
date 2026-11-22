@@ -106,24 +106,24 @@ impl Theme {
         Self {
             surface: Rgba::rgba(0x1c, 0x1c, 0x1e, 196),
             bar: Rgba::rgba(0x1c, 0x1c, 0x1e, 112),
-            hairline: Rgba::rgba(0xff, 0xff, 0xff, 36),
-            field: Rgba::rgba(0x00, 0x00, 0x00, 120),
-            tile: Rgba::rgba(255, 255, 255, 14),
-            tile_hover: Rgba::rgba(255, 255, 255, 28),
-            separator: Rgba::rgba(255, 255, 255, 22),
+            hairline: Rgba::rgba(0xff, 0xff, 0xff, 38),
+            field: Rgba::rgba(0x00, 0x00, 0x00, 112),
+            tile: Rgba::rgba(255, 255, 255, 16),
+            tile_hover: Rgba::rgba(255, 255, 255, 30),
+            separator: Rgba::rgba(255, 255, 255, 24),
             text: Rgba::rgb(0xf5, 0xf5, 0xf7),
-            text_med: Rgba::rgba(0xeb, 0xeb, 0xf5, 230),
+            text_med: Rgba::rgba(0xf2, 0xf2, 0xf7, 232),
             // Apple secondary label — stays ≥ AA on translucent glass.
             text_dim: Rgba::rgb(0xc7, 0xc7, 0xcc),
-            // System blue, deepened for white glyphs at AA on glass.
-            accent: Rgba::rgb(0x00, 0x5f, 0xd0),
+            // System blue — crisp Apple hue that still clears AA with white.
+            accent: Rgba::rgb(0x00, 0x6a, 0xe0),
             on_accent: Rgba::rgb(0xff, 0xff, 0xff),
-            selected_fill: Rgba::rgba(0x0a, 0x84, 0xff, 48),
-            selected_border: Rgba::rgba(0x0a, 0x84, 0xff, 160),
+            selected_fill: Rgba::rgba(0x0a, 0x84, 0xff, 58),
+            selected_border: Rgba::rgba(0x40, 0x9c, 0xff, 120),
             success: Rgba::rgb(0x32, 0xd7, 0x4b),
             warning: Rgba::rgb(0xff, 0xd6, 0x0a),
             danger: Rgba::rgb(0xff, 0x45, 0x3a),
-            agent_active: Rgba::rgb(0x00, 0x5f, 0xd0),
+            agent_active: Rgba::rgb(0x00, 0x6a, 0xe0),
             agent_approval: Rgba::rgb(0xff, 0x9f, 0x0a),
         }
     }
@@ -239,14 +239,14 @@ impl Accent {
 
     /// (accent, text on accent) for a theme.
     pub fn colors(self, kind: ThemeKind) -> (Rgba, Rgba) {
-        let dark_on = Rgba::rgb(0x14, 0x10, 0x18);
+        let dark_on = Rgba::rgb(0x11, 0x11, 0x13);
         let white = Rgba::rgb(0xff, 0xff, 0xff);
         match (self, kind) {
             (Self::Mauve, ThemeKind::Dark) => (Rgba::rgb(0xb4, 0x8a, 0xad), dark_on),
             (Self::Mauve, ThemeKind::Light) => (Rgba::rgb(0x8a, 0x4f, 0x80), white),
-            // System blue — deepened so white glyphs clear AA.
-            (Self::Blue, ThemeKind::Dark) => (Rgba::rgb(0x00, 0x5f, 0xd0), white),
-            (Self::Blue, ThemeKind::Light) => (Rgba::rgb(0x00, 0x5c, 0xd0), white),
+            // System blue — crisp Apple hue that still clears AA with white.
+            (Self::Blue, ThemeKind::Dark) => (Rgba::rgb(0x00, 0x6a, 0xe0), white),
+            (Self::Blue, ThemeKind::Light) => (Rgba::rgb(0x00, 0x64, 0xd8), white),
             (Self::Teal, ThemeKind::Dark) => (Rgba::rgb(0x5f, 0xbf, 0xb4), dark_on),
             (Self::Teal, ThemeKind::Light) => (Rgba::rgb(0x0f, 0x6e, 0x66), white),
             (Self::Green, ThemeKind::Dark) => (Rgba::rgb(0x86, 0xc0, 0x7a), dark_on),
@@ -255,8 +255,8 @@ impl Accent {
             (Self::Amber, ThemeKind::Light) => (Rgba::rgb(0x8a, 0x55, 0x00), white),
             (Self::Rose, ThemeKind::Dark) => (Rgba::rgb(0xe0, 0x8a, 0x9a), dark_on),
             (Self::Rose, ThemeKind::Light) => (Rgba::rgb(0xa8, 0x2f, 0x4f), white),
-            (Self::Graphite, ThemeKind::Dark) => (Rgba::rgb(0xb8, 0xb4, 0xbe), dark_on),
-            (Self::Graphite, ThemeKind::Light) => (Rgba::rgb(0x4a, 0x46, 0x52), white),
+            (Self::Graphite, ThemeKind::Dark) => (Rgba::rgb(0xb4, 0xb6, 0xbc), dark_on),
+            (Self::Graphite, ThemeKind::Light) => (Rgba::rgb(0x48, 0x4a, 0x50), white),
         }
     }
 }

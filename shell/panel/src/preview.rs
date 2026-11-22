@@ -230,10 +230,11 @@ fn launcher_shot(
     let (cw, ch) = (LAUNCHER_W, LAUNCHER_H);
     let (sw, sh) = (cw + pad * 2, ch + pad * 2);
     let mut stage = beach_stage(sw, sh);
-    // Soft scrim so the glass card reads like Spotlight over the desktop.
+    // Light atmospheric scrim + realistic compositor drop shadow behind Spotlight.
     {
         let mut cv = Canvas::new_keep(&mut stage, sw, sh, 1);
-        cv.fill_rect(0, 0, sw as i32, sh as i32, Rgba::rgba(0, 0, 0, 90));
+        cv.fill_rect(0, 0, sw as i32, sh as i32, Rgba::rgba(0, 0, 0, 52));
+        cv.round_rect_shadow(pad as i32, pad as i32, cw as i32, ch as i32, 20.0, 14.0, 28.0, 120);
     }
     let mut card_buf = vec![0u8; (cw * ch * 4) as usize];
     {
@@ -267,13 +268,23 @@ fn desk_shot(name: &str, kind: ThemeKind, fonts: &Fonts, named: bool) -> Shot {
     } else {
         &desk::PROJECT_PLACEHOLDER
     };
-    let pad = 36u32;
+    let pad = 40u32;
     let (cw, ch) = (desk::W as u32, desk::H as u32);
     let (sw, sh) = (cw + pad * 2, ch + pad * 2);
     let mut stage = beach_stage(sw, sh);
     {
         let mut cv = Canvas::new_keep(&mut stage, sw, sh, 1);
-        cv.fill_rect(0, 0, sw as i32, sh as i32, Rgba::rgba(0, 0, 0, 70));
+        cv.fill_rect(0, 0, sw as i32, sh as i32, Rgba::rgba(0, 0, 0, 40));
+        cv.round_rect_shadow(
+            pad as i32,
+            pad as i32,
+            cw as i32,
+            ch as i32,
+            desk::RADIUS,
+            12.0,
+            26.0,
+            112,
+        );
     }
     let mut card_buf = vec![0u8; (cw * ch * 4) as usize];
     {
@@ -1080,8 +1091,8 @@ fn compositor_backdrop(
 ) {
     use crate::material::Material;
     let (sat, noise) = match m {
-        Material::Glass => (1.5f32, 0.0f32),
-        Material::Acrylic => (1.15, 0.06),
+        Material::Glass => (1.18f32, 0.0f32),
+        Material::Acrylic => (1.12, 0.05),
         _ => return,
     };
     let _ = sharp;
@@ -1190,8 +1201,16 @@ fn material_scene(
             None,
         );
     }
-    if crate::material::blurs(bar_m) {
-        compositor_backdrop(&sharp, &soft, w, bar_m, &[(0, 0, w as i32, bh as i32)], (0, 0), &mut out);
+    if bar_m == crate::material::Material::Acrylic {
+        compositor_backdrop(
+            &sharp,
+            &soft,
+            w,
+            bar_m,
+            &[(0, 0, w as i32, bh as i32)],
+            (0, 0),
+            &mut out,
+        );
     }
     over(&mut out, w, &buf, w, bh, (0, 0));
 
@@ -1223,9 +1242,15 @@ fn material_scene(
         (w as i32 - dw as i32) / 2,
         h as i32 - spec.height as i32 - spec.bottom_margin,
     );
-    if let (Some(b), true) = (body, crate::material::blurs(dock_m)) {
-        let rects = crate::material::blur_rects(b.x, b.y, b.w, b.h, b.r);
-        compositor_backdrop(&sharp, &soft, w, dock_m, &rects, at, &mut out);
+    if let Some(b) = body {
+        if !spec.full_width {
+            let mut cv = Canvas::new_keep(&mut out, w, h, 1);
+            cv.round_rect_shadow(at.0 + b.x, at.1 + b.y, b.w, b.h, b.r, 8.0, 18.0, 72);
+        }
+        if crate::material::blurs(dock_m) {
+            let rects = crate::material::blur_rects(b.x, b.y, b.w, b.h, b.r);
+            compositor_backdrop(&sharp, &soft, w, dock_m, &rects, at, &mut out);
+        }
     }
     over(&mut out, w, &buf, dw, spec.height, at);
 
@@ -1297,7 +1322,7 @@ fn material_scenes_render() {
                 NotchStyle::Notch,
             ));
         }
-        // Product default: Glass bar + dock over Beach, island in Glass.
+        // Product default: Glass bar + dock over Beach, pure-black Dynamic Island.
         for (tag, dock) in [
             ("solyra", DockStyle::Solyra),
             ("taskbar", DockStyle::Windows),
@@ -1310,7 +1335,7 @@ fn material_scenes_render() {
                 wp,
                 Material::Glass,
                 Material::Glass,
-                Material::Glass,
+                Material::Solid,
                 dock,
                 NotchStyle::Island,
             ));

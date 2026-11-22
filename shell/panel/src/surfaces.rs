@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use crate::agent::{Approval, Scope, Status, Summary as AgentSummary, TaskView, Verdict};
-use crate::canvas::{text_width, wrap_text, Canvas, Fonts, Icon, Rgba};
+use crate::canvas::{lerp_rgba, text_width, wrap_text, Canvas, Fonts, Icon, Rgba};
 use crate::launcher::{self, Action as LauncherAction, Item as LauncherItem, Kind as LauncherKind};
 use crate::menu::MenuId;
 use crate::state::{
@@ -20,9 +20,9 @@ use crate::tokens::{
 pub const BAR_HEIGHT: u32 = 26;
 pub const NOTCH_WIDTH: i32 = 184;
 
-pub const LAUNCHER_W: u32 = 680;
-/// Compact Spotlight height — tall enough for Top Hit + a few apps, not a Start menu.
-pub const LAUNCHER_H: u32 = 420;
+pub const LAUNCHER_W: u32 = 640;
+/// Compact macOS Spotlight vibrancy card — fits Top Hit + Apps + Commands without dead space.
+pub const LAUNCHER_H: u32 = 362;
 
 pub const CONTROL_W: u32 = 348;
 pub const CONTROL_H: u32 = 436;
@@ -122,49 +122,93 @@ pub fn draw_bar(
     let w = cv.width as i32;
     let h = cv.height as i32;
     let mut regions = Vec::new();
-    // One baseline for the whole strip so the app name, menus and clock sit together.
-    let text_y = (h as f32 * 0.70).round() as i32;
+    // Optical baseline for 26px Apple menu bar.
+    let text_y = (h as f32 * 0.69).round() as i32;
     let icon_cy = h as f32 * 0.5;
 
-    // The bar's material (Solid, See-through, Glass, Acrylic); blur and grain
-    // behind it are the compositor's (see material.rs). A faint seam only —
-    // the strip should read as glass, not a ruled slab.
-    let slab = crate::material::slab(
-        prefs.look.material(prefs.look.bar_material),
-        th.bar,
-        prefs.wall_tint,
+    let bar_mat = prefs.look.material(prefs.look.bar_material);
+    let slab = crate::material::slab(bar_mat, th.bar, prefs.wall_tint);
+    let is_glass_bar = matches!(
+        bar_mat,
+        crate::material::Material::Glass | crate::material::Material::Clear
     );
-    crate::material::paint(cv, &slab, 0, 0, w, h, 0.0);
-    let seam_a = (slab.edge.3 / 3).max(8);
-    cv.fill_rect(
-        0,
-        h - 1,
-        w,
-        1,
-        Rgba::rgba(slab.edge.0, slab.edge.1, slab.edge.2, seam_a),
-    );
+    let dark_theme = prefs.theme == ThemeKind::Dark;
+    if bar_mat == crate::material::Material::Glass {
+        // Near-invisible Apple Liquid Glass bar: delicate top atmospheric feather
+        // so bright wallpaper sky shines uninterrupted while white text stays crisp.
+        let top_a = if dark_theme { 44 } else { 36 };
+        let top = Rgba::rgba(th.bar.0, th.bar.1, th.bar.2, top_a);
+        let bot = Rgba::rgba(th.bar.0, th.bar.1, th.bar.2, 0);
+        cv.fill_rect_vgrad(0, 0, w, h, top, bot);
+    } else {
+        crate::material::paint(cv, &slab, 0, 0, w, h, 0.0);
+        if matches!(
+            bar_mat,
+            crate::material::Material::Solid | crate::material::Material::Acrylic
+        ) {
+            let seam_a = (slab.edge.3 / 3).max(8);
+            cv.fill_rect(
+                0,
+                h - 1,
+                w,
+                1,
+                Rgba::rgba(slab.edge.0, slab.edge.1, slab.edge.2, seam_a),
+            );
+        }
+    }
+
+    // Crisp Apple menu-bar typography over open sky: pure luminous text with
+    // whisper-light shadow on translucent dark glass, zero double-vision halo.
+    let bar_shadow = if is_glass_bar && dark_theme {
+        Some(Rgba::rgba(0, 0, 0, 48))
+    } else {
+        None
+    };
+    let bar_text = if is_glass_bar && dark_theme {
+        Rgba::rgba(255, 255, 255, 248)
+    } else {
+        th.text
+    };
+    let bar_menu_text = if is_glass_bar && dark_theme {
+        Rgba::rgba(255, 255, 255, 224)
+    } else {
+        th.text_med
+    };
+    let draw_bar_text = |cv: &mut Canvas<'_>,
+                         font: Option<&ab_glyph::FontRef<'_>>,
+                         s: &str,
+                         tx: i32,
+                         ty: i32,
+                         size: f32,
+                         col: Rgba| {
+        if let Some(sh) = bar_shadow {
+            cv.text_shadow(font, s, tx, ty, size, 0.0, col, sh, 1);
+        } else {
+            cv.text(font, s, tx, ty, size, col);
+        }
+    };
 
     use solyra_conf::look::BarStyle;
     let bar_style = prefs.look.bar;
     let menubar = bar_style == BarStyle::MenuBar;
     let notch_on = prefs.look.notch != solyra_conf::look::NotchStyle::Off;
     let center_reserved_half = if island_msg.is_some() || notch_on {
-        200
+        178
     } else {
         112
     };
     let max_left_x = (w / 2) - center_reserved_half;
 
-    // Left: a small nL mark. Menu bar → system menu; compact → launcher.
+    // Left: crisp nL brand mark. Menu bar → system menu; compact → launcher.
     let mark_h = 16;
-    let mark_x = 10;
+    let mark_x = 12;
     let mark_y = (h - mark_h) / 2;
     let mark_w = crate::canvas::nl_mark_width(mark_h, fonts);
     let brand_hover = hover.is_some_and(|(hx, hy)| {
-        hx >= (mark_x - 2) as f64 && hx < (mark_x + mark_w + 2) as f64 && hy < h as f64
+        hx >= (mark_x - 3) as f64 && hx < (mark_x + mark_w + 3) as f64 && hy < h as f64
     });
     if brand_hover {
-        cv.round_rect(mark_x - 3, 2, mark_w + 6, h - 4, 5.0, th.tile_hover);
+        cv.round_rect(mark_x - 4, 2, mark_w + 8, h - 4, 5.0, th.tile_hover);
     }
     let drawn = cv.mark_nl(mark_x, mark_y, mark_h, fonts);
     debug_assert_eq!(drawn, mark_w);
@@ -179,24 +223,24 @@ pub fn draw_bar(
             HitAction::Shell(ShellCmd::ToggleLauncher)
         },
     });
-    let mut x = mark_x + mark_w + 12;
+    let mut x = mark_x + mark_w + 14;
 
     if menubar {
-        // Focused app name in semibold, then menu titles in the secondary
-        // colour until the pointer is on them.
+        // SF-weight hierarchy: focused app name in Bold, menus in Medium.
         let (app_name, _) = focused_app_menus(wins);
-        let app_size = 12.5;
-        let aw = text_width(fonts.semibold.as_ref(), &app_name, app_size);
+        let app_size = 13.0;
+        let aw = text_width(fonts.bold.as_ref(), &app_name, app_size);
         if hovered(hover, x - 6, 0, aw + 12, h) {
             cv.round_rect(x - 6, 2, aw + 12, h - 4, 5.0, th.tile_hover);
         }
-        cv.text(
-            fonts.semibold.as_ref(),
+        draw_bar_text(
+            cv,
+            fonts.bold.as_ref(),
             &app_name,
             x,
             text_y,
             app_size,
-            th.text,
+            bar_text,
         );
         regions.push(Region {
             x: x - 6,
@@ -205,11 +249,11 @@ pub fn draw_bar(
             h,
             action: HitAction::OpenMenu(MenuId::App),
         });
-        x += aw + 16;
-        let menu_size = 12.0;
+        x += aw + 18;
+        let menu_size = 12.6;
         for id in MenuId::TITLES {
             let t = id.title();
-            let mw = text_width(fonts.regular.as_ref(), t, menu_size);
+            let mw = text_width(fonts.medium.as_ref(), t, menu_size);
             if x + mw + 8 > max_left_x {
                 break;
             }
@@ -217,13 +261,14 @@ pub fn draw_bar(
             if hot {
                 cv.round_rect(x - 6, 2, mw + 12, h - 4, 5.0, th.tile_hover);
             }
-            cv.text(
-                fonts.regular.as_ref(),
+            draw_bar_text(
+                cv,
+                fonts.medium.as_ref(),
                 t,
                 x,
                 text_y,
                 menu_size,
-                if hot { th.text } else { th.text_dim },
+                if hot { bar_text } else { bar_menu_text },
             );
             regions.push(Region {
                 x: x - 6,
@@ -232,7 +277,7 @@ pub fn draw_bar(
                 h,
                 action: HitAction::OpenMenu(id),
             });
-            x += mw + 14;
+            x += mw + 16;
         }
         x += 6;
     }
@@ -247,21 +292,21 @@ pub fn draw_bar(
             }
             let is_hov = hovered(hover, x, 0, slot, h);
             let label = idx.to_string();
-            let size = 11.0;
+            let size = 11.5;
             let font = if active {
-                fonts.semibold.as_ref()
+                fonts.bold.as_ref()
             } else {
-                fonts.regular.as_ref()
+                fonts.medium.as_ref()
             };
             let tw = text_width(font, &label, size);
             let fg = if active || is_hov {
-                th.text
+                bar_text
             } else {
-                th.text_dim
+                bar_menu_text
             };
-            cv.text(font, &label, x + (slot - tw) / 2, text_y, size, fg);
+            draw_bar_text(cv, font, &label, x + (slot - tw) / 2, text_y, size, fg);
             if active {
-                cv.circle(x as f32 + slot as f32 / 2.0, h as f32 - 3.5, 1.3, th.accent);
+                cv.circle(x as f32 + slot as f32 / 2.0, h as f32 - 3.5, 1.4, th.accent);
             }
             regions.push(Region {
                 x,
@@ -274,34 +319,32 @@ pub fn draw_bar(
         }
     }
 
-    // Centre: with the notch off, a plain message pill in the bar itself.
+    // Centre: with the notch off, a pure-black Live Activity pill in the bar itself.
     if notch_on {
         // Drawn by the island surface (island.rs).
     } else if let Some(message) = island_msg {
         let tw = text_width(fonts.semibold.as_ref(), message, 12.0);
-        let pill_w = (tw + 56).clamp(NOTCH_WIDTH + 24, 360);
+        let pill_w = (tw + 56).clamp(NOTCH_WIDTH + 24, 340);
         let pill_h = (h - 6).max(18);
         let pill_y = (h - pill_h) / 2;
         let left = (w - pill_w) / 2;
         let pr = pill_h as f32 / 2.0;
-        cv.round_rect(
-            left,
-            pill_y,
-            pill_w,
-            pill_h,
-            pr,
-            Rgba::rgb(0x09, 0x08, 0x10),
-        );
-        // The island is always near-black, in both themes, so its content
-        // uses the dark palette. The attention text itself says "needs
-        // approval": the amber dot only reinforces it.
+        cv.round_rect(left, pill_y, pill_w, pill_h, pr, Rgba::rgb(0, 0, 0));
         let pd = Theme::dark();
         let dot = if is_attention {
             pd.agent_approval
         } else {
             pd.agent_active
         };
-        cv.stroke_round_rect(left, pill_y, pill_w, pill_h, pr, 1.0, dot);
+        cv.stroke_round_rect(
+            left,
+            pill_y,
+            pill_w,
+            pill_h,
+            pr,
+            1.0,
+            Rgba::rgba(255, 255, 255, 34),
+        );
         cv.circle(left as f32 + 14.0, icon_cy, 3.2, dot);
         cv.text_truncated(
             fonts.semibold.as_ref(),
@@ -333,8 +376,7 @@ pub fn draw_bar(
         });
     }
 
-    // Right: unboxed glyphs, then the date and the clock as plain text.
-    // Apple order is date then time. Nothing here sits in a capsule.
+    // Right: unboxed glyphs, then date and clock in Apple SF-Medium/SemiBold.
     let now = chrono::Local::now();
     let clock_str = now.format(prefs.look.clock_format()).to_string();
     let date_str = if prefs.look.show_date {
@@ -342,35 +384,37 @@ pub fn draw_bar(
     } else {
         String::new()
     };
-    let clock_size = 12.5;
-    let date_size = 11.5;
+    let clock_size = 12.6;
+    let date_size = 12.4;
     let clock_w = text_width(fonts.semibold.as_ref(), &clock_str, clock_size);
     let date_w = if date_str.is_empty() {
         0
     } else {
-        text_width(fonts.regular.as_ref(), &date_str, date_size)
+        text_width(fonts.medium.as_ref(), &date_str, date_size)
     };
     let date_gap = if date_w > 0 { 8 } else { 0 };
 
-    let right_margin = 12;
+    let right_margin = 14;
     let clock_x = w - right_margin - clock_w;
-    cv.text(
+    draw_bar_text(
+        cv,
         fonts.semibold.as_ref(),
         &clock_str,
         clock_x,
         text_y,
         clock_size,
-        th.text,
+        bar_text,
     );
     let date_x = clock_x - date_gap - date_w;
     if date_w > 0 {
-        cv.text(
-            fonts.regular.as_ref(),
+        draw_bar_text(
+            cv,
+            fonts.medium.as_ref(),
             &date_str,
             date_x,
             text_y,
             date_size,
-            th.text_dim,
+            bar_menu_text,
         );
     }
     let time_left = if date_w > 0 { date_x } else { clock_x };
@@ -382,20 +426,19 @@ pub fn draw_bar(
         action: HitAction::Shell(ShellCmd::ToggleIsland),
     });
 
-    // Search, Wi-Fi, volume, battery, control centre — glyphs only.
-    // The whole status run opens Control Centre; search opens the launcher.
-    let mut edge = time_left - 14;
+    // Search, Wi-Fi, volume, battery, control centre — crisp unboxed glyphs.
+    let mut edge = time_left - 16;
     edge -= 18;
     let cc_cx = edge as f32 + 9.0;
     let bat = if let Some(pct) = telem.battery_pct {
-        edge -= 4 + 22;
+        edge -= 6 + 22;
         Some((edge as f32 + 11.0, pct))
     } else {
         None
     };
-    edge -= 4 + 18;
+    edge -= 6 + 18;
     let vol_cx = edge as f32 + 9.0;
-    edge -= 4 + 18;
+    edge -= 6 + 18;
     let net_cx = edge as f32 + 9.0;
     let status_left = edge;
     let status_right = time_left - 10;
@@ -404,12 +447,28 @@ pub fn draw_bar(
     if status_hov {
         cv.round_rect(status_left, 2, status_w, h - 4, 6.0, th.tile_hover);
     }
-    cv.icon_network(net_cx, icon_cy, 13.0, telem.network, th.text, th.text_dim);
-    cv.icon_volume(vol_cx, icon_cy, 13.0, prefs.volume, th.text);
-    if let Some((cx, pct)) = bat {
-        cv.icon_battery(cx, icon_cy, pct, th.text, th.success);
+    // Subtle optical shadow behind right-side icons on clear dark glass.
+    if let Some(sh) = bar_shadow {
+        cv.icon_network(net_cx, icon_cy + 1.0, 13.0, telem.network, sh, sh);
+        cv.icon_volume(vol_cx, icon_cy + 1.0, 13.0, prefs.volume, sh);
+        if let Some((cx, pct)) = bat {
+            cv.icon_battery(cx, icon_cy + 1.0, pct, sh, sh);
+        }
+        cv.icon_control_centre(cc_cx, icon_cy + 1.0, sh);
     }
-    cv.icon_control_centre(cc_cx, icon_cy, th.text);
+    cv.icon_network(
+        net_cx,
+        icon_cy,
+        13.0,
+        telem.network,
+        bar_text,
+        bar_menu_text,
+    );
+    cv.icon_volume(vol_cx, icon_cy, 13.0, prefs.volume, bar_text);
+    if let Some((cx, pct)) = bat {
+        cv.icon_battery(cx, icon_cy, pct, bar_text, th.success);
+    }
+    cv.icon_control_centre(cc_cx, icon_cy, bar_text);
     regions.push(Region {
         x: status_left,
         y: 0,
@@ -419,12 +478,15 @@ pub fn draw_bar(
     });
 
     let search_w = 22;
-    let search_x = status_left - 10 - search_w;
+    let search_x = status_left - 12 - search_w;
     if search_x > (w / 2) + center_reserved_half {
         if hovered(hover, search_x, 0, search_w, h) {
             cv.round_rect(search_x, 2, search_w, h - 4, 6.0, th.tile_hover);
         }
-        cv.icon_search(search_x as f32 + 11.0, icon_cy, 13.0, th.text);
+        if let Some(sh) = bar_shadow {
+            cv.icon_search(search_x as f32 + 11.0, icon_cy + 1.0, 13.0, sh);
+        }
+        cv.icon_search(search_x as f32 + 11.0, icon_cy, 13.0, bar_text);
         regions.push(Region {
             x: search_x,
             y: 0,
@@ -439,10 +501,43 @@ pub fn draw_bar(
 
 // ------------------------------------------------------ Spotlight Launcher
 
-/// Flat overlay card: one fill, one hairline.
+/// Layered glass overlay card with subtle depth and directional specular rim.
 fn card(cv: &mut Canvas<'_>, th: &Theme, x: i32, y: i32, w: i32, h: i32, r: f32) {
-    cv.round_rect(x, y, w, h, r, th.surface);
-    cv.stroke_round_rect(x, y, w, h, r, 1.0, th.hairline);
+    let dark = th.surface.0 < 128;
+    let top = if dark {
+        Rgba::rgba(
+            th.surface.0.saturating_add(10),
+            th.surface.1.saturating_add(10),
+            th.surface.2.saturating_add(12),
+            240,
+        )
+    } else {
+        Rgba::rgba(255, 255, 255, 246)
+    };
+    let bot = Rgba::rgba(th.surface.0, th.surface.1, th.surface.2, 244);
+    cv.round_rect_vgrad(x, y, w, h, r, top, bot);
+    cv.round_rect_glass_rim(
+        x,
+        y,
+        w,
+        h,
+        r,
+        if dark {
+            Rgba::rgba(255, 255, 255, 76)
+        } else {
+            Rgba::rgba(255, 255, 255, 220)
+        },
+        if dark {
+            Rgba::rgba(255, 255, 255, 26)
+        } else {
+            Rgba::rgba(0, 0, 0, 18)
+        },
+        if dark {
+            Rgba::rgba(255, 255, 255, 16)
+        } else {
+            Rgba::rgba(0, 0, 0, 26)
+        },
+    );
 }
 
 fn hovered(hover: Option<(f64, f64)>, x: i32, y: i32, w: i32, h: i32) -> bool {
@@ -451,13 +546,12 @@ fn hovered(hover: Option<(f64, f64)>, x: i32, y: i32, w: i32, h: i32) -> bool {
     })
 }
 
-/// Spotlight card: 18 px glass, a tall search field, a quiet footer.
-const LAUNCHER_R: f32 = 18.0;
-const SEARCH_Y: i32 = 16;
-const SEARCH_H: i32 = 44;
-/// Top of the result list and the space reserved under it for the footer.
-const LIST_TOP: i32 = 76;
-const FOOTER_H: i32 = 40;
+/// Spotlight card: compact Liquid Glass vibrancy shell with integrated top search.
+const LAUNCHER_R: f32 = 20.0;
+const SEARCH_H: i32 = 54;
+/// Top of the result list and the compact footer band underneath.
+const LIST_TOP: i32 = 60;
+const FOOTER_H: i32 = 32;
 
 pub fn launcher_list_height() -> i32 {
     LAUNCHER_H as i32 - LIST_TOP - FOOTER_H
@@ -468,7 +562,7 @@ fn row_verb(item: &LauncherItem) -> &'static str {
         LauncherKind::Application => "Open",
         LauncherKind::Window => "Switch",
         LauncherKind::Command => "Run",
-        LauncherKind::Agent => "Queue",
+        LauncherKind::Agent => "Ask",
     }
 }
 
@@ -486,56 +580,140 @@ pub fn draw_launcher(
     let w = cv.width as i32;
     let h = cv.height as i32;
     let mut regions = Vec::new();
+    let dark = th.surface.0 < 128;
 
-    let slab = crate::material::slab(crate::material::Material::Glass, th.surface, None);
-    crate::material::paint(cv, &slab, 0, 0, w, h, LAUNCHER_R);
+    // Vibrancy glass body: clean translucent obsidian (dark) or frosted pearl
+    // (light) so wallpaper bokeh breathes softly through like macOS Spotlight.
+    let (body_top, body_bot) = if dark {
+        (Rgba::rgba(30, 32, 36, 198), Rgba::rgba(18, 20, 24, 212))
+    } else {
+        (Rgba::rgba(252, 252, 254, 214), Rgba::rgba(238, 241, 246, 226))
+    };
+    cv.round_rect_vgrad(0, 0, w, h, LAUNCHER_R, body_top, body_bot);
+    // Subtle upper vibrancy luminosity inside the search band.
+    cv.round_rect_vgrad(
+        1,
+        1,
+        w - 2,
+        SEARCH_H,
+        LAUNCHER_R - 1.0,
+        if dark {
+            Rgba::rgba(255, 255, 255, 18)
+        } else {
+            Rgba::rgba(255, 255, 255, 120)
+        },
+        Rgba::rgba(255, 255, 255, 0),
+    );
+    cv.round_rect_glass_rim(
+        0,
+        0,
+        w,
+        h,
+        LAUNCHER_R,
+        if dark {
+            Rgba::rgba(255, 255, 255, 118)
+        } else {
+            Rgba::rgba(255, 255, 255, 235)
+        },
+        if dark {
+            Rgba::rgba(255, 255, 255, 38)
+        } else {
+            Rgba::rgba(0, 0, 0, 18)
+        },
+        if dark {
+            Rgba::rgba(255, 255, 255, 22)
+        } else {
+            Rgba::rgba(0, 0, 0, 28)
+        },
+    );
 
-    // Search field. The caret sits in front of the hint, as in a real field.
-    let field_x = 16;
-    let field_w = w - 32;
-    cv.round_rect(field_x, SEARCH_Y, field_w, SEARCH_H, 12.0, th.field);
-    cv.stroke_round_rect(field_x, SEARCH_Y, field_w, SEARCH_H, 12.0, 1.0, th.hairline);
-    cv.icon_search(38.0, (SEARCH_Y + SEARCH_H / 2) as f32, 16.0, th.text_med);
-    let text_x = 56;
+    // Integrated Apple Spotlight search header — no inner box-in-a-box.
+    let search_cy = SEARCH_H as f32 * 0.5;
+    cv.icon_search(28.0, search_cy, 19.0, th.text_med);
+    let text_x = 52;
     let esc_w = 36;
+    let esc_x = w - 18 - esc_w;
+    let text_base = 34;
     if query.is_empty() {
-        cv.fill_rect(text_x, SEARCH_Y + 13, 2, 18, th.accent);
+        cv.round_rect(text_x, 16, 2, 22, 1.0, th.accent);
         cv.text(
             fonts.regular.as_ref(),
-            "Search or Ask",
+            "Spotlight Search",
             text_x + 8,
-            SEARCH_Y + 28,
-            16.0,
+            text_base,
+            19.5,
             th.text_dim,
         );
     } else {
-        let max_w = field_w - (text_x - field_x) - esc_w - 16;
+        let max_w = esc_x - text_x - 16;
         let qw = cv.text_truncated(
             fonts.regular.as_ref(),
             query,
             text_x,
-            SEARCH_Y + 28,
-            16.0,
+            text_base,
+            19.5,
             max_w,
             th.text,
         );
-        cv.fill_rect(text_x + qw + 2, SEARCH_Y + 13, 2, 18, th.accent);
+        cv.round_rect(text_x + qw + 3, 16, 2, 22, 1.0, th.accent);
     }
+
+    // Quiet `esc` keycap pill at top right.
+    let esc_y = (SEARCH_H - 22) / 2;
+    cv.round_rect(
+        esc_x,
+        esc_y,
+        esc_w,
+        22,
+        6.0,
+        if dark {
+            Rgba::rgba(255, 255, 255, 16)
+        } else {
+            Rgba::rgba(0, 0, 0, 12)
+        },
+    );
+    cv.stroke_round_rect(
+        esc_x,
+        esc_y,
+        esc_w,
+        22,
+        6.0,
+        1.0,
+        if dark {
+            Rgba::rgba(255, 255, 255, 26)
+        } else {
+            Rgba::rgba(0, 0, 0, 20)
+        },
+    );
+    let ew = text_width(fonts.medium.as_ref(), "esc", 11.0);
     cv.text(
-        fonts.mono.as_ref(),
+        fonts.medium.as_ref(),
         "esc",
-        w - 16 - esc_w + 6,
-        SEARCH_Y + 28,
+        esc_x + (esc_w - ew) / 2,
+        esc_y + 15,
         11.0,
         th.text_dim,
     );
     regions.push(Region {
-        x: w - 16 - esc_w,
-        y: SEARCH_Y + 8,
+        x: esc_x,
+        y: esc_y,
         w: esc_w,
-        h: SEARCH_H - 16,
+        h: 22,
         action: HitAction::Shell(ShellCmd::CloseOverlays),
     });
+
+    // Crisp hairline dividing search header from result list.
+    cv.fill_rect(
+        0,
+        SEARCH_H,
+        w,
+        1,
+        if dark {
+            Rgba::rgba(255, 255, 255, 24)
+        } else {
+            Rgba::rgba(0, 0, 0, 18)
+        },
+    );
 
     let list_h = launcher_list_height();
     let only_agent_row = !launcher::has_direct_match(items) && !items.is_empty();
@@ -543,7 +721,7 @@ pub fn draw_launcher(
     if items.is_empty() {
         let (title, body) = if query.trim().is_empty() {
             (
-                "Search or Ask",
+                "Spotlight Search",
                 "Applications appear here once they are installed.".to_string(),
             )
         } else {
@@ -555,20 +733,20 @@ pub fn draw_launcher(
         cv.text(
             fonts.semibold.as_ref(),
             title,
-            28,
-            LIST_TOP + 34,
+            24,
+            LIST_TOP + 30,
             T_TITLE,
             th.text,
         );
-        for (i, line) in wrap_text(fonts.regular.as_ref(), &body, T_LABEL, w - 56, 2)
+        for (i, line) in wrap_text(fonts.regular.as_ref(), &body, T_LABEL, w - 48, 2)
             .iter()
             .enumerate()
         {
             cv.text(
                 fonts.regular.as_ref(),
                 line,
-                28,
-                LIST_TOP + 58 + i as i32 * 18,
+                24,
+                LIST_TOP + 54 + i as i32 * 18,
                 T_LABEL,
                 th.text_dim,
             );
@@ -579,12 +757,13 @@ pub fn draw_launcher(
         let mut y = LIST_TOP;
         for row in launcher::spotlight_rows(items, first, list_h) {
             if let Some(label) = row.heading {
-                cv.text(
+                cv.text_tracked(
                     fonts.semibold.as_ref(),
                     label,
-                    24,
-                    y + 16,
-                    11.5,
+                    22,
+                    y + 15,
+                    11.0,
+                    0.35,
                     th.text_dim,
                 );
                 y += launcher::HEADING_H;
@@ -605,30 +784,38 @@ pub fn draw_launcher(
             y += launcher::ROW_H;
         }
         if only_agent_row {
-            // The only thing offered is an agent request. Say so, so Enter
-            // is never mistaken for "launch the thing I typed".
             let note = "No app, window or command matches. Enter only queues a request.";
             cv.text_truncated(
                 fonts.regular.as_ref(),
                 note,
-                24,
+                22,
                 LIST_TOP + list_h - 6,
                 T_META,
-                w - 48,
+                w - 44,
                 th.text_dim,
             );
         }
     }
 
-    // Apple Spotlight has no power chrome — only quiet key hints.
+    // Minimal Apple Spotlight footer: subtle hairline + quiet key hints, zero power chrome.
     let fy = h - FOOTER_H;
-    cv.fill_rect(20, fy, w - 40, 1, th.separator);
+    cv.fill_rect(
+        16,
+        fy,
+        w - 32,
+        1,
+        if dark {
+            Rgba::rgba(255, 255, 255, 18)
+        } else {
+            Rgba::rgba(0, 0, 0, 14)
+        },
+    );
     cv.text(
-        fonts.regular.as_ref(),
-        "↑↓ move   ⏎ open   esc",
+        fonts.medium.as_ref(),
+        "↑↓ Navigate    ↵ Open    esc Dismiss",
         22,
-        fy + 25,
-        12.0,
+        fy + 20,
+        11.2,
         th.text_dim,
     );
 
@@ -652,67 +839,98 @@ fn draw_launcher_row(
     let (rx, rw, rh) = (12, w - 24, launcher::ROW_H - 4);
     let runnable = item.is_runnable();
     if selected {
-        cv.round_rect(rx, y, rw, rh, R_ROW, th.selected_fill);
-        cv.stroke_round_rect(rx, y, rw, rh, R_ROW, 1.0, th.selected_border);
+        // Luminous Apple Spotlight selection pill derived from theme accent.
+        let sel_top = lerp_rgba(th.accent, Rgba::rgb(255, 255, 255), 0.14);
+        let sel_bot = lerp_rgba(th.accent, Rgba::rgb(0, 0, 0), 0.10);
+        cv.round_rect_vgrad(rx, y, rw, rh, 10.0, sel_top, sel_bot);
+        cv.round_rect_glass_rim(
+            rx,
+            y,
+            rw,
+            rh,
+            10.0,
+            Rgba::rgba(255, 255, 255, 92),
+            Rgba::rgba(255, 255, 255, 28),
+            Rgba::rgba(0, 0, 0, 28),
+        );
     } else if runnable && hovered(hover, rx, y, rw, rh) {
-        cv.round_rect(rx, y, rw, rh, R_ROW, th.tile_hover);
+        cv.round_rect(rx, y, rw, rh, 10.0, th.tile_hover);
     }
 
     let sys_ic = load_app_icon(icons, &item.app_id);
-    let icon = if prominent { 30 } else { 28 };
-    cv.draw_app_squircle(rx + 8, y + (rh - icon) / 2, icon, &item.role, sys_ic, fonts);
-    let title_col = if runnable { th.text } else { th.text_dim };
+    let icon = if prominent { 28 } else { 26 };
+    cv.draw_app_squircle(rx + 9, y + (rh - icon) / 2, icon, &item.role, sys_ic, fonts);
+    let title_col = if selected {
+        th.on_accent
+    } else if runnable {
+        th.text
+    } else {
+        th.text_dim
+    };
+    let sub_col = if selected {
+        Rgba::rgba(th.on_accent.0, th.on_accent.1, th.on_accent.2, 200)
+    } else {
+        th.text_dim
+    };
     let verb = if selected {
         if runnable {
-            row_verb(item)
+            format!("{} ↵", row_verb(item))
         } else {
-            "Unavailable"
+            "Unavailable".to_string()
         }
     } else {
-        ""
+        String::new()
     };
     let badge_w = if verb.is_empty() {
         0
     } else {
-        text_width(fonts.regular.as_ref(), verb, 12.0) + 8
+        text_width(fonts.medium.as_ref(), &verb, 11.5) + 14
     };
-    let text_x = rx + 8 + icon + 10;
-    let text_w = rw - (text_x - rx) - badge_w - 12;
-    let title_size = if prominent { 15.5 } else { 14.0 };
+    let text_x = rx + 9 + icon + 11;
+    let text_w = rw - (text_x - rx) - badge_w - 14;
+    let title_size = if prominent { 14.5 } else { 13.8 };
     let (title_y, sub_y) = if item.subtitle.is_empty() {
         (y + rh / 2 + 5, 0)
     } else {
-        (y + 16, y + 32)
+        (y + 16, y + 30)
     };
-    cv.text_truncated(
-        fonts.semibold.as_ref(),
-        &item.title,
-        text_x,
-        title_y,
-        title_size,
-        text_w,
-        title_col,
-    );
+    let title_font = if selected || prominent {
+        fonts.semibold.as_ref()
+    } else {
+        fonts.medium.as_ref()
+    };
+    cv.text_truncated(title_font, &item.title, text_x, title_y, title_size, text_w, title_col);
     if !item.subtitle.is_empty() {
         cv.text_truncated(
             fonts.regular.as_ref(),
             &item.subtitle,
             text_x,
             sub_y,
-            12.0,
+            11.5,
             text_w,
-            th.text_dim,
+            sub_col,
         );
     }
 
     if selected {
+        let bx = rx + rw - badge_w - 6;
+        let by = y + (rh - 20) / 2;
+        cv.round_rect(
+            bx,
+            by,
+            badge_w,
+            20,
+            6.0,
+            Rgba::rgba(th.on_accent.0, th.on_accent.1, th.on_accent.2, 34),
+        );
+        let vw = text_width(fonts.medium.as_ref(), &verb, 11.5);
         cv.text(
-            fonts.regular.as_ref(),
-            verb,
-            rx + rw - badge_w - 4,
-            y + rh / 2 + 4,
-            12.0,
-            th.text_med,
+            fonts.medium.as_ref(),
+            &verb,
+            bx + (badge_w - vw) / 2,
+            by + 14,
+            11.5,
+            th.on_accent,
         );
     }
 

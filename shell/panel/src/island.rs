@@ -1,10 +1,12 @@
-//! The notch and Dynamic Island: one black shape at the top centre that
-//! morphs between an idle size, a compact live activity and an expanded card.
+//! The notch and Dynamic Island: one pure-black hardware capsule at the top
+//! centre that morphs between an idle pill, a snug compact Live Activity, and
+//! a concentric expanded card.
 //!
 //! Two looks, chosen in Settings (`notch_style`):
 //! * **Notch** – hangs from the top edge with concave "ears", like a laptop
 //!   display notch; expands downward.
-//! * **Island** – a floating pill inside the bar; expands into a rounded card.
+//! * **Island** – a floating pure-black capsule below the top edge; expands
+//!   into a concentric rounded card (`r = 44`).
 //!
 //! It lives on its own layer surface, larger than the shape; only the shape
 //! takes input, and the rest is transparent, so the shape can grow and shrink
@@ -72,14 +74,15 @@ impl Shape {
     }
 }
 
-/// Expanded card size. Media is a Live Activity (~440×156, radius 44 on the
-/// island). Idle is a short glance. Anything with buttons keeps more height.
+/// Expanded card size. Media is an Apple Live Activity (`440×156`, radius `44`
+/// on the island). Idle is a short glance. Anything with buttons keeps more
+/// height.
 fn expanded_shape(style: NotchStyle, content: &Content) -> Shape {
     let island = style == NotchStyle::Island;
     let (w, h) = match content {
         Content::Media(_) => (440.0, 156.0),
-        Content::Idle => (if island { 348.0 } else { 400.0 }, 132.0),
-        _ => (if island { 440.0 } else { 452.0 }, 196.0),
+        Content::Idle => (if island { 348.0 } else { 392.0 }, 132.0),
+        _ => (if island { 440.0 } else { 448.0 }, 196.0),
     };
     Shape {
         w,
@@ -91,26 +94,37 @@ fn expanded_shape(style: NotchStyle, content: &Content) -> Shape {
 
 /// Where the shape wants to be.
 pub fn target(style: NotchStyle, content: &Content, expanded: bool) -> Shape {
-    let busy = !matches!(content, Content::Idle);
     match style {
         NotchStyle::Island => {
             if expanded {
                 expanded_shape(style, content)
-            } else if busy {
-                // Compact live activity: a capsule just taller than idle.
-                Shape {
-                    w: 328.0,
-                    h: 37.0,
-                    y: 4.0,
-                    r: 18.5,
-                }
             } else {
-                // Idle pill, floating just below the top edge.
-                Shape {
-                    w: 126.0,
-                    h: 36.0,
-                    y: 4.0,
-                    r: 18.0,
+                match content {
+                    Content::Idle => Shape {
+                        w: 126.0,
+                        h: 36.0,
+                        y: 4.0,
+                        r: 18.0,
+                    },
+                    // Snug Live Activity capsules — tight leading/trailing, no dead ears.
+                    Content::Media(_) => Shape {
+                        w: 224.0,
+                        h: 37.0,
+                        y: 4.0,
+                        r: 18.5,
+                    },
+                    Content::Activity { .. } | Content::Message(_) => Shape {
+                        w: 268.0,
+                        h: 37.0,
+                        y: 4.0,
+                        r: 18.5,
+                    },
+                    Content::Attention(_) => Shape {
+                        w: 298.0,
+                        h: 37.0,
+                        y: 4.0,
+                        r: 18.5,
+                    },
                 }
             }
         }
@@ -118,19 +132,26 @@ pub fn target(style: NotchStyle, content: &Content, expanded: bool) -> Shape {
         NotchStyle::Notch | NotchStyle::Off => {
             if expanded {
                 expanded_shape(style, content)
-            } else if busy {
-                Shape {
-                    w: 360.0,
-                    h: 36.0,
-                    y: 0.0,
-                    r: 16.0,
-                }
             } else {
-                Shape {
-                    w: 188.0,
-                    h: 32.0,
-                    y: 0.0,
-                    r: 14.0,
+                match content {
+                    Content::Idle => Shape {
+                        w: 188.0,
+                        h: 32.0,
+                        y: 0.0,
+                        r: 14.0,
+                    },
+                    Content::Media(_) => Shape {
+                        w: 264.0,
+                        h: 36.0,
+                        y: 0.0,
+                        r: 16.0,
+                    },
+                    _ => Shape {
+                        w: 312.0,
+                        h: 36.0,
+                        y: 0.0,
+                        r: 16.0,
+                    },
                 }
             }
         }
@@ -246,7 +267,7 @@ pub fn draw(
     extra: &Extra<'_>,
     hover: Option<(f64, f64)>,
 ) -> Vec<Region> {
-    // The shape is always black; what is on it uses the dark palette.
+    // Dynamic Island is always pure OLED hardware black — never a grey bar pill.
     let th = Theme::dark();
     let s = anim.cur;
     let (x, y, w, h) = (s.x(), s.y, s.w, s.h);
@@ -257,29 +278,40 @@ pub fn draw(
         h.round() as i32,
     );
 
-    let slab = crate::material::slab(
-        extra.material,
-        crate::material::notch_base(extra.material),
-        None,
-    );
-    let body = slab.fill;
+    let pure_black = match extra.material {
+        crate::material::Material::Solid => Rgba::rgb(0, 0, 0),
+        crate::material::Material::Clear => Rgba::rgba(0, 0, 0, 232),
+        crate::material::Material::Glass => Rgba::rgba(4, 5, 7, 244),
+        crate::material::Material::Acrylic => Rgba::rgba(6, 7, 10, 246),
+    };
     match style {
         NotchStyle::Island => {
-            cv.round_rect(xi, yi, wi, hi, s.r, body);
-            if extra.material != crate::material::Material::Solid {
-                cv.stroke_round_rect(xi, yi, wi, hi, s.r, 1.0, slab.edge);
-            }
+            // Soft outer elevation shadow so the black capsule floats cleanly over bright sky.
+            let spread = if expanded { 12.0 } else { 6.0 };
+            let sh_a = if expanded { 82 } else { 52 };
+            cv.round_rect_shadow(xi, yi, wi, hi, s.r, if expanded { 5.0 } else { 2.0 }, spread, sh_a);
+            cv.round_rect(xi, yi, wi, hi, s.r, pure_black);
+            // Delicate hardware optical edge rim so black-on-dark never disappears.
+            let top_rim = if extra.material == crate::material::Material::Solid {
+                Rgba::rgba(255, 255, 255, 28)
+            } else {
+                Rgba::rgba(255, 255, 255, 58)
+            };
+            cv.round_rect_glass_rim(
+                xi,
+                yi,
+                wi,
+                hi,
+                s.r,
+                top_rim,
+                Rgba::rgba(255, 255, 255, 18),
+                Rgba::rgba(255, 255, 255, 14),
+            );
         }
         _ => {
-            cv.notch_body(xi, 0, wi, hi, s.r, body);
-            cv.concave_corner(x - EAR, 0.0, EAR, true, body);
-            cv.concave_corner(x + w, 0.0, EAR, false, body);
-        }
-    }
-    if let Some(hl) = slab.highlight {
-        if style == NotchStyle::Island {
-            let inset = (s.r * 0.6).round() as i32;
-            cv.fill_rect(xi + inset, yi + 1, (wi - 2 * inset).max(0), 1, hl);
+            cv.notch_body(xi, 0, wi, hi, s.r, pure_black);
+            cv.concave_corner(x - EAR, 0.0, EAR, true, pure_black);
+            cv.concave_corner(x + w, 0.0, EAR, false, pure_black);
         }
     }
 
@@ -304,14 +336,13 @@ pub fn draw(
     }
 
     if expanded {
-        // Inset past the corner radius. The expanded card replaces the compact
-        // row; it is not stacked under it.
-        let pad = 16;
+        let pad_x = if style == NotchStyle::Island { 24 } else { 20 };
+        let pad_y = if style == NotchStyle::Island { 20 } else { 16 };
         let body = (
-            xi + pad,
-            yi + pad,
-            (wi - 2 * pad).max(0),
-            (hi - 2 * pad).max(0),
+            xi + pad_x,
+            yi + pad_y,
+            (wi - 2 * pad_x).max(0),
+            (hi - 2 * pad_y).max(0),
         );
         expanded_body(cv, &th, fonts, body, content, extra, hover, &mut regions);
     } else {
@@ -320,17 +351,29 @@ pub fn draw(
     regions
 }
 
-/// Leading glyph and trailing status, grouped in the middle of the pill so a
-/// short title does not leave a wide empty gap.
-fn cluster_x(x: i32, w: i32, inset: i32, cluster_w: i32) -> i32 {
-    let inner = (w - 2 * inset).max(0);
-    let cw = cluster_w.min(inner);
-    x + (w - cw).max(0) / 2
+/// Colourful Apple Music live audio spectrum bars.
+fn media_waveform(cv: &mut Canvas<'_>, x: i32, mid: f32, active: bool) {
+    let bars: [(i32, Rgba); 5] = [
+        (7, Rgba::rgb(0xFF, 0x7A, 0x5A)),
+        (13, Rgba::rgb(0xFF, 0xA8, 0x4C)),
+        (9, Rgba::rgb(0xF8, 0xCC, 0x58)),
+        (14, Rgba::rgb(0x64, 0xD2, 0xFF)),
+        (6, Rgba::rgb(0x30, 0xB8, 0xFF)),
+    ];
+    for (i, (bh, col)) in bars.into_iter().enumerate() {
+        let h = if active { bh } else { 4 };
+        let c = if active {
+            col
+        } else {
+            Rgba::rgba(255, 255, 255, 96)
+        };
+        cv.round_rect(x + i as i32 * 4, (mid as i32) - h / 2, 2, h, 1.0, c);
+    }
 }
 
-fn waveform(cv: &mut Canvas<'_>, x: i32, mid: f32, color: Rgba) {
-    for (i, bh) in [7, 12, 5, 10].into_iter().enumerate() {
-        cv.round_rect(x + i as i32 * 5, (mid as i32) - bh / 2, 3, bh, 1.5, color);
+fn agent_waveform(cv: &mut Canvas<'_>, x: i32, mid: f32, color: Rgba) {
+    for (i, bh) in [6, 11, 8, 13, 6].into_iter().enumerate() {
+        cv.round_rect(x + i as i32 * 4, (mid as i32) - bh / 2, 2, bh, 1.0, color);
     }
 }
 
@@ -348,128 +391,124 @@ fn compact_row(
 ) {
     let mid = y as f32 + h as f32 / 2.0;
     let baseline = y + h / 2 + 4;
-    let inset = if style == NotchStyle::Island { 14 } else { 18 };
-    let inner = (w - 2 * inset).max(0);
-    let gap = 8;
+    let pad = if style == NotchStyle::Island { 10 } else { 14 };
     match content {
         Content::Idle => {}
         Content::Message(t) => {
-            let glyph = 16;
-            let max_tw = (inner - glyph - gap).max(0);
-            let tw = text_width(fonts.semibold.as_ref(), t, 12.0).min(max_tw);
-            let start = cluster_x(x, w, inset, glyph + gap + tw);
-            cv.icon_bell(start as f32 + 7.0, mid, th.text);
+            // Snug leading icon + crisp title.
+            cv.icon_bell((x + pad + 8) as f32, mid, th.text);
+            let tx = x + pad + 22;
+            let max_tw = (w - pad * 2 - 26).max(20);
             cv.text_truncated(
-                fonts.semibold.as_ref(),
+                fonts.medium.as_ref(),
                 t,
-                start + glyph,
+                tx,
                 baseline,
-                12.0,
+                12.2,
                 max_tw,
                 th.text,
             );
         }
         Content::Activity { who, text } => {
-            let glyph = 14;
-            let bars = 18;
+            // Snug leading live indicator + centered activity + snug trailing waveform.
+            let dot_x = (x + pad + 7) as f32;
+            cv.circle(
+                dot_x,
+                mid,
+                6.0,
+                Rgba::rgba(th.agent_active.0, th.agent_active.1, th.agent_active.2, 56),
+            );
+            cv.circle(dot_x, mid, 3.6, th.agent_active);
+
+            let bars_w = 18;
+            let bars_x = x + w - pad - bars_w - 2;
+            agent_waveform(cv, bars_x, mid, th.agent_active);
+
             let line = format!("{who} · {text}");
-            let max_tw = (inner - glyph - gap - gap - bars).max(0);
-            let tw = text_width(fonts.semibold.as_ref(), &line, 12.0).min(max_tw);
-            let start = cluster_x(x, w, inset, glyph + gap + tw + gap + bars);
-            cv.circle(start as f32 + 5.0, mid, 4.0, th.agent_active);
+            let tx = x + pad + 20;
+            let max_tw = (bars_x - tx - 10).max(24);
+            let tw = text_width(fonts.medium.as_ref(), &line, 12.0).min(max_tw);
+            let cx = tx + (max_tw - tw) / 2;
             cv.text_truncated(
-                fonts.semibold.as_ref(),
+                fonts.medium.as_ref(),
                 &line,
-                start + glyph,
+                cx,
                 baseline,
                 12.0,
                 max_tw,
                 th.text,
             );
-            waveform(cv, start + glyph + gap + tw + gap, mid, th.agent_active);
         }
         Content::Attention(a) => {
-            let glyph = 16;
-            let what = match a.kind {
-                AskKind::Permission => "Approval needed",
-                AskKind::Question => "Question",
-            };
-            let line = format!("{what} · {}", a.who);
+            let icon_x = (x + pad + 7) as f32;
+            cv.ring(icon_x, mid, 4.8, 1.8, th.agent_approval);
+            cv.circle(icon_x, mid, 1.6, th.agent_approval);
+
             let chip = if a.sent { "Sent" } else { "Review" };
             let chip_w = text_width(fonts.semibold.as_ref(), chip, 10.5) + 14;
-            let max_tw = (inner - glyph - gap - gap - chip_w).max(0);
-            let tw = text_width(fonts.semibold.as_ref(), &line, 12.0).min(max_tw);
-            let start = cluster_x(x, w, inset, glyph + gap + tw + gap + chip_w);
-            cv.ring(start as f32 + 6.0, mid, 4.5, 1.8, th.agent_approval);
-            cv.circle(start as f32 + 6.0, mid, 1.6, th.agent_approval);
-            cv.text_truncated(
-                fonts.semibold.as_ref(),
-                &line,
-                start + glyph,
-                baseline,
-                12.0,
-                max_tw,
-                th.text,
-            );
-            let cx = start + glyph + gap + tw + gap;
-            let cy = y + (h - 18) / 2;
-            cv.round_rect(cx, cy, chip_w, 18, 9.0, th.agent_approval);
+            let chip_x = x + w - pad - chip_w;
+            let chip_y = y + (h - 20) / 2;
+            cv.round_rect(chip_x, chip_y, chip_w, 20, 10.0, th.agent_approval);
             cv.text(
                 fonts.semibold.as_ref(),
                 chip,
-                cx + 7,
-                cy + 13,
+                chip_x + 7,
+                chip_y + 14,
                 10.5,
                 th.on_accent,
             );
+
+            let what = match a.kind {
+                AskKind::Permission => "Approval",
+                AskKind::Question => "Question",
+            };
+            let line = format!("{what} · {}", a.who);
+            let tx = x + pad + 20;
+            let max_tw = (chip_x - tx - 10).max(24);
+            cv.text_truncated(
+                fonts.medium.as_ref(),
+                &line,
+                tx,
+                baseline,
+                12.0,
+                max_tw,
+                th.text,
+            );
         }
         Content::Media(m) => {
-            let art = 18;
+            // Iconic Dynamic Island compact media: concentric album art on left,
+            // clean title in center, vibrant live waveform snugly on right.
+            let art = 21;
+            let art_x = x + 8;
+            let art_y = (mid as i32) - art / 2;
+            cv.draw_album_art(art_x, art_y, art, 6.0);
+
+            let bars_w = 18;
+            let trail_x = x + w - 12 - bars_w;
+            if m.playing {
+                media_waveform(cv, trail_x, mid, true);
+            } else {
+                cv.icon_pause((trail_x + 9) as f32, mid, 10.0, Rgba::rgba(255, 255, 255, 160));
+            }
+
             let line = if m.title.is_empty() {
                 m.artist.clone()
             } else {
                 m.title.clone()
             };
-            let elapsed = (!m.playing)
-                .then(|| m.elapsed_label().map(|(e, _, _)| e))
-                .flatten();
-            let trail = if m.playing {
-                18
-            } else if let Some(elapsed) = elapsed.as_deref() {
-                text_width(fonts.semibold.as_ref(), elapsed, 11.0)
-            } else {
-                12
-            };
-            let max_tw = (inner - art - gap - gap - trail).max(24);
-            let tw = text_width(fonts.semibold.as_ref(), &line, 12.0).min(max_tw);
-            let start = cluster_x(x, w, inset, art + gap + tw + gap + trail);
-            let art_y = (mid as i32) - art / 2;
-            cv.round_rect(start, art_y, art, art, 5.0, Rgba::rgba(255, 255, 255, 32));
-            cv.icon_note(start as f32 + art as f32 / 2.0, mid, th.text);
+            let tx = art_x + art + 10;
+            let max_tw = (trail_x - tx - 10).max(24);
+            let tw = text_width(fonts.medium.as_ref(), &line, 12.2).min(max_tw);
+            let cx = tx + (max_tw - tw) / 2;
             cv.text_truncated(
-                fonts.semibold.as_ref(),
+                fonts.medium.as_ref(),
                 &line,
-                start + art + gap,
+                cx,
                 baseline,
-                12.0,
+                12.2,
                 max_tw,
                 th.text,
             );
-            let tx = start + art + gap + tw + gap;
-            if m.playing {
-                waveform(cv, tx, mid, th.text);
-            } else if let Some(elapsed) = elapsed.as_deref() {
-                cv.text(
-                    fonts.semibold.as_ref(),
-                    elapsed,
-                    tx,
-                    baseline,
-                    11.0,
-                    th.text,
-                );
-            } else {
-                cv.icon_pause(tx as f32 + 6.0, mid, 10.0, th.text_dim);
-            }
         }
     }
 }
@@ -487,9 +526,9 @@ fn button(
     let fill = if primary {
         th.accent
     } else if hovered(hover, x, y, w, h) {
-        Rgba::rgba(255, 255, 255, 40)
+        Rgba::rgba(255, 255, 255, 44)
     } else {
-        Rgba::rgba(255, 255, 255, 24)
+        Rgba::rgba(255, 255, 255, 26)
     };
     cv.round_rect(x, y, w, h, h as f32 / 2.0, fill);
     let tw = text_width(fonts.semibold.as_ref(), label, T_LABEL);
@@ -526,22 +565,23 @@ fn expanded_body(
     let buttons_y = by + bh - 32;
     match content {
         Content::Idle => {
-            // A glance: time, then one quiet line. No button row.
-            cv.text(
-                fonts.regular.as_ref(),
+            // Crisp Apple glance: bold tracked clock, medium date, quiet facts.
+            cv.text_tracked(
+                fonts.bold.as_ref(),
                 extra.clock,
                 bx,
-                by + 36,
-                34.0,
+                by + 34,
+                36.0,
+                -0.8,
                 th.text,
             );
             cv.text(
-                fonts.regular.as_ref(),
+                fonts.medium.as_ref(),
                 extra.date,
                 bx,
-                by + 58,
-                T_LABEL,
-                th.text_dim,
+                by + 56,
+                13.0,
+                Rgba::rgba(255, 255, 255, 168),
             );
             let g = extra.glance;
             let mut facts = Vec::new();
@@ -564,20 +604,20 @@ fn expanded_body(
             }
             if !facts.is_empty() {
                 cv.text_truncated(
-                    fonts.regular.as_ref(),
+                    fonts.medium.as_ref(),
                     &facts.join("   ·   "),
                     bx,
                     by + 82,
-                    T_META,
+                    12.0,
                     bw,
-                    th.text_med,
+                    Rgba::rgba(255, 255, 255, 148),
                 );
             }
         }
         Content::Message(t) => {
             let mut y = by + 16;
-            for l in wrap_text(fonts.regular.as_ref(), t, T_BODY, bw, 4) {
-                cv.text(fonts.regular.as_ref(), &l, bx, y, T_BODY, th.text);
+            for l in wrap_text(fonts.medium.as_ref(), t, T_BODY, bw, 4) {
+                cv.text(fonts.medium.as_ref(), &l, bx, y, T_BODY, th.text);
                 y += 19;
             }
             let r = (bx + bw - 110, buttons_y, 110, 32);
@@ -591,20 +631,21 @@ fn expanded_body(
             });
         }
         Content::Activity { who, text } => {
-            cv.text(
+            cv.text_tracked(
                 fonts.semibold.as_ref(),
                 &who.to_uppercase(),
                 bx,
                 by + 12,
                 T_CAPTION,
+                0.5,
                 th.agent_active,
             );
             let mut y = by + 34;
-            for l in wrap_text(fonts.regular.as_ref(), text, T_BODY, bw, 3) {
-                cv.text(fonts.regular.as_ref(), &l, bx, y, T_BODY, th.text);
+            for l in wrap_text(fonts.medium.as_ref(), text, T_BODY, bw, 3) {
+                cv.text(fonts.medium.as_ref(), &l, bx, y, T_BODY, th.text);
                 y += 19;
             }
-            let r = (bx + bw - 140, buttons_y, 140, 32);
+            let r = (bx + bw - 148, buttons_y, 148, 32);
             button(cv, th, fonts, r, "Open agent tasks", false, hover);
             regions.push(Region {
                 x: r.0,
@@ -616,65 +657,82 @@ fn expanded_body(
         }
         Content::Attention(a) => attention_body(cv, th, fonts, body, a, extra, hover, regions),
         Content::Media(m) => {
-            // Artwork, title and artist, a progress bar with both times,
-            // then transport controls with a 24px gap.
-            let art = 52;
-            cv.round_rect(bx, by, art, art, 14.0, Rgba::rgba(255, 255, 255, 28));
-            cv.icon_note(
-                bx as f32 + art as f32 / 2.0,
-                by as f32 + art as f32 / 2.0,
-                th.text,
-            );
+            // Concentric Apple Dynamic Island Media Live Activity:
+            // Top row: 54x54 vibrant album art (concentric curve) + Bold title /
+            // Medium artist + colorful top-right waveform.
+            let art = 54;
+            cv.draw_album_art(bx, by, art, 15.0);
+
+            let wave_w = 20;
+            let wave_x = bx + bw - wave_w - 2;
+            media_waveform(cv, wave_x, by as f32 + art as f32 * 0.48, m.playing);
+
             let tx = bx + art + 14;
-            let tw = (bw - art - 14).max(0);
+            let tw = (wave_x - tx - 14).max(0);
             cv.text_truncated(
-                fonts.semibold.as_ref(),
+                fonts.bold.as_ref(),
                 &m.title,
                 tx,
-                by + 22,
+                by + 23,
                 16.0,
                 tw,
-                th.text,
+                Rgba::rgb(255, 255, 255),
             );
             cv.text_truncated(
-                fonts.regular.as_ref(),
+                fonts.medium.as_ref(),
                 &m.artist,
                 tx,
-                by + 42,
-                T_LABEL,
+                by + 43,
+                13.5,
                 tw,
-                th.text_dim,
+                Rgba::rgba(255, 255, 255, 152),
             );
+
+            // Middle row: inline Apple scrubber (`0:15  [====----]  3:23`).
             if let Some((elapsed, total, pct)) = m.elapsed_label() {
-                let bar_y = by + art + 8;
-                cv.round_rect(bx, bar_y, bw, 3, 1.5, Rgba::rgba(255, 255, 255, 36));
-                let fill = ((bw as f32) * pct).round() as i32;
-                if fill > 0 {
-                    cv.round_rect(bx, bar_y, fill.max(4), 3, 1.5, th.text);
-                }
-                let time_base = bar_y + 16;
+                let row_y = by + art + 18;
+                let time_col = Rgba::rgba(255, 255, 255, 148);
+                let ew = text_width(fonts.medium.as_ref(), &elapsed, 11.2);
+                let total_w = text_width(fonts.medium.as_ref(), &total, 11.2);
+                cv.text(fonts.medium.as_ref(), &elapsed, bx, row_y + 4, 11.2, time_col);
                 cv.text(
-                    fonts.regular.as_ref(),
-                    &elapsed,
-                    bx,
-                    time_base,
-                    T_CAPTION,
-                    th.text_dim,
-                );
-                let total_w = text_width(fonts.regular.as_ref(), &total, T_CAPTION);
-                cv.text(
-                    fonts.regular.as_ref(),
+                    fonts.medium.as_ref(),
                     &total,
                     bx + bw - total_w,
-                    time_base,
-                    T_CAPTION,
-                    th.text_dim,
+                    row_y + 4,
+                    11.2,
+                    time_col,
                 );
+                let bar_x = bx + ew + 10;
+                let bar_w = (bw - ew - total_w - 20).max(20);
+                let bar_h = 5;
+                let bar_y = row_y - 2;
+                cv.round_rect(
+                    bar_x,
+                    bar_y,
+                    bar_w,
+                    bar_h,
+                    2.5,
+                    Rgba::rgba(255, 255, 255, 42),
+                );
+                let fill = ((bar_w as f32) * pct).round() as i32;
+                if fill > 0 {
+                    cv.round_rect(
+                        bar_x,
+                        bar_y,
+                        fill.max(5),
+                        bar_h,
+                        2.5,
+                        Rgba::rgb(255, 255, 255),
+                    );
+                }
             }
-            let ctrl_h = 32;
-            let ctrl_y = by + bh - ctrl_h;
-            let btn = 36;
-            let gap = 24;
+
+            // Bottom row: centered SF-Symbols-grade transport controls.
+            let ctrl_h = 34;
+            let ctrl_y = by + bh - ctrl_h + 4;
+            let btn = 42;
+            let gap = 26;
             let row_w = btn * 3 + gap * 2;
             let start = bx + (bw - row_w) / 2;
             let cy = ctrl_y + ctrl_h / 2;
@@ -683,16 +741,22 @@ fn expanded_body(
                 let cx0 = start + i as i32 * (btn + gap);
                 let r = (cx0, ctrl_y, btn, ctrl_h);
                 if hovered(hover, r.0, r.1, r.2, r.3) {
-                    cv.round_rect(r.0, r.1, r.2, r.3, 16.0, Rgba::rgba(255, 255, 255, 30));
+                    cv.round_rect(r.0, r.1, r.2, r.3, 17.0, Rgba::rgba(255, 255, 255, 28));
                 }
                 let cx = cx0 + btn / 2;
                 match c {
-                    Control::Previous => cv.icon_skip(cx as f32, cy as f32, 16.0, false, th.text),
-                    Control::Next => cv.icon_skip(cx as f32, cy as f32, 16.0, true, th.text),
-                    Control::PlayPause if m.playing => {
-                        cv.icon_pause(cx as f32, cy as f32, 16.0, th.text)
+                    Control::Previous => {
+                        cv.icon_skip(cx as f32, cy as f32, 19.0, false, Rgba::rgb(255, 255, 255))
                     }
-                    Control::PlayPause => cv.icon_play(cx as f32, cy as f32, 16.0, th.text),
+                    Control::Next => {
+                        cv.icon_skip(cx as f32, cy as f32, 19.0, true, Rgba::rgb(255, 255, 255))
+                    }
+                    Control::PlayPause if m.playing => {
+                        cv.icon_pause(cx as f32, cy as f32, 22.0, Rgba::rgb(255, 255, 255))
+                    }
+                    Control::PlayPause => {
+                        cv.icon_play(cx as f32, cy as f32, 22.0, Rgba::rgb(255, 255, 255))
+                    }
                 }
                 regions.push(Region {
                     x: r.0,
@@ -723,12 +787,13 @@ fn attention_body(
         AskKind::Permission => format!("{} WANTS TO", a.who.to_uppercase()),
         AskKind::Question => format!("{} ASKS", a.who.to_uppercase()),
     };
-    cv.text(
+    cv.text_tracked(
         fonts.semibold.as_ref(),
         &head,
         bx,
         by + 12,
         T_CAPTION,
+        0.5,
         th.agent_approval,
     );
     let mut y = by + 32;

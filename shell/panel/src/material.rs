@@ -6,7 +6,7 @@
 //! * **Solid**: an opaque fill. Nothing shows through.
 //! * **See-through**: a light tint; the desktop stays sharp behind it.
 //! * **Glass**: what is behind is blurred and saturated a little; the
-//!   surface is a thin tint with a lit top edge and a faint rim.
+//!   surface is a clear luminous tint with an optical directional specular rim.
 //! * **Acrylic**: blurred, tinted with the wallpaper's own colour, with a
 //!   fine grain (the compositor's noise).
 //!
@@ -38,7 +38,7 @@ pub struct Slab {
     pub fill: Rgba,
     /// Rim around the shape.
     pub edge: Rgba,
-    /// A one-pixel lit line just inside the top edge (glass only).
+    /// Directional top catch-light (glass / acrylic).
     pub highlight: Option<Rgba>,
 }
 
@@ -56,14 +56,13 @@ fn mix(a: Rgba, b: Rgba, t: f32) -> Rgba {
 }
 
 /// The slab for `base` (the theme colour the surface would otherwise use).
-/// `tint` is the wallpaper's average colour, used by Acrylic.
+/// `tint` is the wallpaper's average colour, used by Acrylic and subtle glass
+/// luminosity adaptation.
 pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
     let dark = is_dark(base);
-    // Adaptive density (the idea behind Liquid Glass adapting to what is
-    // behind it, and Acrylic's luminosity layer): when the wallpaper is the
-    // same lightness as the text (a bright wallpaper under light-on-dark
-    // text, or the reverse) the translucent materials get denser so text
-    // keeps its contrast.
+    // Adaptive density: when wallpaper lightness fights the text colour,
+    // translucent materials gain a calibrated legibility lift without turning
+    // into an opaque grey slab.
     let fights = tint.is_some_and(|t| if dark { luma(t) > 150 } else { luma(t) < 95 });
     let boost = |a: u8| if fights { a.saturating_add(70) } else { a };
     let rim = |a: u8| {
@@ -77,49 +76,99 @@ pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
     match m {
         Material::Solid => Slab {
             fill: with_alpha(base, 255),
-            edge: rim(if dark { 22 } else { 26 }),
+            edge: rim(if dark { 24 } else { 26 }),
             highlight: None,
         },
         Material::Clear => Slab {
             fill: with_alpha(base, boost(if dark { 110 } else { 120 })),
-            edge: rim(if dark { 36 } else { 28 }),
+            edge: rim(if dark { 38 } else { 28 }),
             highlight: None,
         },
-        // Liquid Glass (clear variant over media): wallpaper must stay
-        // visible. Adaptive lift is modest so Beach does not become a slab.
+        // Liquid Glass: crisp luminous translucency so wallpaper stays alive.
         Material::Glass => {
-            let a: u8 = if dark { 28 } else { 48 };
-            let a = if fights { a.saturating_add(28) } else { a };
+            let a: u8 = if dark { 18 } else { 42 };
+            let a = if fights { a.saturating_add(24) } else { a };
             Slab {
                 fill: with_alpha(base, a),
-                edge: rim(if dark { 28 } else { 22 }),
-                highlight: Some(Rgba::rgba(255, 255, 255, if dark { 56 } else { 160 })),
+                edge: rim(if dark { 42 } else { 24 }),
+                highlight: Some(Rgba::rgba(255, 255, 255, if dark { 118 } else { 196 })),
             }
         }
         Material::Acrylic => {
-            // Windows Acrylic: wallpaper hue + denser fill + soft rim.
+            // Windows Acrylic / Mica: wallpaper hue + denser luminosity fill + soft rim.
             let hue = tint.unwrap_or(base);
-            let toward = if dark { 0.34 } else { 0.26 };
+            let toward = if dark { 0.30 } else { 0.24 };
             Slab {
-                fill: with_alpha(mix(base, hue, toward), if dark { 165 } else { 170 }),
-                edge: rim(if dark { 32 } else { 26 }),
-                highlight: Some(Rgba::rgba(255, 255, 255, if dark { 28 } else { 120 })),
+                fill: with_alpha(mix(base, hue, toward), if dark { 164 } else { 176 }),
+                edge: rim(if dark { 40 } else { 26 }),
+                highlight: Some(Rgba::rgba(255, 255, 255, if dark { 68 } else { 165 })),
             }
         }
     }
 }
 
-/// Paint a rounded body (radius 0 for full-width bars).
+/// Paint a rounded body (radius 0 for full-width bars) with directional Liquid
+/// Glass shading and continuous optical perimeter refraction.
 pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f32) {
     if r <= 0.5 {
-        cv.fill_rect(x, y, w, h, s.fill);
+        if s.highlight.is_some() && s.fill.3 < 120 {
+            // Full-width Liquid Glass menu bar: feather-light top veil fading
+            // seamlessly into the wallpaper — never a murky dark slab.
+            let top = Rgba::rgba(s.fill.0, s.fill.1, s.fill.2, (s.fill.3 as f32 * 0.85) as u8);
+            let bot = Rgba::rgba(s.fill.0, s.fill.1, s.fill.2, (s.fill.3 as f32 * 0.28) as u8);
+            cv.fill_rect_vgrad(x, y, w, h, top, bot);
+        } else {
+            cv.fill_rect(x, y, w, h, s.fill);
+        }
+        return;
+    }
+
+    if let Some(hl) = s.highlight {
+        let dark = is_dark(s.fill);
+        // Subtle luminous vertical glass gradient: gently lit near top edge,
+        // calm translucent body below.
+        let top_tint = if dark {
+            let a = s.fill.3.saturating_add(16).min(235);
+            Rgba::rgba(
+                s.fill.0.saturating_add(34),
+                s.fill.1.saturating_add(34),
+                s.fill.2.saturating_add(36),
+                a,
+            )
+        } else {
+            Rgba::rgba(
+                s.fill.0.saturating_add(10),
+                s.fill.1.saturating_add(10),
+                s.fill.2.saturating_add(10),
+                s.fill.3.saturating_add(24).min(242),
+            )
+        };
+        cv.round_rect_vgrad(x, y, w, h, r, top_tint, s.fill);
+        // Subtle frosted luminosity veil on Glass surfaces so bright sand/sky
+        // behind dark glass reads crisp and pearlescent rather than muddy grey.
+        if dark && s.fill.3 < 100 {
+            cv.round_rect_vgrad(
+                x + 1,
+                y + 1,
+                (w - 2).max(0),
+                (h - 2).max(0),
+                (r - 1.0).max(0.0),
+                Rgba::rgba(255, 255, 255, 36),
+                Rgba::rgba(255, 255, 255, 14),
+            );
+        }
+        // Continuous directional optical rim wrapping seamlessly around corners.
+        let side = Rgba::rgba(255, 255, 255, if dark { 52 } else { 96 });
+        let bottom = Rgba::rgba(
+            if dark { 255 } else { 0 },
+            if dark { 255 } else { 0 },
+            if dark { 255 } else { 0 },
+            if dark { 28 } else { 26 },
+        );
+        cv.round_rect_glass_rim(x, y, w, h, r, hl, side, bottom);
     } else {
         cv.round_rect(x, y, w, h, r, s.fill);
         cv.stroke_round_rect(x, y, w, h, r, 1.0, s.edge);
-    }
-    if let Some(hl) = s.highlight {
-        let inset = (r * 0.6).round() as i32;
-        cv.fill_rect(x + inset, y + 1, (w - 2 * inset).max(0), 1, hl);
     }
 }
 
@@ -183,13 +232,10 @@ pub fn average(img: &Icon) -> Option<Rgba> {
     Some(Rgba::rgb((r / n) as u8, (g / n) as u8, (b / n) as u8))
 }
 
-/// The theme's bar colour for a material: the notch is black by nature, the
-/// bar and dock use the theme.
-pub fn notch_base(m: Material) -> Rgba {
-    match m {
-        Material::Solid => Rgba::rgb(0, 0, 0),
-        _ => Rgba::rgb(0x0c, 0x0b, 0x10),
-    }
+/// The notch / Dynamic Island is pure hardware black — never mauve-tinted.
+#[allow(dead_code)]
+pub fn notch_base(_m: Material) -> Rgba {
+    Rgba::rgb(0, 0, 0)
 }
 
 #[cfg(test)]

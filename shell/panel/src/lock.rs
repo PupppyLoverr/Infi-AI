@@ -56,7 +56,7 @@ use wayland_client::{
     Connection, QueueHandle,
 };
 
-use crate::canvas::{decode_png, text_width, Canvas, Fonts, Icon, Rgba};
+use crate::canvas::{decode_png, lerp_rgba, text_width, text_width_tracked, Canvas, Fonts, Icon, Rgba};
 use crate::state::ShellPrefs;
 use crate::tokens::{Accent, Theme, ThemeKind};
 use solyra_conf::look::LockStyle;
@@ -568,7 +568,7 @@ pub struct View<'a> {
     pub weather: Option<&'a str>,
 }
 
-fn centred(
+fn centred_shadow(
     cv: &mut Canvas<'_>,
     font: Option<&ab_glyph::FontRef<'_>>,
     t: &str,
@@ -576,13 +576,81 @@ fn centred(
     baseline: i32,
     size: f32,
     color: Rgba,
+    shadow_alpha: u8,
 ) {
     let tw = text_width(font, t, size);
-    cv.text(font, t, cx - tw / 2, baseline, size, color);
+    cv.text_shadow(
+        font,
+        t,
+        cx - tw / 2,
+        baseline,
+        size,
+        0.0,
+        color,
+        Rgba::rgba(0, 0, 0, shadow_alpha),
+        1,
+    );
+}
+
+/// Large display typography with optical tracking and soft diffused halo depth
+/// matching Apple SF Pro Display Lock Screen clocks.
+fn centred_display_clock(
+    cv: &mut Canvas<'_>,
+    fonts: &Fonts,
+    clock: &str,
+    cx: i32,
+    baseline: i32,
+    size: f32,
+) {
+    let font = fonts.bold.as_ref();
+    let tracking = -(size * 0.032).clamp(1.2, 5.2);
+    let tw = text_width_tracked(font, clock, size, tracking);
+    let tx = cx - tw / 2;
+    // Soft diffused radial shadow cloud — zero hard stepped drop edge.
+    let r1 = (size * 0.015).round().max(1.0) as i32;
+    let r2 = (size * 0.032).round().max(2.0) as i32;
+    for (ox, oy, a) in [
+        (-r2, r2, 9u8),
+        (r2, r2, 9),
+        (0, r2 + 1, 13),
+        (-r1, r1, 16),
+        (r1, r1, 16),
+        (0, r1 + 1, 20),
+    ] {
+        cv.text_tracked(
+            font,
+            clock,
+            tx + ox,
+            baseline + oy,
+            size,
+            tracking,
+            Rgba::rgba(0, 0, 0, a),
+        );
+    }
+    cv.text_tracked(
+        font,
+        clock,
+        tx,
+        baseline,
+        size,
+        tracking,
+        Rgba::rgba(255, 255, 255, 246),
+    );
 }
 
 fn avatar(cv: &mut Canvas<'_>, v: &View<'_>, cx: i32, cy: i32, r: f32) {
-    cv.circle(cx as f32, cy as f32, r, v.theme.accent);
+    cv.circle_shadow(cx as f32, cy as f32, r, 4.0, 10.0, 72);
+    let top = lerp_rgba(v.theme.accent, Rgba::rgb(255, 255, 255), 0.24);
+    let bot = lerp_rgba(v.theme.accent, Rgba::rgb(0, 14, 38), 0.22);
+    cv.circle_vgrad(cx as f32, cy as f32, r, top, bot, 0.24);
+    // Delicate glass rim ring.
+    cv.ring(
+        cx as f32,
+        cy as f32,
+        r - 0.75,
+        1.4,
+        Rgba::rgba(255, 255, 255, 165),
+    );
     let initial = v
         .name
         .chars()
@@ -590,95 +658,182 @@ fn avatar(cv: &mut Canvas<'_>, v: &View<'_>, cx: i32, cy: i32, r: f32) {
         .unwrap_or('?')
         .to_uppercase()
         .to_string();
-    let size = r * 1.05;
-    let tw = text_width(v.fonts.semibold.as_ref(), &initial, size);
-    cv.text(
-        v.fonts.semibold.as_ref(),
+    let size = r * 1.04;
+    let tw = text_width(v.fonts.bold.as_ref(), &initial, size);
+    cv.text_shadow(
+        v.fonts.bold.as_ref(),
         &initial,
         cx - tw / 2,
         cy + (size * 0.36) as i32,
         size,
+        0.0,
         v.theme.on_accent,
-    );
-}
-
-/// Frosted glass capsule: a light neutral fill, lit top edge, soft rim.
-fn glass_pill(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32) {
-    cv.round_rect(x, y, w, h, r, Rgba::rgba(255, 255, 255, 46));
-    cv.stroke_round_rect(x, y, w, h, r, 1.0, Rgba::rgba(255, 255, 255, 96));
-    let inset = (r * 0.55).round() as i32;
-    cv.fill_rect(
-        x + inset,
-        y + 1,
-        (w - 2 * inset).max(0),
+        Rgba::rgba(0, 0, 0, 56),
         1,
-        Rgba::rgba(255, 255, 255, 120),
     );
 }
 
-/// Light neutral frost over a blurred wallpaper. Not a colour cast.
-fn neutral_veil(cv: &mut Canvas<'_>, w: i32, h: i32) {
-    cv.fill_rect(0, 0, w, h, Rgba::rgba(244, 244, 246, 28));
-    cv.fill_rect(0, 0, w, h, Rgba::rgba(12, 12, 14, 46));
+/// Luminous Liquid Glass frosted capsule with soft drop shadow and continuous
+/// optical specular perimeter.
+fn glass_pill(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32) {
+    cv.round_rect_shadow(x, y, w, h, r, 4.0, 11.0, 48);
+    // Calibrated subtle dark anchor keeps white text legible over bright sand
+    // while keeping the frost airy and pearlescent.
+    cv.round_rect(x, y, w, h, r, Rgba::rgba(16, 20, 26, 36));
+    cv.round_rect_vgrad(
+        x,
+        y,
+        w,
+        h,
+        r,
+        Rgba::rgba(255, 255, 255, 78),
+        Rgba::rgba(255, 255, 255, 38),
+    );
+    cv.round_rect_glass_rim(
+        x,
+        y,
+        w,
+        h,
+        r,
+        Rgba::rgba(255, 255, 255, 192),
+        Rgba::rgba(255, 255, 255, 86),
+        Rgba::rgba(255, 255, 255, 48),
+    );
 }
 
-/// The password field: dots for typed characters, never the characters.
+/// Clean neutral frosted scrim over a blurred wallpaper — airy, zero mud or colour cast.
+fn neutral_veil(cv: &mut Canvas<'_>, w: i32, h: i32) {
+    cv.fill_rect_vgrad(
+        0,
+        0,
+        w,
+        h,
+        Rgba::rgba(10, 14, 20, 42),
+        Rgba::rgba(8, 10, 14, 72),
+    );
+}
+
+/// Atmospheric top-and-bottom edge scrims for Classic so the middle Beach
+/// horizon stays vivid and untouched while clock & sign-in stay razor-sharp.
+fn classic_scrims(cv: &mut Canvas<'_>, w: i32, h: i32) {
+    let top_h = (h as f32 * 0.42) as i32;
+    cv.fill_rect_vgrad(
+        0,
+        0,
+        w,
+        top_h,
+        Rgba::rgba(8, 14, 22, 68),
+        Rgba::rgba(8, 14, 22, 0),
+    );
+    let bot_h = (h as f32 * 0.34) as i32;
+    cv.fill_rect_vgrad(
+        0,
+        h - bot_h,
+        w,
+        bot_h,
+        Rgba::rgba(6, 10, 16, 0),
+        Rgba::rgba(6, 10, 16, 94),
+    );
+}
+
+/// The password field: luminous frosted pill, crisp dots, subtle submit affordance.
 fn field(cv: &mut Canvas<'_>, v: &View<'_>, cx: i32, y: i32, w: i32) {
     let th = v.theme;
-    let h = 40;
+    let h = 38;
     let x = cx - w / 2;
-    glass_pill(cv, x, y, w, h, 20.0);
+    glass_pill(cv, x, y, w, h, h as f32 / 2.0);
     if v.checking {
-        centred(
+        centred_shadow(
             cv,
-            v.fonts.regular.as_ref(),
+            v.fonts.medium.as_ref(),
             "Checking…",
             cx,
-            y + 26,
+            y + 24,
             13.0,
             th.text,
+            56,
         );
     } else if v.dots == 0 {
-        centred(
+        centred_shadow(
             cv,
-            v.fonts.regular.as_ref(),
+            v.fonts.medium.as_ref(),
             "Enter Password",
             cx,
-            y + 26,
+            y + 24,
             13.0,
-            Rgba::rgba(255, 255, 255, 170),
+            Rgba::rgba(255, 255, 255, 204),
+            52,
         );
     } else {
-        let n = v.dots.min(24) as i32;
-        let gap = 14;
-        let start = cx - (n - 1) * gap / 2;
+        let n = v.dots.min(20) as i32;
+        let gap = 12;
+        let dots_cx = cx - 8;
+        let start = dots_cx - (n - 1) * gap / 2;
+        let cy = (y + h / 2) as f32;
         for i in 0..n {
-            cv.circle((start + i * gap) as f32, (y + h / 2) as f32, 4.0, th.text);
+            cv.circle((start + i * gap) as f32, cy + 0.8, 3.8, Rgba::rgba(0, 0, 0, 48));
+            cv.circle((start + i * gap) as f32, cy, 3.8, Rgba::rgb(255, 255, 255));
         }
+        // Subtle Apple-style frosted return button on the right inside the capsule.
+        let btn_cx = (x + w - 19) as f32;
+        cv.circle(btn_cx, cy, 12.0, Rgba::rgba(255, 255, 255, 48));
+        cv.ring(btn_cx, cy, 11.5, 1.0, Rgba::rgba(255, 255, 255, 120));
+        cv.line(btn_cx - 4.0, cy, btn_cx + 3.5, cy, 1.6, Rgba::rgb(255, 255, 255));
+        cv.line(
+            btn_cx + 0.5,
+            cy - 3.5,
+            btn_cx + 4.0,
+            cy,
+            1.6,
+            Rgba::rgb(255, 255, 255),
+        );
+        cv.line(
+            btn_cx + 0.5,
+            cy + 3.5,
+            btn_cx + 4.0,
+            cy,
+            1.6,
+            Rgba::rgb(255, 255, 255),
+        );
     }
-    let mut note_y = y + h + 24;
+    let mut note_y = y + h + 22;
     if let Some(m) = v.message {
-        centred(
+        centred_shadow(
             cv,
             v.fonts.semibold.as_ref(),
             m,
             cx,
             note_y,
-            13.0,
-            Rgba::rgb(0xff, 0xb4, 0xa8),
+            12.8,
+            Rgba::rgb(0xff, 0xb8, 0xac),
+            72,
         );
         note_y += 20;
     }
     if v.caps {
-        centred(
+        centred_shadow(
             cv,
-            v.fonts.regular.as_ref(),
+            v.fonts.medium.as_ref(),
             "Caps Lock is on",
             cx,
             note_y,
             12.0,
-            Rgba::rgba(255, 255, 255, 200),
+            Rgba::rgba(255, 255, 255, 212),
+            64,
         );
+    }
+}
+
+/// Colourful miniature live audio bars for the Dashboard now-playing capsule.
+fn lock_media_bars(cv: &mut Canvas<'_>, x: i32, mid: f32) {
+    let bars: [(i32, Rgba); 4] = [
+        (6, Rgba::rgb(0xFF, 0x7A, 0x5A)),
+        (11, Rgba::rgb(0xFF, 0xB2, 0x4E)),
+        (8, Rgba::rgb(0x64, 0xD2, 0xFF)),
+        (12, Rgba::rgb(0x30, 0xB8, 0xFF)),
+    ];
+    for (i, (bh, col)) in bars.into_iter().enumerate() {
+        cv.round_rect(x + i as i32 * 4, (mid as i32) - bh / 2, 2, bh, 1.0, col);
     }
 }
 
@@ -686,73 +841,63 @@ fn field(cv: &mut Canvas<'_>, v: &View<'_>, cx: i32, y: i32, w: i32) {
 pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
     let (w, h) = (cv.width as i32, cv.height as i32);
     let white = Rgba::rgb(0xff, 0xff, 0xff);
-    let soft = Rgba::rgba(255, 255, 255, 215);
+    let soft = Rgba::rgba(255, 255, 255, 228);
     match v.style {
         LockStyle::Solyra => {
             neutral_veil(cv, w, h);
-            let clock_size = (h as f32 * 0.11).clamp(56.0, 112.0);
+            let clock_size = (h as f32 * 0.13).clamp(64.0, 124.0);
             let cy = (h as f32 * 0.38) as i32;
-            centred(
+            centred_display_clock(cv, v.fonts, &v.clock, w / 2, cy, clock_size);
+            centred_shadow(
                 cv,
-                v.fonts.regular.as_ref(),
-                &v.clock,
-                w / 2,
-                cy,
-                clock_size,
-                white,
-            );
-            centred(
-                cv,
-                v.fonts.regular.as_ref(),
+                v.fonts.semibold.as_ref(),
                 &v.date,
                 w / 2,
-                cy + (clock_size * 0.42) as i32 + 8,
-                18.0,
+                cy + (clock_size * 0.36) as i32 + 12,
+                18.5,
                 soft,
+                60,
             );
-            let field_y = (h as f32 * 0.64) as i32;
-            centred(
+            let field_y = (h as f32 * 0.65) as i32;
+            centred_shadow(
                 cv,
-                v.fonts.regular.as_ref(),
+                v.fonts.semibold.as_ref(),
                 v.name,
                 w / 2,
-                field_y - 14,
-                14.0,
-                soft,
+                field_y - 16,
+                15.0,
+                white,
+                64,
             );
-            field(cv, v, w / 2, field_y, 280);
+            field(cv, v, w / 2, field_y, 260);
         }
         LockStyle::Classic => {
-            // Sharp Beach, only a light veil so the clock still reads.
-            cv.fill_rect(0, 0, w, h, Rgba::rgba(0, 0, 0, 40));
-            let clock_size = (h as f32 * 0.16).clamp(80.0, 156.0);
-            let clock_base = (h as f32 * 0.30) as i32;
-            let date_size = (clock_size * 0.20).clamp(16.0, 26.0);
-            let date_base = clock_base - (clock_size * 0.84) as i32;
-            centred(
+            // Sharp Beach with calibrated top/bottom edge scrims only.
+            classic_scrims(cv, w, h);
+            let clock_size = (h as f32 * 0.165).clamp(88.0, 160.0);
+            let clock_base = (h as f32 * 0.295) as i32;
+            let date_size = (clock_size * 0.185).clamp(18.0, 26.0);
+            let date_base = clock_base - (clock_size * 0.80) as i32;
+            centred_shadow(
                 cv,
-                v.fonts.regular.as_ref(),
+                v.fonts.semibold.as_ref(),
                 &v.date,
                 w / 2,
                 date_base,
                 date_size,
                 soft,
+                74,
             );
-            centred(
-                cv,
-                v.fonts.regular.as_ref(),
-                &v.clock,
-                w / 2,
-                clock_base,
-                clock_size,
-                white,
-            );
-            // Sign-in sits low, with the middle left empty.
-            let field_y = h - 116;
-            let name_base = field_y - 20;
-            let avatar_cy = name_base - 40;
-            avatar(cv, v, w / 2, avatar_cy, 32.0);
-            centred(
+            centred_display_clock(cv, v.fonts, &v.clock, w / 2, clock_base, clock_size);
+
+            // macOS-proportioned bottom sign-in anchor: sculpted avatar, clear
+            // vertical gap, bold username, frosted Liquid Glass password pill.
+            let field_y = h - 104;
+            let name_base = field_y - 18;
+            let avatar_r = 28.0;
+            let avatar_cy = name_base - avatar_r as i32 - 20;
+            avatar(cv, v, w / 2, avatar_cy, avatar_r);
+            centred_shadow(
                 cv,
                 v.fonts.semibold.as_ref(),
                 v.name,
@@ -760,50 +905,77 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
                 name_base,
                 16.0,
                 white,
+                82,
             );
-            field(cv, v, w / 2, field_y, 220);
+            field(cv, v, w / 2, field_y, 224);
         }
         LockStyle::Corner => {
             if v.card {
-                cv.fill_rect(0, 0, w, h, Rgba::rgba(0, 0, 0, 58));
-                let cy = h / 2 - 72;
-                avatar(cv, v, w / 2, cy, 48.0);
-                centred(
+                neutral_veil(cv, w, h);
+                let cy = h / 2 - 76;
+                avatar(cv, v, w / 2, cy, 46.0);
+                centred_shadow(
                     cv,
-                    v.fonts.semibold.as_ref(),
+                    v.fonts.bold.as_ref(),
                     v.name,
                     w / 2,
-                    cy + 84,
+                    cy + 78,
                     22.0,
                     white,
+                    72,
                 );
-                field(cv, v, w / 2, cy + 112, 260);
+                field(cv, v, w / 2, cy + 106, 260);
             } else {
-                // Shade only the lower corner, so the wallpaper stays sharp.
-                for i in 0..240 {
-                    let t = i as f32 / 240.0;
-                    let a = (t * t * 128.0) as u8;
-                    cv.fill_rect(0, h - 240 + i, w, 1, Rgba::rgba(0, 0, 0, a));
+                // Smooth quadratic shadow ramp only along the lower edge.
+                let ramp_h = 260.min(h);
+                for i in 0..ramp_h {
+                    let t = i as f32 / ramp_h as f32;
+                    let a = (t * t * 136.0) as u8;
+                    cv.fill_rect(0, h - ramp_h + i, w, 1, Rgba::rgba(0, 0, 0, a));
                 }
-                let size = (h as f32 * 0.12).clamp(76.0, 132.0);
+                let size = (h as f32 * 0.13).clamp(80.0, 136.0);
                 let left = 56;
-                let base = h - 168;
-                cv.text(v.fonts.regular.as_ref(), &v.clock, left, base, size, white);
-                cv.text(
-                    v.fonts.regular.as_ref(),
-                    &v.date,
+                let base = h - 156;
+                let tracking = -(size * 0.032).clamp(1.2, 4.4);
+                cv.text_tracked(
+                    v.fonts.bold.as_ref(),
+                    &v.clock,
                     left,
-                    base + 40,
-                    22.0,
-                    soft,
+                    base + 3,
+                    size,
+                    tracking,
+                    Rgba::rgba(0, 0, 0, 56),
                 );
-                cv.text(
-                    v.fonts.regular.as_ref(),
-                    "Press any key to sign in",
+                cv.text_tracked(
+                    v.fonts.bold.as_ref(),
+                    &v.clock,
                     left,
-                    base + 72,
+                    base,
+                    size,
+                    tracking,
+                    white,
+                );
+                cv.text_shadow(
+                    v.fonts.semibold.as_ref(),
+                    &v.date,
+                    left + 2,
+                    base + 38,
+                    21.0,
+                    0.0,
+                    soft,
+                    Rgba::rgba(0, 0, 0, 68),
+                    1,
+                );
+                cv.text_shadow(
+                    v.fonts.medium.as_ref(),
+                    "Press any key to sign in",
+                    left + 2,
+                    base + 66,
                     13.0,
-                    Rgba::rgba(255, 255, 255, 160),
+                    0.0,
+                    Rgba::rgba(255, 255, 255, 176),
+                    Rgba::rgba(0, 0, 0, 64),
+                    1,
                 );
             }
         }
@@ -820,108 +992,146 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
             };
 
             if let Some(label) = weather {
-                let size = 14.0;
+                let size = 13.5;
                 let tw = text_width(v.fonts.semibold.as_ref(), label, size);
-                let (pw, ph) = (tw + 28, 32);
-                let (px, py) = (w - pw - 28, 22);
-                glass_pill(cv, px, py, pw, ph, 16.0);
-                cv.text(
+                let (pw, ph) = (tw + 42, 34);
+                let (px, py) = (w - pw - 26, 20);
+                glass_pill(cv, px, py, pw, ph, 17.0);
+                cv.icon_sun(px as f32 + 16.0, py as f32 + ph as f32 / 2.0, white);
+                cv.text_shadow(
                     v.fonts.semibold.as_ref(),
                     label,
-                    px + 14,
-                    py + 21,
+                    px + 28,
+                    py + 22,
                     size,
+                    0.0,
                     white,
+                    Rgba::rgba(0, 0, 0, 52),
+                    1,
                 );
             }
 
-            // One capsule: now playing, or the nL mark when nothing is playing.
+            // Top-centre Live Activity capsule (pure hardware black when playing)
+            // or the clean white-on-black nL brand mark when silent.
             if let Some(line) = media_line.as_deref() {
-                let size = 13.0;
-                let side = if weather.is_some() { 120 } else { 36 };
-                let max_tw = (w - side * 2 - 52).clamp(100, 320);
-                let tw = text_width(v.fonts.semibold.as_ref(), line, size).min(max_tw);
-                let (pw, ph) = (tw + 46, 32);
+                let size = 12.6;
+                let side = if weather.is_some() { 130 } else { 36 };
+                let max_tw = (w - side * 2 - 76).clamp(110, 310);
+                let tw = text_width(v.fonts.medium.as_ref(), line, size).min(max_tw);
+                let (pw, ph) = (tw + 66, 36);
                 let px = (w - pw) / 2;
-                let py = 22;
-                glass_pill(cv, px, py, pw, ph, 16.0);
-                cv.icon_note(px as f32 + 16.0, py as f32 + 16.0, white);
+                let py = 18;
+                cv.round_rect_shadow(px, py, pw, ph, 18.0, 4.0, 10.0, 68);
+                cv.round_rect(px, py, pw, ph, 18.0, Rgba::rgb(0, 0, 0));
+                cv.round_rect_glass_rim(
+                    px,
+                    py,
+                    pw,
+                    ph,
+                    18.0,
+                    Rgba::rgba(255, 255, 255, 42),
+                    Rgba::rgba(255, 255, 255, 20),
+                    Rgba::rgba(255, 255, 255, 14),
+                );
+                cv.draw_album_art(px + 8, py + 8, 20, 6.0);
                 cv.text_truncated(
-                    v.fonts.semibold.as_ref(),
+                    v.fonts.medium.as_ref(),
                     line,
-                    px + 30,
-                    py + 21,
+                    px + 36,
+                    py + 23,
                     size,
                     max_tw,
                     white,
                 );
+                lock_media_bars(cv, px + pw - 24, py as f32 + ph as f32 / 2.0);
             } else {
                 let mh = 26;
                 let mw = crate::canvas::nl_mark_width(mh, v.fonts);
-                cv.mark_nl((w - mw) / 2, 24, mh, v.fonts);
+                cv.mark_nl((w - mw) / 2, 22, mh, v.fonts);
             }
 
-            // Huge clock, one secondary line (the date) above it.
-            let clock_size = (h as f32 * 0.20).clamp(96.0, 188.0);
-            let clock_base = (h as f32 * 0.38) as i32;
-            let date_size = (clock_size * 0.18).clamp(16.0, 28.0);
+            // Monumental SF-Pro-weighted Display Clock with tracked date above.
+            let clock_size = (h as f32 * 0.21).clamp(104.0, 192.0);
+            let clock_base = (h as f32 * 0.40) as i32;
+            let date_size = (clock_size * 0.14).clamp(16.0, 24.0);
             let date_base = clock_base - (clock_size * 0.78) as i32;
-            centred(
-                cv,
-                v.fonts.regular.as_ref(),
+            let date_tr = 1.6;
+            let dtw = text_width_tracked(v.fonts.semibold.as_ref(), &v.date, date_size, date_tr);
+            cv.text_tracked(
+                v.fonts.semibold.as_ref(),
                 &v.date,
-                w / 2,
+                w / 2 - dtw / 2,
+                date_base + 1,
+                date_size,
+                date_tr,
+                Rgba::rgba(0, 0, 0, 64),
+            );
+            cv.text_tracked(
+                v.fonts.semibold.as_ref(),
+                &v.date,
+                w / 2 - dtw / 2,
                 date_base,
                 date_size,
-                soft,
+                date_tr,
+                Rgba::rgba(255, 255, 255, 232),
             );
-            centred(
-                cv,
-                v.fonts.regular.as_ref(),
-                &v.clock,
-                w / 2,
-                clock_base,
-                clock_size,
-                white,
-            );
+            centred_display_clock(cv, v.fonts, &v.clock, w / 2, clock_base, clock_size);
 
             if v.agents_running > 0 {
                 let label = if v.agents_running == 1 {
-                    "1 agent".to_string()
+                    "1 agent active".to_string()
                 } else {
-                    format!("{} agents", v.agents_running)
+                    format!("{} agents active", v.agents_running)
                 };
-                let size = 12.0;
-                let tw = text_width(v.fonts.semibold.as_ref(), &label, size);
-                let (aw, ah) = (tw + 28, 28);
+                let size = 12.2;
+                let tw = text_width(v.fonts.medium.as_ref(), &label, size);
+                let (aw, ah) = (tw + 38, 30);
                 let ax = (w - aw) / 2;
-                let ay = clock_base + 16;
-                glass_pill(cv, ax, ay, aw, ah, 14.0);
-                centred(
-                    cv,
-                    v.fonts.semibold.as_ref(),
+                let ay = clock_base + 22;
+                glass_pill(cv, ax, ay, aw, ah, 15.0);
+                let dot_x = (ax + 15) as f32;
+                let dot_y = (ay + ah / 2) as f32;
+                cv.circle(
+                    dot_x,
+                    dot_y,
+                    5.2,
+                    Rgba::rgba(
+                        v.theme.agent_active.0,
+                        v.theme.agent_active.1,
+                        v.theme.agent_active.2,
+                        68,
+                    ),
+                );
+                cv.circle(dot_x, dot_y, 3.2, v.theme.agent_active);
+                cv.text_shadow(
+                    v.fonts.medium.as_ref(),
                     &label,
-                    w / 2,
+                    ax + 25,
                     ay + 19,
                     size,
+                    0.0,
                     white,
+                    Rgba::rgba(0, 0, 0, 48),
+                    1,
                 );
             }
 
-            let field_y = h - 112;
-            let name_base = field_y - 18;
-            let avatar_cy = name_base - 34;
-            avatar(cv, v, w / 2, avatar_cy, 26.0);
-            centred(
+            let field_y = h - 102;
+            let name_base = field_y - 16;
+            let avatar_r = 24.0;
+            let avatar_cy = name_base - avatar_r as i32 - 18;
+            avatar(cv, v, w / 2, avatar_cy, avatar_r);
+            centred_shadow(
                 cv,
-                v.fonts.regular.as_ref(),
+                v.fonts.semibold.as_ref(),
                 v.name,
                 w / 2,
                 name_base,
-                13.0,
-                soft,
+                14.5,
+                white,
+                68,
             );
-            field(cv, v, w / 2, field_y, 240);
+            field(cv, v, w / 2, field_y, 236);
         }
     }
 }

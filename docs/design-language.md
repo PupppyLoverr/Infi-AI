@@ -101,11 +101,11 @@ around the island is never blurred.
 | --- | --- | --- | --- |
 | **Solid** | opaque fill, faint rim | nothing | maximum legibility; the classic black notch |
 | **See-through** | light tint (alpha ~150), rim | nothing; the desktop stays sharp | minimal looks |
-| **Glass** (default bar, dock) | near-clear tint (alpha 44 dark / 60 light), soft rim, 1 px lit top edge | blur, saturation x1.5 | the macOS-like look |
-| **Acrylic** | tint mixed 22-30 % with the wallpaper's average colour (alpha ~190) | blur, saturation x1.15, grain 0.06 | the Windows-like look |
+| **Glass** (default bar, dock) | near-clear tint (alpha 18 dark / 42 light), continuous optical glass rim | blur, saturation x1.18 | the macOS-like look |
+| **Acrylic** | tint mixed 24-30 % with the wallpaper's average colour (alpha ~164-176) | blur, saturation x1.12, grain 0.05 | the Windows-like look |
 
 **Adaptive density.** See-through gets denser (alpha +70) when the wallpaper's
-lightness fights the text colour. Glass gets a smaller lift (alpha +52) so a
+lightness fights the text colour. Glass gets a calibrated lift (alpha +24) so a
 bright wallpaper still reads through the menu bar and dock: a bright wallpaper
 under light-on-dark text, or the reverse. This is the legibility guard that both
 Apple (Liquid Glass adapts to what is behind it) and Microsoft (Acrylic's
@@ -159,8 +159,8 @@ a glance: time, date, battery, network, running agents.
 `dock_style`: **Solyra** (floating card), **Floating** (macOS-like, optional
 magnification), **Taskbar** (Windows-like full-width bar: task view, start,
 a quiet search pill, centred apps, a grouped tray, clock) and **Minimal**
-(icons only). The floating card is 52 px tall, radius 18, with 40 px cells,
-a 5 px gap and 14 px padding, lifted 12 px off the bottom edge. Running apps
+(icons only). The floating card is 56 px tall, radius 19, with 42 px cells,
+a 7 px gap and 12 px padding, lifted 12 px off the bottom edge. Running apps
 carry a small dot; a hairline separates the trash. Auto-hide
 tucks the dock away 0.7 s after the pointer leaves; touching the bottom
 edge brings it back. One cell per app; a click focuses the latest window or
@@ -168,23 +168,25 @@ launches the app.
 
 ### 6.4 Launcher — **shipped**
 
-Spotlight glass card, centred, 18 px radius, 680×480. A 44 px search field
-sits at the top with a magnifying glass and the placeholder "Search or Ask".
-An empty query lists installed applications: the first row is Top Hit and the
-rest sit under Applications. A typed query shows the ranked groups
-(applications, open windows, commands, then an agent row) with the first
-result selected. Rows are 40 px, title over subtitle. `⏎` runs the selection,
-arrows move, `esc` dismisses. Lock and Log out are a quiet text footer.
-The card is glass (translucent fill, lit edge, compositor blur). Previews
-draw it on a soft dim; the live surface is the card.
+Spotlight glass card, centred, 20 px radius, 640×362. A 54 px integrated
+search header sits at the top with a magnifying glass and the placeholder
+"Spotlight Search". An empty query lists installed applications: the first
+row is Top Hit and the rest sit under Applications. A typed query shows the
+ranked groups (applications, open windows, commands, then an agent row) with
+the first result selected. Rows are 40 px, title over subtitle. `⏎` runs the
+selection, arrows move, `esc` dismisses. The footer carries quiet key hints
+only — no power chrome. The card is glass (translucent fill, optical rim,
+compositor blur). Previews draw it over blurred Beach; the live surface is
+the card.
 
 ### 6.11 Agent desk — **shipped**
 
-When `desktop_mode=agent`, a 360×420 glass card sits at the top right
-(`solyra-desk`). It shows the date and clock, the project (from
-`SOLYRA_PROJECT`, else `~/.config/solyra/project.txt`, else a calm
-placeholder), how many agents are running, and Cloud / Local / Worktree
-chips. A chip click stores `agent_env` in `shell.conf`. The agents overlay
+When `desktop_mode=agent`, a 360×392 Mica/glass widget board (radius 22) sits
+at the top right (`solyra-desk`). It shows the date and clock, a workspace
+sub-card (from `SOLYRA_PROJECT`, else `~/.config/solyra/project.txt`, else a
+calm placeholder), 2-column Bento tiles for running agents and target
+environment, and a full-width Cloud / Local / Worktree segmented control.
+Clicking a segment stores `agent_env` in `shell.conf`. The agents overlay
 reuses this card when it has nothing else to show.
 
 ### 6.5 Control centre — **planned**
