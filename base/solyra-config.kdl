@@ -146,7 +146,7 @@ layer-rule {
 
 layer-rule {
     match namespace=r#"^solyra-desk(\..+)?$"#
-    geometry-corner-radius 16
+    geometry-corner-radius 18
     shadow {
         on
         softness 40
@@ -186,7 +186,7 @@ layer-rule {
 
 layer-rule {
     match namespace="^solyra-launcher$"
-    geometry-corner-radius 22
+    geometry-corner-radius 18
     shadow {
         on
         softness 60

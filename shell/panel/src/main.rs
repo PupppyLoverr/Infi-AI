@@ -5,8 +5,8 @@
 //!   Dynamic Island, Search button, Status capsule, and clock.
 //! * **Dock** (`solyra-dock` / `solyra-taskbar`): all 3 variants live-switchable
 //!   (`solyra` hybrid default, `macos` Sequoia dock, `windows` Fluent taskbar).
-//! * **Launcher** (`solyra-launcher`): Spotlight + Start hybrid overlay with
-//!   real keyboard search, Pinned Apps grid, and session footer.
+//! * **Launcher** (`solyra-launcher`): Spotlight overlay. Search or Ask, Top Hit
+//!   and Applications, a quiet Lock / Log out footer.
 //! * **Control Centre** (`solyra-control`): quick toggles, sliders, live Dock
 //!   variant switcher, live Wallpaper switcher, and memory telemetry.
 //! * **Expanded Island** (`solyra-island`): activity popover.
@@ -1289,6 +1289,8 @@ impl App {
             .format(self.prefs.look.clock_format())
             .to_string();
         let date = chrono::Local::now().format("%a %-d %b").to_string().to_uppercase();
+        let project_lines = desk::project_lines();
+        let project_refs: Vec<&str> = project_lines.iter().map(String::as_str).collect();
         let view = AgentsView {
             runtime_present: agents_summary.runtime_present,
             tasks: &self.agent_tasks,
@@ -1301,6 +1303,11 @@ impl App {
             desk: self.prefs.look.desktop == solyra_conf::look::DesktopMode::Agent,
             clock: &clock,
             date: &date,
+            project_lines: &project_refs,
+            environment: self.prefs.agent_env,
+            agents_running: agents_summary
+                .runtime_present
+                .then_some(agents_summary.live),
         };
         overlay!(self.agents, |cv, hover| draw_agents(
             &mut cv,
@@ -1345,8 +1352,23 @@ impl App {
         let _ = conn.flush();
     }
 
-    /// Agent workspace: a floating card on the right with clock, project, environment.
+    /// Agent workspace: a glass card on the right with clock, project, and chips.
     fn draw_desk(&mut self, scale: u32, th: &Theme) {
+        let hover = self.desk.as_ref().and_then(|slot| {
+            if self.pointer_surface.as_ref() == Some(&slot.surface) {
+                Some(self.pointer_pos)
+            } else {
+                None
+            }
+        });
+        let tint = self.prefs.wall_tint;
+        let environment = self.prefs.agent_env;
+        let running = self
+            .agent_summary
+            .runtime_present
+            .then_some(self.agent_summary.live);
+        let project = desk::project_lines();
+        let project_refs: Vec<&str> = project.iter().map(String::as_str).collect();
         let Some(slot) = self.desk.as_mut() else {
             return;
         };
@@ -1366,22 +1388,34 @@ impl App {
         let local = chrono::Local::now();
         let clock = local.format(self.prefs.look.clock_format()).to_string();
         let date = local.format("%A %-d %B").to_string();
-        let _ = desk::paint(
+        let (_, _, hits) = desk::paint(
             &mut cv,
             th,
             &self.fonts,
             &desk::Glance {
                 clock: &clock,
                 date: &date,
-                project_lines: desk::PROJECT_PLACEHOLDER.as_slice(),
-                environment: 1,
+                project_lines: &project_refs,
+                environment,
+                agents_running: running,
             },
+            tint,
+            hover,
             0,
             0,
         );
-        slot.regions.clear();
+        slot.regions = hits
+            .into_iter()
+            .map(|t| Region {
+                x: t.x,
+                y: t.y,
+                w: t.w,
+                h: t.h,
+                action: HitAction::SetAgentEnv(t.environment),
+            })
+            .collect();
         let rects = if material::blurs(self.desk_material) {
-            material::blur_rects(0, 0, w as i32, h as i32, 16.0)
+            material::blur_rects(0, 0, w as i32, h as i32, desk::RADIUS)
         } else {
             Vec::new()
         };
@@ -1660,6 +1694,12 @@ impl App {
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
                     .spawn();
+            }
+            HitAction::SetAgentEnv(which) => {
+                if which < desk::ENVIRONMENTS.len() as u8 && which != self.prefs.agent_env {
+                    self.prefs.agent_env = which;
+                    self.save_prefs();
+                }
             }
             HitAction::SetBrightnessFromX { x0, w } => {
                 let pct = (((x - x0 as f64) / w.max(1) as f64) * 100.0)
@@ -2141,6 +2181,7 @@ impl LayerShellHandler for App {
             &mut self.agents,
             &mut self.island,
             &mut self.menu,
+            &mut self.desk,
         ] {
             if slot.as_ref().is_some_and(|s| &s.layer == layer) {
                 *slot = None;
@@ -2178,6 +2219,7 @@ impl LayerShellHandler for App {
             &mut self.agents,
             &mut self.island,
             &mut self.menu,
+            &mut self.desk,
         ] {
             if let Some(s) = slot.as_mut().filter(|s| &s.layer == layer) {
                 apply(s);

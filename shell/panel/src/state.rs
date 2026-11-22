@@ -260,6 +260,8 @@ pub struct ShellPrefs {
     /// The wallpaper's average colour (Acrylic's tint). Worked out by the
     /// panel when the wallpaper changes; not stored.
     pub wall_tint: Option<crate::tokens::Rgba>,
+    /// Agent desk environment: 0 Cloud, 1 Local, 2 Worktree (`agent_env`).
+    pub agent_env: u8,
 }
 
 impl Default for ShellPrefs {
@@ -275,7 +277,26 @@ impl Default for ShellPrefs {
             brightness: 84,
             look: solyra_conf::look::Look::default(),
             wall_tint: None,
+            agent_env: 1,
         }
+    }
+}
+
+/// `agent_env` in shell.conf: `cloud`, `local`, or `worktree`.
+pub fn parse_agent_env(raw: &str) -> Option<u8> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "cloud" | "0" => Some(0),
+        "local" | "1" => Some(1),
+        "worktree" | "2" => Some(2),
+        _ => None,
+    }
+}
+
+pub fn agent_env_name(which: u8) -> &'static str {
+    match which {
+        0 => "cloud",
+        2 => "worktree",
+        _ => "local",
     }
 }
 
@@ -354,6 +375,11 @@ impl ShellPrefs {
                         prefs.brightness = n.clamp(15, 100);
                     }
                 }
+                "agent_env" => {
+                    if let Some(n) = parse_agent_env(v) {
+                        prefs.agent_env = n;
+                    }
+                }
                 _ => {}
             }
         }
@@ -378,6 +404,7 @@ impl ShellPrefs {
             ("theme", Some(self.theme.as_str().into())),
             ("volume", Some(self.volume.to_string())),
             ("brightness", Some(self.brightness.to_string())),
+            ("agent_env", Some(agent_env_name(self.agent_env).into())),
         ];
         if let Err(err) = solyra_conf::update(&path, &pairs) {
             eprintln!("solyra-panel: cannot save {}: {err}", path.display());
@@ -1279,6 +1306,18 @@ mod tests {
             matches!(parse_cmd_line("notify hi there"), Some(ShellCmd::Notify(t)) if t == "hi there")
         );
         assert!(parse_cmd_line("rm -rf /").is_none());
+    }
+
+    #[test]
+    fn agent_env_names_round_trip() {
+        assert_eq!(parse_agent_env("cloud"), Some(0));
+        assert_eq!(parse_agent_env("Local"), Some(1));
+        assert_eq!(parse_agent_env("worktree"), Some(2));
+        assert_eq!(parse_agent_env("nope"), None);
+        assert_eq!(agent_env_name(0), "cloud");
+        assert_eq!(agent_env_name(2), "worktree");
+        assert_eq!(agent_env_name(9), "local");
+        assert_eq!(ShellPrefs::default().agent_env, 1);
     }
 
     #[test]

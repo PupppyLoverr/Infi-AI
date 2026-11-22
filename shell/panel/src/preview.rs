@@ -214,9 +214,48 @@ fn launcher_shot(
         win(2, "firefox", "Release notes", false),
     ];
     let items = launcher::search(query, cat, &wins, runtime);
-    shoot(name, kind, LAUNCHER_W, LAUNCHER_H, |cv, th| {
+    let pad = 40u32;
+    let (cw, ch) = (LAUNCHER_W, LAUNCHER_H);
+    let (sw, sh) = (cw + pad * 2, ch + pad * 2);
+    let mut card_buf = vec![0u8; (cw * ch * 4) as usize];
+    {
+        let th = Theme::for_kind(kind);
+        let mut cv = Canvas::new(&mut card_buf, cw, ch, 1);
         let mut icons = HashMap::new();
-        draw_launcher(cv, th, fonts, query, &items, selected, &mut icons, None);
+        draw_launcher(&mut cv, &th, fonts, query, &items, selected, &mut icons, None);
+    }
+    let backdrop = match kind {
+        ThemeKind::Dark => Rgba::rgb(0x2b, 0x1d, 0x4a),
+        ThemeKind::Light => Rgba::rgb(0xc9, 0xc3, 0xdd),
+    };
+    let dim = |c: u8| ((c as f32) * 0.58).round() as u8;
+    let dimmed = Rgba::rgb(dim(backdrop.0), dim(backdrop.1), dim(backdrop.2));
+    let card = flatten(&card_buf, cw, ch, dimmed);
+    let mut rgba = vec![0u8; (sw * sh * 4) as usize];
+    for px in rgba.chunks_exact_mut(4) {
+        px.copy_from_slice(&[dimmed.0, dimmed.1, dimmed.2, 255]);
+    }
+    for y in 0..ch {
+        let src = (y * cw * 4) as usize;
+        let dst = ((y + pad) * sw + pad) as usize * 4;
+        let n = (cw * 4) as usize;
+        rgba[dst..dst + n].copy_from_slice(&card[src..src + n]);
+    }
+    Shot { name: format!("{name}-{}", kind.as_str()), w: sw, h: sh, rgba }
+}
+
+fn desk_shot(name: &str, kind: ThemeKind, fonts: &Fonts, named: bool) -> Shot {
+    use crate::desk::{self, Glance};
+    let named_lines = ["Infi-AI", "shell/panel"];
+    let lines: &[&str] = if named { &named_lines } else { &desk::PROJECT_PLACEHOLDER };
+    shoot(name, kind, desk::W as u32, desk::H as u32, |cv, th| {
+        desk::paint(cv, th, fonts, &Glance {
+            clock: "09:41",
+            date: "Tuesday 17 November",
+            project_lines: lines,
+            environment: 1,
+            agents_running: if named { Some(2) } else { None },
+        }, None, None, 0, 0);
     })
 }
 
@@ -302,6 +341,8 @@ fn render_all() -> Vec<Shot> {
             &fonts,
             &cat,
         ));
+        shots.push(desk_shot("desk-project", kind, &fonts, true));
+        shots.push(desk_shot("desk-placeholder", kind, &fonts, false));
 
         let mut prefs = ShellPrefs::default();
         prefs.theme = kind;
@@ -344,6 +385,9 @@ fn render_all() -> Vec<Shot> {
                 desk: true,
                 clock: "09:41",
                 date: "TUE 17 NOV",
+                project_lines: &[],
+                environment: 1,
+                agents_running: None,
             };
                 draw_agents(cv, th, &fonts, &v, None);
             },
@@ -361,6 +405,9 @@ fn render_all() -> Vec<Shot> {
                 desk: false,
                 clock: "09:41",
                 date: "TUE 17 NOV",
+                project_lines: &[],
+                environment: 1,
+                agents_running: None,
             };
             draw_agents(cv, th, &fonts, &v, None);
         }));
@@ -382,6 +429,9 @@ fn render_all() -> Vec<Shot> {
                 desk: false,
                 clock: "09:41",
                 date: "TUE 17 NOV",
+                project_lines: &[],
+                environment: 1,
+                agents_running: None,
             };
                 draw_agents(cv, th, &fonts, &v, None);
             },
@@ -404,6 +454,9 @@ fn render_all() -> Vec<Shot> {
                 desk: false,
                 clock: "09:41",
                 date: "TUE 17 NOV",
+                project_lines: &[],
+                environment: 1,
+                agents_running: None,
             };
                 draw_agents(cv, th, &fonts, &v, None);
             },
@@ -434,6 +487,9 @@ fn render_all() -> Vec<Shot> {
                 desk: false,
                 clock: "09:41",
                 date: "TUE 17 NOV",
+                project_lines: &[],
+                environment: 1,
+                agents_running: None,
             };
                 draw_agents(cv, th, &fonts, &v, None);
             },
@@ -457,6 +513,9 @@ fn render_all() -> Vec<Shot> {
                 desk: false,
                 clock: "09:41",
                 date: "TUE 17 NOV",
+                project_lines: &[],
+                environment: 1,
+                agents_running: None,
             };
                 draw_agents(cv, th, &fonts, &v, None);
             }));
@@ -486,6 +545,9 @@ fn render_all() -> Vec<Shot> {
                 desk: false,
                 clock: "09:41",
                 date: "TUE 17 NOV",
+                project_lines: &[],
+                environment: 1,
+                agents_running: None,
             };
                 draw_agents(cv, th, &fonts, &v, None);
             }));

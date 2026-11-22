@@ -21,12 +21,13 @@ pub enum Kind {
 }
 
 impl Kind {
+    /// Section title in the Spotlight list. Title case, the way a menu labels a group.
     pub fn heading(self) -> &'static str {
         match self {
-            Self::Application => "APPLICATIONS",
-            Self::Window => "OPEN WINDOWS",
-            Self::Command => "COMMANDS",
-            Self::Agent => "AGENT",
+            Self::Application => "Applications",
+            Self::Window => "Open Windows",
+            Self::Command => "Commands",
+            Self::Agent => "Agent",
         }
     }
 }
@@ -59,8 +60,12 @@ impl Item {
 }
 
 const MAX_APPS: usize = 4;
+/// Empty query: Top Hit plus a short Applications list, not a wall of apps.
+const EMPTY_APPS: usize = 5;
 const MAX_WINDOWS: usize = 3;
 const MAX_COMMANDS: usize = 3;
+/// A couple of shell actions under the apps when the field is still empty.
+const EMPTY_COMMANDS: usize = 2;
 /// Fuzzy (subsequence) matching only kicks in this far into a query; below it
 /// a stray two-letter query would match nearly everything.
 const FUZZY_MIN_LEN: usize = 3;
@@ -142,8 +147,8 @@ fn ranked<T>(
 
 /// Build the ordered result list for `query`.
 ///
-/// * Empty query: pinned-style applications, then a few commands. No windows
-///   and no agent row; there is nothing to act on yet.
+/// * Empty query: applications (Top Hit, then Applications) and a few commands.
+///   No windows and no agent row; there is nothing to act on yet.
 /// * Otherwise: Applications, Open windows, Commands, then the Agent row.
 pub fn search(
     query: &str,
@@ -160,7 +165,7 @@ pub fn search(
             .filter(|a| !is_command(a))
             .filter_map(|a| score(q, &a.title, &a.app_id, &a.subtitle).map(|s| (s, a))),
         |a| a.title.as_str(),
-        MAX_APPS,
+        if q.is_empty() { EMPTY_APPS } else { MAX_APPS },
     );
     out.extend(apps.into_iter().map(item_from_app));
 
@@ -194,7 +199,7 @@ pub fn search(
             .filter(|a| is_command(a))
             .filter_map(|a| score(q, &a.title, &a.app_id, &a.subtitle).map(|s| (s, a))),
         |a| a.title.as_str(),
-        if q.is_empty() { 4 } else { MAX_COMMANDS },
+        if q.is_empty() { EMPTY_COMMANDS } else { MAX_COMMANDS },
     );
     out.extend(commands.into_iter().map(item_from_app));
 
@@ -229,37 +234,62 @@ pub fn has_direct_match(items: &[Item]) -> bool {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Row {
     pub index: usize,
-    pub heading: Option<Kind>,
+    /// Section title drawn above this row, when it starts a group.
+    pub heading: Option<&'static str>,
 }
 
 pub const HEADING_H: i32 = 22;
 pub const ROW_H: i32 = 40;
 
-/// Rows that fit in `avail_h` starting at item `first`.
-pub fn rows_from(items: &[Item], first: usize, avail_h: i32) -> Vec<Row> {
+fn section_label(items: &[Item], index: usize, first: usize, spotlight: bool) -> Option<&'static str> {
+    let kind = items[index].kind;
+    // The best match stands alone as Top Hit. The rest of its group keeps the
+    // normal section title on the following row.
+    if spotlight && index == 0 && kind != Kind::Agent {
+        return Some("Top Hit");
+    }
+    let new_group = index == first || items[index - 1].kind != kind;
+    if new_group {
+        return Some(kind.heading());
+    }
+    if spotlight && kind != Kind::Agent && items.first().is_some_and(|i| i.kind == kind) {
+        let rest = (1..items.len()).find(|&i| items[i].kind == kind);
+        if rest == Some(index) {
+            return Some(kind.heading());
+        }
+    }
+    None
+}
+
+fn rows_with(items: &[Item], first: usize, avail_h: i32, spotlight: bool) -> Vec<Row> {
     let mut rows = Vec::new();
     let mut used = 0;
-    for (index, item) in items.iter().enumerate().skip(first) {
-        let starts_group = index == first || items[index - 1].kind != item.kind;
-        let need = ROW_H + if starts_group { HEADING_H } else { 0 };
+    for (index, _) in items.iter().enumerate().skip(first) {
+        let heading = section_label(items, index, first, spotlight);
+        let need = ROW_H + if heading.is_some() { HEADING_H } else { 0 };
         if used + need > avail_h {
             break;
         }
         used += need;
-        rows.push(Row {
-            index,
-            heading: starts_group.then_some(item.kind),
-        });
+        rows.push(Row { index, heading });
     }
     rows
 }
 
-/// Smallest `first` that keeps `selected` fully visible. Deterministic, so the
-/// list needs no scroll state of its own.
-pub fn first_visible(items: &[Item], selected: usize, avail_h: i32) -> usize {
+/// Rows that fit in `avail_h` starting at item `first`.
+pub fn rows_from(items: &[Item], first: usize, avail_h: i32) -> Vec<Row> {
+    rows_with(items, first, avail_h, false)
+}
+
+/// Same list as [`rows_from`], with the first direct match labelled Top Hit.
+pub fn spotlight_rows(items: &[Item], first: usize, avail_h: i32) -> Vec<Row> {
+    rows_with(items, first, avail_h, true)
+}
+
+fn first_with(items: &[Item], selected: usize, avail_h: i32, spotlight: bool) -> usize {
     let selected = selected.min(items.len().saturating_sub(1));
     for first in 0..=selected {
-        if rows_from(items, first, avail_h)
+        if rows_with(items, first, avail_h, spotlight)
             .iter()
             .any(|r| r.index == selected)
         {
@@ -267,6 +297,17 @@ pub fn first_visible(items: &[Item], selected: usize, avail_h: i32) -> usize {
         }
     }
     selected
+}
+
+/// Smallest `first` that keeps `selected` fully visible. Deterministic, so the
+/// list needs no scroll state of its own.
+pub fn first_visible(items: &[Item], selected: usize, avail_h: i32) -> usize {
+    first_with(items, selected, avail_h, false)
+}
+
+/// [`first_visible`] for the Spotlight section layout.
+pub fn spotlight_first(items: &[Item], selected: usize, avail_h: i32) -> usize {
+    first_with(items, selected, avail_h, true)
 }
 
 #[cfg(test)]
@@ -463,11 +504,27 @@ mod tests {
             );
             assert_eq!(
                 rows[0].heading,
-                Some(items[first].kind),
+                Some(items[first].kind.heading()),
                 "first row carries its heading"
             );
         }
         assert_eq!(first_visible(&items, 0, avail), 0);
+    }
+
+    #[test]
+    fn empty_query_leads_with_top_hit_then_applications() {
+        let items = search("", &catalog(), &[], false);
+        assert!(items.iter().any(|i| i.kind == Kind::Application));
+        let rows = spotlight_rows(&items, 0, 480);
+        assert_eq!(rows[0].heading, Some("Top Hit"));
+        assert_eq!(rows[0].index, 0);
+        assert!(
+            rows.iter().any(|r| r.heading == Some("Applications")),
+            "remaining apps keep their section: {rows:?}"
+        );
+        let first = spotlight_first(&items, items.len() - 1, HEADING_H + 2 * ROW_H);
+        let visible = spotlight_rows(&items, first, HEADING_H + 2 * ROW_H);
+        assert!(visible.iter().any(|r| r.index == items.len() - 1));
     }
 
     #[test]

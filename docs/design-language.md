@@ -166,12 +166,26 @@ tucks the dock away 0.7 s after the pointer leaves; touching the bottom
 edge brings it back. One cell per app; a click focuses the latest window or
 launches the app.
 
-### 6.4 Launcher — **planned**
+### 6.4 Launcher — **shipped**
 
-A Solyra surface replacing Fuzzel. Centred card, 16 radius, 640 wide, type-first:
-input row, then results (icon, name, subtitle). The first result is selected;
-`⏎` launches, `esc` dismisses, arrows move. No grid, no "all apps" wall — search
-is the interface.
+Spotlight glass card, centred, 18 px radius, 680×480. A 44 px search field
+sits at the top with a magnifying glass and the placeholder "Search or Ask".
+An empty query lists installed applications: the first row is Top Hit and the
+rest sit under Applications. A typed query shows the ranked groups
+(applications, open windows, commands, then an agent row) with the first
+result selected. Rows are 40 px, title over subtitle. `⏎` runs the selection,
+arrows move, `esc` dismisses. Lock and Log out are a quiet text footer.
+The card is glass (translucent fill, lit edge, compositor blur). Previews
+draw it on a soft dim; the live surface is the card.
+
+### 6.11 Agent desk — **shipped**
+
+When `desktop_mode=agent`, a 360×420 glass card sits at the top right
+(`solyra-desk`). It shows the date and clock, the project (from
+`SOLYRA_PROJECT`, else `~/.config/solyra/project.txt`, else a calm
+placeholder), how many agents are running, and Cloud / Local / Worktree
+chips. A chip click stores `agent_env` in `shell.conf`. The agents overlay
+reuses this card when it has nothing else to show.
 
 ### 6.5 Control centre — **planned**
 
@@ -280,6 +294,6 @@ every duration to zero.
 
 | Surface | State |
 | --- | --- |
-| Menu bar, notch / island, four docks, materials, lock screen, launcher, control centre, notifications, agent tasks and approvals | **shipped**, verified by unit tests and rendered previews; not yet run on a live session by a person |
+| Menu bar, notch / island, four docks, materials, lock screen, launcher, agent desk, control centre, notifications, agent tasks and approvals | **shipped**, verified by unit tests and rendered previews; not yet run on a live session by a person |
 | zgx apps (Settings, Terminal, Browse, Setup) | **shipped**, screenshotted under headless weston in CI |
 | Snap zones (niri is a scrolling tiler; presets instead), screen readers in the shell, fractional scaling | not done |

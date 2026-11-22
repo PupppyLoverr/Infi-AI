@@ -20,8 +20,8 @@ use crate::tokens::{
 pub const BAR_HEIGHT: u32 = 26;
 pub const NOTCH_WIDTH: i32 = 184;
 
-pub const LAUNCHER_W: u32 = 640;
-pub const LAUNCHER_H: u32 = 436;
+pub const LAUNCHER_W: u32 = 680;
+pub const LAUNCHER_H: u32 = 480;
 
 pub const CONTROL_W: u32 = 348;
 pub const CONTROL_H: u32 = 436;
@@ -90,6 +90,8 @@ pub enum HitAction {
     ArmMenuItem(usize),
     /// Play/pause, next or previous on the playing media player.
     Media(crate::media::Control),
+    /// Agent desk: 0 Cloud, 1 Local, 2 Worktree. Persisted as `agent_env`.
+    SetAgentEnv(u8),
 }
 
 // ----------------------------------------------------------------- Top Bar
@@ -448,9 +450,13 @@ fn hovered(hover: Option<(f64, f64)>, x: i32, y: i32, w: i32, h: i32) -> bool {
     })
 }
 
+/// Spotlight card: 18 px glass, a tall search field, a quiet footer.
+const LAUNCHER_R: f32 = 18.0;
+const SEARCH_Y: i32 = 16;
+const SEARCH_H: i32 = 44;
 /// Top of the result list and the space reserved under it for the footer.
-const LIST_TOP: i32 = 74;
-const FOOTER_H: i32 = 50;
+const LIST_TOP: i32 = 76;
+const FOOTER_H: i32 = 40;
 
 pub fn launcher_list_height() -> i32 {
     LAUNCHER_H as i32 - LIST_TOP - FOOTER_H
@@ -458,10 +464,10 @@ pub fn launcher_list_height() -> i32 {
 
 fn row_verb(item: &LauncherItem) -> &'static str {
     match item.kind {
-        LauncherKind::Application => "Open ⏎",
-        LauncherKind::Window => "Switch ⏎",
-        LauncherKind::Command => "Run ⏎",
-        LauncherKind::Agent => "Queue ⏎",
+        LauncherKind::Application => "Open",
+        LauncherKind::Window => "Switch",
+        LauncherKind::Command => "Run",
+        LauncherKind::Agent => "Queue",
     }
 }
 
@@ -480,34 +486,53 @@ pub fn draw_launcher(
     let h = cv.height as i32;
     let mut regions = Vec::new();
 
-    card(cv, th, 0, 0, w, h, R_OVERLAY);
+    let slab = crate::material::slab(crate::material::Material::Glass, th.surface, None);
+    crate::material::paint(cv, &slab, 0, 0, w, h, LAUNCHER_R);
 
-    // Search field.
-    cv.round_rect(18, 16, w - 36, 48, R_TILE, th.field);
-    cv.stroke_round_rect(18, 16, w - 36, 48, R_TILE, 1.0, th.selected_border);
-    cv.icon_search(42.0, 40.0, 16.0, th.accent);
+    // Search field. The caret sits in front of the hint, as in a real field.
+    let field_x = 16;
+    let field_w = w - 32;
+    cv.round_rect(field_x, SEARCH_Y, field_w, SEARCH_H, 12.0, th.field);
+    cv.stroke_round_rect(field_x, SEARCH_Y, field_w, SEARCH_H, 12.0, 1.0, th.hairline);
+    cv.icon_search(38.0, (SEARCH_Y + SEARCH_H / 2) as f32, 16.0, th.text_med);
+    let text_x = 56;
+    let esc_w = 36;
     if query.is_empty() {
+        cv.fill_rect(text_x, SEARCH_Y + 13, 2, 18, th.accent);
         cv.text(
             fonts.regular.as_ref(),
-            "Search apps, windows and commands",
-            62,
-            45,
-            14.0,
+            "Search or Ask",
+            text_x + 8,
+            SEARCH_Y + 28,
+            16.0,
             th.text_dim,
         );
-        cv.fill_rect(62, 30, 2, 20, th.accent);
     } else {
-        let max_w = w - 62 - 90;
-        let qw = cv.text_truncated(fonts.regular.as_ref(), query, 62, 45, 14.5, max_w, th.text);
-        cv.fill_rect(64 + qw, 30, 2, 20, th.accent);
+        let max_w = field_w - (text_x - field_x) - esc_w - 16;
+        let qw = cv.text_truncated(
+            fonts.regular.as_ref(),
+            query,
+            text_x,
+            SEARCH_Y + 28,
+            16.0,
+            max_w,
+            th.text,
+        );
+        cv.fill_rect(text_x + qw + 2, SEARCH_Y + 13, 2, 18, th.accent);
     }
-    cv.round_rect(w - 68, 28, 38, 24, 6.0, th.tile);
-    cv.text(fonts.mono.as_ref(), "esc", w - 59, 44, 11.0, th.text_dim);
+    cv.text(
+        fonts.mono.as_ref(),
+        "esc",
+        w - 16 - esc_w + 6,
+        SEARCH_Y + 28,
+        11.0,
+        th.text_dim,
+    );
     regions.push(Region {
-        x: w - 68,
-        y: 28,
-        w: 38,
-        h: 24,
+        x: w - 16 - esc_w,
+        y: SEARCH_Y + 8,
+        w: esc_w,
+        h: SEARCH_H - 16,
         action: HitAction::Shell(ShellCmd::CloseOverlays),
     });
 
@@ -517,8 +542,8 @@ pub fn draw_launcher(
     if items.is_empty() {
         let (title, body) = if query.trim().is_empty() {
             (
-                "Nothing to show",
-                "No applications were found on this system.".to_string(),
+                "Search or Ask",
+                "Applications appear here once they are installed.".to_string(),
             )
         } else {
             (
@@ -549,16 +574,16 @@ pub fn draw_launcher(
         }
     } else {
         let sel = selected.min(items.len() - 1);
-        let first = launcher::first_visible(items, sel, list_h);
+        let first = launcher::spotlight_first(items, sel, list_h);
         let mut y = LIST_TOP;
-        for row in launcher::rows_from(items, first, list_h) {
-            if let Some(kind) = row.heading {
+        for row in launcher::spotlight_rows(items, first, list_h) {
+            if let Some(label) = row.heading {
                 cv.text(
                     fonts.semibold.as_ref(),
-                    kind.heading(),
+                    label,
                     24,
-                    y + 15,
-                    T_CAPTION,
+                    y + 16,
+                    11.5,
                     th.text_dim,
                 );
                 y += launcher::HEADING_H;
@@ -573,6 +598,7 @@ pub fn draw_launcher(
                 y,
                 &items[row.index],
                 row.index == sel,
+                row.index == 0,
                 hover,
             );
             y += launcher::ROW_H;
@@ -593,52 +619,58 @@ pub fn draw_launcher(
         }
     }
 
-    // Footer: key hints on the left, session actions on the right.
+    // Quiet footer: key hints, then Lock and Log out as text, not Start tiles.
     let fy = h - FOOTER_H;
-    cv.fill_rect(18, fy, w - 36, 1, th.separator);
+    cv.fill_rect(20, fy, w - 40, 1, th.separator);
     cv.text(
-        fonts.mono.as_ref(),
-        "↑↓ move   ⏎ run   esc close",
-        24,
-        fy + 29,
-        11.0,
+        fonts.regular.as_ref(),
+        "↑↓    ⏎    esc",
+        22,
+        fy + 25,
+        12.0,
         th.text_dim,
     );
 
-    cv.round_rect(w - 150, fy + 10, 56, 30, R_CONTROL, th.tile);
-    cv.icon_lock((w - 138) as f32, (fy + 25) as f32, th.text_med);
+    let lock = "Lock";
+    let logout = "Log out";
+    let label_size = 12.5;
+    let logout_w = text_width(fonts.regular.as_ref(), logout, label_size);
+    let lock_w = text_width(fonts.regular.as_ref(), lock, label_size);
+    let logout_x = w - 22 - logout_w;
+    let lock_x = logout_x - 36 - lock_w;
+    let icon_cy = (fy + 20) as f32;
+    cv.icon_lock((lock_x - 16) as f32, icon_cy, th.text_dim);
     cv.text(
         fonts.regular.as_ref(),
-        "Lock",
-        w - 126,
-        fy + 29,
-        T_META,
-        th.text_med,
+        lock,
+        lock_x,
+        fy + 25,
+        label_size,
+        th.text_dim,
     );
     regions.push(Region {
-        x: w - 150,
-        y: fy + 10,
-        w: 56,
-        h: 30,
+        x: lock_x - 22,
+        y: fy + 6,
+        w: lock_w + 26,
+        h: 28,
         action: HitAction::Launch(LaunchTarget::Shell("swaylock".into())),
     });
 
-    cv.round_rect(w - 88, fy + 10, 68, 30, R_CONTROL, th.tile);
-    cv.icon_power((w - 76) as f32, (fy + 25) as f32, th.danger);
+    cv.icon_power((logout_x - 16) as f32, icon_cy, th.text_dim);
     cv.text(
         fonts.regular.as_ref(),
-        "Log out",
-        w - 64,
-        fy + 29,
-        T_META,
-        th.text_med,
+        logout,
+        logout_x,
+        fy + 25,
+        label_size,
+        th.text_dim,
     );
-    // niri asks for confirmation itself; we do not skip it.
+    // The compositor asks for confirmation itself; we do not skip it.
     regions.push(Region {
-        x: w - 88,
-        y: fy + 10,
-        w: 68,
-        h: 30,
+        x: logout_x - 22,
+        y: fy + 6,
+        w: logout_w + 28,
+        h: 28,
         action: HitAction::Launch(LaunchTarget::Ipc(
             "{\"Action\":{\"Quit\":{\"skip_confirmation\":false}}}",
         )),
@@ -658,9 +690,10 @@ fn draw_launcher_row(
     y: i32,
     item: &LauncherItem,
     selected: bool,
+    prominent: bool,
     hover: Option<(f64, f64)>,
 ) {
-    let (rx, rw, rh) = (16, w - 32, launcher::ROW_H - 2);
+    let (rx, rw, rh) = (12, w - 24, launcher::ROW_H - 4);
     let runnable = item.is_runnable();
     if selected {
         cv.round_rect(rx, y, rw, rh, R_ROW, th.selected_fill);
@@ -670,45 +703,60 @@ fn draw_launcher_row(
     }
 
     let sys_ic = load_app_icon(icons, &item.app_id);
-    cv.draw_app_squircle(rx + 8, y + 4, 28, &item.role, sys_ic, fonts);
+    let icon = if prominent { 30 } else { 28 };
+    cv.draw_app_squircle(rx + 8, y + (rh - icon) / 2, icon, &item.role, sys_ic, fonts);
     let title_col = if runnable { th.text } else { th.text_dim };
-    let badge_w = if selected { 72 } else { 0 };
-    let text_w = rw - 52 - badge_w - 8;
-    let tw = cv.text_truncated(
-        fonts.semibold.as_ref(),
-        &item.title,
-        rx + 44,
-        y + 17,
-        T_BODY,
-        text_w,
-        title_col,
-    );
-    let _ = tw;
-    cv.text_truncated(
-        fonts.regular.as_ref(),
-        &item.subtitle,
-        rx + 44,
-        y + 32,
-        T_META,
-        text_w,
-        th.text_dim,
-    );
-
-    if selected {
-        let label = if runnable {
+    let verb = if selected {
+        if runnable {
             row_verb(item)
         } else {
             "Unavailable"
-        };
-        let bw = if runnable { 64 } else { 84 };
-        cv.round_rect(rx + rw - bw - 8, y + 8, bw, 22, 6.0, th.tile_hover);
+        }
+    } else {
+        ""
+    };
+    let badge_w = if verb.is_empty() {
+        0
+    } else {
+        text_width(fonts.regular.as_ref(), verb, 12.0) + 8
+    };
+    let text_x = rx + 8 + icon + 10;
+    let text_w = rw - (text_x - rx) - badge_w - 12;
+    let title_size = if prominent { 15.5 } else { 14.0 };
+    let (title_y, sub_y) = if item.subtitle.is_empty() {
+        (y + rh / 2 + 5, 0)
+    } else {
+        (y + 16, y + 32)
+    };
+    cv.text_truncated(
+        fonts.semibold.as_ref(),
+        &item.title,
+        text_x,
+        title_y,
+        title_size,
+        text_w,
+        title_col,
+    );
+    if !item.subtitle.is_empty() {
+        cv.text_truncated(
+            fonts.regular.as_ref(),
+            &item.subtitle,
+            text_x,
+            sub_y,
+            12.0,
+            text_w,
+            th.text_dim,
+        );
+    }
+
+    if selected {
         cv.text(
-            fonts.mono.as_ref(),
-            label,
-            rx + rw - bw - 2,
-            y + 23,
-            10.8,
-            th.text,
+            fonts.regular.as_ref(),
+            verb,
+            rx + rw - badge_w - 4,
+            y + rh / 2 + 4,
+            12.0,
+            th.text_med,
         );
     }
 
@@ -1181,6 +1229,12 @@ pub struct AgentsView<'a> {
     pub desk: bool,
     pub clock: &'a str,
     pub date: &'a str,
+    /// Project lines for the desk card. Empty falls back to the placeholder.
+    pub project_lines: &'a [&'a str],
+    /// 0 Cloud, 1 Local, 2 Worktree.
+    pub environment: u8,
+    /// `None` when no agent runtime is connected.
+    pub agents_running: Option<usize>,
 }
 
 fn status_glyph(cv: &mut Canvas<'_>, th: &Theme, status: Status, cx: f32, cy: f32) {
@@ -1271,6 +1325,42 @@ pub fn draw_agents(
     cv.fill_rect(18, 66, w - 36, 1, th.separator);
 
     if !view.runtime_present || view.tasks.is_empty() {
+        if view.desk {
+            // The empty agents overlay is the desk, not a second stub under the prose.
+            let placeholder: &[&str] = &crate::desk::PROJECT_PLACEHOLDER;
+            let lines = if view.project_lines.is_empty() {
+                placeholder
+            } else {
+                view.project_lines
+            };
+            let dx = ((w - crate::desk::W) / 2).max(8);
+            let (_, _, hits) = crate::desk::paint(
+                cv,
+                th,
+                fonts,
+                &crate::desk::Glance {
+                    clock: view.clock,
+                    date: view.date,
+                    project_lines: lines,
+                    environment: view.environment,
+                    agents_running: view.agents_running,
+                },
+                None,
+                hover,
+                dx,
+                78,
+            );
+            for t in hits {
+                regions.push(Region {
+                    x: t.x,
+                    y: t.y,
+                    w: t.w,
+                    h: t.h,
+                    action: HitAction::SetAgentEnv(t.environment),
+                });
+            }
+            return regions;
+        }
         let (title, lines): (&str, Vec<String>) = if !view.runtime_present {
             (
                 "No agent runtime is connected",
@@ -1296,21 +1386,6 @@ pub fn draw_agents(
                 y += 18;
             }
             y += 4;
-        }
-        if view.desk {
-            let _ = crate::desk::paint(
-                cv,
-                th,
-                fonts,
-                &crate::desk::Glance {
-                    clock: view.clock,
-                    date: view.date,
-                    project_lines: crate::desk::PROJECT_PLACEHOLDER.as_slice(),
-                    environment: 1,
-                },
-                22,
-                y + 12,
-            );
         }
         return regions;
     }
