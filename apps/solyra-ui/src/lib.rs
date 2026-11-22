@@ -41,7 +41,7 @@ impl Style {
     pub fn from_conf(conf: &str) -> Self {
         let kind = theme_kind_from(conf);
         let look = Look::from_conf(conf);
-        let accent = Accent::parse(&look.accent).unwrap_or(Accent::Mauve);
+        let accent = Accent::parse(&look.accent).unwrap_or(Accent::Blue);
         let glass = !look.opaque && flag(conf, "app_glass", true);
         Self {
             theme: Theme::with(kind, accent),

@@ -81,24 +81,24 @@ pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
             highlight: None,
         },
         Material::Clear => Slab {
-            fill: with_alpha(base, boost(if dark { 150 } else { 140 })),
-            edge: rim(if dark { 30 } else { 24 }),
+            fill: with_alpha(base, boost(if dark { 110 } else { 120 })),
+            edge: rim(if dark { 36 } else { 28 }),
             highlight: None,
         },
+        // Liquid Glass–like: light tint, strong lit rim, wallpaper reads through.
         Material::Glass => Slab {
-            fill: with_alpha(base, boost(if dark { 120 } else { 130 })),
-            edge: rim(if dark { 40 } else { 30 }),
-            highlight: Some(Rgba::rgba(255, 255, 255, if dark { 46 } else { 170 })),
+            fill: with_alpha(base, boost(if dark { 88 } else { 108 })),
+            edge: rim(if dark { 52 } else { 36 }),
+            highlight: Some(Rgba::rgba(255, 255, 255, if dark { 72 } else { 190 })),
         },
         Material::Acrylic => {
-            // Windows-style: a luminosity layer of the theme colour with the
-            // wallpaper's hue mixed in; fairly dense so text always reads.
+            // Windows Acrylic: wallpaper hue + denser fill + soft rim.
             let hue = tint.unwrap_or(base);
-            let toward = if dark { 0.30 } else { 0.22 };
+            let toward = if dark { 0.34 } else { 0.26 };
             Slab {
-                fill: with_alpha(mix(base, hue, toward), if dark { 190 } else { 185 }),
-                edge: rim(if dark { 26 } else { 22 }),
-                highlight: None,
+                fill: with_alpha(mix(base, hue, toward), if dark { 165 } else { 170 }),
+                edge: rim(if dark { 32 } else { 26 }),
+                highlight: Some(Rgba::rgba(255, 255, 255, if dark { 28 } else { 120 })),
             }
         }
     }

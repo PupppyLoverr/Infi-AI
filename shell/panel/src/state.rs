@@ -54,6 +54,8 @@ impl DockStyle {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WallpaperPreset {
+    /// Unsplash beach photograph — the default splash.
+    Beach,
     Violet,
     Ocean,
     Sunset,
@@ -62,16 +64,18 @@ pub enum WallpaperPreset {
 }
 
 impl WallpaperPreset {
-    pub const ALL: [Self; 5] = [
-        Self::Violet,
+    pub const ALL: [Self; 6] = [
+        Self::Beach,
         Self::Ocean,
         Self::Sunset,
         Self::Forest,
         Self::Graphite,
+        Self::Violet,
     ];
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Beach => "beach",
             Self::Violet => "violet",
             Self::Ocean => "ocean",
             Self::Sunset => "sunset",
@@ -82,6 +86,7 @@ impl WallpaperPreset {
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::Beach => "Beach",
             Self::Violet => "Violet",
             Self::Ocean => "Ocean",
             Self::Sunset => "Sunset",
@@ -92,6 +97,7 @@ impl WallpaperPreset {
 
     pub fn swatch(self) -> Rgba {
         match self {
+            Self::Beach => Rgba::rgb(0x3b, 0x9e, 0xd8),
             Self::Violet => Rgba::rgb(0xa8, 0x55, 0xf7),
             Self::Ocean => Rgba::rgb(0x0e, 0xa5, 0xe9),
             Self::Sunset => Rgba::rgb(0xf9, 0x73, 0x16),
@@ -102,6 +108,7 @@ impl WallpaperPreset {
 
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
+            "beach" | "splash" => Some(Self::Beach),
             "violet" => Some(Self::Violet),
             "ocean" => Some(Self::Ocean),
             "sunset" => Some(Self::Sunset),
@@ -259,7 +266,7 @@ impl Default for ShellPrefs {
     fn default() -> Self {
         Self {
             dock_style: DockStyle::Solyra,
-            wallpaper: WallpaperPreset::Graphite,
+            wallpaper: WallpaperPreset::Beach,
             wallpaper_file: None,
             wallpaper_mode: WallpaperMode::Fill,
             theme: ThemeKind::Dark,

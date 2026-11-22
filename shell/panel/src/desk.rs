@@ -116,7 +116,7 @@ mod tests {
     #[test]
     fn paints_without_panic() {
         let fonts = Fonts::load();
-        let th = Theme::with(ThemeKind::Dark, Accent::Mauve);
+        let th = Theme::with(ThemeKind::Dark, Accent::Blue);
         let mut buf = vec![0u8; 400 * 320 * 4];
         let mut cv = Canvas::new(&mut buf, 400, 320, 1);
         let g = Glance {

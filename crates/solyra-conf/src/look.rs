@@ -126,7 +126,7 @@ impl Default for Look {
             bar_material: Material::Glass,
             dock_material: Material::Glass,
             notch_material: Material::Solid,
-            accent: "mauve".into(),
+            accent: "blue".into(),
         }
     }
 }

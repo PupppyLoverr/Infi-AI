@@ -47,19 +47,21 @@ inside one surface.
 Semantic roles first; values second. The light column is **planned** and exists
 so nobody hardcodes a dark-only assumption.
 
-| Role | Dark (shipped) | Light (planned) | Use |
+| Role | Dark (shipped) | Light (shipped) | Use |
 | --- | --- | --- | --- |
-| `bg` | `#121016` | `#F6F4F7` | Desktop, full-bleed surfaces |
-| `surface` | `#1A1720` | `#FFFFFF` | Cards, popovers, windows |
-| `surface-raised` | `#241F2A` | `#EDE9EF` | Inactive fills, pills |
-| `hairline` | `#2A2430` | `#DCD6E2` | 1 px separators |
-| `border-idle` | `#3A3342` | `#CFC8D4` | Unfocused window border |
-| `accent` | `#B48AAD` | `#8A4F80` | The active thing, once per region |
-| `on-accent` | `#141018` | `#FFFFFF` | Text/glyphs on accent |
-| `text` | `#DCD6E2` | `#171319` | Primary text |
-| `text-dim` | `#8B8394` | `#6B6472` | Secondary text only |
-| `void` | `#07060A` | `#07060A` | The notch, always |
-| `danger` | `#C4645C` | `#B23B33` | Destructive confirmation only |
+| `bg` | `#1C1C1E` | `#F2F2F7` | Desktop chrome (neutral graphite) |
+| `surface` | `#1C1C1E` @ ~77% | `#F2F2F7` @ ~82% | Cards, popovers — translucent for Glass |
+| `bar` | `#1C1C1E` @ ~66% | `#F2F2F7` @ ~71% | Menu bar and dock fills |
+| `hairline` | white @ 14% | black @ 11% | 1 px separators |
+| `accent` | `#0A84FF` | `#007AFF` | Active control (system blue) |
+| `on-accent` | `#FFFFFF` | `#FFFFFF` | Text/glyphs on accent |
+| `text` | `#F5F5F7` | `#1C1C1E` | Primary text |
+| `text-dim` | `#C7C7CC` | `#48484E` | Secondary text only |
+| `void` | `#000000` | `#000000` | The notch, always |
+| `danger` | `#FF453A` | `#FF3B30` | Destructive confirmation only |
+
+Default wallpaper is **Beach** (Unsplash photograph). Default accent is **Blue**.
+Mauve remains available in Settings but is no longer the product default.
 
 Contrast: `text` on `bg` ≈ 11:1, `text-dim` on `bg` ≈ 4.6:1, `on-accent` on
 `accent` ≈ 7:1. Dim text is never body copy.

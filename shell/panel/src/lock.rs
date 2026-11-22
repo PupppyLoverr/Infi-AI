@@ -115,7 +115,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut event_loop: EventLoop<App> = EventLoop::try_new()?;
 
     let prefs = ShellPrefs::load();
-    let accent = Accent::parse(&prefs.look.accent).unwrap_or(Accent::Mauve);
+    let accent = Accent::parse(&prefs.look.accent).unwrap_or(Accent::Blue);
     // The lock screen is always dark: it sits over a darkened backdrop.
     let theme = Theme::with(ThemeKind::Dark, accent);
     let user = crate::pam::current_user();
@@ -379,16 +379,13 @@ pub fn backdrop(img: Option<&Icon>, w: u32, h: u32) -> Vec<u8> {
             }
         }
         _ => {
+            // Neutral graphite fallback — never purple-tinted.
             for y in 0..h {
                 let t = y as f32 / h.max(1) as f32;
-                let (r, g, b) = (
-                    (0x1a as f32 * (1.0 - t) + 0x10 as f32 * t) as u8,
-                    0x15,
-                    (0x24 as f32 * (1.0 - t) + 0x14 as f32 * t) as u8,
-                );
+                let v = ((0x1c as f32 * (1.0 - t) + 0x0c as f32 * t) as u8).max(8);
                 for x in 0..w {
                     let di = ((y * w + x) * 4) as usize;
-                    out[di..di + 4].copy_from_slice(&[b, g, r, 255]);
+                    out[di..di + 4].copy_from_slice(&[v, v, v, 255]);
                 }
             }
         }
@@ -525,13 +522,26 @@ fn avatar(cv: &mut Canvas<'_>, v: &View<'_>, cx: i32, cy: i32, r: f32) {
     );
 }
 
+/// Frosted glass capsule: translucent fill, lit top edge, soft rim.
+fn glass_pill(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32) {
+    cv.round_rect(x, y, w, h, r, Rgba::rgba(0x1c, 0x1c, 0x1e, 120));
+    cv.stroke_round_rect(x, y, w, h, r, 1.0, Rgba::rgba(255, 255, 255, 64));
+    let inset = (r * 0.55).round() as i32;
+    cv.fill_rect(
+        x + inset,
+        y + 1,
+        (w - 2 * inset).max(0),
+        1,
+        Rgba::rgba(255, 255, 255, 78),
+    );
+}
+
 /// The password field: dots for typed characters, never the characters.
 fn field(cv: &mut Canvas<'_>, v: &View<'_>, cx: i32, y: i32, w: i32) {
     let th = v.theme;
     let h = 40;
     let x = cx - w / 2;
-    cv.round_rect(x, y, w, h, 20.0, Rgba::rgba(255, 255, 255, 46));
-    cv.stroke_round_rect(x, y, w, h, 20.0, 1.0, Rgba::rgba(255, 255, 255, 70));
+    glass_pill(cv, x, y, w, h, 20.0);
     if v.checking {
         centred(
             cv,
@@ -594,7 +604,8 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
     let big = |h: i32| (h as f32 * 0.13).clamp(64.0, 150.0);
     match v.style {
         LockStyle::Solyra => {
-            cv.fill_rect(0, 0, w, h, Rgba::rgba(0x0c, 0x0a, 0x10, 120));
+            // Neutral dark veil — wallpaper (Beach) stays readable underneath.
+            cv.fill_rect(0, 0, w, h, Rgba::rgba(0, 0, 0, 88));
             let cy = h / 2 - 40;
             centred(
                 cv,
@@ -701,8 +712,8 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
             }
         }
         LockStyle::Dashboard => {
-            cv.fill_rect(0, 0, w, h, Rgba::rgba(0x08, 0x06, 0x0c, 100));
-            let wash = Rgba::rgba(255, 255, 255, 32);
+            // Soft neutral veil so the Beach wallpaper and blur stay visible.
+            cv.fill_rect(0, 0, w, h, Rgba::rgba(0, 0, 0, 72));
             let edge = Rgba::rgba(255, 255, 255, 56);
 
             // Weather sits top-right, clear of the centre capsule.
@@ -711,8 +722,7 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
                 let tw = text_width(v.fonts.semibold.as_ref(), weather, size);
                 let (pw, ph) = (tw + 28, 30);
                 let (px, py) = (w - pw - 28, 20);
-                cv.round_rect(px, py, pw, ph, 15.0, wash);
-                cv.stroke_round_rect(px, py, pw, ph, 15.0, 1.0, edge);
+                glass_pill(cv, px, py, pw, ph, 15.0);
                 cv.text(
                     v.fonts.semibold.as_ref(),
                     weather,
@@ -730,8 +740,7 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
                 let tw = text_width(v.fonts.semibold.as_ref(), title, size).min(max_tw);
                 let (pw, ph) = (tw + 36, 32);
                 let px = (w - pw) / 2;
-                cv.round_rect(px, 20, pw, ph, 16.0, Rgba::rgb(0, 0, 0));
-                cv.stroke_round_rect(px, 20, pw, ph, 16.0, 1.0, edge);
+                glass_pill(cv, px, 20, pw, ph, 16.0);
                 cv.text_truncated(
                     v.fonts.semibold.as_ref(),
                     title,
@@ -779,8 +788,7 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
                 let tw = text_width(v.fonts.semibold.as_ref(), &label, size);
                 let (aw, ah) = (tw + 28, 26);
                 let ax = (w - aw) / 2;
-                cv.round_rect(ax, y, aw, ah, 13.0, Rgba::rgba(255, 255, 255, 28));
-                cv.stroke_round_rect(ax, y, aw, ah, 13.0, 1.0, edge);
+                glass_pill(cv, ax, y, aw, ah, 13.0);
                 centred(
                     cv,
                     v.fonts.semibold.as_ref(),
@@ -809,8 +817,7 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
             if !title.is_empty() || !artist.is_empty() {
                 let (mw, mh) = (300, 56);
                 let mx = (w - mw) / 2;
-                cv.round_rect(mx, y, mw, mh, 16.0, Rgba::rgba(0, 0, 0, 130));
-                cv.stroke_round_rect(mx, y, mw, mh, 16.0, 1.0, edge);
+                glass_pill(cv, mx, y, mw, mh, 16.0);
                 let text_w = mw - 118;
                 if !title.is_empty() {
                     cv.text_truncated(
@@ -849,7 +856,12 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
             let ax = w / 2 - spread;
             let px = w / 2 + spread;
             avatar(cv, v, ax, avatar_cy, avatar_r);
-            cv.circle(px as f32, avatar_cy as f32, avatar_r, wash);
+            cv.circle(
+                px as f32,
+                avatar_cy as f32,
+                avatar_r,
+                Rgba::rgba(0x1c, 0x1c, 0x1e, 140),
+            );
             cv.ring(px as f32, avatar_cy as f32, avatar_r, 1.4, edge);
             let arm = avatar_r * 0.42;
             cv.line(

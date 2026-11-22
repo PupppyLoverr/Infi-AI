@@ -157,13 +157,13 @@ fn appearance_page(status: Signal<String>) -> View {
             ("acrylic", "Acrylic"),
         ];
         static ACCENTS: [(&str, &str); 7] = [
-            ("mauve", "Mauve"),
             ("blue", "Blue"),
             ("teal", "Teal"),
+            ("graphite", "Graphite"),
             ("green", "Green"),
             ("amber", "Amber"),
             ("rose", "Rose"),
-            ("graphite", "Graphite"),
+            ("mauve", "Mauve"),
         ];
         let body = column()
             .gap(16.)

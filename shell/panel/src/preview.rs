@@ -841,7 +841,7 @@ fn lock_screens_render() {
     let fonts = Fonts::load();
     let wp = std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/wallpapers/ocean-1920x1080.png"
+        "/../../assets/wallpapers/beach-1920x1080.png"
     ))
     .ok()
     .and_then(|b| crate::canvas::decode_png(&b));
@@ -1157,7 +1157,7 @@ fn material_scenes_render() {
     let fonts = Fonts::load();
     let mut shots = Vec::new();
     for kind in [ThemeKind::Dark, ThemeKind::Light] {
-        let wp = if kind == ThemeKind::Dark { "ocean" } else { "peach-light" };
+        let wp = if kind == ThemeKind::Dark { "beach" } else { "beach" };
         for m in Material::ALL {
             shots.push(material_scene(
                 &fonts,
@@ -1171,7 +1171,7 @@ fn material_scenes_render() {
                 NotchStyle::Notch,
             ));
         }
-        // Every dock and the island in the default (glass) look.
+        // Product default: Glass bar + dock over Beach, island in Glass.
         for (tag, dock) in [
             ("solyra", DockStyle::Solyra),
             ("taskbar", DockStyle::Windows),
@@ -1182,8 +1182,8 @@ fn material_scenes_render() {
                 &format!("material-scene-{tag}"),
                 kind,
                 wp,
-                Material::Acrylic,
-                Material::Acrylic,
+                Material::Glass,
+                Material::Glass,
                 Material::Glass,
                 dock,
                 NotchStyle::Island,

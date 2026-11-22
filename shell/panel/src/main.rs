@@ -506,7 +506,7 @@ struct App {
 impl App {
     fn theme(&self) -> Theme {
         let accent =
-            tokens::Accent::parse(&self.prefs.look.accent).unwrap_or(tokens::Accent::Mauve);
+            tokens::Accent::parse(&self.prefs.look.accent).unwrap_or(tokens::Accent::Blue);
         let t = Theme::with(self.prefs.theme, accent);
         if self.prefs.look.opaque {
             t.opaque()

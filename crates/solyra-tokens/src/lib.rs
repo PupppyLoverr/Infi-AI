@@ -101,50 +101,55 @@ pub struct Theme {
 
 impl Theme {
     pub const fn dark() -> Self {
+        // Neutral cool graphite (macOS / Windows 11), not purple-tinted.
+        // Surfaces stay translucent so Glass/Acrylic can show the wallpaper.
         Self {
-            surface: Rgba::rgba(0x1a, 0x17, 0x20, 234),
-            bar: Rgba::rgba(0x14, 0x11, 0x19, 240),
-            hairline: Rgba::rgba(0x3a, 0x33, 0x42, 210),
-            field: Rgba::rgba(0x0e, 0x0c, 0x12, 190),
-            tile: Rgba::rgba(255, 255, 255, 13),
-            tile_hover: Rgba::rgba(255, 255, 255, 26),
-            separator: Rgba::rgba(255, 255, 255, 20),
-            text: Rgba::rgb(0xdc, 0xd6, 0xe2),
-            text_med: Rgba::rgba(0xdc, 0xd6, 0xe2, 214),
-            text_dim: Rgba::rgb(0xa0, 0x98, 0xaa),
-            accent: Rgba::rgb(0xb4, 0x8a, 0xad),
-            on_accent: Rgba::rgb(0x14, 0x10, 0x18),
-            selected_fill: Rgba::rgba(0xb4, 0x8a, 0xad, 44),
-            selected_border: Rgba::rgba(0xb4, 0x8a, 0xad, 150),
-            success: Rgba::rgb(0x7f, 0xb8, 0x8c),
-            warning: Rgba::rgb(0xd9, 0xa4, 0x41),
-            danger: Rgba::rgb(0xd8, 0x7a, 0x72),
-            agent_active: Rgba::rgb(0xb4, 0x8a, 0xad),
-            agent_approval: Rgba::rgb(0xe0, 0xa9, 0x4a),
+            surface: Rgba::rgba(0x1c, 0x1c, 0x1e, 196),
+            bar: Rgba::rgba(0x1c, 0x1c, 0x1e, 168),
+            hairline: Rgba::rgba(0xff, 0xff, 0xff, 36),
+            field: Rgba::rgba(0x00, 0x00, 0x00, 120),
+            tile: Rgba::rgba(255, 255, 255, 14),
+            tile_hover: Rgba::rgba(255, 255, 255, 28),
+            separator: Rgba::rgba(255, 255, 255, 22),
+            text: Rgba::rgb(0xf5, 0xf5, 0xf7),
+            text_med: Rgba::rgba(0xeb, 0xeb, 0xf5, 230),
+            // Apple secondary label — stays ≥ AA on translucent glass.
+            text_dim: Rgba::rgb(0xc7, 0xc7, 0xcc),
+            // System blue, deepened for white glyphs at AA on glass.
+            accent: Rgba::rgb(0x00, 0x5f, 0xd0),
+            on_accent: Rgba::rgb(0xff, 0xff, 0xff),
+            selected_fill: Rgba::rgba(0x0a, 0x84, 0xff, 48),
+            selected_border: Rgba::rgba(0x0a, 0x84, 0xff, 160),
+            success: Rgba::rgb(0x32, 0xd7, 0x4b),
+            warning: Rgba::rgb(0xff, 0xd6, 0x0a),
+            danger: Rgba::rgb(0xff, 0x45, 0x3a),
+            agent_active: Rgba::rgb(0x00, 0x5f, 0xd0),
+            agent_approval: Rgba::rgb(0xff, 0x9f, 0x0a),
         }
     }
 
     pub const fn light() -> Self {
         Self {
-            surface: Rgba::rgba(0xf6, 0xf4, 0xf7, 242),
-            bar: Rgba::rgba(0xee, 0xea, 0xf0, 244),
-            hairline: Rgba::rgba(0xcf, 0xc8, 0xd4, 255),
-            field: Rgba::rgba(255, 255, 255, 235),
-            tile: Rgba::rgba(0x17, 0x13, 0x19, 12),
-            tile_hover: Rgba::rgba(0x17, 0x13, 0x19, 24),
-            separator: Rgba::rgba(0x17, 0x13, 0x19, 30),
-            text: Rgba::rgb(0x17, 0x13, 0x19),
-            text_med: Rgba::rgba(0x17, 0x13, 0x19, 220),
-            text_dim: Rgba::rgb(0x5f, 0x58, 0x68),
-            accent: Rgba::rgb(0x8a, 0x4f, 0x80),
+            surface: Rgba::rgba(0xf2, 0xf2, 0xf7, 210),
+            bar: Rgba::rgba(0xf2, 0xf2, 0xf7, 180),
+            hairline: Rgba::rgba(0x00, 0x00, 0x00, 28),
+            field: Rgba::rgba(255, 255, 255, 220),
+            tile: Rgba::rgba(0x00, 0x00, 0x00, 10),
+            tile_hover: Rgba::rgba(0x00, 0x00, 0x00, 18),
+            separator: Rgba::rgba(0x00, 0x00, 0x00, 24),
+            text: Rgba::rgb(0x1c, 0x1c, 0x1e),
+            text_med: Rgba::rgba(0x3a, 0x3a, 0x3c, 230),
+            text_dim: Rgba::rgb(0x48, 0x48, 0x4e),
+            accent: Rgba::rgb(0x00, 0x5c, 0xd0),
             on_accent: Rgba::rgb(0xff, 0xff, 0xff),
-            selected_fill: Rgba::rgba(0x8a, 0x4f, 0x80, 30),
-            selected_border: Rgba::rgba(0x8a, 0x4f, 0x80, 150),
-            success: Rgba::rgb(0x2a, 0x6e, 0x45),
-            warning: Rgba::rgb(0x84, 0x55, 0x0e),
-            danger: Rgba::rgb(0xb2, 0x3b, 0x33),
-            agent_active: Rgba::rgb(0x8a, 0x4f, 0x80),
-            agent_approval: Rgba::rgb(0x84, 0x55, 0x0e),
+            selected_fill: Rgba::rgba(0x00, 0x5c, 0xd0, 28),
+            selected_border: Rgba::rgba(0x00, 0x5c, 0xd0, 150),
+            // Darker state colours so they stay AA on light glass.
+            success: Rgba::rgb(0x18, 0x74, 0x30),
+            warning: Rgba::rgb(0x9a, 0x60, 0x00),
+            danger: Rgba::rgb(0xc4, 0x00, 0x12),
+            agent_active: Rgba::rgb(0x00, 0x5c, 0xd0),
+            agent_approval: Rgba::rgb(0x9a, 0x60, 0x00),
         }
     }
 
@@ -239,8 +244,9 @@ impl Accent {
         match (self, kind) {
             (Self::Mauve, ThemeKind::Dark) => (Rgba::rgb(0xb4, 0x8a, 0xad), dark_on),
             (Self::Mauve, ThemeKind::Light) => (Rgba::rgb(0x8a, 0x4f, 0x80), white),
-            (Self::Blue, ThemeKind::Dark) => (Rgba::rgb(0x7a, 0xa7, 0xe8), dark_on),
-            (Self::Blue, ThemeKind::Light) => (Rgba::rgb(0x1f, 0x5f, 0xbf), white),
+            // System blue — deepened so white glyphs clear AA.
+            (Self::Blue, ThemeKind::Dark) => (Rgba::rgb(0x00, 0x5f, 0xd0), white),
+            (Self::Blue, ThemeKind::Light) => (Rgba::rgb(0x00, 0x5c, 0xd0), white),
             (Self::Teal, ThemeKind::Dark) => (Rgba::rgb(0x5f, 0xbf, 0xb4), dark_on),
             (Self::Teal, ThemeKind::Light) => (Rgba::rgb(0x0f, 0x6e, 0x66), white),
             (Self::Green, ThemeKind::Dark) => (Rgba::rgb(0x86, 0xc0, 0x7a), dark_on),
