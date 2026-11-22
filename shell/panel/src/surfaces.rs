@@ -140,17 +140,20 @@ pub fn draw_bar(
     };
     let max_left_x = (w / 2) - center_reserved_half;
 
-    // Left: the Solyra mark. In the menu bar it opens the system menu (like
-    // the Apple menu); in the compact bar, the launcher.
-    let brand_hover = hover.is_some_and(|(hx, hy)| hx >= 6.0 && hx < 34.0 && hy < h as f64);
+    // Left: the nL mark (white on black). Menu bar → system menu; compact → launcher.
+    let mark_h = 22;
+    let mark_w = cv.mark_nl(8, (h - mark_h) / 2, mark_h, fonts);
+    let brand_hover =
+        hover.is_some_and(|(hx, hy)| hx >= 4.0 && hx < (12 + mark_w) as f64 && hy < h as f64);
     if brand_hover {
-        cv.round_rect(6, 5, 26, 24, 6.0, th.tile_hover);
+        cv.round_rect(4, 4, mark_w + 8, h - 8, 6.0, th.tile_hover);
+        // Redraw the mark above the hover wash.
+        let _ = cv.mark_nl(8, (h - mark_h) / 2, mark_h, fonts);
     }
-    cv.icon_solyra(19.0, 17.0, 6.2, th.accent);
     regions.push(Region {
         x: 4,
         y: 0,
-        w: 30,
+        w: mark_w + 10,
         h,
         action: if menubar {
             HitAction::OpenMenu(MenuId::Solyra)
@@ -158,7 +161,7 @@ pub fn draw_bar(
             HitAction::Shell(ShellCmd::ToggleLauncher)
         },
     });
-    let mut x = 40;
+    let mut x = mark_w + 22;
 
     if menubar {
         // The focused app's name, bold, then the menu titles.

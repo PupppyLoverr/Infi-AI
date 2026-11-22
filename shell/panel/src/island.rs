@@ -568,27 +568,53 @@ fn expanded_body(
         }
         Content::Attention(a) => attention_body(cv, th, fonts, body, a, extra, hover, regions),
         Content::Media(m) => {
-            cv.round_rect(bx, by + 6, 64, 64, 12.0, Rgba::rgba(255, 255, 255, 24));
-            cv.icon_note(bx as f32 + 30.0, by as f32 + 38.0, th.text);
-            let tx = bx + 78;
-            cv.text_truncated(
+            cv.round_rect(bx, by + 2, 56, 56, 12.0, Rgba::rgba(255, 255, 255, 24));
+            cv.icon_note(bx as f32 + 26.0, by as f32 + 30.0, th.text);
+            let tx = bx + 70;
+            cv.text_truncate(
                 fonts.semibold.as_ref(),
                 &m.title,
                 tx,
-                by + 28,
+                by + 22,
                 T_BODY + 1.0,
-                bw - 78,
+                bw - 70,
                 th.text,
             );
-            cv.text_truncated(
+            cv.text_truncate(
                 fonts.regular.as_ref(),
                 &m.artist,
                 tx,
-                by + 48,
+                by + 42,
                 T_LABEL,
-                bw - 78,
+                bw - 70,
                 th.text_dim,
             );
+            if let Some((elapsed, total, pct)) = m.elapsed_label() {
+                let bar_y = by + 58;
+                let bar_w = bw;
+                cv.round_rect(bx, bar_y, bar_w, 4, 2.0, Rgba::rgba(255, 255, 255, 28));
+                let fill = ((bar_w as f32) * pct).round() as i32;
+                if fill > 0 {
+                    cv.round_rect(bx, bar_y, fill.max(4), 4, 2.0, th.accent);
+                }
+                cv.text(
+                    fonts.regular.as_ref(),
+                    &elapsed,
+                    bx,
+                    bar_y + 18,
+                    T_CAPTION,
+                    th.text_dim,
+                );
+                let tw = text_width(fonts.regular.as_ref(), &total, T_CAPTION);
+                cv.text(
+                    fonts.regular.as_ref(),
+                    &total,
+                    bx + bar_w - tw,
+                    bar_y + 18,
+                    T_CAPTION,
+                    th.text_dim,
+                );
+            }
             let cy = buttons_y + 16;
             let centre = bx + bw / 2;
             let ctrls = [

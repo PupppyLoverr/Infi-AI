@@ -202,6 +202,16 @@ fn desktop_page(status: Signal<String>) -> View {
             .child(conf_toggle(cx, &status, "clock_24h", "24-hour clock", look.clock_24h))
             .child(conf_toggle(cx, &status, "show_seconds", "Show seconds", look.show_seconds))
             .child(conf_toggle(cx, &status, "show_date", "Show the date", look.show_date))
+            .child(text("Layout").font_bold())
+            .child(conf_choice(
+                cx,
+                &status,
+                "desktop_mode",
+                "Desktop mode",
+                &[("standard", "Standard"), ("agent", "Agent workspace")],
+                look.desktop.as_str(),
+            ))
+            .child(caption("Agent workspace leans the shell toward agent status, project and environment glances."))
             .child(text("Notch").font_bold())
             .child(conf_choice(
                 cx,
@@ -239,10 +249,15 @@ fn lock_page(status: Signal<String>) -> View {
                 &status,
                 "lock_style",
                 "Layout",
-                &[("solyra", "Solyra"), ("classic", "Centred"), ("corner", "Clock corner")],
+                &[
+                    ("solyra", "Solyra"),
+                    ("classic", "Centred"),
+                    ("corner", "Clock corner"),
+                    ("dashboard", "Dashboard"),
+                ],
                 look.lock.as_str(),
             ))
-            .child(caption("Solyra: time and password in the middle. Centred: date and time at the top, your picture and password below. Clock corner: a large clock in the lower left; any key shows the sign-in card."))
+            .child(caption("Solyra: time and password in the middle. Centred: date and time at the top, your picture and password below. Clock corner: a large clock in the lower left; any key shows the sign-in card. Dashboard: large clock, nL capsule, avatars, agents and media glance."))
             .child(caption("The lock screen uses your wallpaper and accent colour, and the clock settings from Desktop."))
             .child(action("Lock now", move || {
                 if let Err(e) = system::launch(&["solyra-panel", "lock"]) {

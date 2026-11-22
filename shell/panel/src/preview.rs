@@ -663,6 +663,8 @@ fn island_shots(fonts: &Fonts) -> Vec<Shot> {
         title: "Clair de Lune".into(),
         artist: "Debussy".into(),
         playing: true,
+        position_us: Some(15_000_000),
+        length_us: Some(203_000_000),
     };
     let cases: Vec<(&str, Content, bool)> = vec![
         ("idle", Content::Idle, false),
@@ -838,6 +840,7 @@ fn lock_screens_render() {
             3,
             Some("Wrong password"),
         ),
+        ("lock-dashboard", LockStyle::Dashboard, false, 0, None),
     ] {
         let mut buf = if style == LockStyle::Corner && !card {
             sharp.clone()
@@ -846,18 +849,31 @@ fn lock_screens_render() {
         };
         {
             let mut cv = crate::canvas::Canvas::new_keep(&mut buf, w, h, 1);
+            let dashboard = name == "lock-dashboard";
             let v = View {
                 theme: &th,
                 fonts: &fonts,
                 style,
-                clock: "09:41".into(),
-                date: "Friday 20 November".into(),
+                clock: if dashboard { "20:46".into() } else { "09:41".into() },
+                date: if dashboard {
+                    "SAT 17 NOV".into()
+                } else {
+                    "Friday 20 November".into()
+                },
                 name: "Ada Lovelace",
                 dots,
                 caps: name == "lock-solyra",
                 checking: false,
                 message: msg,
                 card,
+                agents_running: if dashboard { 3 } else { 0 },
+                media_title: if dashboard {
+                    Some("FALLEN ANGEL")
+                } else {
+                    None
+                },
+                media_artist: if dashboard { Some("JENNIE") } else { None },
+                weather: if dashboard { Some("25°") } else { None },
             };
             paint(&mut cv, &v);
         }
@@ -1072,9 +1088,11 @@ fn material_scene(
     if notch != solyra_conf::look::NotchStyle::Off {
         let content = Content::Media(crate::media::Media {
             bus: "x".into(),
-            title: "Clair de Lune".into(),
-            artist: "Debussy".into(),
+            title: "FALLEN ANGEL".into(),
+            artist: "JENNIE".into(),
             playing: true,
+            position_us: Some(15_000_000),
+            length_us: Some(203_000_000),
         });
         let anim = Anim::new(island::target(notch, &content, false));
         let glance = Glance {

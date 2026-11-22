@@ -55,6 +55,18 @@ enum Item<'a> {
     Agent,
     Trash,
     Separator,
+    /// Solyra dock tray: weather chip (from `~/.config/solyra/weather.txt`).
+    Weather,
+    /// Solyra dock tray: live clock.
+    Clock,
+}
+
+fn weather_label() -> String {
+    let path = solyra_conf::config_path("weather.txt");
+    path.and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|s| s.lines().next().unwrap_or("").trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "·".into())
 }
 
 struct Metrics {
@@ -92,6 +104,9 @@ fn items<'a>(style: DockStyle, entries: &'a [AppEntry]) -> Vec<Item<'a>> {
             v.extend(entries.iter().map(Item::App));
             v.push(Item::Separator);
             v.push(Item::Agent);
+            v.push(Item::Separator);
+            v.push(Item::Weather);
+            v.push(Item::Clock);
         }
         DockStyle::Macos => {
             for (i, e) in entries.iter().enumerate() {
@@ -120,6 +135,8 @@ fn base_width(style: DockStyle, wins: &[WindowInfo]) -> i32 {
         .iter()
         .map(|i| match i {
             Item::Separator => 1,
+            Item::Clock => m.cell + 18,
+            Item::Weather => m.cell + 4,
             _ => m.cell,
         })
         .sum::<i32>()
@@ -287,6 +304,8 @@ fn draw_floating(
         .zip(&centres)
         .map(|(it, c)| match it {
             Item::Separator => 1,
+            Item::Clock => m.cell + 18,
+            Item::Weather => m.cell + 4,
             _ => match pointer_x {
                 Some(px) => {
                     (m.cell as f32 * magnification((px - c) / m.cell as f32)).round() as i32
@@ -312,6 +331,8 @@ fn draw_floating(
     let mut regions = Vec::new();
     let mut x = card_x + m.pad;
     let base_y = card_y + (CARD_H - m.cell) / 2 - 1;
+    let weather = weather_label();
+    let clock = chrono::Local::now().format(live.prefs.look.clock_format()).to_string();
     for (it, size) in its.iter().zip(&sizes) {
         if let Item::Separator = it {
             cv.fill_rect(x, card_y + 12, 1, CARD_H - 24, th.tile_hover);
@@ -325,45 +346,101 @@ fn draw_floating(
         // the hovered icon lifts a little.
         let lift = if !magnify && hov { 3 } else { 0 };
         let y = base_y + (m.cell - s) - lift;
-        let (role, app_id, action) = match it {
-            Item::Start => ("start", None, HitAction::Shell(ShellCmd::ToggleLauncher)),
-            Item::Agent => ("agent", None, HitAction::Shell(ShellCmd::ToggleAgents)),
-            Item::Trash => (
-                "trash",
-                None,
-                HitAction::Launch(LaunchTarget::Shell("solyra-open files trash:///".into())),
-            ),
-            Item::App(e) => (
-                e.role.as_str(),
-                Some(e.app_id.as_str()),
-                match e.window {
-                    Some(id) => HitAction::FocusWindow(id),
-                    None => HitAction::Launch(e.command.clone()),
-                },
-            ),
-            Item::Separator => unreachable!(),
-        };
-        let icon = app_id.and_then(|id| load_app_icon(icons, id));
-        cv.draw_app_squircle(x, y, s, role, icon);
+        match it {
+            Item::Weather => {
+                let cx = x as f32 + s as f32 * 0.28;
+                let cy = (card_y + CARD_H / 2) as f32;
+                cv.circle(cx, cy, 5.0, th.text_med);
+                for ang in [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0] {
+                    let rad = ang.to_radians();
+                    cv.line(
+                        cx + rad.cos() * 7.0,
+                        cy + rad.sin() * 7.0,
+                        cx + rad.cos() * 10.0,
+                        cy + rad.sin() * 10.0,
+                        1.2,
+                        th.text_med,
+                    );
+                }
+                let tw = text_width(fonts.semibold.as_ref(), &weather, 12.0);
+                cv.text(
+                    fonts.semibold.as_ref(),
+                    &weather,
+                    x + s - tw - 4,
+                    card_y + CARD_H / 2 + 5,
+                    12.0,
+                    th.text,
+                );
+                regions.push(Region {
+                    x,
+                    y: card_y,
+                    w: s,
+                    h: CARD_H,
+                    action: HitAction::Shell(ShellCmd::ToggleControl),
+                });
+            }
+            Item::Clock => {
+                let tw = text_width(fonts.semibold.as_ref(), &clock, 13.0);
+                cv.text(
+                    fonts.semibold.as_ref(),
+                    &clock,
+                    x + (s - tw).max(0) / 2,
+                    card_y + CARD_H / 2 + 5,
+                    13.0,
+                    th.text,
+                );
+                regions.push(Region {
+                    x,
+                    y: card_y,
+                    w: s,
+                    h: CARD_H,
+                    action: HitAction::Shell(ShellCmd::ToggleControl),
+                });
+            }
+            _ => {
+                let (role, app_id, action) = match it {
+                    Item::Start => ("start", None, HitAction::Shell(ShellCmd::ToggleLauncher)),
+                    Item::Agent => ("agent", None, HitAction::Shell(ShellCmd::ToggleAgents)),
+                    Item::Trash => (
+                        "trash",
+                        None,
+                        HitAction::Launch(LaunchTarget::Shell(
+                            "solyra-open files trash:///".into(),
+                        )),
+                    ),
+                    Item::App(e) => (
+                        e.role.as_str(),
+                        Some(e.app_id.as_str()),
+                        match e.window {
+                            Some(id) => HitAction::FocusWindow(id),
+                            None => HitAction::Launch(e.command.clone()),
+                        },
+                    ),
+                    Item::Separator | Item::Weather | Item::Clock => unreachable!(),
+                };
+                let icon = app_id.and_then(|id| load_app_icon(icons, id));
+                cv.draw_app_squircle(x, y, s, role, icon);
 
-        if let Item::App(e) = it {
-            if e.window_count > 0 {
-                running_mark(cv, th, style, x, s, card_y, e.is_focused);
-            }
-            if hov && magnify {
-                tooltip(cv, th, fonts, &e.title, x + s / 2, y - 6, w);
+                if let Item::App(e) = it {
+                    if e.window_count > 0 {
+                        running_mark(cv, th, style, x, s, card_y, e.is_focused);
+                    }
+                    if hov && magnify {
+                        tooltip(cv, th, fonts, &e.title, x + s / 2, y - 6, w);
+                    }
+                }
+                if let Item::Agent = it {
+                    agent_badge(cv, th, fonts, live, x, y, s);
+                }
+                regions.push(Region {
+                    x,
+                    y: card_y,
+                    w: s,
+                    h: CARD_H,
+                    action,
+                });
             }
         }
-        if let Item::Agent = it {
-            agent_badge(cv, th, fonts, live, x, y, s);
-        }
-        regions.push(Region {
-            x,
-            y: card_y,
-            w: s,
-            h: CARD_H,
-            action,
-        });
         x += s + m.gap;
     }
     (regions, Some(body))

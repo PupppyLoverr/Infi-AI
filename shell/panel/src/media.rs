@@ -21,6 +21,33 @@ pub struct Media {
     pub title: String,
     pub artist: String,
     pub playing: bool,
+    /// MPRIS Position, microseconds.
+    pub position_us: Option<i64>,
+    /// `mpris:length` from Metadata, microseconds.
+    pub length_us: Option<i64>,
+}
+
+impl Media {
+    /// Identity for change detection (ignore ticking position).
+    pub fn same_track(&self, other: &Self) -> bool {
+        self.bus == other.bus
+            && self.title == other.title
+            && self.artist == other.artist
+            && self.playing == other.playing
+            && self.length_us == other.length_us
+    }
+
+    pub fn elapsed_label(&self) -> Option<(String, String, f32)> {
+        let len = self.length_us.filter(|l| *l > 0)?;
+        let pos = self.position_us.unwrap_or(0).clamp(0, len);
+        let pct = (pos as f32 / len as f32).clamp(0.0, 1.0);
+        Some((fmt_us(pos), fmt_us(len), pct))
+    }
+}
+
+fn fmt_us(us: i64) -> String {
+    let secs = (us / 1_000_000).max(0) as u64;
+    format!("{}:{:02}", secs / 60, secs % 60)
 }
 
 /// Title and artist from an MPRIS `Metadata` map.
@@ -67,11 +94,17 @@ fn query(conn: &Connection) -> Option<Media> {
         }
         let meta: PropMap = p.get(PLAYER, "Metadata").unwrap_or_default();
         let (title, artist) = parse_metadata(&meta);
+        let length_us = prop_cast::<i64>(&meta, "mpris:length")
+            .copied()
+            .or_else(|| prop_cast::<u64>(&meta, "mpris:length").map(|v| *v as i64));
+        let position_us: Option<i64> = p.get(PLAYER, "Position").ok();
         players.push(Media {
             bus,
             title,
             artist,
             playing: status == "Playing",
+            position_us,
+            length_us,
         });
     }
     pick(players)
@@ -86,12 +119,15 @@ pub fn spawn_watcher(slot: Arc<Mutex<Option<Media>>>, wake: impl Fn() + Send + '
         loop {
             let now = query(&conn);
             let changed = slot.lock().map(|mut s| {
-                if *s != now {
+                let refresh = match (&*s, &now) {
+                    (Some(a), Some(b)) => !a.same_track(b) || a.position_us != b.position_us,
+                    (None, None) => false,
+                    _ => true,
+                };
+                if refresh {
                     *s = now;
-                    true
-                } else {
-                    false
                 }
+                refresh
             });
             if changed.unwrap_or(false) {
                 wake();
@@ -137,7 +173,25 @@ mod tests {
             title: title.into(),
             artist: String::new(),
             playing,
+            position_us: None,
+            length_us: None,
         }
+    }
+
+    #[test]
+    fn elapsed_formats_and_pct() {
+        let media = Media {
+            bus: "x".into(),
+            title: "FALLEN ANGEL".into(),
+            artist: "JENNIE".into(),
+            playing: true,
+            position_us: Some(15_000_000),
+            length_us: Some(203_000_000),
+        };
+        let (a, b, pct) = media.elapsed_label().unwrap();
+        assert_eq!(a, "0:15");
+        assert_eq!(b, "3:23");
+        assert!((pct - 15.0 / 203.0).abs() < 0.01);
     }
 
     #[test]

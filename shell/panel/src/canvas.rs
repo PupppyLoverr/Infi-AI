@@ -653,6 +653,31 @@ impl<'a> Canvas<'a> {
         self.circle(cx + r * 0.28, cy - r * 0.25, r * 0.34, color);
     }
 
+    /// The **nL** brand mark: white letters in a black rounded box.
+    /// Returns the width used so callers can size hit targets.
+    pub fn mark_nl(&mut self, x: i32, y: i32, h: i32, fonts: &Fonts) -> i32 {
+        let h = h.max(16);
+        let pad_x = (h as f32 * 0.28).round() as i32;
+        let size = h as f32 * 0.55;
+        let label = "nL";
+        let tw = text_width(fonts.semibold.as_ref(), label, size);
+        let w = (tw + pad_x * 2).max(h);
+        let r = (h as f32 * 0.22).clamp(3.0, 8.0);
+        self.round_rect(x, y, w, h, r, Rgba::rgb(0x0a, 0x0a, 0x0c));
+        self.stroke_round_rect(x, y, w, h, r, 1.0, Rgba::rgba(255, 255, 255, 28));
+        let tx = x + (w - tw) / 2;
+        let ty = y + (h as f32 * 0.72) as i32;
+        self.text(
+            fonts.semibold.as_ref(),
+            label,
+            tx,
+            ty,
+            size,
+            Rgba::rgb(0xff, 0xff, 0xff),
+        );
+        w
+    }
+
     pub fn icon_search(&mut self, cx: f32, cy: f32, size: f32, color: Rgba) {
         let r = size * 0.34;
         self.ring(cx - size * 0.08, cy - size * 0.08, r, 1.5, color);
@@ -808,9 +833,21 @@ impl<'a> Canvas<'a> {
         let r = (s * 0.24).round();
         let (cx, cy) = (x as f32 + s * 0.5, y as f32 + s * 0.5);
         let start = role == "start";
-        self.round_rect(x, y, size, size, r, if start { ACCENT } else { TILE });
+        // Start is the nL mark: black tile, white letters (not the accent glyph).
+        self.round_rect(
+            x,
+            y,
+            size,
+            size,
+            r,
+            if start {
+                Rgba::rgb(0x0a, 0x0a, 0x0c)
+            } else {
+                TILE
+            },
+        );
         self.stroke_round_rect(x, y, size, size, r, 1.0, EDGE);
-        let ink = if start { ON_ACCENT } else { GLYPH };
+        let ink = if start { Rgba::rgb(0xff, 0xff, 0xff) } else { GLYPH };
 
         if let (false, Some(ic)) = (start, icon) {
             let pad = (s * 0.16).round() as i32;
@@ -819,7 +856,32 @@ impl<'a> Canvas<'a> {
         }
         let u = s * 0.22; // glyph half-extent
         match role {
-            "start" | "agent" => self.icon_solyra(cx, cy, u * 0.9, ink),
+            // Geometric nL so the Start cell works without a Fonts handle.
+            "start" => {
+                let _ = (ACCENT, ON_ACCENT);
+                let stroke = (s * 0.07).clamp(1.4, 2.4);
+                let left = cx - s * 0.22;
+                let right = cx + s * 0.02;
+                let top = cy - s * 0.18;
+                let bot = cy + s * 0.18;
+                // n
+                self.line(left, bot, left, top + s * 0.06, stroke, ink);
+                self.arc(
+                    left + s * 0.11,
+                    top + s * 0.12,
+                    s * 0.11,
+                    stroke,
+                    180.0,
+                    360.0,
+                    ink,
+                );
+                self.line(right, top + s * 0.12, right, bot, stroke, ink);
+                // L
+                let lx = cx + s * 0.12;
+                self.line(lx, top, lx, bot, stroke, ink);
+                self.line(lx, bot, lx + s * 0.16, bot, stroke, ink);
+            }
+            "agent" => self.icon_solyra(cx, cy, u * 0.9, ink),
             "files" | "thunar" => {
                 let (w, h) = ((u * 2.1) as i32, (u * 1.5) as i32);
                 let (fx, fy) = (cx as i32 - w / 2, cy as i32 - h / 2 + 1);

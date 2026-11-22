@@ -6,7 +6,7 @@
 //! through the real keyboard layout (xkb), so any layout and non-ASCII
 //! passwords work.
 //!
-//! Three layouts (`lock_style` in shell.conf):
+//! Four layouts (`lock_style` in shell.conf):
 //! * **Solyra** – blurred wallpaper under a dark scrim, time in the middle, a
 //!   single password pill.
 //! * **Centred** – large date and time near the top, the person's picture,
@@ -14,6 +14,8 @@
 //! * **Clock corner** – a sharp wallpaper with a big clock in the lower left;
 //!   any key slides in a centred sign-in card over a blurred backdrop
 //!   (Windows-like).
+//! * **Dashboard** – large clock, nL / now-playing capsule, avatar row, agents
+//!   glance, empty calendar line, and optional media / weather chips.
 
 use std::time::{Duration, Instant};
 
@@ -310,18 +312,27 @@ impl App {
         bytes.copy_from_slice(if use_sharp { sharp } else { blurred });
         {
             let mut cv = Canvas::new_keep(bytes, w, h, scale as i32);
+            let date = if self.style == LockStyle::Dashboard {
+                chrono::Local::now().format("%a %-d %b").to_string().to_uppercase()
+            } else {
+                chrono::Local::now().format("%A %-d %B").to_string()
+            };
             let view = View {
                 theme: &self.theme,
                 fonts: &self.fonts,
                 style: self.style,
                 clock: chrono::Local::now().format(self.clock_fmt).to_string(),
-                date: chrono::Local::now().format("%A %-d %B").to_string(),
+                date,
                 name: &self.name,
                 dots: self.password.chars().count(),
                 caps: self.caps,
                 checking: self.checking,
                 message: self.message.as_deref(),
                 card: self.card,
+                agents_running: 0,
+                media_title: None,
+                media_artist: None,
+                weather: None,
             };
             paint(&mut cv, &view);
         }
@@ -472,6 +483,12 @@ pub struct View<'a> {
     pub checking: bool,
     pub message: Option<&'a str>,
     pub card: bool,
+    /// Dashboard glance: agents currently running.
+    pub agents_running: usize,
+    pub media_title: Option<&'a str>,
+    pub media_artist: Option<&'a str>,
+    /// Short weather label, e.g. `25°`.
+    pub weather: Option<&'a str>,
 }
 
 fn centred(
@@ -682,6 +699,139 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
                     Rgba::rgba(255, 255, 255, 170),
                 );
             }
+        }
+        LockStyle::Dashboard => {
+            cv.fill_rect(0, 0, w, h, Rgba::rgba(0x08, 0x06, 0x0c, 100));
+            // Top capsule: now playing, else nL.
+            let cap = v
+                .media_title
+                .filter(|t| !t.is_empty())
+                .unwrap_or("nL");
+            let cap_w = text_width(v.fonts.semibold.as_ref(), cap, 13.0).max(72) + 28;
+            let cap_x = (w - cap_w) / 2;
+            cv.round_rect(cap_x, 28, cap_w, 28, 14.0, Rgba::rgb(0x0a, 0x0a, 0x0c));
+            cv.stroke_round_rect(
+                cap_x,
+                28,
+                cap_w,
+                28,
+                14.0,
+                1.0,
+                Rgba::rgba(255, 255, 255, 40),
+            );
+            centred(cv, v.fonts.semibold.as_ref(), cap, w / 2, 47, 13.0, white);
+
+            if let Some(weather) = v.weather {
+                let ww = text_width(v.fonts.regular.as_ref(), weather, 14.0);
+                cv.text(
+                    v.fonts.regular.as_ref(),
+                    weather,
+                    w - ww - 36,
+                    48,
+                    14.0,
+                    soft,
+                );
+            }
+
+            // Large date + clock.
+            let top = (h as f32 * 0.18) as i32;
+            centred(
+                cv,
+                v.fonts.semibold.as_ref(),
+                &v.date,
+                w / 2,
+                top,
+                22.0,
+                soft,
+            );
+            centred(
+                cv,
+                v.fonts.semibold.as_ref(),
+                &v.clock,
+                w / 2,
+                top + big(h) as i32 - 8,
+                big(h),
+                white,
+            );
+
+            if v.agents_running > 0 {
+                let label = format!("{} Agents RUNNING", v.agents_running);
+                let aw = text_width(v.fonts.semibold.as_ref(), &label, 12.0) + 28;
+                let ax = (w - aw) / 2;
+                let ay = top + big(h) as i32 + 16;
+                cv.round_rect(ax, ay, aw, 26, 13.0, Rgba::rgba(0xb4, 0x8a, 0xad, 60));
+                centred(
+                    cv,
+                    v.fonts.semibold.as_ref(),
+                    &label,
+                    w / 2,
+                    ay + 18,
+                    12.0,
+                    white,
+                );
+            }
+
+            centred(
+                cv,
+                v.fonts.regular.as_ref(),
+                "No Events Scheduled Today",
+                w / 2,
+                h - 280,
+                13.0,
+                Rgba::rgba(255, 255, 255, 160),
+            );
+
+            // Avatar row: current user + NEW.
+            let by = h - 230;
+            avatar(cv, v, w / 2 - 44, by, 28.0);
+            centred(
+                cv,
+                v.fonts.regular.as_ref(),
+                v.name,
+                w / 2 - 44,
+                by + 48,
+                12.0,
+                soft,
+            );
+            cv.circle((w / 2 + 44) as f32, by as f32, 28.0, Rgba::rgba(255, 255, 255, 28));
+            centred(cv, v.fonts.semibold.as_ref(), "+", w / 2 + 44, by + 6, 22.0, white);
+            centred(
+                cv,
+                v.fonts.regular.as_ref(),
+                "NEW",
+                w / 2 + 44,
+                by + 48,
+                11.0,
+                soft,
+            );
+
+            if let Some(title) = v.media_title.filter(|t| !t.is_empty()) {
+                let mw = 280;
+                let mx = (w - mw) / 2;
+                let my = h - 170;
+                cv.round_rect(mx, my, mw, 52, 14.0, Rgba::rgba(0, 0, 0, 120));
+                cv.stroke_round_rect(mx, my, mw, 52, 14.0, 1.0, Rgba::rgba(255, 255, 255, 36));
+                cv.text(
+                    v.fonts.semibold.as_ref(),
+                    title,
+                    mx + 16,
+                    my + 22,
+                    13.0,
+                    white,
+                );
+                if let Some(artist) = v.media_artist.filter(|a| !a.is_empty()) {
+                    cv.text(
+                        v.fonts.regular.as_ref(),
+                        artist,
+                        mx + 16,
+                        my + 40,
+                        11.0,
+                        soft,
+                    );
+                }
+            }
+
+            field(cv, v, w / 2, h - 100, 280);
         }
     }
 }
