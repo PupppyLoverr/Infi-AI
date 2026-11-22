@@ -3,7 +3,7 @@ name = "solyra-term"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "Solyra terminal: zgx, multiple tabs"
+description = "Solyra terminal: zgx, workspace tabs and split panes"
 
 [dependencies]
 zgx.workspace = true

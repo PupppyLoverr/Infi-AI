@@ -199,12 +199,15 @@ impl Session {
         }
     }
 
-    /// Close focused pane. Drops empty workspaces. Returns closed id.
+    /// Close the focused pane. An empty workspace is dropped. Returns the id
+    /// that closed. The session can be left with no workspaces; the window
+    /// opens a fresh one (`add_workspace`) so a terminal is always on screen.
     pub fn close_focused(&mut self) -> Option<String> {
         let idx = self.active;
         let ws = self.workspaces.get_mut(idx)?;
         let closed = ws.focused.clone();
         let tree = std::mem::replace(&mut ws.tree, PaneTree::leaf("_"));
+        let beside = sibling_id(&tree, &closed).map(str::to_string);
         match tree.close(&closed) {
             None => {
                 self.workspaces.remove(idx);
@@ -215,10 +218,9 @@ impl Session {
                 }
             }
             Some(tree) => {
-                ws.focused = tree
-                    .first_id()
-                    .unwrap_or("")
-                    .to_string();
+                ws.focused = beside
+                    .filter(|id| tree.contains(id))
+                    .unwrap_or_else(|| tree.first_id().unwrap_or("").to_string());
                 ws.tree = tree;
             }
         }
@@ -241,6 +243,31 @@ impl Session {
         } else {
             self.active - 1
         };
+    }
+}
+
+/// The leaf that should take focus when `target` closes: the sibling beside
+/// it, or the first leaf of that sibling when the closed pane was a branch.
+fn sibling_id<'a>(tree: &'a PaneTree, target: &str) -> Option<&'a str> {
+    match tree {
+        PaneTree::Leaf { .. } => None,
+        PaneTree::Split { a, b, .. } => {
+            if a.contains(target) {
+                if a.count() == 1 {
+                    b.first_id()
+                } else {
+                    sibling_id(a, target)
+                }
+            } else if b.contains(target) {
+                if b.count() == 1 {
+                    a.first_id()
+                } else {
+                    sibling_id(b, target)
+                }
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -284,5 +311,82 @@ mod tests {
         s.close_focused();
         assert_eq!(s.workspaces.len(), 1);
         assert_eq!(s.active().unwrap().focused, "a");
+    }
+
+    #[test]
+    fn count_leaves_in_a_nested_tree() {
+        let mut tree = PaneTree::leaf("a");
+        assert_eq!(tree.count(), 1);
+        assert!(tree.split("a", "b".into(), SplitDir::Vertical, "s1".into()));
+        assert!(tree.split("b", "c".into(), SplitDir::Horizontal, "s2".into()));
+        assert!(!tree.split("missing", "d".into(), SplitDir::Vertical, "s3".into()));
+        assert_eq!(tree.count(), 3);
+        assert_eq!(tree.ids().len(), 3);
+        match &tree {
+            PaneTree::Split { dir, ratio, .. } => {
+                assert_eq!(*dir, SplitDir::Vertical);
+                assert_eq!(*ratio, 0.5);
+            }
+            PaneTree::Leaf { .. } => panic!("expected a split"),
+        }
+    }
+
+    #[test]
+    fn closing_a_nested_pane_focuses_its_sibling() {
+        let mut session = Session::default();
+        session.add_workspace("1".into(), "a".into());
+        assert!(session.split_focused("b".into(), SplitDir::Vertical, "s1".into()));
+        assert!(session.split_focused("c".into(), SplitDir::Horizontal, "s2".into()));
+        assert_eq!(session.pane_count(), 3);
+        assert_eq!(session.close_focused().as_deref(), Some("c"));
+        assert_eq!(session.active().unwrap().focused, "b");
+        assert_eq!(session.pane_count(), 2);
+        assert!(session.active().unwrap().tree.contains("a"));
+        assert!(session.active().unwrap().tree.contains("b"));
+    }
+
+    #[test]
+    fn the_cap_counts_every_workspace() {
+        let mut session = Session::default();
+        session.add_workspace("1".into(), "a".into());
+        for i in 0..8 {
+            assert!(session.split_focused(format!("p{i}"), SplitDir::Vertical, format!("s{i}")));
+        }
+        assert!(session.add_workspace("2".into(), "b".into()));
+        let mut n = 0;
+        while session.can_add_pane() {
+            assert!(session.split_focused(format!("q{n}"), SplitDir::Horizontal, format!("t{n}")));
+            n += 1;
+            assert!(n < MAX_PANES, "cap did not stop the loop");
+        }
+        assert_eq!(session.pane_count(), MAX_PANES);
+        assert!(!session.split_focused("no".into(), SplitDir::Vertical, "sx".into()));
+        assert!(!session.add_workspace("3".into(), "z".into()));
+    }
+
+    #[test]
+    fn workspace_cycle_wraps() {
+        let mut session = Session::default();
+        session.add_workspace("1".into(), "a".into());
+        session.add_workspace("2".into(), "b".into());
+        assert_eq!(session.active().unwrap().name, "2");
+        session.next_workspace();
+        assert_eq!(session.active().unwrap().name, "1");
+        session.prev_workspace();
+        assert_eq!(session.active().unwrap().name, "2");
+        session.prev_workspace();
+        assert_eq!(session.active().unwrap().name, "1");
+    }
+
+    #[test]
+    fn closing_the_only_pane_leaves_room_for_a_fresh_workspace() {
+        let mut session = Session::default();
+        session.add_workspace("1".into(), "a".into());
+        assert_eq!(session.close_focused().as_deref(), Some("a"));
+        assert!(session.workspaces.is_empty());
+        assert_eq!(session.pane_count(), 0);
+        assert!(session.add_workspace("2".into(), "c".into()));
+        assert_eq!(session.pane_count(), 1);
+        assert_eq!(session.active().unwrap().focused, "c");
     }
 }
