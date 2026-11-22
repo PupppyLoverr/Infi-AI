@@ -24,7 +24,9 @@ pub enum PaneTree {
     },
     Split {
         dir: SplitDir,
-        /// Fraction of space given to `a` (0.15..=0.85).
+        /// Stable id so the UI can keep a drag-size signal across rebuilds.
+        key: String,
+        /// Fraction of space given to `a` (0.15..=0.85); seed for new splits.
         ratio: f32,
         a: Box<PaneTree>,
         b: Box<PaneTree>,
@@ -69,13 +71,15 @@ impl PaneTree {
     }
 
     /// Split the leaf `id` in `dir`, inserting `new_id` as the sibling.
+    /// `split_key` identifies the new divider for persisted drag sizes.
     /// Returns false if `id` is missing.
-    pub fn split(&mut self, id: &str, new_id: String, dir: SplitDir) -> bool {
+    pub fn split(&mut self, id: &str, new_id: String, dir: SplitDir, split_key: String) -> bool {
         match self {
             Self::Leaf { id: leaf } if leaf == id => {
                 let old = std::mem::replace(self, Self::leaf("_"));
                 *self = Self::Split {
                     dir,
+                    key: split_key,
                     ratio: 0.5,
                     a: Box::new(old),
                     b: Box::new(Self::leaf(new_id)),
@@ -83,7 +87,10 @@ impl PaneTree {
                 true
             }
             Self::Leaf { .. } => false,
-            Self::Split { a, b, .. } => a.split(id, new_id.clone(), dir) || b.split(id, new_id, dir),
+            Self::Split { a, b, .. } => {
+                a.split(id, new_id.clone(), dir, split_key.clone())
+                    || b.split(id, new_id, dir, split_key)
+            }
         }
     }
 
@@ -92,7 +99,13 @@ impl PaneTree {
         match self {
             Self::Leaf { id: leaf } if leaf == id => None,
             Self::Leaf { .. } => Some(self),
-            Self::Split { dir, ratio, a, b } => {
+            Self::Split {
+                dir,
+                key,
+                ratio,
+                a,
+                b,
+            } => {
                 let a = a.close(id);
                 let b = b.close(id);
                 match (a, b) {
@@ -100,6 +113,7 @@ impl PaneTree {
                     (Some(only), None) | (None, Some(only)) => Some(only),
                     (Some(a), Some(b)) => Some(Self::Split {
                         dir,
+                        key,
                         ratio,
                         a: Box::new(a),
                         b: Box::new(b),
@@ -169,7 +183,7 @@ impl Session {
         true
     }
 
-    pub fn split_focused(&mut self, new_id: String, dir: SplitDir) -> bool {
+    pub fn split_focused(&mut self, new_id: String, dir: SplitDir, split_key: String) -> bool {
         if !self.can_add_pane() {
             return false;
         }
@@ -177,7 +191,7 @@ impl Session {
             return false;
         };
         let focus = ws.focused.clone();
-        if ws.tree.split(&focus, new_id.clone(), dir) {
+        if ws.tree.split(&focus, new_id.clone(), dir, split_key) {
             ws.focused = new_id;
             true
         } else {
@@ -240,12 +254,12 @@ mod tests {
         assert!(s.add_workspace("1".into(), "a".into()));
         for i in 1..MAX_PANES {
             assert!(
-                s.split_focused(format!("p{i}"), SplitDir::Vertical),
+                s.split_focused(format!("p{i}"), SplitDir::Vertical, format!("sk{i}")),
                 "split {i}"
             );
         }
         assert_eq!(s.pane_count(), MAX_PANES);
-        assert!(!s.split_focused("overflow".into(), SplitDir::Horizontal));
+        assert!(!s.split_focused("overflow".into(), SplitDir::Horizontal, "skx".into()));
         assert!(!s.add_workspace("x".into(), "y".into()));
     }
 
@@ -253,7 +267,7 @@ mod tests {
     fn close_collapses_split() {
         let mut s = Session::default();
         s.add_workspace("1".into(), "a".into());
-        s.split_focused("b".into(), SplitDir::Horizontal);
+        s.split_focused("b".into(), SplitDir::Horizontal, "sk1".into());
         assert_eq!(s.pane_count(), 2);
         let closed = s.close_focused();
         assert_eq!(closed.as_deref(), Some("b"));

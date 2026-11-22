@@ -44,6 +44,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let rt = cx.ui.runtime.clone();
             let terms: Rc<RefCell<HashMap<String, Terminal>>> = Rc::default();
             let counter = Rc::new(RefCell::new(0u32));
+            let split_counter = Rc::new(RefCell::new(0u32));
+            // Drag sizes for zgx split() dividers, keyed by PaneTree split key.
+            let split_sizes: Rc<RefCell<HashMap<String, Signal<f32>>>> = Rc::default();
             let session: Rc<RefCell<Session>> = Rc::new(RefCell::new(Session::default()));
             let items: Signal<Vec<Tab>> = rt.signal(Vec::new());
             let selected = rt.signal(String::new());
@@ -127,12 +130,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let do_split = {
-                let (session, mint, terms, sync_tabs, bump) = (
+                let (session, mint, terms, sync_tabs, bump, split_counter, split_sizes, rt) = (
                     session.clone(),
                     mint.clone(),
                     terms.clone(),
                     sync_tabs.clone(),
                     bump.clone(),
+                    split_counter.clone(),
+                    split_sizes.clone(),
+                    rt.clone(),
                 );
                 Rc::new(move |dir: SplitDir| {
                     if !session.borrow().can_add_pane() {
@@ -140,7 +146,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         return;
                     }
                     let id = mint();
-                    let ok = session.borrow_mut().split_focused(id.clone(), dir);
+                    let key = {
+                        let mut n = split_counter.borrow_mut();
+                        *n += 1;
+                        format!("split-{}", *n)
+                    };
+                    let seed = match dir {
+                        SplitDir::Vertical => 520.0,
+                        SplitDir::Horizontal => 320.0,
+                    };
+                    split_sizes
+                        .borrow_mut()
+                        .insert(key.clone(), rt.signal(seed));
+                    let ok = session.borrow_mut().split_focused(id.clone(), dir, key);
                     if !ok {
                         if let Some(t) = terms.borrow_mut().remove(&id) {
                             t.close();
@@ -318,6 +336,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let panel_terms = terms.clone();
             let panel_session = session.clone();
             let panel_tick = tick.clone();
+            let panel_sizes = split_sizes.clone();
             let panel_theme = theme;
             let strip = tabs(
                 "Terminal workspaces",
@@ -343,6 +362,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         panel_terms.clone(),
                         panel_session.clone(),
                         panel_tick.clone(),
+                        panel_sizes.clone(),
                         panel_theme,
                     )
                 },
@@ -382,6 +402,7 @@ fn render_tree(
     terms: Rc<RefCell<HashMap<String, Terminal>>>,
     session: Rc<RefCell<Session>>,
     tick: Signal<u32>,
+    sizes: Rc<RefCell<HashMap<String, Signal<f32>>>>,
     theme: solyra_tokens::Theme,
 ) -> View {
     match tree {
@@ -393,22 +414,26 @@ fn render_tree(
             column()
                 .grow()
                 .w_full()
+                .min_w(80.)
+                .min_h(40.)
                 .rounded(6.)
                 .border_color(if is_focus { accent } else { idle })
                 .border(1.)
                 .child({
-                    let terms = terms.clone();
                     let id_click = id.clone();
                     let session = session.clone();
                     let tick = tick.clone();
                     button()
                         .w_full()
                         .h(22.)
-                        .child(text(if is_focus {
-                            format!("● {id}")
-                        } else {
-                            format!("○ {id}")
-                        }).text_size(11.))
+                        .child(
+                            text(if is_focus {
+                                format!("● {id}")
+                            } else {
+                                format!("○ {id}")
+                            })
+                            .text_size(11.),
+                        )
                         .on_click(move || {
                             if let Some(ws) = session.borrow_mut().active_mut() {
                                 ws.focused = id_click.clone();
@@ -428,17 +453,46 @@ fn render_tree(
                     }
                 })
         }
-        PaneTree::Split { dir, a, b, .. } => {
-            let left = render_tree(a, focused, terms.clone(), session.clone(), tick.clone(), theme);
-            let right = render_tree(b, focused, terms, session, tick, theme);
-            match dir {
-                SplitDir::Vertical => row()
+        PaneTree::Split { dir, key, a, b, .. } => {
+            let left = render_tree(
+                a,
+                focused,
+                terms.clone(),
+                session.clone(),
+                tick.clone(),
+                sizes.clone(),
+                theme,
+            );
+            let right = render_tree(b, focused, terms, session, tick, sizes.clone(), theme);
+            let size = sizes.borrow().get(key).cloned();
+            // zgx: vertical=true → stacked (our Horizontal); vertical=false → side-by-side.
+            let stacked = matches!(dir, SplitDir::Horizontal);
+            match size {
+                Some(size) => split(
+                    size,
+                    SplitOptions {
+                        vertical: stacked,
+                        min: 80.,
+                        min_rest: 80.,
+                        label: Some(if stacked {
+                            "Split height".into()
+                        } else {
+                            "Split width".into()
+                        }),
+                        ..Default::default()
+                    },
+                    left,
+                    right,
+                )
+                .grow(),
+                // Split key missing (should not happen); fall back to equal flex.
+                None if stacked => column()
                     .grow()
                     .w_full()
                     .gap(4.)
                     .child(left.grow())
                     .child(right.grow()),
-                SplitDir::Horizontal => column()
+                None => row()
                     .grow()
                     .w_full()
                     .gap(4.)
