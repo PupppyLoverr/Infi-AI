@@ -13,7 +13,7 @@
 use crate::agent::{AskKind, Scope, Verdict};
 use crate::canvas::{text_width, wrap_text, Canvas, Fonts, Rgba};
 use crate::media::{Control, Media};
-use crate::state::{LaunchTarget, ShellCmd};
+use crate::state::ShellCmd;
 use crate::surfaces::{HitAction, Region};
 use crate::tokens::{Theme, T_BODY, T_CAPTION, T_LABEL, T_META};
 use solyra_conf::look::NotchStyle;
@@ -72,56 +72,65 @@ impl Shape {
     }
 }
 
+/// Expanded card size. Media is a Live Activity (~440×156, radius 44 on the
+/// island). Idle is a short glance. Anything with buttons keeps more height.
+fn expanded_shape(style: NotchStyle, content: &Content) -> Shape {
+    let island = style == NotchStyle::Island;
+    let (w, h) = match content {
+        Content::Media(_) => (440.0, 156.0),
+        Content::Idle => (if island { 348.0 } else { 400.0 }, 132.0),
+        _ => (if island { 440.0 } else { 452.0 }, 196.0),
+    };
+    Shape {
+        w,
+        h,
+        y: if island { 6.0 } else { 0.0 },
+        r: if island { 44.0 } else { 30.0 },
+    }
+}
+
 /// Where the shape wants to be.
 pub fn target(style: NotchStyle, content: &Content, expanded: bool) -> Shape {
     let busy = !matches!(content, Content::Idle);
     match style {
         NotchStyle::Island => {
             if expanded {
-                Shape {
-                    w: 440.0,
-                    h: 186.0,
-                    y: 5.0,
-                    r: 34.0,
-                }
+                expanded_shape(style, content)
             } else if busy {
+                // Compact live activity: a capsule just taller than idle.
                 Shape {
-                    w: 360.0,
-                    h: 26.0,
+                    w: 328.0,
+                    h: 37.0,
                     y: 4.0,
-                    r: 13.0,
+                    r: 18.5,
                 }
             } else {
+                // Idle pill, floating just below the top edge.
                 Shape {
                     w: 126.0,
-                    h: 26.0,
+                    h: 36.0,
                     y: 4.0,
-                    r: 13.0,
+                    r: 18.0,
                 }
             }
         }
         // Off has no surface; the notch numbers are a harmless default.
         NotchStyle::Notch | NotchStyle::Off => {
             if expanded {
-                Shape {
-                    w: 452.0,
-                    h: 200.0,
-                    y: 0.0,
-                    r: 28.0,
-                }
+                expanded_shape(style, content)
             } else if busy {
                 Shape {
-                    w: 380.0,
-                    h: 34.0,
+                    w: 360.0,
+                    h: 36.0,
                     y: 0.0,
-                    r: 14.0,
+                    r: 16.0,
                 }
             } else {
                 Shape {
                     w: 188.0,
                     h: 32.0,
                     y: 0.0,
-                    r: 13.0,
+                    r: 14.0,
                 }
             }
         }
@@ -248,7 +257,11 @@ pub fn draw(
         h.round() as i32,
     );
 
-    let slab = crate::material::slab(extra.material, crate::material::notch_base(extra.material), None);
+    let slab = crate::material::slab(
+        extra.material,
+        crate::material::notch_base(extra.material),
+        None,
+    );
     let body = slab.fill;
     match style {
         NotchStyle::Island => {
@@ -290,16 +303,35 @@ pub fn draw(
         return regions;
     }
 
-    // The compact row: the top strip of the shape (the bar's height).
-    let row_h = if style == NotchStyle::Island { 26 } else { 32 };
-    let row_y = yi;
-    compact_row(cv, &th, fonts, xi, row_y, wi, row_h, content, style);
-
     if expanded {
-        let body = (xi + 22, row_y + row_h + 10, wi - 44, hi - row_h - 22);
+        // Inset past the corner radius. The expanded card replaces the compact
+        // row; it is not stacked under it.
+        let pad = 16;
+        let body = (
+            xi + pad,
+            yi + pad,
+            (wi - 2 * pad).max(0),
+            (hi - 2 * pad).max(0),
+        );
         expanded_body(cv, &th, fonts, body, content, extra, hover, &mut regions);
+    } else {
+        compact_row(cv, &th, fonts, xi, yi, wi, hi, content, style);
     }
     regions
+}
+
+/// Leading glyph and trailing status, grouped in the middle of the pill so a
+/// short title does not leave a wide empty gap.
+fn cluster_x(x: i32, w: i32, inset: i32, cluster_w: i32) -> i32 {
+    let inner = (w - 2 * inset).max(0);
+    let cw = cluster_w.min(inner);
+    x + (w - cw).max(0) / 2
+}
+
+fn waveform(cv: &mut Canvas<'_>, x: i32, mid: f32, color: Rgba) {
+    for (i, bh) in [7, 12, 5, 10].into_iter().enumerate() {
+        cv.round_rect(x + i as i32 * 5, (mid as i32) - bh / 2, 3, bh, 1.5, color);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -315,107 +347,128 @@ fn compact_row(
     style: NotchStyle,
 ) {
     let mid = y as f32 + h as f32 / 2.0;
-    let left = x + if style == NotchStyle::Island { 14 } else { 22 };
-    let right = x + w - if style == NotchStyle::Island { 14 } else { 22 };
     let baseline = y + h / 2 + 4;
-    let text_max = (right - left - 48).max(0);
+    let inset = if style == NotchStyle::Island { 14 } else { 18 };
+    let inner = (w - 2 * inset).max(0);
+    let gap = 8;
     match content {
         Content::Idle => {}
         Content::Message(t) => {
-            cv.icon_bell(left as f32 + 6.0, mid - 2.0, th.text);
+            let glyph = 16;
+            let max_tw = (inner - glyph - gap).max(0);
+            let tw = text_width(fonts.semibold.as_ref(), t, 12.0).min(max_tw);
+            let start = cluster_x(x, w, inset, glyph + gap + tw);
+            cv.icon_bell(start as f32 + 7.0, mid, th.text);
             cv.text_truncated(
                 fonts.semibold.as_ref(),
                 t,
-                left + 20,
+                start + glyph,
                 baseline,
                 12.0,
-                text_max,
+                max_tw,
                 th.text,
             );
         }
         Content::Activity { who, text } => {
-            cv.circle(left as f32 + 5.0, mid, 4.0, th.agent_active);
+            let glyph = 14;
+            let bars = 18;
             let line = format!("{who} · {text}");
+            let max_tw = (inner - glyph - gap - gap - bars).max(0);
+            let tw = text_width(fonts.semibold.as_ref(), &line, 12.0).min(max_tw);
+            let start = cluster_x(x, w, inset, glyph + gap + tw + gap + bars);
+            cv.circle(start as f32 + 5.0, mid, 4.0, th.agent_active);
             cv.text_truncated(
                 fonts.semibold.as_ref(),
                 &line,
-                left + 16,
+                start + glyph,
                 baseline,
                 12.0,
-                text_max,
+                max_tw,
                 th.text,
             );
-            // Right: three short bars: "working".
-            for (i, bh) in [6, 10, 7].into_iter().enumerate() {
-                cv.round_rect(
-                    right - 14 + i as i32 * 5,
-                    (mid as i32) - bh / 2,
-                    3,
-                    bh,
-                    1.5,
-                    th.agent_active,
-                );
-            }
+            waveform(cv, start + glyph + gap + tw + gap, mid, th.agent_active);
         }
         Content::Attention(a) => {
-            cv.ring(left as f32 + 5.0, mid, 4.5, 1.8, th.agent_approval);
-            cv.circle(left as f32 + 5.0, mid, 1.6, th.agent_approval);
+            let glyph = 16;
             let what = match a.kind {
                 AskKind::Permission => "Approval needed",
                 AskKind::Question => "Question",
             };
             let line = format!("{what} · {}", a.who);
+            let chip = if a.sent { "Sent" } else { "Review" };
+            let chip_w = text_width(fonts.semibold.as_ref(), chip, 10.5) + 14;
+            let max_tw = (inner - glyph - gap - gap - chip_w).max(0);
+            let tw = text_width(fonts.semibold.as_ref(), &line, 12.0).min(max_tw);
+            let start = cluster_x(x, w, inset, glyph + gap + tw + gap + chip_w);
+            cv.ring(start as f32 + 6.0, mid, 4.5, 1.8, th.agent_approval);
+            cv.circle(start as f32 + 6.0, mid, 1.6, th.agent_approval);
             cv.text_truncated(
                 fonts.semibold.as_ref(),
                 &line,
-                left + 16,
+                start + glyph,
                 baseline,
                 12.0,
-                text_max,
+                max_tw,
                 th.text,
             );
-            let chip = if a.sent { "Sent" } else { "Review" };
-            let cw = text_width(fonts.semibold.as_ref(), chip, 10.5) + 14;
-            cv.round_rect(right - cw, y + (h - 18) / 2, cw, 18, 9.0, th.agent_approval);
+            let cx = start + glyph + gap + tw + gap;
+            let cy = y + (h - 18) / 2;
+            cv.round_rect(cx, cy, chip_w, 18, 9.0, th.agent_approval);
             cv.text(
                 fonts.semibold.as_ref(),
                 chip,
-                right - cw + 7,
-                y + (h - 18) / 2 + 13,
+                cx + 7,
+                cy + 13,
                 10.5,
                 th.on_accent,
             );
         }
         Content::Media(m) => {
-            cv.icon_note(left as f32 + 4.0, mid, th.text);
-            // Compact pill is the track title only, truncated ("FALLEN ANGEL").
+            let art = 18;
             let line = if m.title.is_empty() {
                 m.artist.clone()
             } else {
                 m.title.clone()
             };
+            let elapsed = (!m.playing)
+                .then(|| m.elapsed_label().map(|(e, _, _)| e))
+                .flatten();
+            let trail = if m.playing {
+                18
+            } else if let Some(elapsed) = elapsed.as_deref() {
+                text_width(fonts.semibold.as_ref(), elapsed, 11.0)
+            } else {
+                12
+            };
+            let max_tw = (inner - art - gap - gap - trail).max(24);
+            let tw = text_width(fonts.semibold.as_ref(), &line, 12.0).min(max_tw);
+            let start = cluster_x(x, w, inset, art + gap + tw + gap + trail);
+            let art_y = (mid as i32) - art / 2;
+            cv.round_rect(start, art_y, art, art, 5.0, Rgba::rgba(255, 255, 255, 32));
+            cv.icon_note(start as f32 + art as f32 / 2.0, mid, th.text);
             cv.text_truncated(
                 fonts.semibold.as_ref(),
                 &line,
-                left + 18,
+                start + art + gap,
                 baseline,
                 12.0,
-                text_max,
+                max_tw,
                 th.text,
             );
+            let tx = start + art + gap + tw + gap;
             if m.playing {
-                for (i, bh) in [8, 12, 6, 10].into_iter().enumerate() {
-                    cv.round_rect(
-                        right - 18 + i as i32 * 5,
-                        (mid as i32) - bh / 2,
-                        3,
-                        bh,
-                        1.5,
-                        th.success,
-                    );
-                }
+                waveform(cv, tx, mid, th.text);
+            } else if let Some(elapsed) = elapsed.as_deref() {
+                cv.text(
+                    fonts.semibold.as_ref(),
+                    elapsed,
+                    tx,
+                    baseline,
+                    11.0,
+                    th.text,
+                );
             } else {
-                cv.icon_pause(right as f32 - 8.0, mid, 10.0, th.text_dim);
+                cv.icon_pause(tx as f32 + 6.0, mid, 10.0, th.text_dim);
             }
         }
     }
@@ -473,58 +526,52 @@ fn expanded_body(
     let buttons_y = by + bh - 32;
     match content {
         Content::Idle => {
+            // A glance: time, then one quiet line. No button row.
             cv.text(
-                fonts.semibold.as_ref(),
+                fonts.regular.as_ref(),
                 extra.clock,
                 bx,
-                by + 30,
-                30.0,
+                by + 36,
+                34.0,
                 th.text,
             );
             cv.text(
                 fonts.regular.as_ref(),
                 extra.date,
                 bx,
-                by + 52,
+                by + 58,
                 T_LABEL,
                 th.text_dim,
             );
             let g = extra.glance;
-            let mut facts = vec![extra.glance.network.clone()];
+            let mut facts = Vec::new();
             if let Some(b) = g.battery {
-                facts.push(format!("Battery {b}%"));
+                facts.push(format!("{b}%"));
             }
-            facts.push(format!("{} windows", g.windows));
+            if !g.network.is_empty() {
+                facts.push(g.network.clone());
+            }
             if g.agents_running > 0 {
-                facts.push(format!("{} agent(s) working", g.agents_running));
+                let word = if g.agents_running == 1 {
+                    "agent"
+                } else {
+                    "agents"
+                };
+                facts.push(format!("{} {word}", g.agents_running));
             }
-            cv.text_truncated(
-                fonts.regular.as_ref(),
-                &facts.join("  ·  "),
-                bx,
-                by + 76,
-                T_META,
-                bw,
-                th.text_med,
-            );
-            let row = button_row(bx, buttons_y, bw, 3);
-            let acts = [
-                ("Agent tasks", HitAction::Shell(ShellCmd::ToggleAgents)),
-                ("Control Centre", HitAction::Shell(ShellCmd::ToggleControl)),
-                (
-                    "Overview",
-                    HitAction::Launch(LaunchTarget::Ipc("{\"Action\":{\"ToggleOverview\":{}}}")),
-                ),
-            ];
-            for (r, (label, act)) in row.into_iter().zip(acts) {
-                button(cv, th, fonts, r, label, false, hover);
-                regions.push(Region {
-                    x: r.0,
-                    y: r.1,
-                    w: r.2,
-                    h: r.3,
-                    action: act,
-                });
+            if g.windows > 0 {
+                facts.push(format!("{} windows", g.windows));
+            }
+            if !facts.is_empty() {
+                cv.text_truncated(
+                    fonts.regular.as_ref(),
+                    &facts.join("   ·   "),
+                    bx,
+                    by + 82,
+                    T_META,
+                    bw,
+                    th.text_med,
+                );
             }
         }
         Content::Message(t) => {
@@ -569,16 +616,24 @@ fn expanded_body(
         }
         Content::Attention(a) => attention_body(cv, th, fonts, body, a, extra, hover, regions),
         Content::Media(m) => {
-            cv.round_rect(bx, by + 2, 56, 56, 12.0, Rgba::rgba(255, 255, 255, 24));
-            cv.icon_note(bx as f32 + 26.0, by as f32 + 30.0, th.text);
-            let tx = bx + 70;
+            // Artwork, title and artist, a progress bar with both times,
+            // then transport controls with a 24px gap.
+            let art = 52;
+            cv.round_rect(bx, by, art, art, 14.0, Rgba::rgba(255, 255, 255, 28));
+            cv.icon_note(
+                bx as f32 + art as f32 / 2.0,
+                by as f32 + art as f32 / 2.0,
+                th.text,
+            );
+            let tx = bx + art + 14;
+            let tw = (bw - art - 14).max(0);
             cv.text_truncated(
                 fonts.semibold.as_ref(),
                 &m.title,
                 tx,
                 by + 22,
-                T_BODY + 1.0,
-                bw - 70,
+                16.0,
+                tw,
                 th.text,
             );
             cv.text_truncated(
@@ -587,40 +642,50 @@ fn expanded_body(
                 tx,
                 by + 42,
                 T_LABEL,
-                bw - 70,
+                tw,
                 th.text_dim,
             );
             if let Some((elapsed, total, pct)) = m.elapsed_label() {
-                let bar_y = by + 58;
-                let bar_w = bw;
-                cv.round_rect(bx, bar_y, bar_w, 4, 2.0, Rgba::rgba(255, 255, 255, 28));
-                let fill = ((bar_w as f32) * pct).round() as i32;
+                let bar_y = by + art + 8;
+                cv.round_rect(bx, bar_y, bw, 3, 1.5, Rgba::rgba(255, 255, 255, 36));
+                let fill = ((bw as f32) * pct).round() as i32;
                 if fill > 0 {
-                    cv.round_rect(bx, bar_y, fill.max(4), 4, 2.0, th.accent);
+                    cv.round_rect(bx, bar_y, fill.max(4), 3, 1.5, th.text);
                 }
-                let label = format!("{elapsed} / {total}");
-                cv.text_truncated(
+                let time_base = bar_y + 16;
+                cv.text(
                     fonts.regular.as_ref(),
-                    &label,
+                    &elapsed,
                     bx,
-                    bar_y + 18,
+                    time_base,
                     T_CAPTION,
-                    bar_w,
+                    th.text_dim,
+                );
+                let total_w = text_width(fonts.regular.as_ref(), &total, T_CAPTION);
+                cv.text(
+                    fonts.regular.as_ref(),
+                    &total,
+                    bx + bw - total_w,
+                    time_base,
+                    T_CAPTION,
                     th.text_dim,
                 );
             }
-            let cy = buttons_y + 16;
-            let centre = bx + bw / 2;
-            let ctrls = [
-                (centre - 64, Control::Previous),
-                (centre, Control::PlayPause),
-                (centre + 64, Control::Next),
-            ];
-            for (cx, c) in ctrls {
-                let r = (cx - 22, buttons_y, 44, 32);
+            let ctrl_h = 32;
+            let ctrl_y = by + bh - ctrl_h;
+            let btn = 36;
+            let gap = 24;
+            let row_w = btn * 3 + gap * 2;
+            let start = bx + (bw - row_w) / 2;
+            let cy = ctrl_y + ctrl_h / 2;
+            let ctrls = [Control::Previous, Control::PlayPause, Control::Next];
+            for (i, c) in ctrls.into_iter().enumerate() {
+                let cx0 = start + i as i32 * (btn + gap);
+                let r = (cx0, ctrl_y, btn, ctrl_h);
                 if hovered(hover, r.0, r.1, r.2, r.3) {
                     cv.round_rect(r.0, r.1, r.2, r.3, 16.0, Rgba::rgba(255, 255, 255, 30));
                 }
+                let cx = cx0 + btn / 2;
                 match c {
                     Control::Previous => cv.icon_skip(cx as f32, cy as f32, 16.0, false, th.text),
                     Control::Next => cv.icon_skip(cx as f32, cy as f32, 16.0, true, th.text),
@@ -853,6 +918,42 @@ mod tests {
             target(NotchStyle::Island, &Content::Idle, false).y > 0.0,
             "an island floats"
         );
+    }
+
+    #[test]
+    fn island_targets_match_live_activity_proportions() {
+        use crate::media::Media;
+        let media = Content::Media(Media {
+            bus: "x".into(),
+            title: "Clair de Lune".into(),
+            artist: "Debussy".into(),
+            playing: true,
+            position_us: Some(15_000_000),
+            length_us: Some(203_000_000),
+        });
+        let idle = target(NotchStyle::Island, &Content::Idle, false);
+        assert_eq!(idle.w, 126.0);
+        assert_eq!(idle.h, 36.0);
+        assert!(idle.y > 0.0);
+        assert!(
+            (idle.r - idle.h / 2.0).abs() < 0.6,
+            "idle island is a capsule"
+        );
+        let busy = target(NotchStyle::Island, &media, false);
+        assert!(busy.h > idle.h, "busy compact is taller than idle");
+        assert!((busy.h - 37.0).abs() < 0.6);
+        let open = target(NotchStyle::Island, &media, true);
+        assert_eq!(open.w, 440.0);
+        assert!(
+            (130.0..=160.0).contains(&open.h),
+            "expanded media height {}",
+            open.h
+        );
+        assert_eq!(open.r, 44.0);
+        let glance = target(NotchStyle::Island, &Content::Idle, true);
+        assert_eq!(glance.r, 44.0);
+        assert!(glance.h < open.h);
+        assert!(glance.h > busy.h);
     }
 
     #[test]

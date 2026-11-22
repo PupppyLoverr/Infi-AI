@@ -7,16 +7,19 @@
 //! passwords work.
 //!
 //! Four layouts (`lock_style` in shell.conf):
-//! * **Solyra** – blurred wallpaper under a dark scrim, time in the middle, a
-//!   single password pill.
-//! * **Centred** – large date and time near the top, the person's picture,
-//!   name and password field near the bottom (macOS-like).
+//! * **Solyra** – soft-blurred wallpaper under a light neutral veil, the clock
+//!   in the upper half, a single password pill.
+//! * **Classic** – sharp wallpaper, a large clock in the top third with the
+//!   date above it, avatar and password near the bottom (macOS-like).
 //! * **Clock corner** – a sharp wallpaper with a big clock in the lower left;
 //!   any key slides in a centred sign-in card over a blurred backdrop
 //!   (Windows-like).
-//! * **Dashboard** – large clock, nL / now-playing capsule, avatar row, agents
-//!   glance, empty calendar line, and optional media / weather chips.
+//! * **Dashboard** – a calm glance: huge clock, one date line, a weather glass
+//!   chip, and either the nL mark or a now-playing capsule. Live weather,
+//!   media and agent counts come from the same places the panel uses.
 
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use smithay_client_toolkit::{
@@ -101,6 +104,12 @@ struct App {
     not_before: Option<Instant>,
     /// Clock corner: the sign-in card is showing.
     card: bool,
+    /// Latest MPRIS player, filled by [`crate::media::spawn_watcher`].
+    media: Arc<Mutex<Option<crate::media::Media>>>,
+    /// Normalized first line of `weather.txt`, when the file has one.
+    weather: Option<String>,
+    /// Non-terminal agent tasks, when a runtime directory is present.
+    agents_running: usize,
     last_key: Instant,
     auth_tx:
         Option<smithay_client_toolkit::reexports::calloop::channel::Sender<Result<(), String>>>,
@@ -134,6 +143,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let shm = Shm::bind(&globals, &qh)?;
     let pool = SlotPool::new(4 * 1024 * 1024, &shm)?;
     let (auth_tx, auth_rx) = channel::<Result<(), String>>();
+    let media = Arc::new(Mutex::new(None));
+    // The lock process does not share the panel's memory. Poll MPRIS the same
+    // way the panel does; a missing session bus leaves the slot empty.
+    crate::media::spawn_watcher(media.clone(), || {});
     let mut app = App {
         registry: RegistryState::new(&globals),
         outputs: OutputState::new(&globals, &qh),
@@ -161,10 +174,14 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         fails: 0,
         not_before: None,
         card: false,
+        media,
+        weather: None,
+        agents_running: 0,
         last_key: Instant::now(),
         auth_tx: Some(auth_tx),
         exit: false,
     };
+    app.refresh_live();
 
     WaylandSource::new(conn.clone(), event_queue).insert(event_loop.handle())?;
     event_loop
@@ -186,6 +203,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             {
                 app.card = false;
             }
+            app.refresh_live();
             app.draw_all();
             TimeoutAction::ToDuration(Duration::from_secs(1))
         })
@@ -288,6 +306,12 @@ impl App {
         }
     }
 
+    /// Re-read weather and the agent runtime. Media updates itself in `self.media`.
+    fn refresh_live(&mut self) {
+        self.weather = load_weather();
+        self.agents_running = live_agents(crate::agent::root_dir().as_deref());
+    }
+
     fn draw(&mut self, i: usize) {
         let (w, h) = (self.surfaces[i].width, self.surfaces[i].height);
         if w == 0 || h == 0 {
@@ -308,15 +332,27 @@ impl App {
             return;
         };
         let (_, _, sharp, blurred) = self.surfaces[i].backdrop.as_ref().expect("built above");
-        let use_sharp = self.style == LockStyle::Corner && !self.card;
+        let use_sharp = sharp_backdrop(self.style, self.card);
         bytes.copy_from_slice(if use_sharp { sharp } else { blurred });
         {
             let mut cv = Canvas::new_keep(bytes, w, h, scale as i32);
             let date = if self.style == LockStyle::Dashboard {
-                chrono::Local::now().format("%a %-d %b").to_string().to_uppercase()
+                chrono::Local::now()
+                    .format("%a %-d %b")
+                    .to_string()
+                    .to_uppercase()
             } else {
                 chrono::Local::now().format("%A %-d %B").to_string()
             };
+            let playing = self.media.lock().ok().and_then(|g| g.clone());
+            let media_title = playing.as_ref().and_then(|m| {
+                let t = m.title.trim();
+                (!t.is_empty()).then_some(t)
+            });
+            let media_artist = playing.as_ref().and_then(|m| {
+                let t = m.artist.trim();
+                (!t.is_empty()).then_some(t)
+            });
             let view = View {
                 theme: &self.theme,
                 fonts: &self.fonts,
@@ -329,10 +365,10 @@ impl App {
                 checking: self.checking,
                 message: self.message.as_deref(),
                 card: self.card,
-                agents_running: 0,
-                media_title: None,
-                media_artist: None,
-                weather: None,
+                agents_running: self.agents_running,
+                media_title,
+                media_artist,
+                weather: self.weather.as_deref(),
             };
             paint(&mut cv, &view);
         }
@@ -343,6 +379,50 @@ impl App {
             surface.commit();
         }
     }
+}
+
+/// Sharp wallpaper for Classic and the Corner clock; soft blur once the
+/// Corner sign-in card is up, and for Dashboard and Solyra.
+pub fn sharp_backdrop(style: LockStyle, card: bool) -> bool {
+    match style {
+        LockStyle::Classic => true,
+        LockStyle::Corner => !card,
+        LockStyle::Dashboard | LockStyle::Solyra => false,
+    }
+}
+
+/// First line of `~/.config/solyra/weather.txt`. A bare number gains a degree
+/// sign. Missing or empty is `None` — no invented reading.
+pub fn read_weather_text(raw: Option<&str>) -> Option<String> {
+    let line = raw.map(str::trim).filter(|s| !s.is_empty())?;
+    if line.contains('°') {
+        return Some(line.to_string());
+    }
+    let numeric = line
+        .chars()
+        .all(|c| c.is_ascii_digit() || matches!(c, '.' | '+' | '-'))
+        && line.chars().any(|c| c.is_ascii_digit());
+    if numeric {
+        Some(format!("{line}°"))
+    } else {
+        Some(line.to_string())
+    }
+}
+
+fn load_weather() -> Option<String> {
+    let path = solyra_conf::config_path("weather.txt")?;
+    let raw = std::fs::read_to_string(path).ok()?;
+    read_weather_text(raw.lines().next())
+}
+
+/// Non-terminal tasks under an agent runtime root. `None` and a missing
+/// `tasks/` directory are zero — the lock screen never invents agents.
+pub fn live_agents(root: Option<&Path>) -> usize {
+    let Some(root) = root else {
+        return 0;
+    };
+    let snap = crate::agent::load(root, crate::agent::now_secs());
+    crate::agent::Summary::of(snap.runtime_present, &snap.tasks).live
 }
 
 /// Overwrite a password in memory before it is freed.
@@ -522,18 +602,24 @@ fn avatar(cv: &mut Canvas<'_>, v: &View<'_>, cx: i32, cy: i32, r: f32) {
     );
 }
 
-/// Frosted glass capsule: translucent fill, lit top edge, soft rim.
+/// Frosted glass capsule: a light neutral fill, lit top edge, soft rim.
 fn glass_pill(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32) {
-    cv.round_rect(x, y, w, h, r, Rgba::rgba(0x1c, 0x1c, 0x1e, 120));
-    cv.stroke_round_rect(x, y, w, h, r, 1.0, Rgba::rgba(255, 255, 255, 64));
+    cv.round_rect(x, y, w, h, r, Rgba::rgba(255, 255, 255, 46));
+    cv.stroke_round_rect(x, y, w, h, r, 1.0, Rgba::rgba(255, 255, 255, 96));
     let inset = (r * 0.55).round() as i32;
     cv.fill_rect(
         x + inset,
         y + 1,
         (w - 2 * inset).max(0),
         1,
-        Rgba::rgba(255, 255, 255, 78),
+        Rgba::rgba(255, 255, 255, 120),
     );
+}
+
+/// Light neutral frost over a blurred wallpaper. Not a colour cast.
+fn neutral_veil(cv: &mut Canvas<'_>, w: i32, h: i32) {
+    cv.fill_rect(0, 0, w, h, Rgba::rgba(244, 244, 246, 28));
+    cv.fill_rect(0, 0, w, h, Rgba::rgba(12, 12, 14, 46));
 }
 
 /// The password field: dots for typed characters, never the characters.
@@ -601,19 +687,18 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
     let (w, h) = (cv.width as i32, cv.height as i32);
     let white = Rgba::rgb(0xff, 0xff, 0xff);
     let soft = Rgba::rgba(255, 255, 255, 215);
-    let big = |h: i32| (h as f32 * 0.13).clamp(64.0, 150.0);
     match v.style {
         LockStyle::Solyra => {
-            // Neutral dark veil — wallpaper (Beach) stays readable underneath.
-            cv.fill_rect(0, 0, w, h, Rgba::rgba(0, 0, 0, 88));
-            let cy = h / 2 - 40;
+            neutral_veil(cv, w, h);
+            let clock_size = (h as f32 * 0.11).clamp(56.0, 112.0);
+            let cy = (h as f32 * 0.38) as i32;
             centred(
                 cv,
-                v.fonts.semibold.as_ref(),
+                v.fonts.regular.as_ref(),
                 &v.clock,
                 w / 2,
                 cy,
-                big(h) * 0.8,
+                clock_size,
                 white,
             );
             centred(
@@ -621,149 +706,32 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
                 v.fonts.regular.as_ref(),
                 &v.date,
                 w / 2,
-                cy + 36,
+                cy + (clock_size * 0.42) as i32 + 8,
                 18.0,
                 soft,
             );
-            field(cv, v, w / 2, cy + 80, 300);
+            let field_y = (h as f32 * 0.64) as i32;
             centred(
                 cv,
                 v.fonts.regular.as_ref(),
                 v.name,
                 w / 2,
-                cy + 74,
-                13.0,
+                field_y - 14,
+                14.0,
                 soft,
             );
+            field(cv, v, w / 2, field_y, 280);
         }
         LockStyle::Classic => {
-            cv.fill_rect(0, 0, w, h, Rgba::rgba(0, 0, 0, 60));
-            let top = (h as f32 * 0.12) as i32;
+            // Sharp Beach, only a light veil so the clock still reads.
+            cv.fill_rect(0, 0, w, h, Rgba::rgba(0, 0, 0, 40));
+            let clock_size = (h as f32 * 0.16).clamp(80.0, 156.0);
+            let clock_base = (h as f32 * 0.30) as i32;
+            let date_size = (clock_size * 0.20).clamp(16.0, 26.0);
+            let date_base = clock_base - (clock_size * 0.84) as i32;
             centred(
                 cv,
-                v.fonts.semibold.as_ref(),
-                &v.date,
-                w / 2,
-                top + 20,
-                20.0,
-                soft,
-            );
-            centred(
-                cv,
-                v.fonts.semibold.as_ref(),
-                &v.clock,
-                w / 2,
-                top + 20 + big(h) as i32,
-                big(h),
-                white,
-            );
-            let by = h - 220;
-            avatar(cv, v, w / 2, by, 34.0);
-            centred(
-                cv,
-                v.fonts.semibold.as_ref(),
-                v.name,
-                w / 2,
-                by + 62,
-                16.0,
-                white,
-            );
-            field(cv, v, w / 2, by + 80, 240);
-        }
-        LockStyle::Corner => {
-            if v.card {
-                cv.fill_rect(0, 0, w, h, Rgba::rgba(0, 0, 0, 90));
-                let cy = h / 2 - 60;
-                avatar(cv, v, w / 2, cy, 64.0);
-                centred(
-                    cv,
-                    v.fonts.semibold.as_ref(),
-                    v.name,
-                    w / 2,
-                    cy + 104,
-                    26.0,
-                    white,
-                );
-                field(cv, v, w / 2, cy + 130, 300);
-            } else {
-                // A gentle shade under the corner clock so it reads on any wallpaper.
-                for i in 0..160 {
-                    let a = (i as f32 / 160.0 * 110.0) as u8;
-                    cv.fill_rect(0, h - 160 + i, w, 1, Rgba::rgba(0, 0, 0, a));
-                }
-                let size = big(h) * 1.05;
-                cv.text(
-                    v.fonts.semibold.as_ref(),
-                    &v.clock,
-                    48,
-                    h - 120,
-                    size,
-                    white,
-                );
-                cv.text(v.fonts.regular.as_ref(), &v.date, 52, h - 72, 24.0, soft);
-                cv.text(
-                    v.fonts.regular.as_ref(),
-                    "Press any key to sign in",
-                    52,
-                    h - 40,
-                    13.0,
-                    Rgba::rgba(255, 255, 255, 170),
-                );
-            }
-        }
-        LockStyle::Dashboard => {
-            // Soft neutral veil so the Beach wallpaper and blur stay visible.
-            cv.fill_rect(0, 0, w, h, Rgba::rgba(0, 0, 0, 72));
-            let edge = Rgba::rgba(255, 255, 255, 56);
-
-            // Weather sits top-right, clear of the centre capsule.
-            if let Some(weather) = v.weather.filter(|t| !t.is_empty()) {
-                let size = 14.0;
-                let tw = text_width(v.fonts.semibold.as_ref(), weather, size);
-                let (pw, ph) = (tw + 28, 30);
-                let (px, py) = (w - pw - 28, 20);
-                glass_pill(cv, px, py, pw, ph, 15.0);
-                cv.text(
-                    v.fonts.semibold.as_ref(),
-                    weather,
-                    px + 14,
-                    py + 20,
-                    size,
-                    white,
-                );
-            }
-
-            // Top centre: now-playing title, or the nL brand box.
-            if let Some(title) = v.media_title.filter(|t| !t.is_empty()) {
-                let size = 13.0;
-                let max_tw = (w / 2).clamp(120, 280);
-                let tw = text_width(v.fonts.semibold.as_ref(), title, size).min(max_tw);
-                let (pw, ph) = (tw + 36, 32);
-                let px = (w - pw) / 2;
-                glass_pill(cv, px, 20, pw, ph, 16.0);
-                cv.text_truncated(
-                    v.fonts.semibold.as_ref(),
-                    title,
-                    px + 18,
-                    41,
-                    size,
-                    max_tw,
-                    white,
-                );
-            } else {
-                let mh = 28;
-                let mw = crate::canvas::nl_mark_width(mh, v.fonts);
-                cv.mark_nl((w - mw) / 2, 20, mh, v.fonts);
-            }
-
-            // Large date above a larger clock, in the upper half.
-            let clock_size = big(h);
-            let clock_base = (h as f32 * 0.40) as i32;
-            let date_size = (clock_size * 0.30).clamp(22.0, 34.0);
-            let date_base = clock_base - (clock_size * 0.82) as i32 - 6;
-            centred(
-                cv,
-                v.fonts.semibold.as_ref(),
+                v.fonts.regular.as_ref(),
                 &v.date,
                 w / 2,
                 date_base,
@@ -772,7 +740,144 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
             );
             centred(
                 cv,
+                v.fonts.regular.as_ref(),
+                &v.clock,
+                w / 2,
+                clock_base,
+                clock_size,
+                white,
+            );
+            // Sign-in sits low, with the middle left empty.
+            let field_y = h - 116;
+            let name_base = field_y - 20;
+            let avatar_cy = name_base - 40;
+            avatar(cv, v, w / 2, avatar_cy, 32.0);
+            centred(
+                cv,
                 v.fonts.semibold.as_ref(),
+                v.name,
+                w / 2,
+                name_base,
+                16.0,
+                white,
+            );
+            field(cv, v, w / 2, field_y, 220);
+        }
+        LockStyle::Corner => {
+            if v.card {
+                cv.fill_rect(0, 0, w, h, Rgba::rgba(0, 0, 0, 58));
+                let cy = h / 2 - 72;
+                avatar(cv, v, w / 2, cy, 48.0);
+                centred(
+                    cv,
+                    v.fonts.semibold.as_ref(),
+                    v.name,
+                    w / 2,
+                    cy + 84,
+                    22.0,
+                    white,
+                );
+                field(cv, v, w / 2, cy + 112, 260);
+            } else {
+                // Shade only the lower corner, so the wallpaper stays sharp.
+                for i in 0..240 {
+                    let t = i as f32 / 240.0;
+                    let a = (t * t * 128.0) as u8;
+                    cv.fill_rect(0, h - 240 + i, w, 1, Rgba::rgba(0, 0, 0, a));
+                }
+                let size = (h as f32 * 0.12).clamp(76.0, 132.0);
+                let left = 56;
+                let base = h - 168;
+                cv.text(v.fonts.regular.as_ref(), &v.clock, left, base, size, white);
+                cv.text(
+                    v.fonts.regular.as_ref(),
+                    &v.date,
+                    left,
+                    base + 40,
+                    22.0,
+                    soft,
+                );
+                cv.text(
+                    v.fonts.regular.as_ref(),
+                    "Press any key to sign in",
+                    left,
+                    base + 72,
+                    13.0,
+                    Rgba::rgba(255, 255, 255, 160),
+                );
+            }
+        }
+        LockStyle::Dashboard => {
+            neutral_veil(cv, w, h);
+            let weather = v.weather.filter(|t| !t.is_empty());
+            let title = v.media_title.unwrap_or("").trim();
+            let artist = v.media_artist.unwrap_or("").trim();
+            let media_line = match (title.is_empty(), artist.is_empty()) {
+                (false, false) => Some(format!("{title}  ·  {artist}")),
+                (false, true) => Some(title.to_string()),
+                (true, false) => Some(artist.to_string()),
+                (true, true) => None,
+            };
+
+            if let Some(label) = weather {
+                let size = 14.0;
+                let tw = text_width(v.fonts.semibold.as_ref(), label, size);
+                let (pw, ph) = (tw + 28, 32);
+                let (px, py) = (w - pw - 28, 22);
+                glass_pill(cv, px, py, pw, ph, 16.0);
+                cv.text(
+                    v.fonts.semibold.as_ref(),
+                    label,
+                    px + 14,
+                    py + 21,
+                    size,
+                    white,
+                );
+            }
+
+            // One capsule: now playing, or the nL mark when nothing is playing.
+            if let Some(line) = media_line.as_deref() {
+                let size = 13.0;
+                let side = if weather.is_some() { 120 } else { 36 };
+                let max_tw = (w - side * 2 - 52).clamp(100, 320);
+                let tw = text_width(v.fonts.semibold.as_ref(), line, size).min(max_tw);
+                let (pw, ph) = (tw + 46, 32);
+                let px = (w - pw) / 2;
+                let py = 22;
+                glass_pill(cv, px, py, pw, ph, 16.0);
+                cv.icon_note(px as f32 + 16.0, py as f32 + 16.0, white);
+                cv.text_truncated(
+                    v.fonts.semibold.as_ref(),
+                    line,
+                    px + 30,
+                    py + 21,
+                    size,
+                    max_tw,
+                    white,
+                );
+            } else {
+                let mh = 26;
+                let mw = crate::canvas::nl_mark_width(mh, v.fonts);
+                cv.mark_nl((w - mw) / 2, 24, mh, v.fonts);
+            }
+
+            // Huge clock, one secondary line (the date) above it.
+            let clock_size = (h as f32 * 0.20).clamp(96.0, 188.0);
+            let clock_base = (h as f32 * 0.38) as i32;
+            let date_size = (clock_size * 0.18).clamp(16.0, 28.0);
+            let date_base = clock_base - (clock_size * 0.78) as i32;
+            centred(
+                cv,
+                v.fonts.regular.as_ref(),
+                &v.date,
+                w / 2,
+                date_base,
+                date_size,
+                soft,
+            );
+            centred(
+                cv,
+                v.fonts.regular.as_ref(),
                 &v.clock,
                 w / 2,
                 clock_base,
@@ -780,126 +885,43 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
                 white,
             );
 
-            // Glance, then avatars, then the password. Flow so they don't collide.
-            let mut y = clock_base + 22;
             if v.agents_running > 0 {
-                let label = format!("{} Agents RUNNING", v.agents_running);
+                let label = if v.agents_running == 1 {
+                    "1 agent".to_string()
+                } else {
+                    format!("{} agents", v.agents_running)
+                };
                 let size = 12.0;
                 let tw = text_width(v.fonts.semibold.as_ref(), &label, size);
-                let (aw, ah) = (tw + 28, 26);
+                let (aw, ah) = (tw + 28, 28);
                 let ax = (w - aw) / 2;
-                glass_pill(cv, ax, y, aw, ah, 13.0);
+                let ay = clock_base + 16;
+                glass_pill(cv, ax, ay, aw, ah, 14.0);
                 centred(
                     cv,
                     v.fonts.semibold.as_ref(),
                     &label,
                     w / 2,
-                    y + 18,
+                    ay + 19,
                     size,
                     white,
                 );
-                y += 38;
             }
 
-            centred(
-                cv,
-                v.fonts.regular.as_ref(),
-                "No Events Scheduled Today",
-                w / 2,
-                y + 16,
-                14.0,
-                Rgba::rgba(255, 255, 255, 170),
-            );
-            y += 30;
-
-            let title = v.media_title.unwrap_or("").trim();
-            let artist = v.media_artist.unwrap_or("").trim();
-            if !title.is_empty() || !artist.is_empty() {
-                let (mw, mh) = (300, 56);
-                let mx = (w - mw) / 2;
-                glass_pill(cv, mx, y, mw, mh, 16.0);
-                let text_w = mw - 118;
-                if !title.is_empty() {
-                    cv.text_truncated(
-                        v.fonts.semibold.as_ref(),
-                        title,
-                        mx + 16,
-                        y + 24,
-                        13.0,
-                        text_w,
-                        white,
-                    );
-                }
-                if !artist.is_empty() {
-                    cv.text_truncated(
-                        v.fonts.regular.as_ref(),
-                        artist,
-                        mx + 16,
-                        y + 42,
-                        12.0,
-                        text_w,
-                        soft,
-                    );
-                }
-                // Decorative only: the lock screen does not control playback.
-                let gy = (y + mh / 2) as f32;
-                let gx = (mx + mw - 24) as f32;
-                cv.icon_skip(gx - 52.0, gy, 12.0, false, white);
-                cv.icon_pause(gx - 26.0, gy, 13.0, white);
-                cv.icon_skip(gx, gy, 12.0, true, white);
-                y += mh + 16;
-            }
-
-            let avatar_r = 28.0;
-            let avatar_cy = (y + 40).max(h - 196).min(h - 148);
-            let spread = 48;
-            let ax = w / 2 - spread;
-            let px = w / 2 + spread;
-            avatar(cv, v, ax, avatar_cy, avatar_r);
-            cv.circle(
-                px as f32,
-                avatar_cy as f32,
-                avatar_r,
-                Rgba::rgba(0x1c, 0x1c, 0x1e, 140),
-            );
-            cv.ring(px as f32, avatar_cy as f32, avatar_r, 1.4, edge);
-            let arm = avatar_r * 0.42;
-            cv.line(
-                px as f32 - arm,
-                avatar_cy as f32,
-                px as f32 + arm,
-                avatar_cy as f32,
-                2.0,
-                white,
-            );
-            cv.line(
-                px as f32,
-                avatar_cy as f32 - arm,
-                px as f32,
-                avatar_cy as f32 + arm,
-                2.0,
-                white,
-            );
-            let label_base = avatar_cy + avatar_r as i32 + 18;
+            let field_y = h - 112;
+            let name_base = field_y - 18;
+            let avatar_cy = name_base - 34;
+            avatar(cv, v, w / 2, avatar_cy, 26.0);
             centred(
                 cv,
                 v.fonts.regular.as_ref(),
                 v.name,
-                ax,
-                label_base,
-                12.0,
+                w / 2,
+                name_base,
+                13.0,
                 soft,
             );
-            centred(
-                cv,
-                v.fonts.semibold.as_ref(),
-                "NEW",
-                px,
-                label_base,
-                11.0,
-                white,
-            );
-            field(cv, v, w / 2, label_base + 16, 260);
+            field(cv, v, w / 2, field_y, 240);
         }
     }
 }
@@ -1172,5 +1194,45 @@ mod tests {
         assert!(extremes(&bl) < extremes(&b));
         let fallback = backdrop(None, 10, 10);
         assert!(fallback.chunks_exact(4).all(|p| p[3] == 255));
+    }
+
+    #[test]
+    fn classic_and_corner_stay_sharp_dashboard_blurs() {
+        assert!(sharp_backdrop(LockStyle::Classic, false));
+        assert!(sharp_backdrop(LockStyle::Corner, false));
+        assert!(!sharp_backdrop(LockStyle::Corner, true));
+        assert!(!sharp_backdrop(LockStyle::Dashboard, false));
+        assert!(!sharp_backdrop(LockStyle::Solyra, false));
+    }
+
+    #[test]
+    fn weather_line_matches_the_panel_file() {
+        assert_eq!(read_weather_text(Some("25")).as_deref(), Some("25°"));
+        assert_eq!(read_weather_text(Some("25°")).as_deref(), Some("25°"));
+        assert_eq!(read_weather_text(Some(" 18 °C ")).as_deref(), Some("18 °C"));
+        assert_eq!(
+            read_weather_text(Some("Partly cloudy")).as_deref(),
+            Some("Partly cloudy")
+        );
+        assert_eq!(read_weather_text(None), None);
+        assert_eq!(read_weather_text(Some("  ")), None);
+    }
+
+    #[test]
+    fn live_agents_counts_a_running_task_and_nothing_else() {
+        assert_eq!(live_agents(None), 0);
+        let dir = std::env::temp_dir().join(format!("solyra-lock-agents-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(live_agents(Some(&dir)), 0);
+        let tasks = dir.join("tasks");
+        std::fs::create_dir_all(&tasks).unwrap();
+        assert_eq!(live_agents(Some(&dir)), 0);
+        std::fs::write(
+            tasks.join("tidy.jsonl"),
+            "{\"ts\":1,\"type\":\"started\",\"name\":\"Tidy\"}\n",
+        )
+        .unwrap();
+        assert_eq!(live_agents(Some(&dir)), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

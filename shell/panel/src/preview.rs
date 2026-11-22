@@ -709,6 +709,14 @@ fn island_shots(fonts: &Fonts) -> Vec<Shot> {
             true,
         ),
     ];
+    let (w, h) = (island::SURF_W, island::SURF_H);
+    let beach_px = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/wallpapers/beach-1920x1080.png"
+    ))
+    .ok()
+    .and_then(|b| crate::canvas::decode_png(&b));
+    let beach = crate::lock::backdrop(beach_px.as_ref(), w, h);
     let mut out = Vec::new();
     for style in [NotchStyle::Notch, NotchStyle::Island] {
         for (name, content, expanded) in &cases {
@@ -722,15 +730,17 @@ fn island_shots(fonts: &Fonts) -> Vec<Shot> {
                 material: crate::material::Material::Solid,
             };
             let tag = format!("island-{}-{name}", style.as_str());
-            out.push(shoot(
-                &tag,
-                ThemeKind::Dark,
-                island::SURF_W,
-                island::SURF_H,
-                |cv, _th| {
-                    island::draw(cv, fonts, style, &anim, content, *expanded, &extra, None);
-                },
-            ));
+            let mut buf = beach.clone();
+            {
+                let mut cv = crate::canvas::Canvas::new_keep(&mut buf, w, h, 1);
+                island::draw(&mut cv, fonts, style, &anim, content, *expanded, &extra, None);
+            }
+            out.push(Shot {
+                name: tag,
+                w,
+                h,
+                rgba: flatten(&buf, w, h, Rgba::rgb(0, 0, 0)),
+            });
         }
     }
     out
@@ -864,7 +874,7 @@ fn lock_screens_render() {
         ("lock-dashboard", LockStyle::Dashboard, false, 0, None),
         ("lock-dashboard-glance", LockStyle::Dashboard, false, 4, None),
     ] {
-        let mut buf = if style == LockStyle::Corner && !card {
+        let mut buf = if crate::lock::sharp_backdrop(style, card) {
             sharp.clone()
         } else {
             soft.clone()
