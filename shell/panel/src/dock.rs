@@ -61,12 +61,45 @@ enum Item<'a> {
     Clock,
 }
 
+/// Width of the Solyra weather chip (sun glyph plus a short reading).
+const WEATHER_W: i32 = 76;
+/// Width of the Solyra clock chip. Fits `12:59:59 PM`.
+const CLOCK_W: i32 = 108;
+
+fn item_span(it: &Item<'_>, cell: i32) -> i32 {
+    match it {
+        Item::Separator => 1,
+        Item::Weather => WEATHER_W,
+        Item::Clock => CLOCK_W,
+        _ => cell,
+    }
+}
+
+/// First line of `~/.config/solyra/weather.txt`. A bare number gains a degree
+/// sign. Missing or empty becomes `—°` — no network lookup, no invented reading.
+fn normalize_weather(raw: Option<&str>) -> String {
+    let Some(line) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return "—°".into();
+    };
+    if line.contains('°') {
+        return line.to_string();
+    }
+    let numeric = line
+        .chars()
+        .all(|c| c.is_ascii_digit() || matches!(c, '.' | '+' | '-'))
+        && line.chars().any(|c| c.is_ascii_digit());
+    if numeric {
+        format!("{line}°")
+    } else {
+        line.to_string()
+    }
+}
+
 fn weather_label() -> String {
     let path = solyra_conf::config_path("weather.txt");
-    path.and_then(|p| std::fs::read_to_string(p).ok())
-        .map(|s| s.lines().next().unwrap_or("").trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "—°".into())
+    let raw = path.and_then(|p| std::fs::read_to_string(p).ok());
+    let line = raw.as_deref().and_then(|s| s.lines().next());
+    normalize_weather(line)
 }
 
 struct Metrics {
@@ -80,7 +113,7 @@ fn metrics(style: DockStyle) -> Metrics {
         DockStyle::Minimal => Metrics {
             cell: 38,
             gap: 6,
-            pad: 10,
+            pad: 14,
         },
         DockStyle::Macos => Metrics {
             cell: 44,
@@ -131,15 +164,7 @@ fn base_width(style: DockStyle, wins: &[WindowInfo]) -> i32 {
     let entries = dock_entries(wins);
     let m = metrics(style);
     let its = items(style, &entries);
-    let content: i32 = its
-        .iter()
-        .map(|i| match i {
-            Item::Separator => 1,
-            Item::Clock => m.cell + 18,
-            Item::Weather => m.cell + 4,
-            _ => m.cell,
-        })
-        .sum::<i32>()
+    let content: i32 = its.iter().map(|i| item_span(i, m.cell)).sum::<i32>()
         + m.gap * (its.len() as i32 - 1).max(0);
     content + m.pad * 2
 }
@@ -284,12 +309,7 @@ fn draw_floating(
     let mut centres = Vec::with_capacity(its.len());
     let mut x = base_left + m.pad;
     for it in &its {
-        let iw = match it {
-            Item::Separator => 1,
-            Item::Clock => m.cell + 18,
-            Item::Weather => m.cell + 4,
-            _ => m.cell,
-        };
+        let iw = item_span(it, m.cell);
         centres.push(x as f32 + iw as f32 / 2.0);
         x += iw + m.gap;
     }
@@ -304,9 +324,7 @@ fn draw_floating(
         .iter()
         .zip(&centres)
         .map(|(it, c)| match it {
-            Item::Separator => 1,
-            Item::Clock => m.cell + 18,
-            Item::Weather => m.cell + 4,
+            Item::Separator | Item::Weather | Item::Clock => item_span(it, m.cell),
             _ => match pointer_x {
                 Some(px) => {
                     (m.cell as f32 * magnification((px - c) / m.cell as f32)).round() as i32
@@ -349,27 +367,15 @@ fn draw_floating(
         let y = base_y + (m.cell - s) - lift;
         match it {
             Item::Weather => {
-                let cx = x as f32 + s as f32 * 0.28;
                 let cy = (card_y + CARD_H / 2) as f32;
-                cv.circle(cx, cy, 5.0, th.text_med);
-                for ang in [0.0f32, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0] {
-                    let rad = ang.to_radians();
-                    cv.line(
-                        cx + rad.cos() * 7.0,
-                        cy + rad.sin() * 7.0,
-                        cx + rad.cos() * 10.0,
-                        cy + rad.sin() * 10.0,
-                        1.2,
-                        th.text_med,
-                    );
-                }
-                let tw = text_width(fonts.semibold.as_ref(), &weather, 12.0);
-                cv.text(
+                cv.icon_sun(x as f32 + 12.0, cy, th.text);
+                cv.text_truncated(
                     fonts.semibold.as_ref(),
                     &weather,
-                    x + s - tw - 4,
+                    x + 24,
                     card_y + CARD_H / 2 + 5,
-                    12.0,
+                    12.5,
+                    (s - 28).max(8),
                     th.text,
                 );
                 regions.push(Region {
@@ -381,13 +387,16 @@ fn draw_floating(
                 });
             }
             Item::Clock => {
-                let tw = text_width(fonts.semibold.as_ref(), &clock, 13.0);
-                cv.text(
+                let size = 13.0;
+                let max_w = (s - 8).max(8);
+                let tw = text_width(fonts.semibold.as_ref(), &clock, size).min(max_w);
+                cv.text_truncated(
                     fonts.semibold.as_ref(),
                     &clock,
                     x + (s - tw).max(0) / 2,
                     card_y + CARD_H / 2 + 5,
-                    13.0,
+                    size,
+                    max_w,
                     th.text,
                 );
                 regions.push(Region {
@@ -458,10 +467,17 @@ fn running_mark(
 ) {
     let bottom = card_y + CARD_H;
     match style {
-        // macOS: a small dot.
-        DockStyle::Macos | DockStyle::Minimal => {
-            let col = if focused { th.accent } else { th.text_med };
-            cv.circle(x as f32 + s as f32 / 2.0, (bottom - 4) as f32, 2.2, col);
+        // Floating dock: a dot with a backing disc so it stays readable on glass.
+        DockStyle::Macos => {
+            let col = if focused { th.accent } else { th.text };
+            let cx = x as f32 + s as f32 / 2.0;
+            let cy = (bottom - 7) as f32;
+            cv.circle(cx, cy, 3.6, th.surface);
+            cv.circle(cx, cy, 2.5, col);
+        }
+        DockStyle::Minimal => {
+            let col = if focused { th.accent } else { th.text };
+            cv.circle(x as f32 + s as f32 / 2.0, (bottom - 6) as f32, 2.4, col);
         }
         // Solyra: a pill that widens for the focused app (shape, not only colour).
         _ => {
@@ -651,21 +667,28 @@ fn draw_taskbar(
         cx += 44;
     }
 
-    // Right: tray and stacked clock/date, honouring the clock settings.
+    // Right: tray, weather, and a slightly larger stacked clock/date.
     let look = &prefs.look;
     let now = chrono::Local::now();
+    let weather = weather_label();
     let t_str = now.format(look.clock_format()).to_string();
     let d_str = now.format("%d/%m/%Y").to_string();
-    let tw = text_width(fonts.semibold.as_ref(), &t_str, 11.5);
-    let dw = text_width(fonts.regular.as_ref(), &d_str, 10.2);
+    let time_px = 13.5;
+    let tw = text_width(fonts.semibold.as_ref(), &t_str, time_px);
+    let dw = if look.show_date {
+        text_width(fonts.regular.as_ref(), &d_str, 11.0)
+    } else {
+        0
+    };
     let col_w = tw.max(dw);
-    let clock_x = w - 14 - col_w;
+    let clock_x = w - 16 - col_w;
+    let time_y = if look.show_date { 20 } else { 29 };
     cv.text(
         fonts.semibold.as_ref(),
         &t_str,
         clock_x + col_w - tw,
-        21,
-        11.5,
+        time_y,
+        time_px,
         th.text,
     );
     if look.show_date {
@@ -673,12 +696,25 @@ fn draw_taskbar(
             fonts.regular.as_ref(),
             &d_str,
             clock_x + col_w - dw,
-            35,
-            10.2,
+            36,
+            11.0,
             th.text_dim,
         );
     }
-    let tray_x = clock_x - 82;
+    let ww = text_width(fonts.semibold.as_ref(), &weather, 12.5).min(72);
+    let weather_w = 22 + ww;
+    let wx = clock_x - 12 - weather_w;
+    cv.icon_sun((wx + 8) as f32, 24.0, th.text);
+    cv.text_truncated(
+        fonts.semibold.as_ref(),
+        &weather,
+        wx + 18,
+        28,
+        12.5,
+        ww,
+        th.text,
+    );
+    let tray_x = wx - 78;
     cv.icon_network(
         (tray_x + 10) as f32,
         24.0,
@@ -749,8 +785,32 @@ mod tests {
         assert!(matches!(items(DockStyle::Minimal, &e)[..], []));
         assert!(matches!(items(DockStyle::Solyra, &e)[0], Item::Start));
         assert!(matches!(
+            items(DockStyle::Solyra, &e).last(),
+            Some(Item::Clock)
+        ));
+        assert!(matches!(
             items(DockStyle::Macos, &e).last(),
             Some(Item::Trash)
         ));
+    }
+
+    #[test]
+    fn weather_line_becomes_degrees_or_a_placeholder() {
+        assert_eq!(normalize_weather(Some("25")), "25°");
+        assert_eq!(normalize_weather(Some("25°")), "25°");
+        assert_eq!(normalize_weather(Some(" 18 °C ")), "18 °C");
+        assert_eq!(normalize_weather(Some("Partly cloudy")), "Partly cloudy");
+        assert_eq!(normalize_weather(None), "—°");
+        assert_eq!(normalize_weather(Some("  ")), "—°");
+    }
+
+    #[test]
+    fn solyra_width_includes_the_tray() {
+        let wins = [];
+        let w = spec(DockStyle::Solyra, &wins, false, false).width;
+        // Start, agent, three separators, weather chip, clock chip, padding.
+        assert!(w >= 320, "tray missing from width ({w})");
+        let minimal = spec(DockStyle::Minimal, &wins, false, false).width;
+        assert!(minimal < w);
     }
 }

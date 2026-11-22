@@ -1253,7 +1253,7 @@ pub fn draw_agents(
                 &crate::desk::Glance {
                     clock: view.clock,
                     date: view.date,
-                    project_lines: &["Infi-AI", "solyra-panel", "agent wrap"],
+                    project_lines: crate::desk::PROJECT_PLACEHOLDER.as_slice(),
                     environment: 1,
                 },
                 22,

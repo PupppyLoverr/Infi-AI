@@ -211,7 +211,7 @@ fn desktop_page(status: Signal<String>) -> View {
                 &[("standard", "Standard"), ("agent", "Agent workspace")],
                 look.desktop.as_str(),
             ))
-            .child(caption("Agent workspace leans the shell toward agent status, project and environment glances."))
+            .child(caption("Agent workspace adds a desk card on the right: a large clock, a three-line project placeholder, and Cloud / Local / Worktree. Local is highlighted."))
             .child(text("Notch").font_bold())
             .child(conf_choice(
                 cx,

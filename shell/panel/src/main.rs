@@ -214,6 +214,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         control: None,
         island_card: None,
         agents: None,
+        desk: None,
+        desk_material: material::Material::Solid,
         menu: None,
         menu_open: None,
         menu_armed: None,
@@ -261,6 +263,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     app.ensure_island();
     app.ensure_bar();
+    app.ensure_desk();
 
     // Re-apply the saved wallpaper: the session config only starts a default.
     if app.prefs.wallpaper_file.is_some() || app.prefs.wallpaper != state::WallpaperPreset::Graphite
@@ -442,6 +445,9 @@ struct App {
     control: Option<SurfaceSlot>,
     island_card: Option<SurfaceSlot>,
     agents: Option<SurfaceSlot>,
+    /// Right-side desk card when desktop mode is Agent workspace.
+    desk: Option<SurfaceSlot>,
+    desk_material: material::Material,
     /// The notch / Dynamic Island surface (absent when the style is Off).
     /// An open menu-bar menu: a full-screen transparent overlay.
     menu: Option<SurfaceSlot>,
@@ -744,6 +750,7 @@ impl App {
             self.apply_saved_wallpaper();
         }
         self.ensure_dock();
+        self.ensure_desk();
         self.needs_redraw = true;
     }
 
@@ -1108,6 +1115,7 @@ impl App {
 
         self.update_dock_autohide();
         self.ensure_dock();
+        self.ensure_desk();
         if let Some(t) = self.island_left_at {
             if self.island_expanded && t.elapsed() >= Duration::from_secs(4) && !self.reply_mode {
                 self.island_expanded = false;
@@ -1333,7 +1341,89 @@ impl App {
         }
 
         self.draw_island(scale);
+        self.draw_desk(scale, &th);
         let _ = conn.flush();
+    }
+
+    /// Agent workspace: a floating card on the right with clock, project, environment.
+    fn draw_desk(&mut self, scale: u32, th: &Theme) {
+        let Some(slot) = self.desk.as_mut() else {
+            return;
+        };
+        if !slot.configured || slot.width == 0 {
+            return;
+        }
+        let (w, h) = (slot.width, slot.height);
+        let Ok((buffer, bytes)) = self.pool.create_buffer(
+            (w * scale) as i32,
+            (h * scale) as i32,
+            (w * scale * 4) as i32,
+            Format::Argb8888,
+        ) else {
+            return;
+        };
+        let mut cv = Canvas::new(bytes, w, h, scale as i32);
+        let local = chrono::Local::now();
+        let clock = local.format(self.prefs.look.clock_format()).to_string();
+        let date = local.format("%A %-d %B").to_string();
+        let _ = desk::paint(
+            &mut cv,
+            th,
+            &self.fonts,
+            &desk::Glance {
+                clock: &clock,
+                date: &date,
+                project_lines: desk::PROJECT_PLACEHOLDER.as_slice(),
+                environment: 1,
+            },
+            0,
+            0,
+        );
+        slot.regions.clear();
+        let rects = if material::blurs(self.desk_material) {
+            material::blur_rects(0, 0, w as i32, h as i32, 16.0)
+        } else {
+            Vec::new()
+        };
+        set_blur(
+            self.blur_mgr.as_ref(),
+            &self.compositor,
+            &self.qh,
+            slot,
+            rects,
+        );
+        present(buffer, &slot.surface, w * scale, h * scale, scale as i32);
+    }
+
+    fn ensure_desk(&mut self) {
+        use solyra_conf::look::DesktopMode;
+        let want = self.prefs.look.desktop == DesktopMode::Agent;
+        let mat = self.prefs.look.material(self.prefs.look.dock_material);
+        if !want {
+            if self.desk.is_some() {
+                self.desk = None;
+                self.needs_redraw = true;
+            }
+            return;
+        }
+        if self.desk.is_some() && mat == self.desk_material {
+            return;
+        }
+        self.desk = Some(make_layer_surface(
+            &self.compositor,
+            &self.layer_shell,
+            &self.qh,
+            Layer::Bottom,
+            &material::namespace("solyra-desk", mat),
+            Anchor::TOP | Anchor::RIGHT,
+            0,
+            (56, 18, 0, 0),
+            desk::W as u32,
+            desk::H as u32,
+            KeyboardInteractivity::None,
+        ));
+        self.desk_material = mat;
+        self.needs_redraw = true;
     }
 
     fn draw_island(&mut self, scale: u32) {
@@ -1435,6 +1525,7 @@ impl App {
             &self.control,
             &self.island_card,
             &self.agents,
+            &self.desk,
         ]
         .into_iter()
         .flatten()

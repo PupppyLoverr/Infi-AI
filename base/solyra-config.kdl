@@ -145,6 +145,21 @@ layer-rule {
 }
 
 layer-rule {
+    match namespace=r#"^solyra-desk(\..+)?$"#
+    geometry-corner-radius 16
+    shadow {
+        on
+        softness 40
+        spread 8
+        offset x=0 y=12
+        color "#00000080"
+    }
+    background-effect {
+        xray false
+    }
+}
+
+layer-rule {
     match namespace=r#"^solyra-(taskbar|dock-magnify|dock-hidden|notch)(\..+)?$"#
     background-effect {
         xray false

@@ -388,10 +388,11 @@ fn compact_row(
         }
         Content::Media(m) => {
             cv.icon_note(left as f32 + 4.0, mid, th.text);
-            let line = if m.artist.is_empty() {
-                m.title.clone()
+            // Compact pill is the track title only, truncated ("FALLEN ANGEL").
+            let line = if m.title.is_empty() {
+                m.artist.clone()
             } else {
-                format!("{} — {}", m.title, m.artist)
+                m.title.clone()
             };
             cv.text_truncated(
                 fonts.semibold.as_ref(),
@@ -597,21 +598,14 @@ fn expanded_body(
                 if fill > 0 {
                     cv.round_rect(bx, bar_y, fill.max(4), 4, 2.0, th.accent);
                 }
-                cv.text(
+                let label = format!("{elapsed} / {total}");
+                cv.text_truncated(
                     fonts.regular.as_ref(),
-                    &elapsed,
+                    &label,
                     bx,
                     bar_y + 18,
                     T_CAPTION,
-                    th.text_dim,
-                );
-                let tw = text_width(fonts.regular.as_ref(), &total, T_CAPTION);
-                cv.text(
-                    fonts.regular.as_ref(),
-                    &total,
-                    bx + bar_w - tw,
-                    bar_y + 18,
-                    T_CAPTION,
+                    bar_w,
                     th.text_dim,
                 );
             }

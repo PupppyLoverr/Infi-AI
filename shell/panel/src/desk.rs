@@ -1,10 +1,21 @@
-//! Agent-workspace desk card: clock, project list, and environment chips.
+//! Agent-workspace desk card: clock, project placeholder, and environment chips.
 //!
-//! Shown when `desktop_mode=agent`. Painted into the agents overlay when that
-//! surface is open, and also available for offscreen previews.
+//! Shown when `desktop_mode=agent`. The panel keeps a real layer-shell surface
+//! on the right of the desktop (`solyra-desk`). The same card is also painted
+//! into the agents overlay when that surface is open and empty.
 
 use crate::canvas::{text_width, Canvas, Fonts, Rgba};
 use crate::tokens::Theme;
+
+pub const W: i32 = 320;
+pub const H: i32 = 280;
+
+/// Three lines until a project folder is pinned.
+pub const PROJECT_PLACEHOLDER: [&str; 3] = [
+    "No project open",
+    "Pin a folder to keep",
+    "agent context here",
+];
 
 pub struct Glance<'a> {
     pub clock: &'a str,
@@ -16,8 +27,8 @@ pub struct Glance<'a> {
 
 /// Paint the desk card into `cv` at the given origin. Returns the card size.
 pub fn paint(cv: &mut Canvas<'_>, th: &Theme, fonts: &Fonts, g: &Glance<'_>, x: i32, y: i32) -> (i32, i32) {
-    let w = 320;
-    let h = 280;
+    let w = W;
+    let h = H;
     cv.round_rect(x, y, w, h, 16.0, th.surface);
     cv.stroke_round_rect(x, y, w, h, 16.0, 1.0, th.hairline);
 
@@ -115,6 +126,7 @@ mod tests {
             environment: 1,
         };
         let (w, h) = paint(&mut cv, &th, &fonts, &g, 20, 20);
-        assert_eq!((w, h), (320, 280));
+        assert_eq!((w, h), (W, H));
+        assert_eq!(PROJECT_PLACEHOLDER.len(), 3);
     }
 }

@@ -47,7 +47,36 @@ impl Media {
 
 fn fmt_us(us: i64) -> String {
     let secs = (us / 1_000_000).max(0) as u64;
-    format!("{}:{:02}", secs / 60, secs % 60)
+    let s = secs % 60;
+    let m = (secs / 60) % 60;
+    let h = secs / 3600;
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
+}
+
+/// `mpris:length` from a Metadata map, in microseconds.
+pub fn length_us(meta: &PropMap) -> Option<i64> {
+    prop_cast::<i64>(meta, "mpris:length")
+        .copied()
+        .or_else(|| prop_cast::<u64>(meta, "mpris:length").map(|v| *v as i64))
+}
+
+/// Displayed second. The 1.5s poll still moves the scrubber; sub-second jitter does not.
+fn shown_second(us: Option<i64>) -> Option<i64> {
+    us.map(|v| v.max(0) / 1_000_000)
+}
+
+fn scrubber_changed(prev: &Option<Media>, now: &Option<Media>) -> bool {
+    match (prev, now) {
+        (Some(a), Some(b)) => {
+            !a.same_track(b) || shown_second(a.position_us) != shown_second(b.position_us)
+        }
+        (None, None) => false,
+        _ => true,
+    }
 }
 
 /// Title and artist from an MPRIS `Metadata` map.
@@ -94,9 +123,7 @@ fn query(conn: &Connection) -> Option<Media> {
         }
         let meta: PropMap = p.get(PLAYER, "Metadata").unwrap_or_default();
         let (title, artist) = parse_metadata(&meta);
-        let length_us = prop_cast::<i64>(&meta, "mpris:length")
-            .copied()
-            .or_else(|| prop_cast::<u64>(&meta, "mpris:length").map(|v| *v as i64));
+        let length_us = length_us(&meta);
         let position_us: Option<i64> = p.get(PLAYER, "Position").ok();
         players.push(Media {
             bus,
@@ -119,11 +146,7 @@ pub fn spawn_watcher(slot: Arc<Mutex<Option<Media>>>, wake: impl Fn() + Send + '
         loop {
             let now = query(&conn);
             let changed = slot.lock().map(|mut s| {
-                let refresh = match (&*s, &now) {
-                    (Some(a), Some(b)) => !a.same_track(b) || a.position_us != b.position_us,
-                    (None, None) => false,
-                    _ => true,
-                };
+                let refresh = scrubber_changed(&s, &now);
                 if refresh {
                     *s = now;
                 }
@@ -192,6 +215,41 @@ mod tests {
         assert_eq!(a, "0:15");
         assert_eq!(b, "3:23");
         assert!((pct - 15.0 / 203.0).abs() < 0.01);
+        let long = Media {
+            position_us: Some(3_723_000_000),
+            length_us: Some(7_200_000_000),
+            ..media
+        };
+        assert_eq!(long.elapsed_label().unwrap().0, "1:02:03");
+    }
+
+    #[test]
+    fn scrubber_wakes_on_a_new_second_not_on_jitter() {
+        let mut a = m("FALLEN ANGEL", true);
+        a.length_us = Some(203_000_000);
+        a.position_us = Some(15_000_000);
+        let mut jitter = a.clone();
+        jitter.position_us = Some(15_400_000);
+        assert!(a.same_track(&jitter));
+        assert!(!scrubber_changed(&Some(a.clone()), &Some(jitter)));
+        let mut next = a.clone();
+        next.position_us = Some(16_600_000);
+        assert!(scrubber_changed(&Some(a.clone()), &Some(next)));
+        let mut other = a.clone();
+        other.title = "other".into();
+        assert!(scrubber_changed(&Some(a), &Some(other)));
+        assert!(!scrubber_changed(&None, &None));
+    }
+
+    #[test]
+    fn metadata_length_is_microseconds() {
+        let mut meta = PropMap::new();
+        meta.insert(
+            "mpris:length".into(),
+            Variant(Box::new(203_000_000_i64) as Box<dyn RefArg>),
+        );
+        assert_eq!(length_us(&meta), Some(203_000_000));
+        assert_eq!(length_us(&PropMap::new()), None);
     }
 
     #[test]
