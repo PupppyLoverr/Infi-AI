@@ -85,12 +85,18 @@ pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
             edge: rim(if dark { 36 } else { 28 }),
             highlight: None,
         },
-        // Liquid Glass–like: light tint, strong lit rim, wallpaper reads through.
-        Material::Glass => Slab {
-            fill: with_alpha(base, boost(if dark { 88 } else { 108 })),
-            edge: rim(if dark { 52 } else { 36 }),
-            highlight: Some(Rgba::rgba(255, 255, 255, if dark { 72 } else { 190 })),
-        },
+        // Liquid Glass: a near-clear tint. The adaptive lift is smaller than
+        // See-through's so a bright wallpaper still reads through the bar
+        // and the dock instead of turning them into a graphite slab.
+        Material::Glass => {
+            let a: u8 = if dark { 44 } else { 60 };
+            let a = if fights { a.saturating_add(52) } else { a };
+            Slab {
+                fill: with_alpha(base, a),
+                edge: rim(if dark { 32 } else { 24 }),
+                highlight: Some(Rgba::rgba(255, 255, 255, if dark { 40 } else { 140 })),
+            }
+        }
         Material::Acrylic => {
             // Windows Acrylic: wallpaper hue + denser fill + soft rim.
             let hue = tint.unwrap_or(base);
@@ -206,14 +212,27 @@ mod tests {
     #[test]
     fn glass_gets_denser_over_a_wallpaper_that_fights_the_text() {
         let dark_bar = Theme::dark().bar;
-        let calm = slab(Material::Glass, dark_bar, Some(Rgba::rgb(20, 40, 90))).fill.3;
-        let bright = slab(Material::Glass, dark_bar, Some(Rgba::rgb(240, 230, 220))).fill.3;
+        let calm = slab(Material::Glass, dark_bar, Some(Rgba::rgb(20, 40, 90)))
+            .fill
+            .3;
+        let bright = slab(Material::Glass, dark_bar, Some(Rgba::rgb(240, 230, 220)))
+            .fill
+            .3;
         assert!(bright > calm + 40, "{calm} -> {bright}");
         let light_bar = Theme::light().bar;
-        let dark_wall = slab(Material::Glass, light_bar, Some(Rgba::rgb(15, 15, 30))).fill.3;
-        let light_wall = slab(Material::Glass, light_bar, Some(Rgba::rgb(230, 220, 240))).fill.3;
+        let dark_wall = slab(Material::Glass, light_bar, Some(Rgba::rgb(15, 15, 30)))
+            .fill
+            .3;
+        let light_wall = slab(Material::Glass, light_bar, Some(Rgba::rgb(230, 220, 240)))
+            .fill
+            .3;
         assert!(dark_wall > light_wall + 40);
-        assert_eq!(slab(Material::Solid, dark_bar, Some(Rgba::rgb(255, 255, 255))).fill.3, 255);
+        assert_eq!(
+            slab(Material::Solid, dark_bar, Some(Rgba::rgb(255, 255, 255)))
+                .fill
+                .3,
+            255
+        );
     }
 
     #[test]

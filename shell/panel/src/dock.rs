@@ -15,15 +15,17 @@
 use std::collections::HashMap;
 
 use crate::canvas::{text_width, Canvas, Fonts, Icon, Rgba};
+use crate::material;
 use crate::state::{
     dock_entries, load_app_icon, AppEntry, DockStyle, LaunchTarget, ShellCmd, WindowInfo,
 };
 use crate::surfaces::{HitAction, Live, Region};
-use crate::material;
 use crate::tokens::Theme;
 
-/// Height of the floating card itself.
-pub const CARD_H: i32 = 58;
+/// Height of the floating card itself (macOS dock ~52–54).
+pub const CARD_H: i32 = 52;
+/// Corner radius of the floating glass pill.
+const DOCK_R: f32 = 18.0;
 /// Extra room above the card for magnified icons.
 pub const MAGNIFY_ROOM: i32 = 30;
 /// Height of the Windows-style taskbar.
@@ -68,7 +70,8 @@ const CLOCK_W: i32 = 108;
 
 fn item_span(it: &Item<'_>, cell: i32) -> i32 {
     match it {
-        Item::Separator => 1,
+        // Wider than the 1 px rule so the line has air on both sides.
+        Item::Separator => 7,
         Item::Weather => WEATHER_W,
         Item::Clock => CLOCK_W,
         _ => cell,
@@ -111,19 +114,21 @@ struct Metrics {
 fn metrics(style: DockStyle) -> Metrics {
     match style {
         DockStyle::Minimal => Metrics {
-            cell: 38,
-            gap: 6,
+            cell: 36,
+            gap: 5,
+            pad: 12,
+        },
+        // macOS dock: ~40 px icons, a tight gap, padding that lets the glass
+        // pill read as a capsule rather than a chunky card.
+        DockStyle::Macos | DockStyle::Solyra => Metrics {
+            cell: 40,
+            gap: 5,
             pad: 14,
         },
-        DockStyle::Macos => Metrics {
-            cell: 44,
-            gap: 8,
-            pad: 10,
-        },
-        _ => Metrics {
-            cell: 42,
-            gap: 8,
-            pad: 10,
+        DockStyle::Windows => Metrics {
+            cell: 40,
+            gap: 5,
+            pad: 14,
         },
     }
 }
@@ -200,7 +205,7 @@ pub fn spec(style: DockStyle, wins: &[WindowInfo], magnify: bool, hidden: bool) 
             namespace: "solyra-dock-magnify",
             full_width: false,
             exclusive: 0,
-            bottom_margin: 10,
+            bottom_margin: 12,
             width: (w + extra) as u32,
             height: (CARD_H + MAGNIFY_ROOM) as u32,
         }
@@ -209,7 +214,7 @@ pub fn spec(style: DockStyle, wins: &[WindowInfo], magnify: bool, hidden: bool) 
             namespace: "solyra-dock",
             full_width: false,
             exclusive: 0,
-            bottom_margin: 10,
+            bottom_margin: 12,
             width: w as u32,
             height: CARD_H as u32,
         }
@@ -262,7 +267,10 @@ pub fn draw(
                 h: cv.height as i32,
                 r: 0.0,
             };
-            (draw_taskbar(cv, th, fonts, wins, icons, hover, live), Some(body))
+            (
+                draw_taskbar(cv, th, fonts, wins, icons, hover, live),
+                Some(body),
+            )
         }
         _ => draw_floating(cv, th, fonts, style, wins, icons, hover, live, magnify),
     }
@@ -281,7 +289,11 @@ pub struct Body {
 
 fn slab_for(live: &Live<'_>, base: crate::tokens::Rgba) -> material::Slab {
     let look = &live.prefs.look;
-    material::slab(look.material(look.dock_material), base, live.prefs.wall_tint)
+    material::slab(
+        look.material(look.dock_material),
+        base,
+        live.prefs.wall_tint,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -338,24 +350,30 @@ fn draw_floating(
     let card_x = (w - card_w) / 2;
 
     let slab = slab_for(live, th.surface);
-    material::paint(cv, &slab, card_x, card_y, card_w, CARD_H, 20.0);
+    material::paint(cv, &slab, card_x, card_y, card_w, CARD_H, DOCK_R);
     let body = Body {
         x: card_x,
         y: card_y,
         w: card_w,
         h: CARD_H,
-        r: 20.0,
+        r: DOCK_R,
     };
 
     let mut regions = Vec::new();
     let mut x = card_x + m.pad;
-    let base_y = card_y + (CARD_H - m.cell) / 2 - 1;
+    // Bias icons up so a running dot can sit in the padding under them.
+    let base_y = card_y + (CARD_H - m.cell) / 2 - 2;
     let weather = weather_label();
-    let clock = chrono::Local::now().format(live.prefs.look.clock_format()).to_string();
+    let clock = chrono::Local::now()
+        .format(live.prefs.look.clock_format())
+        .to_string();
     for (it, size) in its.iter().zip(&sizes) {
         if let Item::Separator = it {
-            cv.fill_rect(x, card_y + 12, 1, CARD_H - 24, th.tile_hover);
-            x += 1 + m.gap;
+            let sep_h = 22;
+            let sep_y = card_y + (CARD_H - sep_h) / 2;
+            let sw = *size;
+            cv.fill_rect(x + (sw - 1) / 2, sep_y, 1, sep_h, th.hairline);
+            x += sw + m.gap;
             continue;
         }
         let s = *size;
@@ -433,7 +451,7 @@ fn draw_floating(
 
                 if let Item::App(e) = it {
                     if e.window_count > 0 {
-                        running_mark(cv, th, style, x, s, card_y, e.is_focused);
+                        running_mark(cv, th, x, s, card_y, e.is_focused);
                     }
                     if hov && magnify {
                         tooltip(cv, th, fonts, &e.title, x + s / 2, y - 6, w);
@@ -456,35 +474,16 @@ fn draw_floating(
     (regions, Some(body))
 }
 
-fn running_mark(
-    cv: &mut Canvas<'_>,
-    th: &Theme,
-    style: DockStyle,
-    x: i32,
-    s: i32,
-    card_y: i32,
-    focused: bool,
-) {
+fn running_mark(cv: &mut Canvas<'_>, th: &Theme, x: i32, s: i32, card_y: i32, focused: bool) {
+    // A small dot under the icon. The frontmost app is a touch larger and
+    // uses the accent, so state is not colour alone and the mark stays a dot.
     let bottom = card_y + CARD_H;
-    match style {
-        // Floating dock: a dot with a backing disc so it stays readable on glass.
-        DockStyle::Macos => {
-            let col = if focused { th.accent } else { th.text };
-            let cx = x as f32 + s as f32 / 2.0;
-            let cy = (bottom - 7) as f32;
-            cv.circle(cx, cy, 3.6, th.surface);
-            cv.circle(cx, cy, 2.5, col);
-        }
-        DockStyle::Minimal => {
-            let col = if focused { th.accent } else { th.text };
-            cv.circle(x as f32 + s as f32 / 2.0, (bottom - 6) as f32, 2.4, col);
-        }
-        // Solyra: a pill that widens for the focused app (shape, not only colour).
-        _ => {
-            let bw = if focused { 18 } else { 8 };
-            let col = if focused { th.accent } else { th.text_med };
-            cv.round_rect(x + (s - bw) / 2, bottom - 5, bw, 3, 1.5, col);
-        }
+    let cx = x as f32 + s as f32 / 2.0;
+    let cy = (bottom - 4) as f32;
+    if focused {
+        cv.circle(cx, cy, 1.7, th.accent);
+    } else {
+        cv.circle(cx, cy, 1.25, th.text);
     }
 }
 
@@ -587,9 +586,11 @@ fn draw_taskbar(
         action: HitAction::Launch(LaunchTarget::Ipc("{\"Action\":{\"ToggleOverview\":{}}}")),
     });
 
-    // Centre: start, search, apps.
+    // Centre: start, a quiet search pill, apps.
     let entries = dock_entries(wins);
-    let search_w = 188;
+    let search_w = 160;
+    let search_h = 28;
+    let search_y = (h - search_h) / 2;
     let total_w = 40 + 8 + search_w + 10 + (entries.len() as i32) * 44;
     let mut cx = (w - total_w) / 2;
     cv.draw_app_squircle(cx + 3, 7, 34, "start", None, fonts);
@@ -605,27 +606,27 @@ fn draw_taskbar(
     let s_hov = hover.is_some_and(|(hx, _)| hx >= cx as f64 && hx < (cx + search_w) as f64);
     cv.round_rect(
         cx,
-        8,
+        search_y,
         search_w,
-        32,
-        16.0,
+        search_h,
+        search_h as f32 / 2.0,
         if s_hov { th.tile_hover } else { th.tile },
     );
-    cv.stroke_round_rect(cx, 8, search_w, 32, 16.0, 1.0, th.hairline);
-    cv.icon_search(cx as f32 + 18.0, 24.0, 13.0, th.text_med);
+    let search_cy = search_y as f32 + search_h as f32 / 2.0;
+    cv.icon_search(cx as f32 + 16.0, search_cy, 12.0, th.text_dim);
     cv.text(
         fonts.regular.as_ref(),
         "Search",
-        cx + 32,
-        28,
+        cx + 28,
+        search_y + 18,
         12.0,
         th.text_dim,
     );
     regions.push(Region {
         x: cx,
-        y: 6,
+        y: search_y,
         w: search_w,
-        h: 36,
+        h: search_h,
         action: HitAction::Shell(ShellCmd::ToggleLauncher),
     });
     cx += search_w + 10;
@@ -667,7 +668,7 @@ fn draw_taskbar(
         cx += 44;
     }
 
-    // Right: tray, weather, and a slightly larger stacked clock/date.
+    // Right: system icons as one group, a hairline, then weather and the clock.
     let look = &prefs.look;
     let now = chrono::Local::now();
     let weather = weather_label();
@@ -681,7 +682,7 @@ fn draw_taskbar(
         0
     };
     let col_w = tw.max(dw);
-    let clock_x = w - 16 - col_w;
+    let clock_x = w - 14 - col_w;
     let time_y = if look.show_date { 20 } else { 29 };
     cv.text(
         fonts.semibold.as_ref(),
@@ -703,7 +704,7 @@ fn draw_taskbar(
     }
     let ww = text_width(fonts.semibold.as_ref(), &weather, 12.5).min(72);
     let weather_w = 22 + ww;
-    let wx = clock_x - 12 - weather_w;
+    let wx = clock_x - 14 - weather_w;
     cv.icon_sun((wx + 8) as f32, 24.0, th.text);
     cv.text_truncated(
         fonts.semibold.as_ref(),
@@ -714,23 +715,29 @@ fn draw_taskbar(
         ww,
         th.text,
     );
-    let tray_x = wx - 78;
-    cv.icon_network(
-        (tray_x + 10) as f32,
-        24.0,
-        12.5,
-        telem.network,
-        th.text,
-        th.text_dim,
-    );
-    cv.icon_volume((tray_x + 32) as f32, 24.0, 12.5, prefs.volume, th.text);
-    if let Some(pct) = telem.battery_pct {
-        cv.icon_battery((tray_x + 56) as f32, 24.0, pct, th.text_med, th.success);
+
+    let sep_x = wx - 12;
+    cv.fill_rect(sep_x, 14, 1, h - 28, th.separator);
+
+    let mut icon_right = sep_x - 8;
+    let place = |right: &mut i32| -> f32 {
+        *right -= 26;
+        *right as f32 + 13.0
+    };
+    let bat = telem.battery_pct.map(|pct| (place(&mut icon_right), pct));
+    let vol_cx = place(&mut icon_right);
+    let net_cx = place(&mut icon_right);
+    let tray_left = icon_right;
+
+    cv.icon_network(net_cx, 24.0, 13.0, telem.network, th.text, th.text_dim);
+    cv.icon_volume(vol_cx, 24.0, 13.0, prefs.volume, th.text);
+    if let Some((cx, pct)) = bat {
+        cv.icon_battery(cx, 24.0, pct, th.text, th.success);
     }
     regions.push(Region {
-        x: tray_x - 6,
+        x: tray_left,
         y: 4,
-        w: w - tray_x,
+        w: w - tray_left,
         h: 40,
         action: HitAction::Shell(ShellCmd::ToggleControl),
     });

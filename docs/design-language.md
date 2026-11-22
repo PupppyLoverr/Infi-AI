@@ -36,9 +36,9 @@ A 4 px base grid. Every gap, inset, and size is a multiple of 4.
 | `space-4` | 16 | bar content inset, section gaps |
 | `space-6` | 24 | panel-to-content separation |
 
-Corner radii: **7** pills, **10** cells, **12** cards and windows, **16** the
-dock and the launcher, **14** the notch's bottom corners. Radii never mix
-inside one surface.
+Corner radii: **7** pills, **10** cells, **12** cards and windows, **18** the
+floating dock, **16** the launcher, **14** the notch's bottom corners. Radii
+never mix inside one surface.
 
 ---
 
@@ -51,7 +51,7 @@ so nobody hardcodes a dark-only assumption.
 | --- | --- | --- | --- |
 | `bg` | `#1C1C1E` | `#F2F2F7` | Desktop chrome (neutral graphite) |
 | `surface` | `#1C1C1E` @ ~77% | `#F2F2F7` @ ~82% | Cards, popovers — translucent for Glass |
-| `bar` | `#1C1C1E` @ ~66% | `#F2F2F7` @ ~71% | Menu bar and dock fills |
+| `bar` | `#1C1C1E` @ ~44% | `#F2F2F7` @ ~50% | Menu bar and dock fills |
 | `hairline` | white @ 14% | black @ 11% | 1 px separators |
 | `accent` | `#0A84FF` | `#007AFF` | Active control (system blue) |
 | `on-accent` | `#FFFFFF` | `#FFFFFF` | Text/glyphs on accent |
@@ -101,12 +101,13 @@ around the island is never blurred.
 | --- | --- | --- | --- |
 | **Solid** | opaque fill, faint rim | nothing | maximum legibility; the classic black notch |
 | **See-through** | light tint (alpha ~150), rim | nothing; the desktop stays sharp | minimal looks |
-| **Glass** (default bar, dock) | thin tint (alpha ~120), rim, 1 px lit top edge | blur, saturation x1.5 | the macOS-like look |
+| **Glass** (default bar, dock) | near-clear tint (alpha 44 dark / 60 light), soft rim, 1 px lit top edge | blur, saturation x1.5 | the macOS-like look |
 | **Acrylic** | tint mixed 22-30 % with the wallpaper's average colour (alpha ~190) | blur, saturation x1.15, grain 0.06 | the Windows-like look |
 
-**Adaptive density.** Glass and See-through get denser (alpha +70) when the
-wallpaper's lightness fights the text colour: a bright wallpaper under
-light-on-dark text, or the reverse. This is the legibility guard that both
+**Adaptive density.** See-through gets denser (alpha +70) when the wallpaper's
+lightness fights the text colour. Glass gets a smaller lift (alpha +52) so a
+bright wallpaper still reads through the menu bar and dock: a bright wallpaper
+under light-on-dark text, or the reverse. This is the legibility guard that both
 Apple (Liquid Glass adapts to what is behind it) and Microsoft (Acrylic's
 luminosity layer) build in. **Solid surfaces everywhere** (`opaque=1`)
 overrides every material, as an accessibility switch.
@@ -128,12 +129,14 @@ compositor's blur is approximated there.
 
 ### 6.1 Bar — **shipped**
 
-32 px, full width, exclusive zone 32. Styles (`bar_style`): **Menu bar**
-(Finder-style: Solyra menu, the focused app's name, Go, Window, View, Help,
-each a real dropdown), **Compact** (workspaces and status only) and
-**Hidden** (no strip, nothing reserved). Right side: search, network, volume,
-battery when present, control centre, date and clock (12/24 h, seconds and
-date optional). Workspace pills are optional.
+26 px, full width, exclusive zone 26. Styles (`bar_style`): **Menu bar**
+(Finder-style: a small Solyra mark, the focused app's name in semibold, then
+Go, Window, View, Help in `text-dim` until hovered, each a real dropdown),
+**Compact** (workspaces and status only) and **Hidden** (no strip, nothing
+reserved). Right side, unboxed glyphs: search, network, volume, battery when
+present, control centre, then the date and the clock as plain text (date
+then time; 12/24 h, seconds and date optional). Workspaces, when shown, are
+quiet digits with a dot on the active one.
 
 Menus open on a full-screen transparent overlay: a click outside closes,
 hovering another title switches, as on macOS. Restart and Shut down ask for
@@ -155,7 +158,10 @@ a glance: time, date, battery, network, running agents.
 
 `dock_style`: **Solyra** (floating card), **Floating** (macOS-like, optional
 magnification), **Taskbar** (Windows-like full-width bar: task view, start,
-search, centred apps, tray, clock) and **Minimal** (icons only). Auto-hide
+a quiet search pill, centred apps, a grouped tray, clock) and **Minimal**
+(icons only). The floating card is 52 px tall, radius 18, with 40 px cells,
+a 5 px gap and 14 px padding, lifted 12 px off the bottom edge. Running apps
+carry a small dot; a hairline separates the trash. Auto-hide
 tucks the dock away 0.7 s after the pointer leaves; touching the bottom
 edge brings it back. One cell per app; a click focuses the latest window or
 launches the app.
@@ -242,11 +248,11 @@ every duration to zero.
 ## 9. Accessibility
 
 - Focus is always visible: the 2 px accent border, never a colour-only change.
-- Minimum target 24 × 24; dock cells are 34 × 34.
+- Minimum target 24 × 24; dock cells are 40 × 40.
 - Text scales with the compositor's scale factor; the bar grows with it.
 - Reduced motion, and no animation on the lock screen.
-- The shell never relies on colour alone: running apps also carry the
-  underline, the active workspace also carries the filled pill.
+- The shell never relies on colour alone: running apps also carry a dot,
+  the active workspace also carries a dot under its digit.
 
 ---
 

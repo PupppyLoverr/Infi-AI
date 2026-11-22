@@ -58,10 +58,10 @@ impl ThemeKind {
 
 /// Semantic colour roles. Every field is a role, not a use site.
 ///
-/// Surfaces are flat: one fill and one hairline, no gradients. Overlays are
-/// slightly translucent so the compositor's blur shows faintly through; the bar
-/// and dock are nearly opaque. The accent means "active" or "selected" and is
-/// never used for decoration.
+/// Surfaces are flat: one fill and one hairline, no gradients. Overlay cards
+/// are slightly translucent so the compositor's blur shows faintly through.
+/// The bar token is a thin tint; Glass paints an even clearer veil. The accent
+/// means "active" or "selected" and is never used for decoration.
 #[derive(Clone, Copy, Debug)]
 pub struct Theme {
     // Surfaces.
@@ -105,7 +105,7 @@ impl Theme {
         // Surfaces stay translucent so Glass/Acrylic can show the wallpaper.
         Self {
             surface: Rgba::rgba(0x1c, 0x1c, 0x1e, 196),
-            bar: Rgba::rgba(0x1c, 0x1c, 0x1e, 168),
+            bar: Rgba::rgba(0x1c, 0x1c, 0x1e, 112),
             hairline: Rgba::rgba(0xff, 0xff, 0xff, 36),
             field: Rgba::rgba(0x00, 0x00, 0x00, 120),
             tile: Rgba::rgba(255, 255, 255, 14),
@@ -131,7 +131,7 @@ impl Theme {
     pub const fn light() -> Self {
         Self {
             surface: Rgba::rgba(0xf2, 0xf2, 0xf7, 210),
-            bar: Rgba::rgba(0xf2, 0xf2, 0xf7, 180),
+            bar: Rgba::rgba(0xf2, 0xf2, 0xf7, 128),
             hairline: Rgba::rgba(0x00, 0x00, 0x00, 28),
             field: Rgba::rgba(255, 255, 255, 220),
             tile: Rgba::rgba(0x00, 0x00, 0x00, 10),

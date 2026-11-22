@@ -16,7 +16,8 @@ use crate::tokens::{
     T_META, T_TITLE,
 };
 
-pub const BAR_HEIGHT: u32 = 34;
+/// macOS menu-bar band: 24–28 px. Exclusive zone tracks this height.
+pub const BAR_HEIGHT: u32 = 26;
 pub const NOTCH_WIDTH: i32 = 184;
 
 pub const LAUNCHER_W: u32 = 640;
@@ -118,16 +119,27 @@ pub fn draw_bar(
     let w = cv.width as i32;
     let h = cv.height as i32;
     let mut regions = Vec::new();
+    // One baseline for the whole strip so the app name, menus and clock sit together.
+    let text_y = (h as f32 * 0.70).round() as i32;
+    let icon_cy = h as f32 * 0.5;
 
     // The bar's material (Solid, See-through, Glass, Acrylic); blur and grain
-    // behind it are the compositor's (see material.rs).
+    // behind it are the compositor's (see material.rs). A faint seam only —
+    // the strip should read as glass, not a ruled slab.
     let slab = crate::material::slab(
         prefs.look.material(prefs.look.bar_material),
         th.bar,
         prefs.wall_tint,
     );
     crate::material::paint(cv, &slab, 0, 0, w, h, 0.0);
-    cv.fill_rect(0, h - 1, w, 1, slab.edge);
+    let seam_a = (slab.edge.3 / 3).max(8);
+    cv.fill_rect(
+        0,
+        h - 1,
+        w,
+        1,
+        Rgba::rgba(slab.edge.0, slab.edge.1, slab.edge.2, seam_a),
+    );
 
     use solyra_conf::look::BarStyle;
     let bar_style = prefs.look.bar;
@@ -140,16 +152,16 @@ pub fn draw_bar(
     };
     let max_left_x = (w / 2) - center_reserved_half;
 
-    // Left: the nL mark (white on black). Menu bar → system menu; compact → launcher.
-    let mark_h = 22;
-    let mark_x = 8;
+    // Left: a small nL mark. Menu bar → system menu; compact → launcher.
+    let mark_h = 16;
+    let mark_x = 10;
     let mark_y = (h - mark_h) / 2;
     let mark_w = crate::canvas::nl_mark_width(mark_h, fonts);
     let brand_hover = hover.is_some_and(|(hx, hy)| {
         hx >= (mark_x - 2) as f64 && hx < (mark_x + mark_w + 2) as f64 && hy < h as f64
     });
     if brand_hover {
-        cv.round_rect(mark_x - 4, 4, mark_w + 8, h - 8, 8.0, th.tile_hover);
+        cv.round_rect(mark_x - 3, 2, mark_w + 6, h - 4, 5.0, th.tile_hover);
     }
     let drawn = cv.mark_nl(mark_x, mark_y, mark_h, fonts);
     debug_assert_eq!(drawn, mark_w);
@@ -164,16 +176,25 @@ pub fn draw_bar(
             HitAction::Shell(ShellCmd::ToggleLauncher)
         },
     });
-    let mut x = mark_x + mark_w + 14;
+    let mut x = mark_x + mark_w + 12;
 
     if menubar {
-        // The focused app's name, bold, then the menu titles.
+        // Focused app name in semibold, then menu titles in the secondary
+        // colour until the pointer is on them.
         let (app_name, _) = focused_app_menus(wins);
-        let aw = text_width(fonts.semibold.as_ref(), &app_name, 13.0);
-        if hovered(hover, x - 6, 4, aw + 12, 26) {
-            cv.round_rect(x - 6, 5, aw + 12, 24, 5.0, th.tile_hover);
+        let app_size = 12.5;
+        let aw = text_width(fonts.semibold.as_ref(), &app_name, app_size);
+        if hovered(hover, x - 6, 0, aw + 12, h) {
+            cv.round_rect(x - 6, 2, aw + 12, h - 4, 5.0, th.tile_hover);
         }
-        cv.text(fonts.semibold.as_ref(), &app_name, x, 22, 13.0, th.text);
+        cv.text(
+            fonts.semibold.as_ref(),
+            &app_name,
+            x,
+            text_y,
+            app_size,
+            th.text,
+        );
         regions.push(Region {
             x: x - 6,
             y: 0,
@@ -181,17 +202,26 @@ pub fn draw_bar(
             h,
             action: HitAction::OpenMenu(MenuId::App),
         });
-        x += aw + 18;
+        x += aw + 16;
+        let menu_size = 12.0;
         for id in MenuId::TITLES {
             let t = id.title();
-            let mw = text_width(fonts.regular.as_ref(), t, 13.0);
+            let mw = text_width(fonts.regular.as_ref(), t, menu_size);
             if x + mw + 8 > max_left_x {
                 break;
             }
-            if hovered(hover, x - 6, 4, mw + 12, 26) {
-                cv.round_rect(x - 6, 5, mw + 12, 24, 5.0, th.tile_hover);
+            let hot = hovered(hover, x - 6, 0, mw + 12, h);
+            if hot {
+                cv.round_rect(x - 6, 2, mw + 12, h - 4, 5.0, th.tile_hover);
             }
-            cv.text(fonts.regular.as_ref(), t, x, 22, 13.0, th.text);
+            cv.text(
+                fonts.regular.as_ref(),
+                t,
+                x,
+                text_y,
+                menu_size,
+                if hot { th.text } else { th.text_dim },
+            );
             regions.push(Region {
                 x: x - 6,
                 y: 0,
@@ -199,49 +229,45 @@ pub fn draw_bar(
                 h,
                 action: HitAction::OpenMenu(id),
             });
-            x += mw + 18;
+            x += mw + 14;
         }
-        x += 4;
+        x += 6;
     }
 
-    // Workspace pills (optional in the menu bar, always in the compact bar).
+    // Workspace digits (optional in the menu bar, always in the compact bar).
+    // A dot marks the active space — no filled pills.
     if prefs.look.show_workspaces || !menubar {
+        let slot = 16;
         for &(idx, active) in ws_list {
-            if x + 22 > max_left_x {
+            if x + slot > max_left_x {
                 break;
             }
-            let is_hov = hovered(hover, x, 7, 20, 20);
-            if active {
-                cv.round_rect(x, 9, 20, 16, 8.0, th.accent);
-            } else {
-                cv.round_rect(
-                    x,
-                    9,
-                    20,
-                    16,
-                    8.0,
-                    if is_hov { th.tile_hover } else { th.tile },
-                );
-            }
+            let is_hov = hovered(hover, x, 0, slot, h);
             let label = idx.to_string();
-            let tw = text_width(fonts.semibold.as_ref(), &label, 11.0);
-            let fg = if active { th.on_accent } else { th.text_med };
-            cv.text(
-                fonts.semibold.as_ref(),
-                &label,
-                x + (20 - tw) / 2,
-                21,
-                11.0,
-                fg,
-            );
+            let size = 11.0;
+            let font = if active {
+                fonts.semibold.as_ref()
+            } else {
+                fonts.regular.as_ref()
+            };
+            let tw = text_width(font, &label, size);
+            let fg = if active || is_hov {
+                th.text
+            } else {
+                th.text_dim
+            };
+            cv.text(font, &label, x + (slot - tw) / 2, text_y, size, fg);
+            if active {
+                cv.circle(x as f32 + slot as f32 / 2.0, h as f32 - 3.5, 1.3, th.accent);
+            }
             regions.push(Region {
-                x: x - 2,
-                y: 4,
-                w: 24,
-                h: 26,
+                x,
+                y: 0,
+                w: slot,
+                h,
                 action: HitAction::Workspace(idx),
             });
-            x += 25;
+            x += slot + 2;
         }
     }
 
@@ -250,9 +276,19 @@ pub fn draw_bar(
         // Drawn by the island surface (island.rs).
     } else if let Some(message) = island_msg {
         let tw = text_width(fonts.semibold.as_ref(), message, 12.0);
-        let pill_w = (tw + 68).clamp(NOTCH_WIDTH + 36, 390);
+        let pill_w = (tw + 56).clamp(NOTCH_WIDTH + 24, 360);
+        let pill_h = (h - 6).max(18);
+        let pill_y = (h - pill_h) / 2;
         let left = (w - pill_w) / 2;
-        cv.round_rect(left, 3, pill_w, 28, 14.0, Rgba::rgb(0x09, 0x08, 0x10));
+        let pr = pill_h as f32 / 2.0;
+        cv.round_rect(
+            left,
+            pill_y,
+            pill_w,
+            pill_h,
+            pr,
+            Rgba::rgb(0x09, 0x08, 0x10),
+        );
         // The island is always near-black, in both themes, so its content
         // uses the dark palette. The attention text itself says "needs
         // approval": the amber dot only reinforces it.
@@ -262,15 +298,15 @@ pub fn draw_bar(
         } else {
             pd.agent_active
         };
-        cv.stroke_round_rect(left, 3, pill_w, 28, 14.0, 1.0, dot);
-        cv.circle(left as f32 + 16.0, 17.0, 4.0, dot);
+        cv.stroke_round_rect(left, pill_y, pill_w, pill_h, pr, 1.0, dot);
+        cv.circle(left as f32 + 14.0, icon_cy, 3.2, dot);
         cv.text_truncated(
             fonts.semibold.as_ref(),
             message,
-            left + 28,
-            21,
+            left + 24,
+            text_y,
             12.0,
-            pill_w - 64,
+            pill_w - 40,
             pd.text,
         );
         regions.push(Region {
@@ -294,7 +330,8 @@ pub fn draw_bar(
         });
     }
 
-    // Right cluster: Clock & Date, Status Capsule (Wi-Fi, Sound, Battery, Control Centre), Search.
+    // Right: unboxed glyphs, then the date and the clock as plain text.
+    // Apple order is date then time. Nothing here sits in a capsule.
     let now = chrono::Local::now();
     let clock_str = now.format(prefs.look.clock_format()).to_string();
     let date_str = if prefs.look.show_date {
@@ -302,79 +339,94 @@ pub fn draw_bar(
     } else {
         String::new()
     };
-    let clock_w = text_width(fonts.semibold.as_ref(), &clock_str, 12.8);
-    let date_w = text_width(fonts.regular.as_ref(), &date_str, 12.0);
+    let clock_size = 12.5;
+    let date_size = 11.5;
+    let clock_w = text_width(fonts.semibold.as_ref(), &clock_str, clock_size);
+    let date_w = if date_str.is_empty() {
+        0
+    } else {
+        text_width(fonts.regular.as_ref(), &date_str, date_size)
+    };
+    let date_gap = if date_w > 0 { 8 } else { 0 };
 
-    let mut rx = w - 14;
-    rx -= clock_w;
-    cv.text(fonts.semibold.as_ref(), &clock_str, rx, 22, 12.8, th.text);
-    let clock_start = rx - date_w - 8;
+    let right_margin = 12;
+    let clock_x = w - right_margin - clock_w;
     cv.text(
-        fonts.regular.as_ref(),
-        &date_str,
-        clock_start,
-        22,
-        12.0,
-        th.text_med,
+        fonts.semibold.as_ref(),
+        &clock_str,
+        clock_x,
+        text_y,
+        clock_size,
+        th.text,
     );
+    let date_x = clock_x - date_gap - date_w;
+    if date_w > 0 {
+        cv.text(
+            fonts.regular.as_ref(),
+            &date_str,
+            date_x,
+            text_y,
+            date_size,
+            th.text_dim,
+        );
+    }
+    let time_left = if date_w > 0 { date_x } else { clock_x };
     regions.push(Region {
-        x: clock_start - 4,
-        y: 4,
-        w: date_w + clock_w + 12,
-        h: 26,
+        x: time_left - 4,
+        y: 0,
+        w: clock_x + clock_w + 8 - (time_left - 4),
+        h,
         action: HitAction::Shell(ShellCmd::ToggleIsland),
     });
 
-    // Status pill (Control Centre trigger): Wi-Fi + Volume + Battery + Twin-switches.
-    let status_w = 104;
-    let status_x = clock_start - status_w - 12;
-    let status_hov = hover.is_some_and(|(hx, hy)| {
-        hx >= status_x as f64 && hx < (status_x + status_w) as f64 && hy >= 4.0 && hy < 30.0
-    });
-    cv.round_rect(
-        status_x,
-        5,
-        status_w,
-        24,
-        8.0,
-        if status_hov { th.tile_hover } else { th.tile },
-    );
-    cv.icon_network(
-        status_x as f32 + 15.0,
-        17.0,
-        14.5,
-        telem.network,
-        th.text,
-        th.text_dim,
-    );
-    cv.icon_volume(status_x as f32 + 39.0, 17.0, 14.5, prefs.volume, th.text);
-    if let Some(pct) = telem.battery_pct {
-        cv.icon_battery(status_x as f32 + 65.0, 17.0, pct, th.text_med, th.success);
+    // Search, Wi-Fi, volume, battery, control centre — glyphs only.
+    // The whole status run opens Control Centre; search opens the launcher.
+    let mut edge = time_left - 14;
+    edge -= 18;
+    let cc_cx = edge as f32 + 9.0;
+    let bat = if let Some(pct) = telem.battery_pct {
+        edge -= 4 + 22;
+        Some((edge as f32 + 11.0, pct))
+    } else {
+        None
+    };
+    edge -= 4 + 18;
+    let vol_cx = edge as f32 + 9.0;
+    edge -= 4 + 18;
+    let net_cx = edge as f32 + 9.0;
+    let status_left = edge;
+    let status_right = time_left - 10;
+    let status_w = (status_right - status_left).max(0);
+    let status_hov = hovered(hover, status_left, 0, status_w, h);
+    if status_hov {
+        cv.round_rect(status_left, 2, status_w, h - 4, 6.0, th.tile_hover);
     }
-    cv.icon_control_centre(status_x as f32 + 91.0, 17.0, th.text);
+    cv.icon_network(net_cx, icon_cy, 13.0, telem.network, th.text, th.text_dim);
+    cv.icon_volume(vol_cx, icon_cy, 13.0, prefs.volume, th.text);
+    if let Some((cx, pct)) = bat {
+        cv.icon_battery(cx, icon_cy, pct, th.text, th.success);
+    }
+    cv.icon_control_centre(cc_cx, icon_cy, th.text);
     regions.push(Region {
-        x: status_x,
-        y: 4,
+        x: status_left,
+        y: 0,
         w: status_w,
-        h: 26,
+        h,
         action: HitAction::Shell(ShellCmd::ToggleControl),
     });
 
-    // Spotlight Search icon button just left of the status pill.
-    let search_x = status_x - 30;
+    let search_w = 22;
+    let search_x = status_left - 10 - search_w;
     if search_x > (w / 2) + center_reserved_half {
-        let s_hov = hover.is_some_and(|(hx, hy)| {
-            hx >= search_x as f64 && hx < (search_x + 24) as f64 && hy >= 5.0 && hy < 29.0
-        });
-        if s_hov {
-            cv.round_rect(search_x, 5, 24, 24, 7.0, th.tile_hover);
+        if hovered(hover, search_x, 0, search_w, h) {
+            cv.round_rect(search_x, 2, search_w, h - 4, 6.0, th.tile_hover);
         }
-        cv.icon_search(search_x as f32 + 12.0, 17.0, 13.5, th.text_med);
+        cv.icon_search(search_x as f32 + 11.0, icon_cy, 13.0, th.text);
         regions.push(Region {
             x: search_x,
-            y: 4,
-            w: 24,
-            h: 26,
+            y: 0,
+            w: search_w,
+            h,
             action: HitAction::Shell(ShellCmd::ToggleLauncher),
         });
     }
@@ -1752,5 +1804,52 @@ fn reply_field(
         if active {
             cv.fill_rect(x + 13 + tw, y + 9, 2, 16, th.accent);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::{draw_launcher, HitAction, LAUNCHER_H, LAUNCHER_W};
+    use crate::canvas::{Canvas, Fonts};
+    use crate::launcher;
+    use crate::state::{AppEntry, LaunchTarget, ShellCmd};
+    use crate::tokens::{Theme, ThemeKind};
+
+    fn app(title: &str, id: &str) -> AppEntry {
+        AppEntry {
+            window: None,
+            window_count: 0,
+            is_focused: false,
+            app_id: id.into(),
+            role: id.into(),
+            title: title.into(),
+            subtitle: "Open".into(),
+            command: LaunchTarget::Shell(id.into()),
+        }
+    }
+
+    #[test]
+    fn empty_launcher_lists_apps() {
+        let fonts = Fonts::load();
+        let th = Theme::for_kind(ThemeKind::Dark);
+        let cat = vec![app("Files", "thunar"), app("Terminal", "foot")];
+        let items = launcher::search("", &cat, &[], false);
+        assert!(items.iter().any(|i| i.kind == launcher::Kind::Application));
+        let mut buf = vec![0u8; (LAUNCHER_W * LAUNCHER_H * 4) as usize];
+        let mut cv = Canvas::new(&mut buf, LAUNCHER_W, LAUNCHER_H, 1);
+        let mut icons = HashMap::new();
+        let regions = draw_launcher(&mut cv, &th, &fonts, "", &items, 0, &mut icons, None);
+        let list_bottom = LAUNCHER_H as i32 - 50;
+        let apps: Vec<_> = regions
+            .iter()
+            .filter(|r| r.y < list_bottom && matches!(r.action, HitAction::Launch(_)))
+            .collect();
+        assert!(apps.len() >= 2, "empty query should offer the catalogue");
+        assert!(apps.iter().all(|r| (30..=42).contains(&r.h)));
+        assert!(regions.iter().any(|r| {
+            matches!(r.action, HitAction::Shell(ShellCmd::CloseOverlays))
+        }));
     }
 }
