@@ -21,7 +21,8 @@ pub const BAR_HEIGHT: u32 = 26;
 pub const NOTCH_WIDTH: i32 = 184;
 
 pub const LAUNCHER_W: u32 = 680;
-pub const LAUNCHER_H: u32 = 480;
+/// Compact Spotlight height — tall enough for Top Hit + a few apps, not a Start menu.
+pub const LAUNCHER_H: u32 = 420;
 
 pub const CONTROL_W: u32 = 348;
 pub const CONTROL_H: u32 = 436;
@@ -619,62 +620,17 @@ pub fn draw_launcher(
         }
     }
 
-    // Quiet footer: key hints, then Lock and Log out as text, not Start tiles.
+    // Apple Spotlight has no power chrome — only quiet key hints.
     let fy = h - FOOTER_H;
     cv.fill_rect(20, fy, w - 40, 1, th.separator);
     cv.text(
         fonts.regular.as_ref(),
-        "↑↓    ⏎    esc",
+        "↑↓ move   ⏎ open   esc",
         22,
         fy + 25,
         12.0,
         th.text_dim,
     );
-
-    let lock = "Lock";
-    let logout = "Log out";
-    let label_size = 12.5;
-    let logout_w = text_width(fonts.regular.as_ref(), logout, label_size);
-    let lock_w = text_width(fonts.regular.as_ref(), lock, label_size);
-    let logout_x = w - 22 - logout_w;
-    let lock_x = logout_x - 36 - lock_w;
-    let icon_cy = (fy + 20) as f32;
-    cv.icon_lock((lock_x - 16) as f32, icon_cy, th.text_dim);
-    cv.text(
-        fonts.regular.as_ref(),
-        lock,
-        lock_x,
-        fy + 25,
-        label_size,
-        th.text_dim,
-    );
-    regions.push(Region {
-        x: lock_x - 22,
-        y: fy + 6,
-        w: lock_w + 26,
-        h: 28,
-        action: HitAction::Launch(LaunchTarget::Shell("swaylock".into())),
-    });
-
-    cv.icon_power((logout_x - 16) as f32, icon_cy, th.text_dim);
-    cv.text(
-        fonts.regular.as_ref(),
-        logout,
-        logout_x,
-        fy + 25,
-        label_size,
-        th.text_dim,
-    );
-    // The compositor asks for confirmation itself; we do not skip it.
-    regions.push(Region {
-        x: logout_x - 22,
-        y: fy + 6,
-        w: logout_w + 28,
-        h: 28,
-        action: HitAction::Launch(LaunchTarget::Ipc(
-            "{\"Action\":{\"Quit\":{\"skip_confirmation\":false}}}",
-        )),
-    });
 
     regions
 }

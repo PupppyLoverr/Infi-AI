@@ -177,9 +177,10 @@ fn shoot_scaled(
         buf.chunks_exact(4).any(|p| p[3] > 0),
         "{name}: drew nothing"
     );
+    // Neutral graphite — never purple — so glass overlays are judged fairly.
     let backdrop = match kind {
-        ThemeKind::Dark => Rgba::rgb(0x2b, 0x1d, 0x4a),
-        ThemeKind::Light => Rgba::rgb(0xc9, 0xc3, 0xdd),
+        ThemeKind::Dark => Rgba::rgb(0x1c, 0x1c, 0x1e),
+        ThemeKind::Light => Rgba::rgb(0xe8, 0xe8, 0xed),
     };
     Shot {
         name: format!("{name}-{}", kind.as_str()),
@@ -200,6 +201,17 @@ fn write_png(dir: &std::path::Path, shot: &Shot) {
         .unwrap();
 }
 
+fn beach_stage(w: u32, h: u32) -> Vec<u8> {
+    let wp = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/wallpapers/beach-1920x1080.png"
+    ))
+    .ok()
+    .and_then(|b| crate::canvas::decode_png(&b));
+    let sharp = crate::lock::backdrop(wp.as_ref(), w, h);
+    crate::lock::blur(&sharp, w, h)
+}
+
 fn launcher_shot(
     name: &str,
     kind: ThemeKind,
@@ -214,9 +226,15 @@ fn launcher_shot(
         win(2, "firefox", "Release notes", false),
     ];
     let items = launcher::search(query, cat, &wins, runtime);
-    let pad = 40u32;
+    let pad = 48u32;
     let (cw, ch) = (LAUNCHER_W, LAUNCHER_H);
     let (sw, sh) = (cw + pad * 2, ch + pad * 2);
+    let mut stage = beach_stage(sw, sh);
+    // Soft scrim so the glass card reads like Spotlight over the desktop.
+    {
+        let mut cv = Canvas::new_keep(&mut stage, sw, sh, 1);
+        cv.fill_rect(0, 0, sw as i32, sh as i32, Rgba::rgba(0, 0, 0, 90));
+    }
     let mut card_buf = vec![0u8; (cw * ch * 4) as usize];
     {
         let th = Theme::for_kind(kind);
@@ -224,39 +242,75 @@ fn launcher_shot(
         let mut icons = HashMap::new();
         draw_launcher(&mut cv, &th, fonts, query, &items, selected, &mut icons, None);
     }
-    let backdrop = match kind {
-        ThemeKind::Dark => Rgba::rgb(0x2b, 0x1d, 0x4a),
-        ThemeKind::Light => Rgba::rgb(0xc9, 0xc3, 0xdd),
-    };
-    let dim = |c: u8| ((c as f32) * 0.58).round() as u8;
-    let dimmed = Rgba::rgb(dim(backdrop.0), dim(backdrop.1), dim(backdrop.2));
-    let card = flatten(&card_buf, cw, ch, dimmed);
-    let mut rgba = vec![0u8; (sw * sh * 4) as usize];
-    for px in rgba.chunks_exact_mut(4) {
-        px.copy_from_slice(&[dimmed.0, dimmed.1, dimmed.2, 255]);
+    // Premultiplied glass over Beach — never flatten onto a solid tint first.
+    over(
+        &mut stage,
+        sw,
+        &card_buf,
+        cw,
+        ch,
+        (pad as i32, pad as i32),
+    );
+    Shot {
+        name: format!("{name}-{}", kind.as_str()),
+        w: sw,
+        h: sh,
+        rgba: flatten(&stage, sw, sh, Rgba::rgb(0, 0, 0)),
     }
-    for y in 0..ch {
-        let src = (y * cw * 4) as usize;
-        let dst = ((y + pad) * sw + pad) as usize * 4;
-        let n = (cw * 4) as usize;
-        rgba[dst..dst + n].copy_from_slice(&card[src..src + n]);
-    }
-    Shot { name: format!("{name}-{}", kind.as_str()), w: sw, h: sh, rgba }
 }
 
 fn desk_shot(name: &str, kind: ThemeKind, fonts: &Fonts, named: bool) -> Shot {
     use crate::desk::{self, Glance};
     let named_lines = ["Infi-AI", "shell/panel"];
-    let lines: &[&str] = if named { &named_lines } else { &desk::PROJECT_PLACEHOLDER };
-    shoot(name, kind, desk::W as u32, desk::H as u32, |cv, th| {
-        desk::paint(cv, th, fonts, &Glance {
-            clock: "09:41",
-            date: "Tuesday 17 November",
-            project_lines: lines,
-            environment: 1,
-            agents_running: if named { Some(2) } else { None },
-        }, None, None, 0, 0);
-    })
+    let lines: &[&str] = if named {
+        &named_lines
+    } else {
+        &desk::PROJECT_PLACEHOLDER
+    };
+    let pad = 36u32;
+    let (cw, ch) = (desk::W as u32, desk::H as u32);
+    let (sw, sh) = (cw + pad * 2, ch + pad * 2);
+    let mut stage = beach_stage(sw, sh);
+    {
+        let mut cv = Canvas::new_keep(&mut stage, sw, sh, 1);
+        cv.fill_rect(0, 0, sw as i32, sh as i32, Rgba::rgba(0, 0, 0, 70));
+    }
+    let mut card_buf = vec![0u8; (cw * ch * 4) as usize];
+    {
+        let th = Theme::for_kind(kind);
+        let mut cv = Canvas::new(&mut card_buf, cw, ch, 1);
+        desk::paint(
+            &mut cv,
+            &th,
+            fonts,
+            &Glance {
+                clock: "09:41",
+                date: "Tuesday 17 November",
+                project_lines: lines,
+                environment: 1,
+                agents_running: if named { Some(2) } else { None },
+            },
+            Some(Rgba::rgb(0x3b, 0x9e, 0xd8)),
+            None,
+            0,
+            0,
+        );
+    }
+    // Premultiplied glass over Beach — never flatten onto a solid tint first.
+    over(
+        &mut stage,
+        sw,
+        &card_buf,
+        cw,
+        ch,
+        (pad as i32, pad as i32),
+    );
+    Shot {
+        name: format!("{name}-{}", kind.as_str()),
+        w: sw,
+        h: sh,
+        rgba: flatten(&stage, sw, sh, Rgba::rgb(0, 0, 0)),
+    }
 }
 
 fn sample_catalog() -> Vec<AppEntry> {

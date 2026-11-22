@@ -813,10 +813,9 @@ impl<'a> Canvas<'a> {
 
     // ------------------------------------------------------------ app tiles
 
-    /// App tile (`size x size`): a flat dark rounded square. A real system
-    /// icon is used when one was found; otherwise a monochrome glyph for the
-    /// role. Start is the nL brand (black rounded box, white semibold letters).
-    /// Agents keep their own glyph so the two are not the same mark.
+    /// macOS-like app squircle: colourful fill, lit top, soft edge. Real
+    /// system icons sit on a neutral tile; fallbacks use a role palette so
+    /// the dock never looks like a row of flat grey glyphs.
     pub fn draw_app_squircle(
         &mut self,
         x: i32,
@@ -826,22 +825,31 @@ impl<'a> Canvas<'a> {
         icon: Option<&Icon>,
         fonts: &Fonts,
     ) {
-        const TILE: Rgba = Rgba::rgb(0x2a, 0x24, 0x31);
-        const EDGE: Rgba = Rgba::rgba(255, 255, 255, 26);
-        const GLYPH: Rgba = Rgba::rgb(0xdc, 0xd6, 0xe2);
+        let s = size as f32;
+        let r = (s * 0.255).round().clamp(6.0, 14.0);
+        let (cx, cy) = (x as f32 + s * 0.5, y as f32 + s * 0.5);
+
+        // Soft contact shadow under the tile (Apple dock depth).
+        let shadow = Rgba::rgba(0, 0, 0, 55);
+        self.round_rect(x + 1, y + 2, size, size, r, shadow);
 
         if role == "start" {
-            let s = size as f32;
-            let r = (s * 0.26).round();
-            self.round_rect(x, y, size, size, r, Rgba::rgb(0, 0, 0));
-            self.stroke_round_rect(x, y, size, size, r, 1.0, Rgba::rgba(255, 255, 255, 36));
+            self.round_rect(x, y, size, size, r, Rgba::rgb(0x11, 0x11, 0x14));
+            self.stroke_round_rect(x, y, size, size, r, 1.0, Rgba::rgba(255, 255, 255, 40));
+            self.round_rect(
+                x + 2,
+                y + 1,
+                size - 4,
+                (size as f32 * 0.42) as i32,
+                r * 0.7,
+                Rgba::rgba(255, 255, 255, 28),
+            );
             let font_px = (s * 0.40).clamp(9.0, 20.0);
-            let label = "nL";
-            let tw = text_width(fonts.semibold.as_ref(), label, font_px);
+            let tw = text_width(fonts.semibold.as_ref(), "nL", font_px);
             let baseline = y + size / 2 + (font_px * 0.36) as i32;
             self.text(
                 fonts.semibold.as_ref(),
-                label,
+                "nL",
                 x + (size - tw) / 2,
                 baseline,
                 font_px,
@@ -850,69 +858,138 @@ impl<'a> Canvas<'a> {
             return;
         }
 
-        let s = size as f32;
-        let r = (s * 0.24).round();
-        let (cx, cy) = (x as f32 + s * 0.5, y as f32 + s * 0.5);
-        self.round_rect(x, y, size, size, r, TILE);
-        self.stroke_round_rect(x, y, size, size, r, 1.0, EDGE);
-        let ink = GLYPH;
+        let (base, top, ink) = role_colors(role);
+        self.round_rect(x, y, size, size, r, base);
+        // Specular band — lighter colour from the top, fading mid-tile.
+        let band = ((size as f32) * 0.48).round() as i32;
+        self.round_rect(x + 1, y + 1, size - 2, band, r * 0.85, top);
+        self.stroke_round_rect(x, y, size, size, r, 1.0, Rgba::rgba(255, 255, 255, 48));
+        // Lit rim on the top edge.
+        let inset = (r * 0.55).round() as i32;
+        self.fill_rect(
+            x + inset,
+            y + 1,
+            (size - 2 * inset).max(0),
+            1,
+            Rgba::rgba(255, 255, 255, 90),
+        );
 
         if let Some(ic) = icon {
-            let pad = (s * 0.16).round() as i32;
+            let pad = (s * 0.14).round() as i32;
             self.draw_icon(x + pad, y + pad, size - pad * 2, ic);
             return;
         }
-        let u = s * 0.22; // glyph half-extent
+
+        let u = s * 0.22;
         match role {
-            "agent" => self.icon_solyra(cx, cy, u * 0.9, ink),
+            "agent" => self.icon_solyra(cx, cy, u * 0.95, ink),
             "files" | "thunar" => {
-                let (w, h) = ((u * 2.1) as i32, (u * 1.5) as i32);
+                let (w, h) = ((u * 2.15) as i32, (u * 1.55) as i32);
                 let (fx, fy) = (cx as i32 - w / 2, cy as i32 - h / 2 + 1);
-                self.stroke_round_rect(fx, fy, w, h, 2.5, 1.5, ink);
-                self.round_rect(fx, fy - 3, w / 2, 4, 1.5, ink);
+                self.round_rect(fx, fy, w, h, 3.0, ink);
+                self.round_rect(fx, fy - 4, w / 2 + 2, 5, 2.0, Rgba::rgba(ink.0, ink.1, ink.2, 200));
             }
-            "terminal" | "foot" => {
-                self.line(cx - u, cy - u * 0.7, cx - u * 0.1, cy, 1.7, ink);
-                self.line(cx - u * 0.1, cy, cx - u, cy + u * 0.7, 1.7, ink);
-                self.line(cx + u * 0.1, cy + u * 0.8, cx + u, cy + u * 0.8, 1.7, ink);
+            "terminal" | "foot" | "solyra-term" => {
+                self.line(cx - u, cy - u * 0.65, cx - u * 0.05, cy, 2.0, ink);
+                self.line(cx - u * 0.05, cy, cx - u, cy + u * 0.65, 2.0, ink);
+                self.line(cx + u * 0.15, cy + u * 0.75, cx + u, cy + u * 0.75, 2.0, ink);
             }
-            "overview" => {
-                let q = (u * 0.8) as i32;
-                let (x0, y0) = (cx as i32 - q - 1, cy as i32 - q - 1);
+            "overview" | "launcher" => {
+                let q = (u * 0.78) as i32;
+                let (x0, y0) = (cx as i32 - q - 2, cy as i32 - q - 2);
                 for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                    self.round_rect(x0 + dx * (q + 2), y0 + dy * (q + 2), q, q, 1.5, ink);
+                    self.round_rect(x0 + dx * (q + 3), y0 + dy * (q + 3), q, q, 2.0, ink);
                 }
             }
             "settings" => {
                 for (i, k) in [0.28f32, 0.62, 0.40].into_iter().enumerate() {
-                    let ly = cy - u * 0.9 + i as f32 * u * 0.9;
-                    self.line(cx - u, ly, cx + u, ly, 1.4, ink);
-                    self.circle(cx - u + 2.0 * u * k, ly, 2.2, ink);
+                    let ly = cy - u * 0.85 + i as f32 * u * 0.85;
+                    self.line(cx - u, ly, cx + u, ly, 1.8, ink);
+                    self.circle(cx - u + 2.0 * u * k, ly, 2.4, ink);
                 }
             }
             "trash" => {
-                // A bin: lid, body, three ribs.
-                let (bw, bh) = ((u * 1.5) as i32, (u * 1.6) as i32);
+                let (bw, bh) = ((u * 1.55) as i32, (u * 1.65) as i32);
                 let (bx, by) = (cx as i32 - bw / 2, cy as i32 - bh / 2 + 2);
                 self.fill_rect(bx - 2, by - 4, bw + 4, 2, ink);
-                self.stroke_round_rect(bx, by, bw, bh, 2.0, 1.5, ink);
-                for i in 1..3 {
-                    let rx = bx + i * bw / 3;
-                    self.fill_rect(rx, by + 3, 1, bh - 6, ink);
-                }
+                self.round_rect(bx, by, bw, bh, 2.5, ink);
+            }
+            "firefox" | "browser" => {
+                self.circle(cx, cy, u * 1.15, ink);
+                self.ring(cx, cy, u * 0.72, 2.0, base);
+                self.line(cx - u, cy, cx + u, cy, 1.6, base);
             }
             "wallpaper" => {
-                self.ring(cx, cy, u * 0.9, 1.5, ink);
-                self.circle(cx + u * 0.25, cy - u * 0.2, u * 0.28, ink);
+                self.round_rect(
+                    (cx - u) as i32,
+                    (cy - u * 0.85) as i32,
+                    (u * 2.0) as i32,
+                    (u * 1.7) as i32,
+                    3.0,
+                    ink,
+                );
+                self.circle(cx + u * 0.35, cy - u * 0.25, u * 0.28, base);
             }
             _ => {
-                // Generic window: no real icon was found for this app.
                 let (w, h) = ((u * 2.1) as i32, (u * 1.7) as i32);
                 let (wx, wy) = (cx as i32 - w / 2, cy as i32 - h / 2);
-                self.stroke_round_rect(wx, wy, w, h, 2.5, 1.5, ink);
-                self.fill_rect(wx + 1, wy + 4, w - 2, 1, ink);
+                self.round_rect(wx, wy, w, h, 3.0, ink);
+                self.fill_rect(wx + 2, wy + 4, w - 4, 2, base);
             }
         }
+    }
+}
+
+/// `(base, specular top, glyph)` for a dock / launcher role.
+fn role_colors(role: &str) -> (Rgba, Rgba, Rgba) {
+    let white = Rgba::rgb(0xff, 0xff, 0xff);
+    let soft = |r: u8, g: u8, b: u8| Rgba::rgba(r, g, b, 110);
+    match role {
+        "terminal" | "foot" | "solyra-term" => (
+            Rgba::rgb(0x1a, 0x1a, 0x1e),
+            soft(0x6a, 0x6a, 0x72),
+            Rgba::rgb(0x3d, 0xdc, 0x7c),
+        ),
+        "files" | "thunar" => (
+            Rgba::rgb(0x0a, 0x84, 0xff),
+            soft(0x64, 0xb5, 0xff),
+            white,
+        ),
+        "firefox" | "browser" => (
+            Rgba::rgb(0xff, 0x71, 0x3c),
+            soft(0xff, 0xb0, 0x7a),
+            white,
+        ),
+        "settings" => (
+            Rgba::rgb(0x63, 0x63, 0x6a),
+            soft(0xb0, 0xb0, 0xb8),
+            white,
+        ),
+        "overview" | "launcher" => (
+            Rgba::rgb(0x58, 0x56, 0xe0),
+            soft(0xa5, 0xa3, 0xff),
+            white,
+        ),
+        "agent" => (
+            Rgba::rgb(0x00, 0x5f, 0xd0),
+            soft(0x5a, 0xb0, 0xff),
+            white,
+        ),
+        "trash" => (
+            Rgba::rgb(0x48, 0x48, 0x4e),
+            soft(0x98, 0x98, 0xa0),
+            white,
+        ),
+        "wallpaper" => (
+            Rgba::rgb(0x30, 0xb0, 0xc8),
+            soft(0x90, 0xe0, 0xf0),
+            white,
+        ),
+        _ => (
+            Rgba::rgb(0x3a, 0x3a, 0x3c),
+            soft(0x8e, 0x8e, 0x93),
+            white,
+        ),
     }
 }
 

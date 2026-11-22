@@ -85,16 +85,15 @@ pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
             edge: rim(if dark { 36 } else { 28 }),
             highlight: None,
         },
-        // Liquid Glass: a near-clear tint. The adaptive lift is smaller than
-        // See-through's so a bright wallpaper still reads through the bar
-        // and the dock instead of turning them into a graphite slab.
+        // Liquid Glass (clear variant over media): wallpaper must stay
+        // visible. Adaptive lift is modest so Beach does not become a slab.
         Material::Glass => {
-            let a: u8 = if dark { 44 } else { 60 };
-            let a = if fights { a.saturating_add(52) } else { a };
+            let a: u8 = if dark { 28 } else { 48 };
+            let a = if fights { a.saturating_add(28) } else { a };
             Slab {
                 fill: with_alpha(base, a),
-                edge: rim(if dark { 32 } else { 24 }),
-                highlight: Some(Rgba::rgba(255, 255, 255, if dark { 40 } else { 140 })),
+                edge: rim(if dark { 28 } else { 22 }),
+                highlight: Some(Rgba::rgba(255, 255, 255, if dark { 56 } else { 160 })),
             }
         }
         Material::Acrylic => {
@@ -218,7 +217,7 @@ mod tests {
         let bright = slab(Material::Glass, dark_bar, Some(Rgba::rgb(240, 230, 220)))
             .fill
             .3;
-        assert!(bright > calm + 40, "{calm} -> {bright}");
+        assert!(bright > calm + 20, "{calm} -> {bright}");
         let light_bar = Theme::light().bar;
         let dark_wall = slab(Material::Glass, light_bar, Some(Rgba::rgb(15, 15, 30)))
             .fill
@@ -226,7 +225,7 @@ mod tests {
         let light_wall = slab(Material::Glass, light_bar, Some(Rgba::rgb(230, 220, 240)))
             .fill
             .3;
-        assert!(dark_wall > light_wall + 40);
+        assert!(dark_wall > light_wall + 20);
         assert_eq!(
             slab(Material::Solid, dark_bar, Some(Rgba::rgb(255, 255, 255)))
                 .fill
