@@ -58,7 +58,17 @@ choice! {
         Solyra = "solyra" / "Solyra",
         Classic = "classic" / "Centred",
         Corner = "corner" / "Clock corner",
+        /// Large clock, avatar row, island capsule, agents / media glance.
+        Dashboard = "dashboard" / "Dashboard",
     } default Solyra
+}
+
+choice! {
+    /// How the desktop is arranged for humans vs agent-forward work.
+    DesktopMode {
+        Standard = "standard" / "Standard",
+        Agent = "agent" / "Agent workspace",
+    } default Standard
 }
 
 choice! {
@@ -90,6 +100,7 @@ pub struct Look {
     pub reduced_motion: bool,
     pub opaque: bool,
     pub lock: LockStyle,
+    pub desktop: DesktopMode,
     pub bar_material: Material,
     pub dock_material: Material,
     pub notch_material: Material,
@@ -112,6 +123,7 @@ impl Default for Look {
             reduced_motion: false,
             opaque: false,
             lock: LockStyle::default(),
+            desktop: DesktopMode::default(),
             bar_material: Material::Glass,
             dock_material: Material::Glass,
             notch_material: Material::Solid,
@@ -157,6 +169,9 @@ impl Look {
             lock: get(text, "lock_style")
                 .and_then(LockStyle::parse)
                 .unwrap_or(d.lock),
+            desktop: get(text, "desktop_mode")
+                .and_then(DesktopMode::parse)
+                .unwrap_or(d.desktop),
             bar_material: get(text, "bar_material")
                 .and_then(Material::parse)
                 .unwrap_or(d.bar_material),
@@ -186,6 +201,7 @@ impl Look {
             ("reduced_motion", b(self.reduced_motion)),
             ("opaque", b(self.opaque)),
             ("lock_style", Some(self.lock.as_str().into())),
+            ("desktop_mode", Some(self.desktop.as_str().into())),
             ("bar_material", Some(self.bar_material.as_str().into())),
             ("dock_material", Some(self.dock_material.as_str().into())),
             ("notch_material", Some(self.notch_material.as_str().into())),
@@ -273,6 +289,9 @@ mod tests {
         }
         for v in LockStyle::ALL {
             assert_eq!(LockStyle::parse(v.as_str()), Some(*v));
+        }
+        for v in DesktopMode::ALL {
+            assert_eq!(DesktopMode::parse(v.as_str()), Some(*v));
         }
         for v in Material::ALL {
             assert_eq!(Material::parse(v.as_str()), Some(*v));
