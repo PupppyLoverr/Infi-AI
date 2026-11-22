@@ -424,33 +424,6 @@ impl<'a> Canvas<'a> {
         self.circle_raw(cx * sf, cy * sf, radius * sf, color);
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn circle_vgrad(
-        &mut self,
-        cx: f32,
-        cy: f32,
-        radius: f32,
-        top: Rgba,
-        bottom: Rgba,
-        sheen: f32,
-    ) {
-        let sf = self.s() as f32;
-        self.circle_vgrad_raw(cx * sf, cy * sf, radius * sf, top, bottom, sheen);
-    }
-
-    pub fn circle_shadow(
-        &mut self,
-        cx: f32,
-        cy: f32,
-        radius: f32,
-        dy: f32,
-        spread: f32,
-        max_alpha: u8,
-    ) {
-        let sf = self.s() as f32;
-        self.circle_shadow_raw(cx * sf, cy * sf, radius * sf, dy * sf, spread * sf, max_alpha);
-    }
-
     pub fn ring(&mut self, cx: f32, cy: f32, radius: f32, thickness: f32, color: Rgba) {
         let sf = self.s() as f32;
         self.ring_raw(cx * sf, cy * sf, radius * sf, thickness * sf, color);
@@ -714,6 +687,7 @@ impl<'a> Canvas<'a> {
         let r = radius.min(w as f32 * 0.5).min(h as f32 * 0.5).max(0.0);
         let (hw, hh) = (w as f32 * 0.5, h as f32 * 0.5);
         let (cx, cy) = (x as f32 + hw, y as f32 + hh + dy);
+        let (cx0, cy0) = (x as f32 + hw, y as f32 + hh);
         let pad = spread.ceil() as i32 + 2;
         let x0 = (x - pad).max(0);
         let y0 = (y + dy.floor() as i32 - pad).max(0);
@@ -723,14 +697,23 @@ impl<'a> Canvas<'a> {
 
         for py in y0..y1 {
             let qy = (py as f32 + 0.5 - cy).abs() - (hh - r);
+            let qy0 = (py as f32 + 0.5 - cy0).abs() - (hh - r);
             for px in x0..x1 {
                 let qx = (px as f32 + 0.5 - cx).abs() - (hw - r);
                 let sdf = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
                 if sdf >= spread {
                     continue;
                 }
+                // The shadow never reaches under the shape itself, so a
+                // translucent body is not darkened by its own shadow.
+                let qx0 = (px as f32 + 0.5 - cx0).abs() - (hw - r);
+                let inside = qx0.max(0.0).hypot(qy0.max(0.0)) + qx0.max(qy0).min(0.0) - r;
+                let outside = (inside + 0.5).clamp(0.0, 1.0);
+                if outside <= 0.0 {
+                    continue;
+                }
                 let u = ((sdf + 1.0) / spread).clamp(0.0, 1.0);
-                let falloff = (1.0 - u) * (1.0 - u) * (1.0 - u * 0.35);
+                let falloff = (1.0 - u) * (1.0 - u) * (1.0 - u * 0.35) * outside;
                 if falloff > 0.004 {
                     self.blend(px, py, col, falloff);
                 }
@@ -966,81 +949,6 @@ impl<'a> Canvas<'a> {
                 let cov = (0.5 - d).clamp(0.0, 1.0);
                 if cov > 0.0 {
                     self.blend(px, py, color, cov);
-                }
-            }
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn circle_vgrad_raw(
-        &mut self,
-        cx: f32,
-        cy: f32,
-        radius: f32,
-        top: Rgba,
-        bottom: Rgba,
-        sheen: f32,
-    ) {
-        let x0 = (cx - radius - 2.0).floor().max(0.0) as i32;
-        let y0 = (cy - radius - 2.0).floor().max(0.0) as i32;
-        let x1 = (cx + radius + 2.0).ceil().min(self.pw as f32) as i32;
-        let y1 = (cy + radius + 2.0).ceil().min(self.ph as f32) as i32;
-        let inv_r = 1.0 / radius.max(1e-3);
-        for py in y0..y1 {
-            let dy = py as f32 + 0.5 - cy;
-            let ty = ((dy * inv_r + 1.0) * 0.5).clamp(0.0, 1.0);
-            let row_col = lerp_rgba(top, bottom, ty);
-            for px in x0..x1 {
-                let dx = px as f32 + 0.5 - cx;
-                let d = dx.hypot(dy) - radius;
-                let cov = (0.5 - d).clamp(0.0, 1.0);
-                if cov <= 0.0 {
-                    continue;
-                }
-                let col = if sheen > 0.001 {
-                    let lx = dx * inv_r + 0.25;
-                    let ly = dy * inv_r + 0.58;
-                    let glow = (-(lx * lx + ly * ly) * 1.9).exp() * sheen;
-                    add_light(row_col, glow)
-                } else {
-                    row_col
-                };
-                self.blend(px, py, col, cov);
-            }
-        }
-    }
-
-    fn circle_shadow_raw(
-        &mut self,
-        cx: f32,
-        cy: f32,
-        radius: f32,
-        dy_off: f32,
-        spread: f32,
-        max_alpha: u8,
-    ) {
-        if spread <= 0.5 || max_alpha == 0 {
-            return;
-        }
-        let cy = cy + dy_off;
-        let pad = radius + spread + 2.0;
-        let x0 = (cx - pad).floor().max(0.0) as i32;
-        let y0 = (cy - pad).floor().max(0.0) as i32;
-        let x1 = (cx + pad).ceil().min(self.pw as f32) as i32;
-        let y1 = (cy + pad).ceil().min(self.ph as f32) as i32;
-        let col = Rgba::rgba(0, 0, 0, max_alpha);
-        for py in y0..y1 {
-            let dy = py as f32 + 0.5 - cy;
-            for px in x0..x1 {
-                let dx = px as f32 + 0.5 - cx;
-                let sdf = dx.hypot(dy) - radius;
-                if sdf >= spread {
-                    continue;
-                }
-                let u = ((sdf + 1.0) / spread).clamp(0.0, 1.0);
-                let falloff = (1.0 - u) * (1.0 - u);
-                if falloff > 0.005 {
-                    self.blend(px, py, col, falloff);
                 }
             }
         }
@@ -1530,16 +1438,6 @@ impl<'a> Canvas<'a> {
         let (w, size, tw) = nl_metrics(h, fonts);
         let r = (h as f32 * 0.28).clamp(4.0, 10.0);
         self.round_rect(x, y, w, h, r, Rgba::rgb(0, 0, 0));
-        self.round_rect_glass_rim(
-            x,
-            y,
-            w,
-            h,
-            r,
-            Rgba::rgba(255, 255, 255, 58),
-            Rgba::rgba(255, 255, 255, 28),
-            Rgba::rgba(255, 255, 255, 14),
-        );
         let baseline = y + h / 2 + (size * 0.36) as i32;
         self.text(
             fonts.semibold.as_ref(),
@@ -1688,19 +1586,79 @@ impl<'a> Canvas<'a> {
 
     // ------------------------------------------------------------ app tiles
 
-    /// Subtle luminous tint reflection cast beneath an app icon on a Liquid
-    /// Glass dock floor.
-    pub fn draw_dock_reflection(&mut self, x: i32, y: i32, size: i32, role: &str) {
-        let glow = role_reflection(role);
-        let rw = (size as f32 * 0.72).round() as i32;
-        let rx = x + (size - rw) / 2;
-        let ry = y + size + 1;
-        self.round_rect(rx, ry, rw, 3, 1.5, glow);
+    /// A disc shaded from `inner` at a focus point to `outer` at the far rim.
+    /// `focus` is where the lit centre sits, as a fraction of the radius.
+    pub fn circle_radial(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        focus: (f32, f32),
+        inner: Rgba,
+        outer: Rgba,
+    ) {
+        let sf = self.s() as f32;
+        self.circle_radial_raw(cx * sf, cy * sf, radius * sf, focus, inner, outer);
     }
 
-    /// Apple-grade continuous-curvature app squircle: superellipse silhouette,
-    /// analytical soft shadow, multi-stop gradient, subtle radial luminosity,
-    /// directional glass rim, and layered dimensional vector artwork.
+    fn circle_radial_raw(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        focus: (f32, f32),
+        inner: Rgba,
+        outer: Rgba,
+    ) {
+        let (fx, fy) = (cx + focus.0 * radius, cy + focus.1 * radius);
+        let reach = radius + focus.0.hypot(focus.1) * radius;
+        let x0 = (cx - radius - 2.0).floor().max(0.0) as i32;
+        let y0 = (cy - radius - 2.0).floor().max(0.0) as i32;
+        let x1 = (cx + radius + 2.0).ceil().min(self.pw as f32) as i32;
+        let y1 = (cy + radius + 2.0).ceil().min(self.ph as f32) as i32;
+        for py in y0..y1 {
+            for px in x0..x1 {
+                let (dx, dy) = (px as f32 + 0.5 - cx, py as f32 + 0.5 - cy);
+                let cov = (0.5 - (dx.hypot(dy) - radius)).clamp(0.0, 1.0);
+                if cov <= 0.0 {
+                    continue;
+                }
+                let t = ((px as f32 + 0.5 - fx).hypot(py as f32 + 0.5 - fy) / reach).clamp(0.0, 1.0);
+                self.blend(px, py, lerp_rgba(inner, outer, t.sqrt()), cov);
+            }
+        }
+    }
+
+    /// Blit an icon whose squircle body fills `BODY` of its canvas so that the
+    /// *body* covers `size` logical pixels at (`x`, `y`). `grow` scales it
+    /// further and `lift` moves it up by that fraction of its size.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_icon_body(
+        &mut self,
+        x: i32,
+        y: i32,
+        size: i32,
+        icon: &Icon,
+        grow: f32,
+        lift: f32,
+    ) {
+        let s = self.s() as f32;
+        let body = size as f32 * s;
+        let box_px = (body * grow / crate::icons::BODY).round() as i32;
+        let cx = x as f32 * s + body * 0.5;
+        let cy = y as f32 * s + body * 0.5 - box_px as f32 * lift;
+        self.draw_icon_raw(
+            (cx - box_px as f32 * 0.5).round() as i32,
+            (cy - box_px as f32 * 0.5).round() as i32,
+            box_px,
+            icon,
+        );
+    }
+
+    /// An app icon in a `size` px square. First-party roles and well-known
+    /// apps use the bundled artwork; `icon` is the system theme's bitmap for
+    /// anything else, set on a neutral tile; the brand and agent tiles are
+    /// drawn here.
     pub fn draw_app_squircle(
         &mut self,
         x: i32,
@@ -1711,583 +1669,120 @@ impl<'a> Canvas<'a> {
         fonts: &Fonts,
     ) {
         let s = size as f32;
-        let (cx, cy) = (x as f32 + s * 0.5, y as f32 + s * 0.5);
-
-        // Soft analytical ambient + contact shadow grounding the tile.
-        let spread = (s * 0.14).clamp(3.0, 7.0);
-        self.squircle_shadow(x, y, size, (s * 0.055).clamp(1.2, 3.0), spread, 72);
-
-        if role == "start" {
-            // Product brand mark: white `nL` on pure black continuous squircle.
-            self.squircle_vgrad(
-                x,
-                y,
-                size,
-                Rgba::rgb(0x18, 0x18, 0x1b),
-                Rgba::rgb(0x04, 0x04, 0x06),
-                0.10,
-            );
-            self.squircle_glass_rim(
-                x,
-                y,
-                size,
-                Rgba::rgba(255, 255, 255, 92),
-                Rgba::rgba(255, 255, 255, 34),
-                Rgba::rgba(255, 255, 255, 14),
-            );
-            let font_px = (s * 0.42).clamp(9.0, 21.0);
-            let tw = text_width(fonts.semibold.as_ref(), "nL", font_px);
-            let baseline = y + size / 2 + (font_px * 0.36) as i32;
-            self.text(
-                fonts.semibold.as_ref(),
-                "nL",
-                x + (size - tw) / 2,
-                baseline,
-                font_px,
-                Rgba::rgb(255, 255, 255),
-            );
-            return;
+        match role {
+            "start" => return self.brand_tile(x, y, size, fonts),
+            "agent" => return self.agent_tile(x, y, size),
+            _ => {}
         }
-
-        // Core first-party roles always render bespoke vector art so legacy
-        // system bitmaps (such as XFCE's Thunar hammer) never degrade the dock.
-        let first_party = matches!(
-            role,
-            "files"
-                | "thunar"
-                | "terminal"
-                | "foot"
-                | "solyra-term"
-                | "firefox"
-                | "browser"
-                | "settings"
-                | "overview"
-                | "launcher"
-                | "agent"
-                | "trash"
-                | "wallpaper"
-                | "gedit"
-                | "editor"
-        );
-
-        if !first_party {
-            if let Some(ic) = icon {
-                self.squircle_vgrad(
-                    x,
-                    y,
-                    size,
-                    Rgba::rgb(0xf6, 0xf7, 0xf9),
-                    Rgba::rgb(0xdc, 0xe0, 0xe7),
-                    0.12,
-                );
-                self.squircle_glass_rim(
-                    x,
-                    y,
-                    size,
-                    Rgba::rgba(255, 255, 255, 165),
-                    Rgba::rgba(255, 255, 255, 65),
-                    Rgba::rgba(0, 0, 0, 34),
-                );
-                let pad = (s * 0.14).round() as i32;
-                self.draw_icon(x + pad, y + pad, size - pad * 2, ic);
+        if let Some(name) = crate::icons::name_for(role) {
+            if let Some(ic) = crate::icons::get(name) {
+                let (grow, lift) = crate::icons::fit(name);
+                self.draw_icon_body(x, y, size, ic, grow, lift);
                 return;
             }
         }
 
-        let (top_col, bot_col, sheen) = role_gradient(role);
-        self.squircle_vgrad(x, y, size, top_col, bot_col, sheen);
-
-        let u = s * 0.22;
-        match role {
-            "files" | "thunar" => {
-                // Apple Files / Finder-inspired layered sky-blue glass folder
-                // on a luminous pearl-silver continuous squircle.
-                let fw = (s * 0.64).round() as i32;
-                let fh = (s * 0.44).round() as i32;
-                let fx = x + (size - fw) / 2;
-                let fy = y + (size - fh) / 2 + (s * 0.04).round() as i32;
-                let fr = (s * 0.085).clamp(2.5, 5.0);
-                // Soft shadow under the folder.
-                self.round_rect_shadow(fx, fy, fw, fh, fr, 1.5, 3.5, 54);
-                // Back folder tab & upper rear body.
-                let tab_w = (fw as f32 * 0.44).round() as i32;
-                let tab_h = (s * 0.11).round().max(3.0) as i32;
-                self.round_rect_vgrad(
-                    fx,
-                    fy - tab_h + 2,
-                    tab_w,
-                    tab_h + 4,
-                    (fr * 0.7).max(1.8),
-                    Rgba::rgb(0x1f, 0x8d, 0xff),
-                    Rgba::rgb(0x00, 0x5c, 0xd1),
-                );
-                self.round_rect_vgrad(
-                    fx,
-                    fy - 2,
-                    fw,
-                    fh,
-                    fr,
-                    Rgba::rgb(0x12, 0x7a, 0xf2),
-                    Rgba::rgb(0x00, 0x51, 0xbf),
-                );
-                // Crisp inner paper sheet edge peeking out.
-                let paper_inset = (s * 0.06).round().max(2.0) as i32;
-                self.round_rect(
-                    fx + paper_inset,
-                    fy + 1,
-                    (fw - paper_inset * 2).max(2),
-                    (fh / 3).max(3),
-                    (fr * 0.5).max(1.0),
-                    Rgba::rgba(0xff, 0xff, 0xff, 232),
-                );
-                // Sculpted luminous front folder flap.
-                let flap_y = fy + (s * 0.085).round().max(3.0) as i32;
-                let flap_h = (fh - (flap_y - fy)).max(6);
-                self.round_rect_vgrad(
-                    fx,
-                    flap_y,
-                    fw,
-                    flap_h,
-                    fr,
-                    Rgba::rgb(0x5c, 0xc8, 0xff),
-                    Rgba::rgb(0x0a, 0x7e, 0xf6),
-                );
-                self.round_rect_glass_rim(
-                    fx,
-                    flap_y,
-                    fw,
-                    flap_h,
-                    fr,
-                    Rgba::rgba(255, 255, 255, 165),
-                    Rgba::rgba(255, 255, 255, 45),
-                    Rgba::rgba(0, 40, 110, 50),
-                );
-            }
-            "terminal" | "foot" | "solyra-term" => {
-                // Brushed titanium bezel framing a recessed deep obsidian screen.
-                let inset = (s * 0.085).round().max(2.0) as i32;
-                let inner = size - inset * 2;
-                self.squircle_vgrad(
-                    x + inset,
-                    y + inset,
-                    inner,
-                    Rgba::rgb(0x1c, 0x1e, 0x24),
-                    Rgba::rgb(0x09, 0x0a, 0x0d),
-                    0.07,
-                );
-                self.squircle_glass_rim(
-                    x + inset,
-                    y + inset,
-                    inner,
-                    Rgba::rgba(0, 0, 0, 120),
-                    Rgba::rgba(255, 255, 255, 22),
-                    Rgba::rgba(255, 255, 255, 58),
-                );
-                // Subtle green phosphor ambient glow behind prompt.
-                self.circle(
-                    cx + u * 0.30,
-                    cy + u * 0.45,
-                    u * 0.95,
-                    Rgba::rgba(0x34, 0xd3, 0x99, 28),
-                );
-                // Crisp chevron `>` in snow-white + glowing emerald underscore `_`.
-                let sw = (s * 0.056).clamp(1.5, 2.6);
-                let px0 = cx - u * 0.92;
-                let px1 = cx - u * 0.12;
-                self.line(px0, cy - u * 0.56, px1, cy - u * 0.04, sw, Rgba::rgb(0xf5, 0xf7, 0xfa));
-                self.line(px1, cy - u * 0.04, px0, cy + u * 0.48, sw, Rgba::rgb(0xf5, 0xf7, 0xfa));
-                self.line(
-                    cx + u * 0.14,
-                    cy + u * 0.52,
-                    cx + u * 0.92,
-                    cy + u * 0.52,
-                    sw,
-                    Rgba::rgb(0x34, 0xd3, 0x99),
-                );
-            }
-            "overview" | "launcher" => {
-                // Emerald-to-teal Workspaces / Mission Control icon (zero purple):
-                // three crisp layered translucent workspace cards with depth.
-                let cw = (s * 0.34).round().max(6.0) as i32;
-                let ch = (s * 0.25).round().max(5.0) as i32;
-                let cr = (s * 0.065).clamp(2.0, 4.0);
-                // Back-left card.
-                let lx = (cx - s * 0.30).round() as i32;
-                let ly = (cy - s * 0.22).round() as i32;
-                self.round_rect_shadow(lx, ly, cw, ch, cr, 1.2, 2.8, 48);
-                self.round_rect_vgrad(
-                    lx,
-                    ly,
-                    cw,
-                    ch,
-                    cr,
-                    Rgba::rgba(255, 255, 255, 232),
-                    Rgba::rgba(225, 250, 245, 195),
-                );
-                // Back-right card.
-                let rx = (cx + s * 0.01).round() as i32;
-                let ry = (cy - s * 0.16).round() as i32;
-                self.round_rect_shadow(rx, ry, cw, ch, cr, 1.2, 2.8, 48);
-                self.round_rect_vgrad(
-                    rx,
-                    ry,
-                    cw,
-                    ch,
-                    cr,
-                    Rgba::rgba(255, 255, 255, 210),
-                    Rgba::rgba(210, 245, 240, 175),
-                );
-                // Front focal active workspace card.
-                let fw = (s * 0.46).round().max(8.0) as i32;
-                let fh = (s * 0.29).round().max(6.0) as i32;
-                let fx = (cx - fw as f32 * 0.5).round() as i32;
-                let fy = (cy + s * 0.02).round() as i32;
-                self.round_rect_shadow(fx, fy, fw, fh, cr, 1.6, 3.6, 72);
-                self.round_rect_vgrad(
-                    fx,
-                    fy,
-                    fw,
-                    fh,
-                    cr,
-                    Rgba::rgb(0xff, 0xff, 0xff),
-                    Rgba::rgb(0xe2, 0xf6, 0xf2),
-                );
-                self.round_rect_glass_rim(
-                    fx,
-                    fy,
-                    fw,
-                    fh,
-                    cr,
-                    Rgba::rgba(255, 255, 255, 220),
-                    Rgba::rgba(255, 255, 255, 90),
-                    Rgba::rgba(0, 70, 65, 40),
-                );
-            }
-            "settings" => {
-                // Machined precision aluminum System Settings gear.
-                let gr = s * 0.30;
-                // Recessed shadow disc under the gear.
-                self.circle_shadow(cx, cy, gr * 0.96, 1.5, 3.8, 76);
-                // 8 precision gear teeth radiating cleanly.
-                let tooth_w = (s * 0.095).clamp(2.2, 4.4);
-                for i in 0..8 {
-                    let a = (i as f32) * std::f32::consts::FRAC_PI_4;
-                    self.line(
-                        cx + a.cos() * (gr * 0.55),
-                        cy + a.sin() * (gr * 0.55),
-                        cx + a.cos() * (gr * 1.02),
-                        cy + a.sin() * (gr * 1.02),
-                        tooth_w,
-                        Rgba::rgb(0x3a, 0x3f, 0x47),
-                    );
-                }
-                // Dark anodized outer gear wheel.
-                self.circle_vgrad(
-                    cx,
-                    cy,
-                    gr * 0.84,
-                    Rgba::rgb(0x4b, 0x51, 0x5c),
-                    Rgba::rgb(0x25, 0x28, 0x2e),
-                    0.18,
-                );
-                // Brushed inner metallic ring.
-                self.ring(cx, cy, gr * 0.58, (s * 0.045).clamp(1.2, 2.2), Rgba::rgba(255, 255, 255, 135));
-                // Inner hub cavity & machined steel center.
-                self.circle_vgrad(
-                    cx,
-                    cy,
-                    gr * 0.36,
-                    Rgba::rgb(0xd4, 0xd8, 0xe0),
-                    Rgba::rgb(0x8c, 0x93, 0x9e),
-                    0.22,
-                );
-                self.circle(cx, cy, gr * 0.16, Rgba::rgb(0x33, 0x37, 0x3f));
-            }
-            "firefox" | "browser" => {
-                // Sculpted vibrant sunset-coral compass / browser icon.
-                let dr = s * 0.34;
-                self.circle_shadow(cx, cy, dr, 1.4, 3.6, 68);
-                // Luminous translucent glass compass dial.
-                self.circle_vgrad(
-                    cx,
-                    cy,
-                    dr,
-                    Rgba::rgba(255, 255, 255, 245),
-                    Rgba::rgba(255, 238, 228, 225),
-                    0.18,
-                );
-                // Inner ocean-coral recessed dial face.
-                self.circle_vgrad(
-                    cx,
-                    cy,
-                    dr * 0.82,
-                    Rgba::rgb(0x29, 0x9d, 0xf2),
-                    Rgba::rgb(0x00, 0x5a, 0xc7),
-                    0.22,
-                );
-                // Fine cardinal compass ticks.
-                for i in 0..8 {
-                    let a = (i as f32) * std::f32::consts::FRAC_PI_4;
-                    let inner = if i % 2 == 0 { dr * 0.56 } else { dr * 0.65 };
-                    self.line(
-                        cx + a.cos() * inner,
-                        cy + a.sin() * inner,
-                        cx + a.cos() * (dr * 0.76),
-                        cy + a.sin() * (dr * 0.76),
-                        (s * 0.026).clamp(0.9, 1.5),
-                        Rgba::rgba(255, 255, 255, 185),
-                    );
-                }
-                // Sleek two-tone compass needle pointing NE.
-                let nl = dr * 0.68;
-                let nw = dr * 0.22;
-                let dx = nl * 0.707;
-                let dy = -nl * 0.707;
-                let px = nw * 0.707;
-                let py = nw * 0.707;
-                // Coral-red north needle half.
-                self.rounded_triangle(
-                    (cx + dx, cy + dy),
-                    (cx - px, cy - py),
-                    (cx + px, cy + py),
-                    0.6,
-                    Rgba::rgb(0xff, 0x4f, 0x3b),
-                );
-                // Pure white south needle half.
-                self.rounded_triangle(
-                    (cx - dx, cy - dy),
-                    (cx - px, cy - py),
-                    (cx + px, cy + py),
-                    0.6,
-                    Rgba::rgb(0xff, 0xff, 0xff),
-                );
-                self.circle(cx, cy, (s * 0.045).clamp(1.2, 2.2), Rgba::rgb(0xe8, 0xec, 0xf2));
-            }
-            "agent" => {
-                // Luminous sapphire Solyra eclipse orb (zero purple).
-                let or = s * 0.30;
-                // Soft radiant halo behind the orb.
-                self.circle(cx, cy, or * 1.25, Rgba::rgba(0x70, 0xd6, 0xff, 52));
-                self.ring(
-                    cx,
-                    cy,
-                    or,
-                    (s * 0.055).clamp(1.5, 2.6),
-                    Rgba::rgba(255, 255, 255, 232),
-                );
-                self.arc(
-                    cx,
-                    cy,
-                    or * 0.64,
-                    (s * 0.042).clamp(1.2, 2.0),
-                    -145.0,
-                    35.0,
-                    Rgba::rgba(0x9b, 0xe7, 0xff, 210),
-                );
-                // Radiant inner eclipse jewel.
-                self.circle_vgrad(
-                    cx + or * 0.24,
-                    cy - or * 0.22,
-                    or * 0.38,
-                    Rgba::rgb(0xff, 0xff, 0xff),
-                    Rgba::rgb(0xa8, 0xe2, 0xff),
-                    0.30,
-                );
-            }
-            "trash" => {
-                // Sculpted brushed-silver macOS wastebasket cylinder.
-                let bw = (s * 0.44).round().max(10.0) as i32;
-                let bh = (s * 0.46).round().max(10.0) as i32;
-                let bx = (cx - bw as f32 * 0.5).round() as i32;
-                let by = (cy - bh as f32 * 0.44).round() as i32;
-                let br = (s * 0.08).clamp(2.5, 4.5);
-                self.round_rect_shadow(bx, by, bw, bh, br, 1.5, 3.2, 65);
-                // Brushed aluminum basket body.
-                self.round_rect_vgrad(
-                    bx,
-                    by,
-                    bw,
-                    bh,
-                    br,
-                    Rgba::rgb(0xe5, 0xe8, 0xee),
-                    Rgba::rgb(0xa5, 0xab, 0xb6),
-                );
-                // Dark open rim top lip.
-                let lid_w = bw + 4;
-                let lid_h = (s * 0.11).round().max(3.0) as i32;
-                self.round_rect_vgrad(
-                    bx - 2,
-                    by - lid_h / 2,
-                    lid_w,
-                    lid_h,
-                    (lid_h as f32 * 0.48).max(1.5),
-                    Rgba::rgb(0xf6, 0xf8, 0xfa),
-                    Rgba::rgb(0xb8, 0xbe, 0xc8),
-                );
-                self.round_rect(
-                    bx + 1,
-                    by - lid_h / 2 + 1,
-                    (bw - 2).max(2),
-                    (lid_h - 2).max(2),
-                    1.5,
-                    Rgba::rgba(0x3a, 0x3e, 0x46, 170),
-                );
-                // Subtle vertical fluted ribs.
-                let rib_top = by as f32 + lid_h as f32 * 0.72;
-                let rib_bot = (by + bh) as f32 - 3.0;
-                for i in -1..=1 {
-                    let rx = cx + i as f32 * (bw as f32 * 0.24);
-                    self.line(
-                        rx,
-                        rib_top,
-                        rx,
-                        rib_bot,
-                        (s * 0.032).clamp(1.0, 1.6),
-                        Rgba::rgba(0x54, 0x59, 0x64, 130),
-                    );
-                }
-            }
-            "gedit" | "editor" => {
-                // macOS Notes / TextEdit craft: crisp ivory page with warm
-                // amber header band and delicate ruled text lines.
-                let hdr_h = (s * 0.24).round().max(6.0) as i32;
-                self.round_rect_vgrad(
-                    x + 2,
-                    y + 2,
-                    size - 4,
-                    hdr_h,
-                    (s * 0.18).clamp(4.0, 9.0),
-                    Rgba::rgb(0xff, 0xc7, 0x45),
-                    Rgba::rgb(0xf2, 0x9e, 0x16),
-                );
-                let line_l = cx - u * 1.15;
-                let line_r = cx + u * 1.15;
-                for i in 0..3 {
-                    let ly = cy + (i as f32 - 0.35) * (u * 0.75);
-                    let r_end = if i == 2 { cx + u * 0.45 } else { line_r };
-                    self.line(
-                        line_l,
-                        ly,
-                        r_end,
-                        ly,
-                        (s * 0.042).clamp(1.2, 2.0),
-                        Rgba::rgba(0x78, 0x80, 0x8d, 150),
-                    );
-                }
-            }
-            "wallpaper" => {
-                // Coastal sky + warm sun + layered waves.
-                self.circle(cx + u * 0.48, cy - u * 0.42, u * 0.46, Rgba::rgb(0xff, 0xe2, 0x99));
-                self.circle(cx - u * 0.45, cy + u * 0.85, u * 1.15, Rgba::rgba(0x1f, 0x9d, 0xb3, 210));
-                self.circle(cx + u * 0.55, cy + u * 1.05, u * 1.25, Rgba::rgba(0x0c, 0x62, 0x8a, 225));
-            }
-            _ => {
-                // Clean neutral app window glyph (zero purple).
-                let (w, h) = ((s * 0.56).round() as i32, (s * 0.44).round() as i32);
-                let (wx, wy) = ((cx - w as f32 * 0.5).round() as i32, (cy - h as f32 * 0.5).round() as i32);
-                let wr = (s * 0.08).clamp(2.0, 4.0);
-                self.round_rect_shadow(wx, wy, w, h, wr, 1.2, 3.0, 56);
-                self.round_rect_vgrad(
-                    wx,
-                    wy,
-                    w,
-                    h,
-                    wr,
-                    Rgba::rgb(0xff, 0xff, 0xff),
-                    Rgba::rgb(0xdc, 0xe1, 0xe8),
-                );
-                self.fill_rect(wx + 2, wy + (h / 4).max(3), w - 4, 1, Rgba::rgba(0, 0, 0, 40));
-            }
-        }
-
-        // Optical directional Liquid Glass outer rim on every squircle.
-        let (rim_top, rim_side, rim_bot) = if matches!(role, "files" | "thunar" | "gedit" | "editor")
-        {
-            (
-                Rgba::rgba(255, 255, 255, 215),
-                Rgba::rgba(255, 255, 255, 85),
-                Rgba::rgba(0, 0, 0, 32),
-            )
+        self.squircle_shadow(x, y, size, (s * 0.04).clamp(1.0, 2.0), (s * 0.10).clamp(2.5, 5.0), 40);
+        self.squircle_vgrad(
+            x,
+            y,
+            size,
+            Rgba::rgb(0xfb, 0xfb, 0xfd),
+            Rgba::rgb(0xdd, 0xe1, 0xe8),
+            0.0,
+        );
+        if let Some(ic) = icon {
+            let pad = (s * 0.14).round() as i32;
+            self.draw_icon(x + pad, y + pad, size - pad * 2, ic);
         } else {
-            (
-                Rgba::rgba(255, 255, 255, 138),
-                Rgba::rgba(255, 255, 255, 48),
-                Rgba::rgba(0, 0, 0, 46),
-            )
-        };
-        self.squircle_glass_rim(x, y, size, rim_top, rim_side, rim_bot);
+            let (w, h) = ((s * 0.52).round() as i32, (s * 0.40).round() as i32);
+            let (wx, wy) = (x + (size - w) / 2, y + (size - h) / 2);
+            self.round_rect_vgrad(
+                wx,
+                wy,
+                w,
+                h,
+                (s * 0.07).clamp(2.0, 4.0),
+                Rgba::rgb(0x8a, 0x92, 0xa0),
+                Rgba::rgb(0x5e, 0x65, 0x72),
+            );
+            self.fill_rect(wx, wy + (h / 4).max(3), w, 1, Rgba::rgba(255, 255, 255, 70));
+        }
+        self.squircle_glass_rim(
+            x,
+            y,
+            size,
+            Rgba::rgba(255, 255, 255, 190),
+            Rgba::rgba(255, 255, 255, 60),
+            Rgba::rgba(0, 0, 0, 30),
+        );
     }
-}
 
-/// `(top, bottom, sheen)` multi-stop gradient palette per role — ZERO mauve/purple.
-fn role_gradient(role: &str) -> (Rgba, Rgba, f32) {
-    match role {
-        "files" | "thunar" => (
-            Rgba::rgb(0xfa, 0xfc, 0xff),
-            Rgba::rgb(0xd9, 0xe3, 0xf0),
-            0.14,
-        ),
-        "terminal" | "foot" | "solyra-term" => (
-            Rgba::rgb(0x5c, 0x62, 0x6c),
-            Rgba::rgb(0x28, 0x2b, 0x32),
-            0.16,
-        ),
-        "firefox" | "browser" => (
-            Rgba::rgb(0xff, 0x8a, 0x3d),
-            Rgba::rgb(0xdc, 0x35, 0x22),
-            0.18,
-        ),
-        "settings" => (
-            Rgba::rgb(0xdf, 0xe3, 0xea),
-            Rgba::rgb(0x9a, 0xa1, 0xad),
-            0.18,
-        ),
-        "overview" | "launcher" => (
-            // Vivid emerald-to-ocean-teal (replaces previous purple tile).
-            Rgba::rgb(0x2c, 0xd4, 0x9b),
-            Rgba::rgb(0x0b, 0x7b, 0x83),
-            0.18,
-        ),
-        "agent" => (
-            Rgba::rgb(0x2e, 0x9b, 0xff),
-            Rgba::rgb(0x00, 0x48, 0xbd),
-            0.20,
-        ),
-        "trash" => (
-            Rgba::rgb(0x7c, 0x82, 0x8d),
-            Rgba::rgb(0x41, 0x45, 0x4e),
-            0.16,
-        ),
-        "gedit" | "editor" => (
-            Rgba::rgb(0xff, 0xff, 0xff),
-            Rgba::rgb(0xe6, 0xea, 0xf0),
-            0.10,
-        ),
-        "wallpaper" => (
-            Rgba::rgb(0x56, 0xc8, 0xf5),
-            Rgba::rgb(0x1f, 0x6f, 0xd6),
-            0.18,
-        ),
-        _ => (
-            Rgba::rgb(0x4e, 0x53, 0x5c),
-            Rgba::rgb(0x2a, 0x2d, 0x34),
-            0.14,
-        ),
+    /// The product mark: white `nL` on a black squircle.
+    fn brand_tile(&mut self, x: i32, y: i32, size: i32, fonts: &Fonts) {
+        let s = size as f32;
+        self.squircle_shadow(x, y, size, (s * 0.04).clamp(1.0, 2.0), (s * 0.10).clamp(2.5, 5.0), 56);
+        self.squircle_vgrad(
+            x,
+            y,
+            size,
+            Rgba::rgb(0x1c, 0x1c, 0x1f),
+            Rgba::rgb(0x03, 0x03, 0x04),
+            0.0,
+        );
+        self.squircle_glass_rim(
+            x,
+            y,
+            size,
+            Rgba::rgba(255, 255, 255, 70),
+            Rgba::rgba(255, 255, 255, 22),
+            Rgba::rgba(255, 255, 255, 10),
+        );
+        let font_px = (s * 0.42).clamp(9.0, 21.0);
+        let tw = text_width(fonts.semibold.as_ref(), "nL", font_px);
+        self.text(
+            fonts.semibold.as_ref(),
+            "nL",
+            x + (size - tw) / 2,
+            y + size / 2 + (font_px * 0.36) as i32,
+            font_px,
+            Rgba::rgb(255, 255, 255),
+        );
     }
-}
 
-/// Subtle color tint reflected onto the dock glass floor beneath each icon.
-fn role_reflection(role: &str) -> Rgba {
-    match role {
-        "files" | "thunar" => Rgba::rgba(0x38, 0xa8, 0xff, 55),
-        "start" => Rgba::rgba(0x00, 0x00, 0x00, 32),
-        "terminal" | "foot" | "solyra-term" => Rgba::rgba(0x34, 0xd3, 0x99, 44),
-        "overview" | "launcher" => Rgba::rgba(0x20, 0xc4, 0x9c, 55),
-        "settings" => Rgba::rgba(0xd0, 0xd6, 0xe0, 48),
-        "firefox" | "browser" => Rgba::rgba(0xff, 0x6e, 0x34, 58),
-        "agent" => Rgba::rgba(0x1e, 0x88, 0xff, 58),
-        "trash" => Rgba::rgba(0x9a, 0xa0, 0xab, 40),
-        _ => Rgba::rgba(0xc8, 0xd0, 0xd8, 36),
+    /// The agent shelf: a lit sapphire orb in a graphite squircle.
+    fn agent_tile(&mut self, x: i32, y: i32, size: i32) {
+        let s = size as f32;
+        let (cx, cy) = (x as f32 + s * 0.5, y as f32 + s * 0.5);
+        self.squircle_shadow(x, y, size, (s * 0.04).clamp(1.0, 2.0), (s * 0.10).clamp(2.5, 5.0), 56);
+        self.squircle_vgrad(
+            x,
+            y,
+            size,
+            Rgba::rgb(0x2b, 0x2f, 0x38),
+            Rgba::rgb(0x0a, 0x0c, 0x10),
+            0.0,
+        );
+        self.circle_radial(cx, cy, s * 0.46, (0.0, 0.0), Rgba::rgba(0x2f, 0x9b, 0xff, 70), Rgba::rgba(0x2f, 0x9b, 0xff, 0));
+        let r = s * 0.27;
+        self.circle_radial(
+            cx,
+            cy,
+            r,
+            (-0.38, -0.44),
+            Rgba::rgb(0xd6, 0xf0, 0xff),
+            Rgba::rgb(0x06, 0x56, 0xdc),
+        );
+        self.ring(cx, cy, r - 0.4, (s * 0.03).clamp(0.8, 1.4), Rgba::rgba(255, 255, 255, 70));
+        self.circle(cx - r * 0.34, cy - r * 0.40, r * 0.20, Rgba::rgba(255, 255, 255, 120));
+        self.squircle_glass_rim(
+            x,
+            y,
+            size,
+            Rgba::rgba(255, 255, 255, 80),
+            Rgba::rgba(255, 255, 255, 24),
+            Rgba::rgba(255, 255, 255, 10),
+        );
     }
 }
 

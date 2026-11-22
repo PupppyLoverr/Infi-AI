@@ -5,8 +5,8 @@
 //!   Dynamic Island, Search button, Status capsule, and clock.
 //! * **Dock** (`solyra-dock` / `solyra-taskbar`): all 3 variants live-switchable
 //!   (`solyra` hybrid default, `macos` Sequoia dock, `windows` Fluent taskbar).
-//! * **Launcher** (`solyra-launcher`): Spotlight overlay. Search or Ask, Top Hit
-//!   and Applications, a quiet Lock / Log out footer.
+//! * **Launcher** (`solyra-launcher`): Spotlight. A "Search or Ask" capsule that
+//!   opens a results card (Top Hit, Applications, windows) once there is a query.
 //! * **Control Centre** (`solyra-control`): quick toggles, sliders, live Dock
 //!   variant switcher, live Wallpaper switcher, and memory telemetry.
 //! * **Expanded Island** (`solyra-island`): activity popover.
@@ -17,6 +17,7 @@ mod agent;
 mod canvas;
 mod desk;
 mod dock;
+mod icons;
 mod island;
 mod launcher;
 mod lock;
@@ -56,9 +57,9 @@ use state::{
     WindowInfo,
 };
 use surfaces::{
-    draw_agents, draw_bar, draw_control, draw_island_card, draw_launcher, AgentsView, HitAction,
-    Live, Region, AGENTS_H, AGENTS_W, BAR_HEIGHT, CONTROL_H, CONTROL_W, ISLAND_CARD_H,
-    ISLAND_CARD_W, LAUNCHER_H, LAUNCHER_W,
+    draw_agents, draw_bar, draw_control, draw_island_card, draw_launcher, spot_layout, AgentsView,
+    HitAction, Live, Region, AGENTS_H, AGENTS_W, BAR_HEIGHT, CONTROL_H, CONTROL_W, ISLAND_CARD_H,
+    ISLAND_CARD_W,
 };
 use tokens::Theme;
 use wayland_client::globals::registry_queue_init;
@@ -588,11 +589,12 @@ impl App {
                     self.launcher_query.clear();
                     self.launcher_selected = 0;
                     self.refresh_launcher_items();
+                    let lay = spot_layout(&self.launcher_query, &self.launcher_items);
                     self.launcher = Some(self.open_overlay(
                         "solyra-launcher",
-                        Anchor::empty(),
-                        (0, 0, 0, 0),
-                        (LAUNCHER_W, LAUNCHER_H),
+                        Anchor::TOP,
+                        (self.spotlight_top(), 0, 0, 0),
+                        (lay.w, lay.h),
                         KeyboardInteractivity::Exclusive,
                     ));
                 }
@@ -830,6 +832,43 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Space above the Spotlight capsule: it sits about a seventh of the way
+    /// down the screen, like macOS. The output's height is not known here, so
+    /// it is taken from the bar's width at 16:9.
+    fn spotlight_top(&self) -> i32 {
+        let screen_h = self.bar.width.max(1024) as f32 * 9.0 / 16.0;
+        ((screen_h * 0.14) as i32 - 20).max(32)
+    }
+
+    /// Fit the Spotlight surface to the capsule and card it is showing, and
+    /// limit input and blur to those two shapes.
+    fn sync_launcher(&mut self) {
+        let lay = spot_layout(&self.launcher_query, &self.launcher_items);
+        let Some(slot) = self.launcher.as_mut() else {
+            return;
+        };
+        if (slot.width, slot.height) != (lay.w, lay.h) {
+            slot.layer.set_size(lay.w, lay.h);
+            slot.width = lay.w;
+            slot.height = lay.h;
+        }
+        let rects: Vec<(i32, i32, i32, i32)> = lay
+            .shapes()
+            .iter()
+            .flat_map(|(r, radius)| material::blur_rects(r.x, r.y, r.w, r.h, *radius))
+            .collect();
+        if rects == slot.blur {
+            return;
+        }
+        if let Ok(region) = smithay_client_toolkit::compositor::Region::new(&self.compositor) {
+            for (r, _) in lay.shapes() {
+                region.add(r.x, r.y, r.w, r.h);
+            }
+            slot.surface.set_input_region(Some(region.wl_region()));
+        }
+        set_blur(self.blur_mgr.as_ref(), &self.compositor, &self.qh, slot, rects);
     }
 
     fn refresh_launcher_items(&mut self) {
@@ -1166,7 +1205,9 @@ impl App {
                     )
                 };
                 let bar_shown = self.prefs.look.bar != solyra_conf::look::BarStyle::Hidden;
-                let rects = if bar_shown && material::blurs(self.bar_material) {
+                // Only Acrylic blurs the bar: a blurred strip over a sharp
+                // wallpaper would show as a band, and Glass keeps the sky clear.
+                let rects = if bar_shown && self.bar_material == material::Material::Acrylic {
                     vec![(0, 0, w as i32, h as i32)]
                 } else {
                     Vec::new()
@@ -1254,6 +1295,7 @@ impl App {
             };
         }
 
+        self.sync_launcher();
         overlay!(self.launcher, |cv, hover| draw_launcher(
             &mut cv,
             &th,
@@ -1498,7 +1540,6 @@ impl App {
             date: &date,
             reply: &self.reply_buf,
             typing,
-            material: self.notch_material,
         };
         let Ok((buffer, bytes)) = self.pool.create_buffer(
             (w * scale) as i32,
@@ -1526,12 +1567,8 @@ impl App {
             region.add(ix - 10, iy, iw + 20, ih);
             slot.surface.set_input_region(Some(region.wl_region()));
         }
-        let rects = if material::blurs(self.notch_material) {
-            island::blur_rects(self.prefs.look.notch, &self.island_anim.cur)
-        } else {
-            Vec::new()
-        };
-        set_blur(self.blur_mgr.as_ref(), &self.compositor, &self.qh, slot, rects);
+        // The island is opaque black: there is nothing to blur behind it.
+        set_blur(self.blur_mgr.as_ref(), &self.compositor, &self.qh, slot, Vec::new());
         if moving {
             // Ask for the next frame; `CompositorHandler::frame` redraws.
             slot.surface.frame(&self.qh, slot.surface.clone());
@@ -1862,6 +1899,7 @@ impl App {
                 if let Some(item) = self
                     .launcher_items
                     .get(self.launcher_selected.min(max_idx))
+                    .filter(|_| !self.launcher_query.trim().is_empty())
                     .cloned()
                 {
                     self.run_launcher_item(item);

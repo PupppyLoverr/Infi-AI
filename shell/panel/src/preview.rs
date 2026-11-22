@@ -201,17 +201,6 @@ fn write_png(dir: &std::path::Path, shot: &Shot) {
         .unwrap();
 }
 
-fn beach_stage(w: u32, h: u32) -> Vec<u8> {
-    let wp = std::fs::read(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/wallpapers/beach-1920x1080.png"
-    ))
-    .ok()
-    .and_then(|b| crate::canvas::decode_png(&b));
-    let sharp = crate::lock::backdrop(wp.as_ref(), w, h);
-    crate::lock::blur(&sharp, w, h)
-}
-
 fn launcher_shot(
     name: &str,
     kind: ThemeKind,
@@ -221,70 +210,83 @@ fn launcher_shot(
     fonts: &Fonts,
     cat: &[AppEntry],
 ) -> Shot {
+    use crate::material::Material;
+    use solyra_conf::look::NotchStyle;
     let wins = [
         win(1, "foot", "foot — terminal notes", true),
         win(2, "firefox", "Release notes", false),
     ];
     let items = launcher::search(query, cat, &wins, runtime);
-    let pad = 48u32;
-    let (cw, ch) = (LAUNCHER_W, LAUNCHER_H);
-    let (sw, sh) = (cw + pad * 2, ch + pad * 2);
-    let mut stage = beach_stage(sw, sh);
-    // Light atmospheric scrim + realistic compositor drop shadow behind Spotlight.
-    {
-        let mut cv = Canvas::new_keep(&mut stage, sw, sh, 1);
-        cv.fill_rect(0, 0, sw as i32, sh as i32, Rgba::rgba(0, 0, 0, 52));
-        cv.round_rect_shadow(pad as i32, pad as i32, cw as i32, ch as i32, 20.0, 14.0, 28.0, 120);
-    }
-    let mut card_buf = vec![0u8; (cw * ch * 4) as usize];
+    let mut scene = scene_pixels(
+        fonts,
+        kind,
+        "beach",
+        Material::Glass,
+        Material::Glass,
+        Material::Solid,
+        DockStyle::Solyra,
+        NotchStyle::Island,
+    );
+    let lay = spot_layout(query, &items);
+    let at = (
+        (scene.w as i32 - lay.w as i32) / 2,
+        (scene.h as f32 * 0.14) as i32 - 20,
+    );
+    let mut buf = vec![0u8; (lay.w * lay.h * 4) as usize];
     {
         let th = Theme::for_kind(kind);
-        let mut cv = Canvas::new(&mut card_buf, cw, ch, 1);
+        let mut cv = Canvas::new(&mut buf, lay.w, lay.h, 1);
         let mut icons = HashMap::new();
         draw_launcher(&mut cv, &th, fonts, query, &items, selected, &mut icons, None);
     }
-    // Premultiplied glass over Beach — never flatten onto a solid tint first.
-    over(
-        &mut stage,
-        sw,
-        &card_buf,
-        cw,
-        ch,
-        (pad as i32, pad as i32),
+    let rects: Vec<_> = lay
+        .shapes()
+        .iter()
+        .flat_map(|(r, radius)| crate::material::blur_rects(r.x, r.y, r.w, r.h, *radius))
+        .collect();
+    compositor_backdrop(
+        &scene.sharp,
+        &scene.soft,
+        scene.w,
+        Material::Glass,
+        &rects,
+        at,
+        &mut scene.out,
     );
+    over(&mut scene.out, scene.w, &buf, lay.w, lay.h, at);
     Shot {
         name: format!("{name}-{}", kind.as_str()),
-        w: sw,
-        h: sh,
-        rgba: flatten(&stage, sw, sh, Rgba::rgb(0, 0, 0)),
+        w: scene.w,
+        h: scene.h,
+        rgba: flatten(&scene.out, scene.w, scene.h, Rgba::rgb(0, 0, 0)),
     }
 }
 
 fn desk_shot(name: &str, kind: ThemeKind, fonts: &Fonts, named: bool) -> Shot {
     use crate::desk::{self, Glance};
+    use crate::material::Material;
+    use solyra_conf::look::NotchStyle;
     let named_lines = ["Infi-AI", "shell/panel"];
     let lines: &[&str] = if named {
         &named_lines
     } else {
         &desk::PROJECT_PLACEHOLDER
     };
-    let pad = 40u32;
+    let mut scene = scene_pixels(
+        fonts,
+        kind,
+        "beach",
+        Material::Glass,
+        Material::Glass,
+        Material::Solid,
+        DockStyle::Solyra,
+        NotchStyle::Island,
+    );
     let (cw, ch) = (desk::W as u32, desk::H as u32);
-    let (sw, sh) = (cw + pad * 2, ch + pad * 2);
-    let mut stage = beach_stage(sw, sh);
+    let at = (scene.w as i32 - desk::W - 36, BAR_HEIGHT as i32 + 36);
     {
-        let mut cv = Canvas::new_keep(&mut stage, sw, sh, 1);
-        cv.fill_rect(0, 0, sw as i32, sh as i32, Rgba::rgba(0, 0, 0, 40));
-        cv.round_rect_shadow(
-            pad as i32,
-            pad as i32,
-            cw as i32,
-            ch as i32,
-            desk::RADIUS,
-            12.0,
-            26.0,
-            112,
-        );
+        let mut cv = Canvas::new_keep(&mut scene.out, scene.w, scene.h, 1);
+        cv.round_rect_shadow(at.0, at.1, desk::W, desk::H, desk::RADIUS, 12.0, 30.0, 70);
     }
     let mut card_buf = vec![0u8; (cw * ch * 4) as usize];
     {
@@ -295,7 +297,7 @@ fn desk_shot(name: &str, kind: ThemeKind, fonts: &Fonts, named: bool) -> Shot {
             &th,
             fonts,
             &Glance {
-                clock: "09:41",
+                clock: "9:41",
                 date: "Tuesday 17 November",
                 project_lines: lines,
                 environment: 1,
@@ -307,20 +309,12 @@ fn desk_shot(name: &str, kind: ThemeKind, fonts: &Fonts, named: bool) -> Shot {
             0,
         );
     }
-    // Premultiplied glass over Beach — never flatten onto a solid tint first.
-    over(
-        &mut stage,
-        sw,
-        &card_buf,
-        cw,
-        ch,
-        (pad as i32, pad as i32),
-    );
+    over(&mut scene.out, scene.w, &card_buf, cw, ch, at);
     Shot {
         name: format!("{name}-{}", kind.as_str()),
-        w: sw,
-        h: sh,
-        rgba: flatten(&stage, sw, sh, Rgba::rgb(0, 0, 0)),
+        w: scene.w,
+        h: scene.h,
+        rgba: flatten(&scene.out, scene.w, scene.h, Rgba::rgb(0, 0, 0)),
     }
 }
 
@@ -727,8 +721,8 @@ fn two_x_renders_are_sharp_and_keep_logical_hit_regions() {
         let s = shoot_scaled(
             "launcher-hidpi",
             ThemeKind::Dark,
-            LAUNCHER_W,
-            LAUNCHER_H,
+            spot_layout("te", &items).w,
+            spot_layout("te", &items).h,
             scale,
             |cv, th| {
                 let mut icons = HashMap::new();
@@ -854,7 +848,6 @@ fn island_shots(fonts: &Fonts) -> Vec<Shot> {
                 date: "Thursday 19 November",
                 reply: "",
                 typing: false,
-                material: crate::material::Material::Solid,
             };
             let tag = format!("island-{}-{name}", style.as_str());
             let mut buf = beach.clone();
@@ -984,7 +977,8 @@ fn lock_screens_render() {
     .and_then(|b| crate::canvas::decode_png(&b));
     let (w, h) = (960u32, 600u32);
     let sharp = backdrop(wp.as_ref(), w, h);
-    let soft = blur(&sharp, w, h);
+    let mut soft = blur(&sharp, w, h);
+    crate::lock::vivid(&mut soft, 1.25);
     let th = Theme::with(ThemeKind::Dark, crate::tokens::Accent::Blue);
     let mut shots = Vec::new();
     for (name, style, card, dots, msg) in [
@@ -1158,6 +1152,38 @@ fn material_scene(
     dock_style: DockStyle,
     notch: solyra_conf::look::NotchStyle,
 ) -> Shot {
+    let scene = scene_pixels(
+        fonts, kind, wallpaper, bar_m, dock_m, notch_m, dock_style, notch,
+    );
+    Shot {
+        name: format!("{name}-{}", kind.as_str()),
+        w: scene.w,
+        h: scene.h,
+        rgba: flatten(&scene.out, scene.w, scene.h, Rgba::rgb(0, 0, 0)),
+    }
+}
+
+/// A composed desktop: the sharp wallpaper, its blurred twin (what a blurring
+/// surface shows), and the scene with bar, dock and island drawn.
+struct Scene {
+    sharp: Vec<u8>,
+    soft: Vec<u8>,
+    out: Vec<u8>,
+    w: u32,
+    h: u32,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scene_pixels(
+    fonts: &Fonts,
+    kind: ThemeKind,
+    wallpaper: &str,
+    bar_m: crate::material::Material,
+    dock_m: crate::material::Material,
+    notch_m: crate::material::Material,
+    dock_style: DockStyle,
+    notch: solyra_conf::look::NotchStyle,
+) -> Scene {
     use crate::island::{self, Anim, Content, Extra, Glance};
     use crate::lock::{backdrop, blur};
     let (w, h) = (1280u32, 800u32);
@@ -1258,8 +1284,8 @@ fn material_scene(
     if notch != solyra_conf::look::NotchStyle::Off {
         let content = Content::Media(crate::media::Media {
             bus: "x".into(),
-            title: "FALLEN ANGEL".into(),
-            artist: "JENNIE".into(),
+            title: "Clair de Lune".into(),
+            artist: "Claude Debussy".into(),
             playing: true,
             position_us: Some(15_000_000),
             length_us: Some(203_000_000),
@@ -1277,7 +1303,6 @@ fn material_scene(
             date: "Thursday 19 November",
             reply: "",
             typing: false,
-            material: notch_m,
         };
         let (sw, sh) = (island::SURF_W, island::SURF_H);
         let mut buf = vec![0u8; (sw * sh * 4) as usize];
@@ -1286,18 +1311,15 @@ fn material_scene(
             island::draw(&mut cv, fonts, notch, &anim, &content, false, &extra, None);
         }
         let at = ((w as i32 - sw as i32) / 2, 0);
-        if crate::material::blurs(notch_m) {
-            let rects = island::blur_rects(notch, &anim.cur);
-            compositor_backdrop(&sharp, &soft, w, notch_m, &rects, at, &mut out);
-        }
         over(&mut out, w, &buf, sw, sh, at);
     }
 
-    Shot {
-        name: format!("{name}-{}", kind.as_str()),
+    Scene {
+        sharp,
+        soft,
+        out,
         w,
         h,
-        rgba: flatten(&out, w, h, Rgba::rgb(0, 0, 0)),
     }
 }
 

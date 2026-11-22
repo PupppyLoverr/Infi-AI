@@ -92,6 +92,17 @@ fn expanded_shape(style: NotchStyle, content: &Content) -> Shape {
     }
 }
 
+/// Art, waveform and padding around the title in a compact media capsule.
+const MEDIA_CHROME: f32 = 78.0;
+
+/// A compact media capsule hugs its title: art, title, waveform and nothing
+/// else. Glyph widths are estimated because the fonts are not at hand here.
+fn compact_media_width(m: &crate::media::Media, min: f32, max: f32) -> f32 {
+    let line = if m.title.is_empty() { &m.artist } else { &m.title };
+    let text = line.chars().map(|c| if c.is_uppercase() { 7.8 } else { 6.3 }).sum::<f32>();
+    (MEDIA_CHROME + text).clamp(min, max).round()
+}
+
 /// Where the shape wants to be.
 pub fn target(style: NotchStyle, content: &Content, expanded: bool) -> Shape {
     match style {
@@ -107,8 +118,8 @@ pub fn target(style: NotchStyle, content: &Content, expanded: bool) -> Shape {
                         r: 18.0,
                     },
                     // Snug Live Activity capsules — tight leading/trailing, no dead ears.
-                    Content::Media(_) => Shape {
-                        w: 224.0,
+                    Content::Media(m) => Shape {
+                        w: compact_media_width(m, 176.0, 264.0),
                         h: 37.0,
                         y: 4.0,
                         r: 18.5,
@@ -140,8 +151,8 @@ pub fn target(style: NotchStyle, content: &Content, expanded: bool) -> Shape {
                         y: 0.0,
                         r: 14.0,
                     },
-                    Content::Media(_) => Shape {
-                        w: 264.0,
+                    Content::Media(m) => Shape {
+                        w: compact_media_width(m, 212.0, 300.0),
                         h: 36.0,
                         y: 0.0,
                         r: 16.0,
@@ -225,35 +236,6 @@ pub struct Extra<'a> {
     pub date: &'a str,
     pub reply: &'a str,
     pub typing: bool,
-    /// What the shape is made of. Solid is the classic pure black.
-    pub material: crate::material::Material,
-}
-
-#[allow(clippy::too_many_arguments)]
-/// The shape's area as rectangles, for the compositor's blur region.
-pub fn blur_rects(style: NotchStyle, s: &Shape) -> Vec<(i32, i32, i32, i32)> {
-    let (x, y, w, h) = (
-        s.x().round() as i32,
-        s.y.round() as i32,
-        s.w.round() as i32,
-        s.h.round() as i32,
-    );
-    match style {
-        NotchStyle::Island => crate::material::blur_rects(x, y, w, h, s.r),
-        _ => {
-            // Square top (it hangs from the screen edge), rounded bottom:
-            // the lower half of a rounded rect twice as tall.
-            let r = s.r.min(w as f32 / 2.0).min(h as f32).max(0.0);
-            let full = crate::material::blur_rects(x, y - h, w, 2 * h, r);
-            full.into_iter()
-                .filter_map(|(rx, ry, rw, rh)| {
-                    let top = ry.max(y);
-                    let bot = (ry + rh).min(y + h);
-                    (bot > top).then_some((rx, top, rw, bot - top))
-                })
-                .collect()
-        }
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -278,35 +260,18 @@ pub fn draw(
         h.round() as i32,
     );
 
-    let pure_black = match extra.material {
-        crate::material::Material::Solid => Rgba::rgb(0, 0, 0),
-        crate::material::Material::Clear => Rgba::rgba(0, 0, 0, 232),
-        crate::material::Material::Glass => Rgba::rgba(4, 5, 7, 244),
-        crate::material::Material::Acrylic => Rgba::rgba(6, 7, 10, 246),
-    };
+    // The island and the notch are hardware black. A translucent one reads as
+    // a grey pill, so the material setting never thins it out.
+    let pure_black = Rgba::rgb(0, 0, 0);
     match style {
         NotchStyle::Island => {
-            // Soft outer elevation shadow so the black capsule floats cleanly over bright sky.
-            let spread = if expanded { 12.0 } else { 6.0 };
-            let sh_a = if expanded { 82 } else { 52 };
-            cv.round_rect_shadow(xi, yi, wi, hi, s.r, if expanded { 5.0 } else { 2.0 }, spread, sh_a);
+            if expanded {
+                cv.round_rect_shadow(xi, yi, wi, hi, s.r, 8.0, 18.0, 56);
+            }
             cv.round_rect(xi, yi, wi, hi, s.r, pure_black);
-            // Delicate hardware optical edge rim so black-on-dark never disappears.
-            let top_rim = if extra.material == crate::material::Material::Solid {
-                Rgba::rgba(255, 255, 255, 28)
-            } else {
-                Rgba::rgba(255, 255, 255, 58)
-            };
-            cv.round_rect_glass_rim(
-                xi,
-                yi,
-                wi,
-                hi,
-                s.r,
-                top_rim,
-                Rgba::rgba(255, 255, 255, 18),
-                Rgba::rgba(255, 255, 255, 14),
-            );
+            if expanded {
+                cv.stroke_round_rect(xi, yi, wi, hi, s.r, 1.0, Rgba::rgba(255, 255, 255, 16));
+            }
         }
         _ => {
             cv.notch_body(xi, 0, wi, hi, s.r, pure_black);
@@ -351,23 +316,12 @@ pub fn draw(
     regions
 }
 
-/// Colourful Apple Music live audio spectrum bars.
+/// Live audio bars in soft white, like the Now Playing Live Activity.
 fn media_waveform(cv: &mut Canvas<'_>, x: i32, mid: f32, active: bool) {
-    let bars: [(i32, Rgba); 5] = [
-        (7, Rgba::rgb(0xFF, 0x7A, 0x5A)),
-        (13, Rgba::rgb(0xFF, 0xA8, 0x4C)),
-        (9, Rgba::rgb(0xF8, 0xCC, 0x58)),
-        (14, Rgba::rgb(0x64, 0xD2, 0xFF)),
-        (6, Rgba::rgb(0x30, 0xB8, 0xFF)),
-    ];
-    for (i, (bh, col)) in bars.into_iter().enumerate() {
+    for (i, bh) in [7, 13, 9, 14, 6].into_iter().enumerate() {
         let h = if active { bh } else { 4 };
-        let c = if active {
-            col
-        } else {
-            Rgba::rgba(255, 255, 255, 96)
-        };
-        cv.round_rect(x + i as i32 * 4, (mid as i32) - h / 2, 2, h, 1.0, c);
+        let a = if active { 236 } else { 96 };
+        cv.round_rect(x + i as i32 * 4, (mid as i32) - h / 2, 2, h, 1.0, Rgba::rgba(255, 255, 255, a));
     }
 }
 

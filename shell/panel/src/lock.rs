@@ -56,7 +56,7 @@ use wayland_client::{
     Connection, QueueHandle,
 };
 
-use crate::canvas::{decode_png, lerp_rgba, text_width, text_width_tracked, Canvas, Fonts, Icon, Rgba};
+use crate::canvas::{decode_png, text_width, text_width_tracked, Canvas, Fonts, Icon, Rgba};
 use crate::state::ShellPrefs;
 use crate::tokens::{Accent, Theme, ThemeKind};
 use solyra_conf::look::LockStyle;
@@ -322,7 +322,8 @@ impl App {
         // Backdrops are built at physical size once per size.
         if self.surfaces[i].backdrop.as_ref().map(|b| (b.0, b.1)) != Some((pw, ph)) {
             let sharp = backdrop(self.wallpaper.as_ref(), pw, ph);
-            let blurred = blur(&sharp, pw, ph);
+            let mut blurred = blur(&sharp, pw, ph);
+            vivid(&mut blurred, 1.25);
             self.surfaces[i].backdrop = Some((pw, ph, sharp, blurred));
         }
         let Ok((buffer, bytes)) =
@@ -473,18 +474,18 @@ pub fn backdrop(img: Option<&Icon>, w: u32, h: u32) -> Vec<u8> {
     out
 }
 
-/// A soft blur: downscale by 8, three box-blur passes, scale back up with
-/// bilinear filtering. Cheap enough to run once per screen size.
+/// A soft blur: downscale by 4, three separable box-blur passes, then bilinear
+/// back up with a whisper of dither so the long gradients do not band.
 pub fn blur(src: &[u8], w: u32, h: u32) -> Vec<u8> {
-    let f = 8u32;
-    let (sw, sh) = ((w / f).max(1), (h / f).max(1));
-    let mut small = vec![0f32; (sw * sh * 3) as usize];
+    let f = 4u32;
+    let (sw, sh) = ((w / f).max(1) as usize, (h / f).max(1) as usize);
+    let mut small = vec![0f32; sw * sh * 3];
     for y in 0..sh {
         for x in 0..sw {
             let mut acc = [0f32; 3];
             let mut n = 0f32;
-            for yy in (y * f)..((y + 1) * f).min(h) {
-                for xx in (x * f)..((x + 1) * f).min(w) {
+            for yy in (y as u32 * f)..((y as u32 + 1) * f).min(h) {
+                for xx in (x as u32 * f)..((x as u32 + 1) * f).min(w) {
                     let i = ((yy * w + xx) * 4) as usize;
                     acc[0] += src[i] as f32;
                     acc[1] += src[i + 1] as f32;
@@ -492,35 +493,37 @@ pub fn blur(src: &[u8], w: u32, h: u32) -> Vec<u8> {
                     n += 1.0;
                 }
             }
-            let o = ((y * sw + x) * 3) as usize;
+            let o = (y * sw + x) * 3;
             for c in 0..3 {
                 small[o + c] = acc[c] / n.max(1.0);
             }
         }
     }
-    let r = 2i32;
+    let r = 6i32;
+    let norm = 1.0 / (2 * r + 1) as f32;
+    let mut tmp = vec![0f32; small.len()];
     for _ in 0..3 {
-        let prev = small.clone();
-        for y in 0..sh as i32 {
+        for y in 0..sh {
             for x in 0..sw as i32 {
-                let mut acc = [0f32; 3];
-                let mut n = 0f32;
-                for dy in -r..=r {
-                    for dx in -r..=r {
-                        let (xx, yy) = (
-                            (x + dx).clamp(0, sw as i32 - 1),
-                            (y + dy).clamp(0, sh as i32 - 1),
-                        );
-                        let i = ((yy as u32 * sw + xx as u32) * 3) as usize;
-                        acc[0] += prev[i];
-                        acc[1] += prev[i + 1];
-                        acc[2] += prev[i + 2];
-                        n += 1.0;
-                    }
-                }
-                let o = ((y as u32 * sw + x as u32) * 3) as usize;
                 for c in 0..3 {
-                    small[o + c] = acc[c] / n;
+                    let mut acc = 0.0;
+                    for d in -r..=r {
+                        let xx = (x + d).clamp(0, sw as i32 - 1) as usize;
+                        acc += small[(y * sw + xx) * 3 + c];
+                    }
+                    tmp[(y * sw + x as usize) * 3 + c] = acc * norm;
+                }
+            }
+        }
+        for y in 0..sh as i32 {
+            for x in 0..sw {
+                for c in 0..3 {
+                    let mut acc = 0.0;
+                    for d in -r..=r {
+                        let yy = (y + d).clamp(0, sh as i32 - 1) as usize;
+                        acc += tmp[(yy * sw + x) * 3 + c];
+                    }
+                    small[(y as usize * sw + x) * 3 + c] = acc * norm;
                 }
             }
         }
@@ -528,23 +531,35 @@ pub fn blur(src: &[u8], w: u32, h: u32) -> Vec<u8> {
     let mut out = vec![0u8; (w * h * 4) as usize];
     for y in 0..h {
         let fy = ((y as f32 + 0.5) / f as f32 - 0.5).clamp(0.0, (sh - 1) as f32);
-        let (y0, ty) = (fy.floor() as u32, fy.fract());
+        let (y0, ty) = (fy.floor() as usize, fy.fract());
         let y1 = (y0 + 1).min(sh - 1);
         for x in 0..w {
             let fx = ((x as f32 + 0.5) / f as f32 - 0.5).clamp(0.0, (sw - 1) as f32);
-            let (x0, tx) = (fx.floor() as u32, fx.fract());
+            let (x0, tx) = (fx.floor() as usize, fx.fract());
             let x1 = (x0 + 1).min(sw - 1);
-            let at = |xx: u32, yy: u32, c: usize| small[((yy * sw + xx) * 3) as usize + c];
+            let at = |xx: usize, yy: usize, c: usize| small[(yy * sw + xx) * 3 + c];
             let di = ((y * w + x) * 4) as usize;
+            let hash = x.wrapping_mul(73_856_093) ^ y.wrapping_mul(19_349_663);
+            let dither = (hash % 1024) as f32 / 1024.0 - 0.5;
             for c in 0..3 {
                 let top = at(x0, y0, c) * (1.0 - tx) + at(x1, y0, c) * tx;
                 let bot = at(x0, y1, c) * (1.0 - tx) + at(x1, y1, c) * tx;
-                out[di + c] = (top * (1.0 - ty) + bot * ty).round() as u8;
+                out[di + c] = (top * (1.0 - ty) + bot * ty + dither).round().clamp(0.0, 255.0) as u8;
             }
             out[di + 3] = 255;
         }
     }
     out
+}
+
+/// Put back the colour a blur averages away (sky and sand blur toward grey).
+pub fn vivid(px: &mut [u8], k: f32) {
+    for p in px.chunks_exact_mut(4) {
+        let l = 0.114 * p[0] as f32 + 0.587 * p[1] as f32 + 0.299 * p[2] as f32;
+        for c in 0..3 {
+            p[c] = (l + (p[c] as f32 - l) * k).clamp(0.0, 255.0) as u8;
+        }
+    }
 }
 
 /// What the lock screen shows; pure data so it can be previewed.
@@ -592,8 +607,8 @@ fn centred_shadow(
     );
 }
 
-/// Large display typography with optical tracking and soft diffused halo depth
-/// matching Apple SF Pro Display Lock Screen clocks.
+/// Large display clock: semibold, tightly tracked, with one soft shadow so it
+/// lifts off a bright wallpaper without a halo.
 fn centred_display_clock(
     cv: &mut Canvas<'_>,
     fonts: &Fonts,
@@ -602,31 +617,20 @@ fn centred_display_clock(
     baseline: i32,
     size: f32,
 ) {
-    let font = fonts.bold.as_ref();
-    let tracking = -(size * 0.032).clamp(1.2, 5.2);
+    let font = fonts.semibold.as_ref();
+    let tracking = -(size * 0.03).clamp(1.2, 4.8);
     let tw = text_width_tracked(font, clock, size, tracking);
     let tx = cx - tw / 2;
-    // Soft diffused radial shadow cloud — zero hard stepped drop edge.
-    let r1 = (size * 0.015).round().max(1.0) as i32;
-    let r2 = (size * 0.032).round().max(2.0) as i32;
-    for (ox, oy, a) in [
-        (-r2, r2, 9u8),
-        (r2, r2, 9),
-        (0, r2 + 1, 13),
-        (-r1, r1, 16),
-        (r1, r1, 16),
-        (0, r1 + 1, 20),
-    ] {
-        cv.text_tracked(
-            font,
-            clock,
-            tx + ox,
-            baseline + oy,
-            size,
-            tracking,
-            Rgba::rgba(0, 0, 0, a),
-        );
-    }
+    let drop = (size * 0.02).round().max(1.0) as i32;
+    cv.text_tracked(
+        font,
+        clock,
+        tx,
+        baseline + drop,
+        size,
+        tracking,
+        Rgba::rgba(0, 0, 0, 26),
+    );
     cv.text_tracked(
         font,
         clock,
@@ -634,23 +638,13 @@ fn centred_display_clock(
         baseline,
         size,
         tracking,
-        Rgba::rgba(255, 255, 255, 246),
+        Rgba::rgba(255, 255, 255, 238),
     );
 }
 
 fn avatar(cv: &mut Canvas<'_>, v: &View<'_>, cx: i32, cy: i32, r: f32) {
-    cv.circle_shadow(cx as f32, cy as f32, r, 4.0, 10.0, 72);
-    let top = lerp_rgba(v.theme.accent, Rgba::rgb(255, 255, 255), 0.24);
-    let bot = lerp_rgba(v.theme.accent, Rgba::rgb(0, 14, 38), 0.22);
-    cv.circle_vgrad(cx as f32, cy as f32, r, top, bot, 0.24);
-    // Delicate glass rim ring.
-    cv.ring(
-        cx as f32,
-        cy as f32,
-        r - 0.75,
-        1.4,
-        Rgba::rgba(255, 255, 255, 165),
-    );
+    cv.circle(cx as f32, cy as f32, r, Rgba::rgba(255, 255, 255, 58));
+    cv.ring(cx as f32, cy as f32, r - 0.5, 1.0, Rgba::rgba(255, 255, 255, 96));
     let initial = v
         .name
         .chars()
@@ -658,47 +652,23 @@ fn avatar(cv: &mut Canvas<'_>, v: &View<'_>, cx: i32, cy: i32, r: f32) {
         .unwrap_or('?')
         .to_uppercase()
         .to_string();
-    let size = r * 1.04;
-    let tw = text_width(v.fonts.bold.as_ref(), &initial, size);
-    cv.text_shadow(
-        v.fonts.bold.as_ref(),
+    let size = r * 1.0;
+    let tw = text_width(v.fonts.semibold.as_ref(), &initial, size);
+    cv.text(
+        v.fonts.semibold.as_ref(),
         &initial,
         cx - tw / 2,
         cy + (size * 0.36) as i32,
         size,
-        0.0,
-        v.theme.on_accent,
-        Rgba::rgba(0, 0, 0, 56),
-        1,
+        Rgba::rgba(255, 255, 255, 240),
     );
 }
 
-/// Luminous Liquid Glass frosted capsule with soft drop shadow and continuous
-/// optical specular perimeter.
+/// A frosted capsule: a white veil, a fine rim and a soft shadow.
 fn glass_pill(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32) {
-    cv.round_rect_shadow(x, y, w, h, r, 4.0, 11.0, 48);
-    // Calibrated subtle dark anchor keeps white text legible over bright sand
-    // while keeping the frost airy and pearlescent.
-    cv.round_rect(x, y, w, h, r, Rgba::rgba(16, 20, 26, 36));
-    cv.round_rect_vgrad(
-        x,
-        y,
-        w,
-        h,
-        r,
-        Rgba::rgba(255, 255, 255, 78),
-        Rgba::rgba(255, 255, 255, 38),
-    );
-    cv.round_rect_glass_rim(
-        x,
-        y,
-        w,
-        h,
-        r,
-        Rgba::rgba(255, 255, 255, 192),
-        Rgba::rgba(255, 255, 255, 86),
-        Rgba::rgba(255, 255, 255, 48),
-    );
+    cv.round_rect_shadow(x, y, w, h, r, 4.0, 12.0, 30);
+    cv.round_rect(x, y, w, h, r, Rgba::rgba(255, 255, 255, 52));
+    cv.stroke_round_rect(x, y, w, h, r, 1.0, Rgba::rgba(255, 255, 255, 84));
 }
 
 /// Clean neutral frosted scrim over a blurred wallpaper — airy, zero mud or colour cast.
@@ -708,8 +678,8 @@ fn neutral_veil(cv: &mut Canvas<'_>, w: i32, h: i32) {
         0,
         w,
         h,
-        Rgba::rgba(10, 14, 20, 42),
-        Rgba::rgba(8, 10, 14, 72),
+        Rgba::rgba(0, 0, 0, 26),
+        Rgba::rgba(0, 0, 0, 58),
     );
 }
 
@@ -722,8 +692,8 @@ fn classic_scrims(cv: &mut Canvas<'_>, w: i32, h: i32) {
         0,
         w,
         top_h,
-        Rgba::rgba(8, 14, 22, 68),
-        Rgba::rgba(8, 14, 22, 0),
+        Rgba::rgba(0, 0, 0, 46),
+        Rgba::rgba(0, 0, 0, 0),
     );
     let bot_h = (h as f32 * 0.34) as i32;
     cv.fill_rect_vgrad(
@@ -731,8 +701,8 @@ fn classic_scrims(cv: &mut Canvas<'_>, w: i32, h: i32) {
         h - bot_h,
         w,
         bot_h,
-        Rgba::rgba(6, 10, 16, 0),
-        Rgba::rgba(6, 10, 16, 94),
+        Rgba::rgba(0, 0, 0, 0),
+        Rgba::rgba(0, 0, 0, 104),
     );
 }
 

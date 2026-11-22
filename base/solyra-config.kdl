@@ -146,7 +146,7 @@ layer-rule {
 
 layer-rule {
     match namespace=r#"^solyra-desk(\..+)?$"#
-    geometry-corner-radius 18
+    geometry-corner-radius 24
     shadow {
         on
         softness 40
@@ -184,20 +184,14 @@ layer-rule {
     }
 }
 
+// Spotlight is a capsule and a results card on one transparent surface. The
+// panel paints their shadow and asks for blur behind just those two shapes
+// (ext-background-effect), so the rule must not blur or shadow the whole surface.
 layer-rule {
     match namespace="^solyra-launcher$"
-    geometry-corner-radius 18
-    shadow {
-        on
-        softness 60
-        spread 14
-        offset x=0 y=18
-        color "#000000a0"
-    }
     background-effect {
-        blur true
         xray false
-        saturation 1.0
+        saturation 1.2
     }
 }
 

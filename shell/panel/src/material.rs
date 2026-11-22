@@ -35,6 +35,7 @@ pub fn blurs(m: Material) -> bool {
 /// What the panel paints for one surface body.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Slab {
+    pub kind: Material,
     pub fill: Rgba,
     /// Rim around the shape.
     pub edge: Rgba,
@@ -55,15 +56,27 @@ fn mix(a: Rgba, b: Rgba, t: f32) -> Rgba {
     Rgba::rgba(m(a.0, b.0), m(a.1, b.1), m(a.2, b.2), a.3)
 }
 
+/// Does text on a see-through surface fight the wallpaper behind it? A dark
+/// theme over a bright wallpaper (or the reverse) would set the text against
+/// its own colour.
+fn fights(dark: bool, tint: Option<Rgba>) -> bool {
+    tint.is_some_and(|t| if dark { luma(t) > 150 } else { luma(t) < 95 })
+}
+
+/// Should content sitting straight on a Glass surface (menu-bar text, dock
+/// tray) flip to the opposite ink? Like macOS's automatic menu bar: dark text
+/// over a bright wallpaper, light text over a dark one. Other materials carry
+/// their own tint, so their ink never flips.
+pub fn ink_flips(m: Material, base: Rgba, tint: Option<Rgba>) -> bool {
+    m == Material::Glass && fights(is_dark(base), tint)
+}
+
 /// The slab for `base` (the theme colour the surface would otherwise use).
-/// `tint` is the wallpaper's average colour, used by Acrylic and subtle glass
-/// luminosity adaptation.
+/// `tint` is the wallpaper's average colour, used by Acrylic's hue and by
+/// Clear's legibility lift.
 pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
     let dark = is_dark(base);
-    // Adaptive density: when wallpaper lightness fights the text colour,
-    // translucent materials gain a calibrated legibility lift without turning
-    // into an opaque grey slab.
-    let fights = tint.is_some_and(|t| if dark { luma(t) > 150 } else { luma(t) < 95 });
+    let fights = fights(dark, tint);
     let boost = |a: u8| if fights { a.saturating_add(70) } else { a };
     let rim = |a: u8| {
         if dark {
@@ -75,30 +88,32 @@ pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
     let with_alpha = |c: Rgba, a: u8| Rgba::rgba(c.0, c.1, c.2, a);
     match m {
         Material::Solid => Slab {
+            kind: m,
             fill: with_alpha(base, 255),
             edge: rim(if dark { 24 } else { 26 }),
             highlight: None,
         },
         Material::Clear => Slab {
+            kind: m,
             fill: with_alpha(base, boost(if dark { 110 } else { 120 })),
             edge: rim(if dark { 38 } else { 28 }),
             highlight: None,
         },
-        // Liquid Glass: crisp luminous translucency so wallpaper stays alive.
-        Material::Glass => {
-            let a: u8 = if dark { 18 } else { 42 };
-            let a = if fights { a.saturating_add(24) } else { a };
-            Slab {
-                fill: with_alpha(base, a),
-                edge: rim(if dark { 42 } else { 24 }),
-                highlight: Some(Rgba::rgba(255, 255, 255, if dark { 118 } else { 196 })),
-            }
-        }
+        // Frosted glass: a neutral white veil, never a grey one. Darkening a
+        // warm wallpaper with grey is what turns sand into mauve; a white veil
+        // keeps its hue and only lifts it, the way the macOS dock does.
+        Material::Glass => Slab {
+            kind: m,
+            fill: Rgba::rgba(255, 255, 255, if dark { 38 } else { 96 }),
+            edge: rim(if dark { 36 } else { 24 }),
+            highlight: Some(Rgba::rgba(255, 255, 255, if dark { 150 } else { 220 })),
+        },
         Material::Acrylic => {
             // Windows Acrylic / Mica: wallpaper hue + denser luminosity fill + soft rim.
             let hue = tint.unwrap_or(base);
             let toward = if dark { 0.30 } else { 0.24 };
             Slab {
+                kind: m,
                 fill: with_alpha(mix(base, hue, toward), if dark { 164 } else { 176 }),
                 edge: rim(if dark { 40 } else { 26 }),
                 highlight: Some(Rgba::rgba(255, 255, 255, if dark { 68 } else { 165 })),
@@ -107,68 +122,76 @@ pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
     }
 }
 
-/// Paint a rounded body (radius 0 for full-width bars) with directional Liquid
-/// Glass shading and continuous optical perimeter refraction.
+/// Paint a rounded body (radius 0 for full-width bars).
 pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f32) {
     if r <= 0.5 {
-        if s.highlight.is_some() && s.fill.3 < 120 {
-            // Full-width Liquid Glass menu bar: feather-light top veil fading
-            // seamlessly into the wallpaper — never a murky dark slab.
-            let top = Rgba::rgba(s.fill.0, s.fill.1, s.fill.2, (s.fill.3 as f32 * 0.85) as u8);
-            let bot = Rgba::rgba(s.fill.0, s.fill.1, s.fill.2, (s.fill.3 as f32 * 0.28) as u8);
-            cv.fill_rect_vgrad(x, y, w, h, top, bot);
+        if s.kind == Material::Glass {
+            // A glass bar is only a veil that fades into the wallpaper.
+            let top = Rgba::rgba(255, 255, 255, s.fill.3 / 2);
+            cv.fill_rect_vgrad(x, y, w, h, top, Rgba::rgba(255, 255, 255, 0));
         } else {
             cv.fill_rect(x, y, w, h, s.fill);
         }
         return;
     }
-
-    if let Some(hl) = s.highlight {
-        let dark = is_dark(s.fill);
-        // Subtle luminous vertical glass gradient: gently lit near top edge,
-        // calm translucent body below.
-        let top_tint = if dark {
-            let a = s.fill.3.saturating_add(16).min(235);
-            Rgba::rgba(
-                s.fill.0.saturating_add(34),
-                s.fill.1.saturating_add(34),
-                s.fill.2.saturating_add(36),
-                a,
-            )
-        } else {
-            Rgba::rgba(
-                s.fill.0.saturating_add(10),
-                s.fill.1.saturating_add(10),
-                s.fill.2.saturating_add(10),
-                s.fill.3.saturating_add(24).min(242),
-            )
-        };
-        cv.round_rect_vgrad(x, y, w, h, r, top_tint, s.fill);
-        // Subtle frosted luminosity veil on Glass surfaces so bright sand/sky
-        // behind dark glass reads crisp and pearlescent rather than muddy grey.
-        if dark && s.fill.3 < 100 {
+    match s.kind {
+        Material::Glass => {
+            let a = s.fill.3;
             cv.round_rect_vgrad(
-                x + 1,
-                y + 1,
-                (w - 2).max(0),
-                (h - 2).max(0),
-                (r - 1.0).max(0.0),
-                Rgba::rgba(255, 255, 255, 36),
-                Rgba::rgba(255, 255, 255, 14),
+                x,
+                y,
+                w,
+                h,
+                r,
+                Rgba::rgba(255, 255, 255, a.saturating_add(20)),
+                Rgba::rgba(255, 255, 255, a.saturating_sub(10)),
+            );
+            let hl = s.highlight.unwrap_or(s.fill);
+            cv.round_rect_glass_rim(
+                x,
+                y,
+                w,
+                h,
+                r,
+                hl,
+                Rgba::rgba(255, 255, 255, hl.3 / 3),
+                Rgba::rgba(255, 255, 255, hl.3 / 5),
             );
         }
-        // Continuous directional optical rim wrapping seamlessly around corners.
-        let side = Rgba::rgba(255, 255, 255, if dark { 52 } else { 96 });
-        let bottom = Rgba::rgba(
-            if dark { 255 } else { 0 },
-            if dark { 255 } else { 0 },
-            if dark { 255 } else { 0 },
-            if dark { 28 } else { 26 },
-        );
-        cv.round_rect_glass_rim(x, y, w, h, r, hl, side, bottom);
-    } else {
-        cv.round_rect(x, y, w, h, r, s.fill);
-        cv.stroke_round_rect(x, y, w, h, r, 1.0, s.edge);
+        Material::Acrylic => {
+            let dark = is_dark(s.fill);
+            let top_tint = if dark {
+                Rgba::rgba(
+                    s.fill.0.saturating_add(34),
+                    s.fill.1.saturating_add(34),
+                    s.fill.2.saturating_add(36),
+                    s.fill.3.saturating_add(16).min(235),
+                )
+            } else {
+                Rgba::rgba(
+                    s.fill.0.saturating_add(10),
+                    s.fill.1.saturating_add(10),
+                    s.fill.2.saturating_add(10),
+                    s.fill.3.saturating_add(24).min(242),
+                )
+            };
+            cv.round_rect_vgrad(x, y, w, h, r, top_tint, s.fill);
+            let hl = s.highlight.unwrap_or(s.fill);
+            cv.round_rect_glass_rim(
+                x,
+                y,
+                w,
+                h,
+                r,
+                hl,
+                Rgba::rgba(255, 255, 255, if dark { 52 } else { 96 }),
+                Rgba::rgba(if dark { 255 } else { 0 }, if dark { 255 } else { 0 }, if dark { 255 } else { 0 }, if dark { 28 } else { 26 }),
+            );
+        }
+        _ => {
+            cv.round_rect(x, y, w, h, r, s.fill);
+            cv.stroke_round_rect(x, y, w, h, r, 1.0, s.edge);
+        }
     }
 }
 
@@ -255,29 +278,46 @@ mod tests {
     }
 
     #[test]
-    fn glass_gets_denser_over_a_wallpaper_that_fights_the_text() {
+    fn clear_gets_denser_over_a_wallpaper_that_fights_the_text() {
         let dark_bar = Theme::dark().bar;
-        let calm = slab(Material::Glass, dark_bar, Some(Rgba::rgb(20, 40, 90)))
-            .fill
-            .3;
-        let bright = slab(Material::Glass, dark_bar, Some(Rgba::rgb(240, 230, 220)))
-            .fill
-            .3;
+        let calm = slab(Material::Clear, dark_bar, Some(Rgba::rgb(20, 40, 90))).fill.3;
+        let bright = slab(Material::Clear, dark_bar, Some(Rgba::rgb(240, 230, 220))).fill.3;
         assert!(bright > calm + 20, "{calm} -> {bright}");
         let light_bar = Theme::light().bar;
-        let dark_wall = slab(Material::Glass, light_bar, Some(Rgba::rgb(15, 15, 30)))
-            .fill
-            .3;
-        let light_wall = slab(Material::Glass, light_bar, Some(Rgba::rgb(230, 220, 240)))
-            .fill
-            .3;
+        let dark_wall = slab(Material::Clear, light_bar, Some(Rgba::rgb(15, 15, 30))).fill.3;
+        let light_wall = slab(Material::Clear, light_bar, Some(Rgba::rgb(230, 220, 240))).fill.3;
         assert!(dark_wall > light_wall + 20);
         assert_eq!(
-            slab(Material::Solid, dark_bar, Some(Rgba::rgb(255, 255, 255)))
-                .fill
-                .3,
+            slab(Material::Solid, dark_bar, Some(Rgba::rgb(255, 255, 255))).fill.3,
             255
         );
+    }
+
+    #[test]
+    fn glass_is_a_neutral_white_veil_that_never_greys_the_wallpaper() {
+        for base in [Theme::dark().bar, Theme::light().bar] {
+            for tint in [None, Some(Rgba::rgb(240, 200, 170)), Some(Rgba::rgb(10, 30, 60))] {
+                let f = slab(Material::Glass, base, tint).fill;
+                assert_eq!((f.0, f.1, f.2), (255, 255, 255), "{base:?} {tint:?}");
+                assert!(f.3 > 0 && f.3 < 120, "{}", f.3);
+            }
+        }
+    }
+
+    #[test]
+    fn glass_ink_flips_only_when_the_text_would_fight_the_wallpaper() {
+        let dark_bar = Theme::dark().bar;
+        let light_bar = Theme::light().bar;
+        let sand = Some(Rgba::rgb(235, 205, 175));
+        let night = Some(Rgba::rgb(14, 30, 60));
+        assert!(ink_flips(Material::Glass, dark_bar, sand));
+        assert!(!ink_flips(Material::Glass, dark_bar, night));
+        assert!(!ink_flips(Material::Glass, dark_bar, None));
+        assert!(ink_flips(Material::Glass, light_bar, night));
+        assert!(!ink_flips(Material::Glass, light_bar, sand));
+        for m in [Material::Solid, Material::Clear, Material::Acrylic] {
+            assert!(!ink_flips(m, dark_bar, sand), "{m:?} carries its own tint");
+        }
     }
 
     #[test]

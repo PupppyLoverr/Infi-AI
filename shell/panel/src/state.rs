@@ -758,6 +758,8 @@ pub fn role_for_app_id(app_id: &str) -> String {
         "files".into()
     } else if lower.contains("foot") || lower.contains("term") {
         "terminal".into()
+    } else if lower.contains("solyra-browse") {
+        "browser".into()
     } else {
         lower
     }
@@ -815,6 +817,16 @@ pub fn dock_entries(wins: &[WindowInfo]) -> Vec<AppEntry> {
             title: "Terminal".into(),
             subtitle: "Command line shell".into(),
             command: LaunchTarget::Shell("solyra-open terminal".into()),
+        },
+        AppEntry {
+            window: None,
+            window_count: 0,
+            is_focused: false,
+            app_id: "solyra-browse".into(),
+            role: "browser".into(),
+            title: "Browser".into(),
+            subtitle: "Browse the web".into(),
+            command: LaunchTarget::Shell("solyra-open browser".into()),
         },
         AppEntry {
             window: None,

@@ -168,16 +168,19 @@ launches the app.
 
 ### 6.4 Launcher — **shipped**
 
-Spotlight glass card, centred, 20 px radius, 640×362. A 54 px integrated
-search header sits at the top with a magnifying glass and the placeholder
-"Spotlight Search". An empty query lists installed applications: the first
-row is Top Hit and the rest sit under Applications. A typed query shows the
-ranked groups (applications, open windows, commands, then an agent row) with
-the first result selected. Rows are 40 px, title over subtitle. `⏎` runs the
-selection, arrows move, `esc` dismisses. The footer carries quiet key hints
-only — no power chrome. The card is glass (translucent fill, optical rim,
-compositor blur). Previews draw it over blurred Beach; the live surface is
-the card.
+Spotlight is a floating search capsule (580×56, fully rounded) about a seventh
+of the way down the screen, with the placeholder "Search or Ask". An empty
+query is only the capsule: nothing is listed until there is something to match,
+and `⏎` does nothing. A typed query opens a results card (24 px radius, 10 px
+under the capsule) with ranked groups (Top Hit, applications, open windows,
+commands, then an agent row) and the first result selected. Rows are 40 px and
+single line: icon, title, then the subtitle in a dimmer tone. The selection is
+a flat accent pill with a `↵` mark. `esc` dismisses. There is no footer.
+
+The capsule and card are two shapes on one transparent surface that the panel
+resizes to fit. The panel draws their shadow and asks the compositor (through
+`ext-background-effect`) to blur behind just those two shapes, so the layer
+rule for `solyra-launcher` neither blurs nor shadows the whole surface.
 
 ### 6.11 Agent desk — **shipped**
 

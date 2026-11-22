@@ -79,30 +79,28 @@ fn item_span(it: &Item<'_>, cell: i32) -> i32 {
 }
 
 /// First line of `~/.config/solyra/weather.txt`. A bare number gains a degree
-/// sign. Missing or empty becomes `—°` — no network lookup, no invented reading.
-fn normalize_weather(raw: Option<&str>) -> String {
-    let Some(line) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
-        return "—°".into();
-    };
+/// sign. Missing or empty is `None`: no network lookup and no invented reading,
+/// and the dock then shows no weather chip at all rather than a placeholder.
+fn normalize_weather(raw: Option<&str>) -> Option<String> {
+    let line = raw.map(str::trim).filter(|s| !s.is_empty())?;
     if line.contains('°') {
-        return line.to_string();
+        return Some(line.to_string());
     }
     let numeric = line
         .chars()
         .all(|c| c.is_ascii_digit() || matches!(c, '.' | '+' | '-'))
         && line.chars().any(|c| c.is_ascii_digit());
-    if numeric {
+    Some(if numeric {
         format!("{line}°")
     } else {
         line.to_string()
-    }
+    })
 }
 
-fn weather_label() -> String {
+fn weather_reading() -> Option<String> {
     let path = solyra_conf::config_path("weather.txt");
     let raw = path.and_then(|p| std::fs::read_to_string(p).ok());
-    let line = raw.as_deref().and_then(|s| s.lines().next());
-    normalize_weather(line)
+    normalize_weather(raw.as_deref().and_then(|s| s.lines().next()))
 }
 
 struct Metrics {
@@ -133,7 +131,7 @@ fn metrics(style: DockStyle) -> Metrics {
     }
 }
 
-fn items<'a>(style: DockStyle, entries: &'a [AppEntry]) -> Vec<Item<'a>> {
+fn items<'a>(style: DockStyle, entries: &'a [AppEntry], weather: bool) -> Vec<Item<'a>> {
     let mut v = Vec::new();
     match style {
         DockStyle::Solyra => {
@@ -143,7 +141,9 @@ fn items<'a>(style: DockStyle, entries: &'a [AppEntry]) -> Vec<Item<'a>> {
             v.push(Item::Separator);
             v.push(Item::Agent);
             v.push(Item::Separator);
-            v.push(Item::Weather);
+            if weather {
+                v.push(Item::Weather);
+            }
             v.push(Item::Clock);
         }
         DockStyle::Macos => {
@@ -168,7 +168,7 @@ fn items<'a>(style: DockStyle, entries: &'a [AppEntry]) -> Vec<Item<'a>> {
 fn base_width(style: DockStyle, wins: &[WindowInfo]) -> i32 {
     let entries = dock_entries(wins);
     let m = metrics(style);
-    let its = items(style, &entries);
+    let its = items(style, &entries, weather_reading().is_some());
     let content: i32 = its.iter().map(|i| item_span(i, m.cell)).sum::<i32>()
         + m.gap * (its.len() as i32 - 1).max(0);
     content + m.pad * 2
@@ -312,7 +312,8 @@ fn draw_floating(
     let h = cv.height as i32;
     let m = metrics(style);
     let entries = dock_entries(wins);
-    let its = items(style, &entries);
+    let weather = weather_reading();
+    let its = items(style, &entries, weather.is_some());
     let card_y = h - CARD_H;
     let base_w = base_width(style, wins);
     let base_left = (w - base_w) / 2;
@@ -360,11 +361,23 @@ fn draw_floating(
     };
 
     let dark = th.surface.0 < 128;
+    let ink = if material::ink_flips(
+        live.prefs.look.material(live.prefs.look.dock_material),
+        th.surface,
+        live.prefs.wall_tint,
+    ) {
+        if dark {
+            Rgba::rgb(0x1c, 0x1c, 0x1e)
+        } else {
+            Rgba::rgb(0xf5, 0xf5, 0xf7)
+        }
+    } else {
+        th.text
+    };
     let mut regions = Vec::new();
     let mut x = card_x + m.pad;
-    // Slightly upward optical alignment so running dots + glass reflection breathe cleanly.
+    // Icons sit a touch above centre so the running dots have room beneath them.
     let base_y = card_y + (CARD_H - m.cell) / 2 - 3;
-    let weather = weather_label();
     let clock = chrono::Local::now()
         .format(live.prefs.look.clock_format())
         .to_string();
@@ -374,12 +387,8 @@ fn draw_floating(
             let sep_y = card_y + (CARD_H - sep_h) / 2;
             let sw = *size;
             let sx = x + (sw - 1) / 2;
-            let mid = if dark {
-                Rgba::rgba(255, 255, 255, 62)
-            } else {
-                Rgba::rgba(0, 0, 0, 34)
-            };
-            let end = Rgba::rgba(mid.0, mid.1, mid.2, 8);
+            let mid = Rgba::rgba(ink.0, ink.1, ink.2, 52);
+            let end = Rgba::rgba(ink.0, ink.1, ink.2, 0);
             cv.fill_rect_vgrad(sx, sep_y, 1, sep_h / 2, end, mid);
             cv.fill_rect_vgrad(sx, sep_y + sep_h / 2, 1, sep_h - sep_h / 2, mid, end);
             x += sw + m.gap;
@@ -396,15 +405,15 @@ fn draw_floating(
             Item::Weather => {
                 let cy = (card_y + CARD_H / 2) as f32;
                 let wx = x + 4;
-                cv.icon_sun(wx as f32 + 7.0, cy, th.text);
+                cv.icon_sun(wx as f32 + 7.0, cy, ink);
                 cv.text_truncated(
                     fonts.medium.as_ref(),
-                    &weather,
+                    weather.as_deref().unwrap_or_default(),
                     wx + 18,
                     card_y + CARD_H / 2 + 5,
                     12.5,
                     (s - 22).max(8),
-                    th.text,
+                    ink,
                 );
                 regions.push(Region {
                     x,
@@ -425,7 +434,7 @@ fn draw_floating(
                     card_y + CARD_H / 2 + 5,
                     size,
                     max_w,
-                    th.text,
+                    ink,
                 );
                 regions.push(Region {
                     x,
@@ -456,16 +465,12 @@ fn draw_floating(
                     ),
                     Item::Separator | Item::Weather | Item::Clock => unreachable!(),
                 };
-                // Subtle glass-shelf reflection beneath each sculpted dock squircle.
-                let floor_y = (y + s + 1).min(card_y + CARD_H - 4);
-                cv.draw_dock_reflection(x, floor_y, s, role);
-
                 let icon = app_id.and_then(|id| load_app_icon(icons, id));
                 cv.draw_app_squircle(x, y, s, role, icon, fonts);
 
                 if let Item::App(e) = it {
                     if e.window_count > 0 {
-                        running_mark(cv, th, x, s, card_y, e.is_focused);
+                        running_mark(cv, ink, x, s, card_y, e.is_focused);
                     }
                     if hov && magnify {
                         tooltip(cv, th, fonts, &e.title, x + s / 2, y - 6, w);
@@ -488,22 +493,13 @@ fn draw_floating(
     (regions, Some(body))
 }
 
-fn running_mark(cv: &mut Canvas<'_>, th: &Theme, x: i32, s: i32, card_y: i32, focused: bool) {
-    // Crisp luminous dot under running apps, inspired by macOS Liquid Glass dock.
-    let bottom = card_y + CARD_H;
+fn running_mark(cv: &mut Canvas<'_>, ink: Rgba, x: i32, s: i32, card_y: i32, focused: bool) {
+    // One quiet dot under a running app, like macOS: the focused app's is only
+    // slightly stronger.
     let cx = x as f32 + s as f32 / 2.0;
-    let cy = (bottom - 5) as f32;
-    if focused {
-        cv.circle(
-            cx,
-            cy,
-            3.0,
-            Rgba::rgba(th.accent.0, th.accent.1, th.accent.2, 64),
-        );
-        cv.circle(cx, cy, 1.8, th.accent);
-    } else {
-        cv.circle(cx, cy, 1.5, Rgba::rgba(th.text.0, th.text.1, th.text.2, 224));
-    }
+    let cy = (card_y + CARD_H - 5) as f32;
+    let (r, a) = if focused { (2.0, 235) } else { (1.7, 150) };
+    cv.circle(cx, cy, r, Rgba::rgba(ink.0, ink.1, ink.2, a));
 }
 
 fn agent_badge(
@@ -763,7 +759,6 @@ fn draw_taskbar(
     // Right: system icons as one group, a hairline, then weather and the clock.
     let look = &prefs.look;
     let now = chrono::Local::now();
-    let weather = weather_label();
     let t_str = now.format(look.clock_format()).to_string();
     let d_str = now.format("%d/%m/%Y").to_string();
     let time_px = 13.0;
@@ -794,19 +789,21 @@ fn draw_taskbar(
             th.text_dim,
         );
     }
-    let ww = text_width(fonts.medium.as_ref(), &weather, 12.2).min(60);
-    let weather_w = 20 + ww;
-    let wx = clock_x - 14 - weather_w;
-    cv.icon_sun((wx + 7) as f32, 24.0, th.text);
-    cv.text_truncated(
-        fonts.medium.as_ref(),
-        &weather,
-        wx + 17,
-        28,
-        12.2,
-        ww,
-        th.text,
-    );
+    let mut wx = clock_x;
+    if let Some(reading) = weather_reading() {
+        let ww = text_width(fonts.medium.as_ref(), &reading, 12.2).min(60);
+        wx = clock_x - 14 - (20 + ww);
+        cv.icon_sun((wx + 7) as f32, 24.0, th.text);
+        cv.text_truncated(
+            fonts.medium.as_ref(),
+            &reading,
+            wx + 17,
+            28,
+            12.2,
+            ww,
+            th.text,
+        );
+    }
 
     let sep_x = wx - 12;
     cv.fill_rect(sep_x, 14, 1, h - 28, th.separator);
@@ -824,7 +821,7 @@ fn draw_taskbar(
     cv.icon_network(net_cx, 24.0, 13.0, telem.network, th.text, th.text_dim);
     cv.icon_volume(vol_cx, 24.0, 13.0, prefs.volume, th.text);
     if let Some((cx, pct)) = bat {
-        cv.icon_battery(cx, 24.0, pct, th.text, th.success);
+        cv.icon_battery(cx, 24.0, pct, th.text, if pct <= 15 { th.danger } else { th.text });
     }
     regions.push(Region {
         x: tray_left,
@@ -881,26 +878,33 @@ mod tests {
     #[test]
     fn items_per_style() {
         let e = vec![];
-        assert!(matches!(items(DockStyle::Minimal, &e)[..], []));
-        assert!(matches!(items(DockStyle::Solyra, &e)[0], Item::Start));
+        assert!(matches!(items(DockStyle::Minimal, &e, true)[..], []));
+        assert!(matches!(items(DockStyle::Solyra, &e, true)[0], Item::Start));
         assert!(matches!(
-            items(DockStyle::Solyra, &e).last(),
+            items(DockStyle::Solyra, &e, true).last(),
             Some(Item::Clock)
         ));
         assert!(matches!(
-            items(DockStyle::Macos, &e).last(),
+            items(DockStyle::Macos, &e, true).last(),
             Some(Item::Trash)
         ));
+        let has = |on| {
+            items(DockStyle::Solyra, &e, on)
+                .iter()
+                .any(|i| matches!(i, Item::Weather))
+        };
+        assert!(has(true) && !has(false), "no reading, no weather chip");
     }
 
     #[test]
-    fn weather_line_becomes_degrees_or_a_placeholder() {
-        assert_eq!(normalize_weather(Some("25")), "25°");
-        assert_eq!(normalize_weather(Some("25°")), "25°");
-        assert_eq!(normalize_weather(Some(" 18 °C ")), "18 °C");
-        assert_eq!(normalize_weather(Some("Partly cloudy")), "Partly cloudy");
-        assert_eq!(normalize_weather(None), "—°");
-        assert_eq!(normalize_weather(Some("  ")), "—°");
+    fn weather_line_becomes_degrees_or_nothing() {
+        let w = |s| normalize_weather(s).unwrap_or_default();
+        assert_eq!(w(Some("25")), "25°");
+        assert_eq!(w(Some("25°")), "25°");
+        assert_eq!(w(Some(" 18 °C ")), "18 °C");
+        assert_eq!(w(Some("Partly cloudy")), "Partly cloudy");
+        assert_eq!(normalize_weather(None), None);
+        assert_eq!(normalize_weather(Some("  ")), None);
     }
 
     #[test]
