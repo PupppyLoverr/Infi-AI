@@ -13,6 +13,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Duration};
 use zgx::{
     compose::prelude::*,
     reactive::Signal,
+    scene::Color,
     terminal::{terminal, Terminal, TerminalOptions},
 };
 use zgx_components::{tabs, Tab, TabsOptions};
@@ -48,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let selected = rt.signal(String::new());
             let status = rt.signal(format!("Panes 1/{MAX_PANES}"));
             // Bumped after structural edits so the active tab body rebuilds.
-            let gen = rt.signal(0u32);
+            let tick = rt.signal(0u32);
 
             let mint = {
                 let (terms, counter, rt) = (terms.clone(), counter.clone(), rt.clone());
@@ -89,9 +90,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let bump = {
-                let (gen, status, session) = (gen.clone(), status.clone(), session.clone());
+                let (tick, status, session) = (tick.clone(), status.clone(), session.clone());
                 Rc::new(move || {
-                    gen.set(gen.get().wrapping_add(1));
+                    tick.set(tick.get().wrapping_add(1));
                     status.set(format!(
                         "Panes {}/{MAX_PANES}",
                         session.borrow().pane_count()
@@ -316,7 +317,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let panel_terms = terms.clone();
             let panel_session = session.clone();
-            let panel_gen = gen.clone();
+            let panel_tick = tick.clone();
             let panel_theme = theme;
             let strip = tabs(
                 "Terminal workspaces",
@@ -327,8 +328,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     on_close: Some(on_tab_close),
                 },
                 move |_id, _cx| {
-                    // Depend on gen so splits rebuild the body.
-                    let _ = panel_gen.get();
+                    // Depend on tick so splits rebuild the body.
+                    let _ = panel_tick.get();
                     let snap = panel_session.borrow();
                     let Some(ws) = snap.active() else {
                         return text("No workspace").into();
@@ -341,7 +342,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &focused,
                         panel_terms.clone(),
                         panel_session.clone(),
-                        panel_gen.clone(),
+                        panel_tick.clone(),
                         panel_theme,
                     )
                 },
@@ -380,7 +381,7 @@ fn render_tree(
     focused: &str,
     terms: Rc<RefCell<HashMap<String, Terminal>>>,
     session: Rc<RefCell<Session>>,
-    gen: Signal<u32>,
+    tick: Signal<u32>,
     theme: solyra_tokens::Theme,
 ) -> View {
     match tree {
@@ -399,7 +400,7 @@ fn render_tree(
                     let terms = terms.clone();
                     let id_click = id.clone();
                     let session = session.clone();
-                    let gen = gen.clone();
+                    let tick = tick.clone();
                     button()
                         .w_full()
                         .h(22.)
@@ -412,7 +413,7 @@ fn render_tree(
                             if let Some(ws) = session.borrow_mut().active_mut() {
                                 ws.focused = id_click.clone();
                             }
-                            gen.set(gen.get().wrapping_add(1));
+                            tick.set(tick.get().wrapping_add(1));
                         })
                 })
                 .child({
@@ -428,8 +429,8 @@ fn render_tree(
                 })
         }
         PaneTree::Split { dir, a, b, .. } => {
-            let left = render_tree(a, focused, terms.clone(), session.clone(), gen.clone(), theme);
-            let right = render_tree(b, focused, terms, session, gen, theme);
+            let left = render_tree(a, focused, terms.clone(), session.clone(), tick.clone(), theme);
+            let right = render_tree(b, focused, terms, session, tick, theme);
             match dir {
                 SplitDir::Vertical => row()
                     .grow()

@@ -142,18 +142,21 @@ pub fn draw_bar(
 
     // Left: the nL mark (white on black). Menu bar → system menu; compact → launcher.
     let mark_h = 22;
-    let mark_w = cv.mark_nl(8, (h - mark_h) / 2, mark_h, fonts);
-    let brand_hover =
-        hover.is_some_and(|(hx, hy)| hx >= 4.0 && hx < (12 + mark_w) as f64 && hy < h as f64);
+    let mark_x = 8;
+    let mark_y = (h - mark_h) / 2;
+    let mark_w = crate::canvas::nl_mark_width(mark_h, fonts);
+    let brand_hover = hover.is_some_and(|(hx, hy)| {
+        hx >= (mark_x - 2) as f64 && hx < (mark_x + mark_w + 2) as f64 && hy < h as f64
+    });
     if brand_hover {
-        cv.round_rect(4, 4, mark_w + 8, h - 8, 6.0, th.tile_hover);
-        // Redraw the mark above the hover wash.
-        let _ = cv.mark_nl(8, (h - mark_h) / 2, mark_h, fonts);
+        cv.round_rect(mark_x - 4, 4, mark_w + 8, h - 8, 8.0, th.tile_hover);
     }
+    let drawn = cv.mark_nl(mark_x, mark_y, mark_h, fonts);
+    debug_assert_eq!(drawn, mark_w);
     regions.push(Region {
-        x: 4,
+        x: mark_x - 2,
         y: 0,
-        w: mark_w + 10,
+        w: mark_w + 4,
         h,
         action: if menubar {
             HitAction::OpenMenu(MenuId::Solyra)
@@ -161,7 +164,7 @@ pub fn draw_bar(
             HitAction::Shell(ShellCmd::ToggleLauncher)
         },
     });
-    let mut x = mark_w + 22;
+    let mut x = mark_x + mark_w + 14;
 
     if menubar {
         // The focused app's name, bold, then the menu titles.
@@ -615,7 +618,7 @@ fn draw_launcher_row(
     }
 
     let sys_ic = load_app_icon(icons, &item.app_id);
-    cv.draw_app_squircle(rx + 8, y + 4, 28, &item.role, sys_ic);
+    cv.draw_app_squircle(rx + 8, y + 4, 28, &item.role, sys_ic, fonts);
     let title_col = if runnable { th.text } else { th.text_dim };
     let badge_w = if selected { 72 } else { 0 };
     let text_w = rw - 52 - badge_w - 8;
@@ -1020,7 +1023,7 @@ pub fn draw_island_card(
 
     card(cv, th, 0, 0, w, h, R_OVERLAY);
 
-    cv.draw_app_squircle(18, 18, 36, "agent", None);
+    cv.draw_app_squircle(18, 18, 36, "agent", None, fonts);
     cv.text(
         fonts.semibold.as_ref(),
         "Activity",
@@ -1122,6 +1125,10 @@ pub struct AgentsView<'a> {
     pub reply: &'a str,
     /// Keys are going into the reply field.
     pub typing: bool,
+    /// Agent desktop mode: show the project / environment desk card.
+    pub desk: bool,
+    pub clock: &'a str,
+    pub date: &'a str,
 }
 
 fn status_glyph(cv: &mut Canvas<'_>, th: &Theme, status: Status, cx: f32, cy: f32) {
@@ -1237,6 +1244,21 @@ pub fn draw_agents(
                 y += 18;
             }
             y += 4;
+        }
+        if view.desk {
+            let _ = crate::desk::paint(
+                cv,
+                th,
+                fonts,
+                &crate::desk::Glance {
+                    clock: view.clock,
+                    date: view.date,
+                    project_lines: &["Infi-AI", "solyra-panel", "agent wrap"],
+                    environment: 1,
+                },
+                22,
+                y + 12,
+            );
         }
         return regions;
     }

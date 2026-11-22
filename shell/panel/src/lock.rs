@@ -702,46 +702,63 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
         }
         LockStyle::Dashboard => {
             cv.fill_rect(0, 0, w, h, Rgba::rgba(0x08, 0x06, 0x0c, 100));
-            // Top capsule: now playing, else nL.
-            let cap = v
-                .media_title
-                .filter(|t| !t.is_empty())
-                .unwrap_or("nL");
-            let cap_w = text_width(v.fonts.semibold.as_ref(), cap, 13.0).max(72) + 28;
-            let cap_x = (w - cap_w) / 2;
-            cv.round_rect(cap_x, 28, cap_w, 28, 14.0, Rgba::rgb(0x0a, 0x0a, 0x0c));
-            cv.stroke_round_rect(
-                cap_x,
-                28,
-                cap_w,
-                28,
-                14.0,
-                1.0,
-                Rgba::rgba(255, 255, 255, 40),
-            );
-            centred(cv, v.fonts.semibold.as_ref(), cap, w / 2, 47, 13.0, white);
+            let wash = Rgba::rgba(255, 255, 255, 32);
+            let edge = Rgba::rgba(255, 255, 255, 56);
 
-            if let Some(weather) = v.weather {
-                let ww = text_width(v.fonts.regular.as_ref(), weather, 14.0);
+            // Weather sits top-right, clear of the centre capsule.
+            if let Some(weather) = v.weather.filter(|t| !t.is_empty()) {
+                let size = 14.0;
+                let tw = text_width(v.fonts.semibold.as_ref(), weather, size);
+                let (pw, ph) = (tw + 28, 30);
+                let (px, py) = (w - pw - 28, 20);
+                cv.round_rect(px, py, pw, ph, 15.0, wash);
+                cv.stroke_round_rect(px, py, pw, ph, 15.0, 1.0, edge);
                 cv.text(
-                    v.fonts.regular.as_ref(),
+                    v.fonts.semibold.as_ref(),
                     weather,
-                    w - ww - 36,
-                    48,
-                    14.0,
-                    soft,
+                    px + 14,
+                    py + 20,
+                    size,
+                    white,
                 );
             }
 
-            // Large date + clock.
-            let top = (h as f32 * 0.18) as i32;
+            // Top centre: now-playing title, or the nL brand box.
+            if let Some(title) = v.media_title.filter(|t| !t.is_empty()) {
+                let size = 13.0;
+                let max_tw = (w / 2).clamp(120, 280);
+                let tw = text_width(v.fonts.semibold.as_ref(), title, size).min(max_tw);
+                let (pw, ph) = (tw + 36, 32);
+                let px = (w - pw) / 2;
+                cv.round_rect(px, 20, pw, ph, 16.0, Rgba::rgb(0, 0, 0));
+                cv.stroke_round_rect(px, 20, pw, ph, 16.0, 1.0, edge);
+                cv.text_truncated(
+                    v.fonts.semibold.as_ref(),
+                    title,
+                    px + 18,
+                    41,
+                    size,
+                    max_tw,
+                    white,
+                );
+            } else {
+                let mh = 28;
+                let mw = crate::canvas::nl_mark_width(mh, v.fonts);
+                cv.mark_nl((w - mw) / 2, 20, mh, v.fonts);
+            }
+
+            // Large date above a larger clock, in the upper half.
+            let clock_size = big(h);
+            let clock_base = (h as f32 * 0.40) as i32;
+            let date_size = (clock_size * 0.30).clamp(22.0, 34.0);
+            let date_base = clock_base - (clock_size * 0.82) as i32 - 6;
             centred(
                 cv,
                 v.fonts.semibold.as_ref(),
                 &v.date,
                 w / 2,
-                top,
-                22.0,
+                date_base,
+                date_size,
                 soft,
             );
             centred(
@@ -749,26 +766,31 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
                 v.fonts.semibold.as_ref(),
                 &v.clock,
                 w / 2,
-                top + big(h) as i32 - 8,
-                big(h),
+                clock_base,
+                clock_size,
                 white,
             );
 
+            // Glance, then avatars, then the password. Flow so they don't collide.
+            let mut y = clock_base + 22;
             if v.agents_running > 0 {
                 let label = format!("{} Agents RUNNING", v.agents_running);
-                let aw = text_width(v.fonts.semibold.as_ref(), &label, 12.0) + 28;
+                let size = 12.0;
+                let tw = text_width(v.fonts.semibold.as_ref(), &label, size);
+                let (aw, ah) = (tw + 28, 26);
                 let ax = (w - aw) / 2;
-                let ay = top + big(h) as i32 + 16;
-                cv.round_rect(ax, ay, aw, 26, 13.0, Rgba::rgba(0xb4, 0x8a, 0xad, 60));
+                cv.round_rect(ax, y, aw, ah, 13.0, Rgba::rgba(255, 255, 255, 28));
+                cv.stroke_round_rect(ax, y, aw, ah, 13.0, 1.0, edge);
                 centred(
                     cv,
                     v.fonts.semibold.as_ref(),
                     &label,
                     w / 2,
-                    ay + 18,
-                    12.0,
+                    y + 18,
+                    size,
                     white,
                 );
+                y += 38;
             }
 
             centred(
@@ -776,62 +798,96 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
                 v.fonts.regular.as_ref(),
                 "No Events Scheduled Today",
                 w / 2,
-                h - 280,
-                13.0,
-                Rgba::rgba(255, 255, 255, 160),
+                y + 16,
+                14.0,
+                Rgba::rgba(255, 255, 255, 170),
             );
+            y += 30;
 
-            // Avatar row: current user + NEW.
-            let by = h - 230;
-            avatar(cv, v, w / 2 - 44, by, 28.0);
+            let title = v.media_title.unwrap_or("").trim();
+            let artist = v.media_artist.unwrap_or("").trim();
+            if !title.is_empty() || !artist.is_empty() {
+                let (mw, mh) = (300, 56);
+                let mx = (w - mw) / 2;
+                cv.round_rect(mx, y, mw, mh, 16.0, Rgba::rgba(0, 0, 0, 130));
+                cv.stroke_round_rect(mx, y, mw, mh, 16.0, 1.0, edge);
+                let text_w = mw - 118;
+                if !title.is_empty() {
+                    cv.text_truncated(
+                        v.fonts.semibold.as_ref(),
+                        title,
+                        mx + 16,
+                        y + 24,
+                        13.0,
+                        text_w,
+                        white,
+                    );
+                }
+                if !artist.is_empty() {
+                    cv.text_truncated(
+                        v.fonts.regular.as_ref(),
+                        artist,
+                        mx + 16,
+                        y + 42,
+                        12.0,
+                        text_w,
+                        soft,
+                    );
+                }
+                // Decorative only: the lock screen does not control playback.
+                let gy = (y + mh / 2) as f32;
+                let gx = (mx + mw - 24) as f32;
+                cv.icon_skip(gx - 52.0, gy, 12.0, false, white);
+                cv.icon_pause(gx - 26.0, gy, 13.0, white);
+                cv.icon_skip(gx, gy, 12.0, true, white);
+                y += mh + 16;
+            }
+
+            let avatar_r = 28.0;
+            let avatar_cy = (y + 40).max(h - 196).min(h - 148);
+            let spread = 48;
+            let ax = w / 2 - spread;
+            let px = w / 2 + spread;
+            avatar(cv, v, ax, avatar_cy, avatar_r);
+            cv.circle(px as f32, avatar_cy as f32, avatar_r, wash);
+            cv.ring(px as f32, avatar_cy as f32, avatar_r, 1.4, edge);
+            let arm = avatar_r * 0.42;
+            cv.line(
+                px as f32 - arm,
+                avatar_cy as f32,
+                px as f32 + arm,
+                avatar_cy as f32,
+                2.0,
+                white,
+            );
+            cv.line(
+                px as f32,
+                avatar_cy as f32 - arm,
+                px as f32,
+                avatar_cy as f32 + arm,
+                2.0,
+                white,
+            );
+            let label_base = avatar_cy + avatar_r as i32 + 18;
             centred(
                 cv,
                 v.fonts.regular.as_ref(),
                 v.name,
-                w / 2 - 44,
-                by + 48,
+                ax,
+                label_base,
                 12.0,
                 soft,
             );
-            cv.circle((w / 2 + 44) as f32, by as f32, 28.0, Rgba::rgba(255, 255, 255, 28));
-            centred(cv, v.fonts.semibold.as_ref(), "+", w / 2 + 44, by + 6, 22.0, white);
             centred(
                 cv,
-                v.fonts.regular.as_ref(),
+                v.fonts.semibold.as_ref(),
                 "NEW",
-                w / 2 + 44,
-                by + 48,
+                px,
+                label_base,
                 11.0,
-                soft,
+                white,
             );
-
-            if let Some(title) = v.media_title.filter(|t| !t.is_empty()) {
-                let mw = 280;
-                let mx = (w - mw) / 2;
-                let my = h - 170;
-                cv.round_rect(mx, my, mw, 52, 14.0, Rgba::rgba(0, 0, 0, 120));
-                cv.stroke_round_rect(mx, my, mw, 52, 14.0, 1.0, Rgba::rgba(255, 255, 255, 36));
-                cv.text(
-                    v.fonts.semibold.as_ref(),
-                    title,
-                    mx + 16,
-                    my + 22,
-                    13.0,
-                    white,
-                );
-                if let Some(artist) = v.media_artist.filter(|a| !a.is_empty()) {
-                    cv.text(
-                        v.fonts.regular.as_ref(),
-                        artist,
-                        mx + 16,
-                        my + 40,
-                        11.0,
-                        soft,
-                    );
-                }
-            }
-
-            field(cv, v, w / 2, h - 100, 280);
+            field(cv, v, w / 2, label_base + 16, 260);
         }
     }
 }

@@ -66,7 +66,7 @@ fn weather_label() -> String {
     path.and_then(|p| std::fs::read_to_string(p).ok())
         .map(|s| s.lines().next().unwrap_or("").trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "·".into())
+        .unwrap_or_else(|| "—°".into())
 }
 
 struct Metrics {
@@ -284,10 +284,11 @@ fn draw_floating(
     let mut centres = Vec::with_capacity(its.len());
     let mut x = base_left + m.pad;
     for it in &its {
-        let iw = if matches!(it, Item::Separator) {
-            1
-        } else {
-            m.cell
+        let iw = match it {
+            Item::Separator => 1,
+            Item::Clock => m.cell + 18,
+            Item::Weather => m.cell + 4,
+            _ => m.cell,
         };
         centres.push(x as f32 + iw as f32 / 2.0);
         x += iw + m.gap;
@@ -351,7 +352,7 @@ fn draw_floating(
                 let cx = x as f32 + s as f32 * 0.28;
                 let cy = (card_y + CARD_H / 2) as f32;
                 cv.circle(cx, cy, 5.0, th.text_med);
-                for ang in [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0] {
+                for ang in [0.0f32, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0] {
                     let rad = ang.to_radians();
                     cv.line(
                         cx + rad.cos() * 7.0,
@@ -419,7 +420,7 @@ fn draw_floating(
                     Item::Separator | Item::Weather | Item::Clock => unreachable!(),
                 };
                 let icon = app_id.and_then(|id| load_app_icon(icons, id));
-                cv.draw_app_squircle(x, y, s, role, icon);
+                cv.draw_app_squircle(x, y, s, role, icon, fonts);
 
                 if let Item::App(e) = it {
                     if e.window_count > 0 {
@@ -575,7 +576,7 @@ fn draw_taskbar(
     let search_w = 188;
     let total_w = 40 + 8 + search_w + 10 + (entries.len() as i32) * 44;
     let mut cx = (w - total_w) / 2;
-    cv.draw_app_squircle(cx + 3, 7, 34, "start", None);
+    cv.draw_app_squircle(cx + 3, 7, 34, "start", None, fonts);
     regions.push(Region {
         x: cx,
         y: 4,
@@ -626,7 +627,7 @@ fn draw_taskbar(
             );
         }
         let sys_ic = load_app_icon(icons, &entry.app_id);
-        cv.draw_app_squircle(cx + 4, 7, 32, &entry.role, sys_ic);
+        cv.draw_app_squircle(cx + 4, 7, 32, &entry.role, sys_ic, fonts);
         if entry.window_count > 0 {
             let uw = if entry.is_focused { 16 } else { 6 };
             let col = if entry.is_focused {

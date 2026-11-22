@@ -53,12 +53,11 @@ choice! {
 }
 
 choice! {
-    /// The lock screen's layout.
+    /// The lock screen's layout (Dashboard = large clock, avatars, media glance).
     LockStyle {
         Solyra = "solyra" / "Solyra",
         Classic = "classic" / "Centred",
         Corner = "corner" / "Clock corner",
-        /// Large clock, avatar row, island capsule, agents / media glance.
         Dashboard = "dashboard" / "Dashboard",
     } default Solyra
 }
@@ -290,6 +289,10 @@ mod tests {
         for v in LockStyle::ALL {
             assert_eq!(LockStyle::parse(v.as_str()), Some(*v));
         }
+        assert_eq!(
+            Look::from_conf("lock_style=dashboard").lock,
+            LockStyle::Dashboard
+        );
         for v in DesktopMode::ALL {
             assert_eq!(DesktopMode::parse(v.as_str()), Some(*v));
         }

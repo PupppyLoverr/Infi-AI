@@ -195,8 +195,10 @@ password checked by PAM (`/etc/pam.d/solyra-lock`, same stack as login) off
 the UI thread, input through xkb (any layout), Caps Lock shown, back-off
 after repeated failures. `lock_style`: **Solyra** (blurred wallpaper, time
 and field centred), **Centred** (macOS-like: date and time at the top, avatar
-and field below) and **Clock corner** (Windows-like: large clock lower left,
-any key shows the sign-in card). swaylock stays installed as the fallback
+and field below), **Clock corner** (Windows-like: large clock lower left,
+any key shows the sign-in card) and **Dashboard** (large date and clock,
+nL or now-playing capsule, avatar row with a NEW circle, agents / events /
+media glance). swaylock stays installed as the fallback
 and recovery (Super+Alt+L).
 
 ### 6.10 Setup wizard — **planned**

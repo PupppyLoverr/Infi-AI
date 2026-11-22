@@ -15,6 +15,7 @@
 
 mod agent;
 mod canvas;
+mod desk;
 mod dock;
 mod island;
 mod launcher;
@@ -1276,6 +1277,10 @@ impl App {
         let root_hint = agent::root_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "$XDG_RUNTIME_DIR/solyra-agent (XDG_RUNTIME_DIR is not set)".into());
+        let clock = chrono::Local::now()
+            .format(self.prefs.look.clock_format())
+            .to_string();
+        let date = chrono::Local::now().format("%a %-d %b").to_string().to_uppercase();
         let view = AgentsView {
             runtime_present: agents_summary.runtime_present,
             tasks: &self.agent_tasks,
@@ -1285,6 +1290,9 @@ impl App {
             error: self.agents_error.as_deref(),
             reply: &self.reply_buf,
             typing: self.reply_mode || self.typing_question(),
+            desk: self.prefs.look.desktop == solyra_conf::look::DesktopMode::Agent,
+            clock: &clock,
+            date: &date,
         };
         overlay!(self.agents, |cv, hover| draw_agents(
             &mut cv,

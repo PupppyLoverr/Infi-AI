@@ -341,7 +341,10 @@ fn render_all() -> Vec<Shot> {
                     error: None,
                     reply: "",
                     typing: false,
-                };
+                desk: true,
+                clock: "09:41",
+                date: "TUE 17 NOV",
+            };
                 draw_agents(cv, th, &fonts, &v, None);
             },
         ));
@@ -355,6 +358,9 @@ fn render_all() -> Vec<Shot> {
                 error: None,
                 reply: "",
                 typing: false,
+                desk: false,
+                clock: "09:41",
+                date: "TUE 17 NOV",
             };
             draw_agents(cv, th, &fonts, &v, None);
         }));
@@ -373,7 +379,10 @@ fn render_all() -> Vec<Shot> {
                     error: None,
                     reply: "",
                     typing: false,
-                };
+                desk: false,
+                clock: "09:41",
+                date: "TUE 17 NOV",
+            };
                 draw_agents(cv, th, &fonts, &v, None);
             },
         ));
@@ -392,7 +401,10 @@ fn render_all() -> Vec<Shot> {
                     error: Some("Decision not recorded: permission denied"),
                     reply: "",
                     typing: false,
-                };
+                desk: false,
+                clock: "09:41",
+                date: "TUE 17 NOV",
+            };
                 draw_agents(cv, th, &fonts, &v, None);
             },
         ));
@@ -419,7 +431,10 @@ fn render_all() -> Vec<Shot> {
                     error: None,
                     reply: "",
                     typing: false,
-                };
+                desk: false,
+                clock: "09:41",
+                date: "TUE 17 NOV",
+            };
                 draw_agents(cv, th, &fonts, &v, None);
             },
         ));
@@ -439,7 +454,10 @@ fn render_all() -> Vec<Shot> {
                     error: None,
                     reply: "",
                     typing: false,
-                };
+                desk: false,
+                clock: "09:41",
+                date: "TUE 17 NOV",
+            };
                 draw_agents(cv, th, &fonts, &v, None);
             }));
         }
@@ -465,7 +483,10 @@ fn render_all() -> Vec<Shot> {
                     error: None,
                     reply,
                     typing,
-                };
+                desk: false,
+                clock: "09:41",
+                date: "TUE 17 NOV",
+            };
                 draw_agents(cv, th, &fonts, &v, None);
             }));
         }
@@ -841,6 +862,7 @@ fn lock_screens_render() {
             Some("Wrong password"),
         ),
         ("lock-dashboard", LockStyle::Dashboard, false, 0, None),
+        ("lock-dashboard-glance", LockStyle::Dashboard, false, 4, None),
     ] {
         let mut buf = if style == LockStyle::Corner && !card {
             sharp.clone()
@@ -849,7 +871,8 @@ fn lock_screens_render() {
         };
         {
             let mut cv = crate::canvas::Canvas::new_keep(&mut buf, w, h, 1);
-            let dashboard = name == "lock-dashboard";
+            let dashboard = style == LockStyle::Dashboard;
+            let glance = name == "lock-dashboard-glance";
             let v = View {
                 theme: &th,
                 fonts: &fonts,
@@ -866,13 +889,9 @@ fn lock_screens_render() {
                 checking: false,
                 message: msg,
                 card,
-                agents_running: if dashboard { 3 } else { 0 },
-                media_title: if dashboard {
-                    Some("FALLEN ANGEL")
-                } else {
-                    None
-                },
-                media_artist: if dashboard { Some("JENNIE") } else { None },
+                agents_running: if glance { 2 } else { 0 },
+                media_title: if glance { Some("Clair de Lune") } else { None },
+                media_artist: if glance { Some("Debussy") } else { None },
                 weather: if dashboard { Some("25°") } else { None },
             };
             paint(&mut cv, &v);

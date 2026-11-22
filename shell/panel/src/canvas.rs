@@ -653,27 +653,23 @@ impl<'a> Canvas<'a> {
         self.circle(cx + r * 0.28, cy - r * 0.25, r * 0.34, color);
     }
 
-    /// The **nL** brand mark: white letters in a black rounded box.
-    /// Returns the width used so callers can size hit targets.
+    /// The **nL** brand mark: white semibold letters in a black rounded box,
+    /// sized to `h`. Returns the width so callers can size hit targets.
+    /// At the menu-bar height (`h` ≈ 22) the box lands around 36–44 px wide.
     pub fn mark_nl(&mut self, x: i32, y: i32, h: i32, fonts: &Fonts) -> i32 {
         let h = h.max(16);
-        let pad_x = (h as f32 * 0.28).round() as i32;
-        let size = h as f32 * 0.55;
-        let label = "nL";
-        let tw = text_width(fonts.semibold.as_ref(), label, size);
-        let w = (tw + pad_x * 2).max(h);
-        let r = (h as f32 * 0.22).clamp(3.0, 8.0);
-        self.round_rect(x, y, w, h, r, Rgba::rgb(0x0a, 0x0a, 0x0c));
-        self.stroke_round_rect(x, y, w, h, r, 1.0, Rgba::rgba(255, 255, 255, 28));
-        let tx = x + (w - tw) / 2;
-        let ty = y + (h as f32 * 0.72) as i32;
+        let (w, size, tw) = nl_metrics(h, fonts);
+        let r = (h as f32 * 0.28).clamp(4.0, 10.0);
+        self.round_rect(x, y, w, h, r, Rgba::rgb(0, 0, 0));
+        self.stroke_round_rect(x, y, w, h, r, 1.0, Rgba::rgba(255, 255, 255, 36));
+        let baseline = y + h / 2 + (size * 0.36) as i32;
         self.text(
             fonts.semibold.as_ref(),
-            label,
-            tx,
-            ty,
+            "nL",
+            x + (w - tw) / 2,
+            baseline,
             size,
-            Rgba::rgb(0xff, 0xff, 0xff),
+            Rgba::rgb(255, 255, 255),
         );
         w
     }
@@ -813,8 +809,8 @@ impl<'a> Canvas<'a> {
 
     /// App tile (`size x size`): a flat dark rounded square. A real system
     /// icon is used when one was found; otherwise a monochrome glyph for the
-    /// role, or the role's first letter. One style for every app, so the dock
-    /// and launcher read as one set.
+    /// role. Start is the nL brand (black rounded box, white semibold letters).
+    /// Agents keep their own glyph so the two are not the same mark.
     pub fn draw_app_squircle(
         &mut self,
         x: i32,
@@ -822,65 +818,46 @@ impl<'a> Canvas<'a> {
         size: i32,
         role: &str,
         icon: Option<&Icon>,
+        fonts: &Fonts,
     ) {
         const TILE: Rgba = Rgba::rgb(0x2a, 0x24, 0x31);
         const EDGE: Rgba = Rgba::rgba(255, 255, 255, 26);
         const GLYPH: Rgba = Rgba::rgb(0xdc, 0xd6, 0xe2);
-        const ACCENT: Rgba = Rgba::rgb(0xb4, 0x8a, 0xad);
-        const ON_ACCENT: Rgba = Rgba::rgb(0x14, 0x10, 0x18);
+
+        if role == "start" {
+            let s = size as f32;
+            let r = (s * 0.26).round();
+            self.round_rect(x, y, size, size, r, Rgba::rgb(0, 0, 0));
+            self.stroke_round_rect(x, y, size, size, r, 1.0, Rgba::rgba(255, 255, 255, 36));
+            let font_px = (s * 0.40).clamp(9.0, 20.0);
+            let label = "nL";
+            let tw = text_width(fonts.semibold.as_ref(), label, font_px);
+            let baseline = y + size / 2 + (font_px * 0.36) as i32;
+            self.text(
+                fonts.semibold.as_ref(),
+                label,
+                x + (size - tw) / 2,
+                baseline,
+                font_px,
+                Rgba::rgb(255, 255, 255),
+            );
+            return;
+        }
 
         let s = size as f32;
         let r = (s * 0.24).round();
         let (cx, cy) = (x as f32 + s * 0.5, y as f32 + s * 0.5);
-        let start = role == "start";
-        // Start is the nL mark: black tile, white letters (not the accent glyph).
-        self.round_rect(
-            x,
-            y,
-            size,
-            size,
-            r,
-            if start {
-                Rgba::rgb(0x0a, 0x0a, 0x0c)
-            } else {
-                TILE
-            },
-        );
+        self.round_rect(x, y, size, size, r, TILE);
         self.stroke_round_rect(x, y, size, size, r, 1.0, EDGE);
-        let ink = if start { Rgba::rgb(0xff, 0xff, 0xff) } else { GLYPH };
+        let ink = GLYPH;
 
-        if let (false, Some(ic)) = (start, icon) {
+        if let Some(ic) = icon {
             let pad = (s * 0.16).round() as i32;
             self.draw_icon(x + pad, y + pad, size - pad * 2, ic);
             return;
         }
         let u = s * 0.22; // glyph half-extent
         match role {
-            // Geometric nL so the Start cell works without a Fonts handle.
-            "start" => {
-                let _ = (ACCENT, ON_ACCENT);
-                let stroke = (s * 0.07).clamp(1.4, 2.4);
-                let left = cx - s * 0.22;
-                let right = cx + s * 0.02;
-                let top = cy - s * 0.18;
-                let bot = cy + s * 0.18;
-                // n
-                self.line(left, bot, left, top + s * 0.06, stroke, ink);
-                self.arc(
-                    left + s * 0.11,
-                    top + s * 0.12,
-                    s * 0.11,
-                    stroke,
-                    180.0,
-                    360.0,
-                    ink,
-                );
-                self.line(right, top + s * 0.12, right, bot, stroke, ink);
-                // L
-                let lx = cx + s * 0.12;
-                self.line(lx, top, lx, bot, stroke, ink);
-                self.line(lx, bot, lx + s * 0.16, bot, stroke, ink);
-            }
             "agent" => self.icon_solyra(cx, cy, u * 0.9, ink),
             "files" | "thunar" => {
                 let (w, h) = ((u * 2.1) as i32, (u * 1.5) as i32);
@@ -931,6 +908,22 @@ impl<'a> Canvas<'a> {
             }
         }
     }
+}
+
+/// Width of [`Canvas::mark_nl`] for `h`, without drawing.
+pub(crate) fn nl_mark_width(h: i32, fonts: &Fonts) -> i32 {
+    nl_metrics(h, fonts).0
+}
+
+/// `(width, font size, text width)` for the nL box at height `h`.
+fn nl_metrics(h: i32, fonts: &Fonts) -> (i32, f32, i32) {
+    let h = h.max(16);
+    let pad_x = (h as f32 * 0.34).round() as i32;
+    let size = (h as f32 * 0.56).clamp(11.0, 28.0);
+    let tw = text_width(fonts.semibold.as_ref(), "nL", size).max(1);
+    // Floor keeps the menu-bar mark (h ≈ 22) inside about 36–44 px.
+    let w = (tw + pad_x * 2).max((h as f32 * 1.72).round() as i32);
+    (w, size, tw)
 }
 
 pub fn text_width(font: Option<&FontRef<'_>>, value: &str, size: f32) -> i32 {
@@ -1055,5 +1048,24 @@ mod tests {
         assert!(wrap_with("   ", 100, 3, m).is_empty());
         assert_eq!(wrap_with("abcd efgh", 90, 3, m), vec!["abcd efgh"]);
         assert_eq!(wrap_with("a b", 100, 0, m), Vec::<String>::new());
+    }
+
+    #[test]
+    fn nl_mark_is_a_black_box_in_the_bar_band() {
+        let fonts = Fonts::load();
+        let mut buf = vec![0u8; 96 * 40 * 4];
+        let drawn = {
+            let mut cv = Canvas::new(&mut buf, 96, 40, 1);
+            let w = cv.mark_nl(8, 8, 22, &fonts);
+            assert_eq!(w, nl_mark_width(22, &fonts));
+            w
+        };
+        assert!(
+            (36..=44).contains(&drawn),
+            "bar mark width {drawn} px, want 36–44"
+        );
+        // Left padding of the box is opaque black (BGRA).
+        let i = ((18u32 * 96 + 12) * 4) as usize;
+        assert_eq!(&buf[i..i + 4], &[0, 0, 0, 255]);
     }
 }

@@ -571,7 +571,7 @@ fn expanded_body(
             cv.round_rect(bx, by + 2, 56, 56, 12.0, Rgba::rgba(255, 255, 255, 24));
             cv.icon_note(bx as f32 + 26.0, by as f32 + 30.0, th.text);
             let tx = bx + 70;
-            cv.text_truncate(
+            cv.text_truncated(
                 fonts.semibold.as_ref(),
                 &m.title,
                 tx,
@@ -580,7 +580,7 @@ fn expanded_body(
                 bw - 70,
                 th.text,
             );
-            cv.text_truncate(
+            cv.text_truncated(
                 fonts.regular.as_ref(),
                 &m.artist,
                 tx,
