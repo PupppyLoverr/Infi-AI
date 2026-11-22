@@ -19,20 +19,26 @@ pub struct Fonts {
 impl Fonts {
     pub fn load() -> Self {
         Self {
+            // Prefer Adwaita Sans (design language), then Inter (SF-like).
             regular: try_load_font(&[
+                "/usr/share/fonts/adwaita-sans-fonts/AdwaitaSans-Regular.ttf",
+                "/usr/share/fonts/truetype/adwaita/AdwaitaSans-Regular.ttf",
+                "/usr/share/fonts/truetype/macos/Inter-Regular.ttf",
                 "/usr/share/fonts/rsms-inter-fonts/Inter-Regular.otf",
                 "/usr/share/fonts/opentype/inter/Inter-Regular.otf",
                 "/usr/share/fonts/open-sans/OpenSans-Regular.ttf",
-                "/usr/share/fonts/adwaita-sans-fonts/AdwaitaSans-Regular.ttf",
                 "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             ]),
             semibold: try_load_font(&[
+                "/usr/share/fonts/adwaita-sans-fonts/AdwaitaSans-SemiBold.ttf",
+                "/usr/share/fonts/truetype/adwaita/AdwaitaSans-SemiBold.ttf",
+                "/usr/share/fonts/adwaita-sans-fonts/AdwaitaSans-Regular.ttf",
+                "/usr/share/fonts/truetype/macos/Inter-SemiBold.ttf",
                 "/usr/share/fonts/rsms-inter-fonts/Inter-SemiBold.otf",
                 "/usr/share/fonts/opentype/inter/Inter-SemiBold.otf",
                 "/usr/share/fonts/open-sans/OpenSans-Semibold.ttf",
                 "/usr/share/fonts/open-sans/OpenSans-Bold.ttf",
-                "/usr/share/fonts/adwaita-sans-fonts/AdwaitaSans-Regular.ttf",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
             ]),
             mono: try_load_font(&[
