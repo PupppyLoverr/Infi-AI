@@ -18,7 +18,7 @@ mod wrap;
 
 use std::io::Read;
 use std::os::fd::AsRawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::Duration;
 
@@ -37,6 +37,7 @@ fn main() -> ExitCode {
         Some("wrap") => cmd_wrap(&args[1..]),
         Some("run") => cmd_run(&args[1..]),
         Some("undo") => cmd_undo(&args[1..]),
+        Some("undo-apply") => cmd_undo_apply(&args[1..]),
         Some("runs") => cmd_runs(),
         Some("install-hooks") => installer::cmd(&args[1..]),
         Some("opencode") => cmd_opencode(&args[1..]),
@@ -165,7 +166,27 @@ fn cmd_run(args: &[String]) -> ExitCode {
         Ok(w) => w,
         Err(e) => return die(e),
     };
-    let Some(snaps) = sandbox::snapshots_dir() else { return die("HOME is not set") };
+    // Level-1 isolation: when the dedicated `solyra-agent` user exists, the
+    // sandbox itself runs under it (the human's uid never enters the box).
+    // sudo is limited to `/usr/bin/bwrap` by /etc/sudoers.d/solyra-agent, so
+    // `sudo -n` fails closed rather than prompting.
+    let as_agent = agent_user_available();
+    if as_agent && !Command::new("sudo").args(["-n", "-u", "solyra-agent", "--", "test", "-w"]).arg(&ws).status().map(|s| s.success()).unwrap_or(false) {
+        return die(format!(
+            "{} is not writable by the `solyra-agent` user; chown it or grant an ACL (setfacl -m u:solyra-agent:rwx)",
+            ws.display()
+        ));
+    }
+    // Agent-user snapshots go in the shared agent directory (readable by the
+    // agent user, so `undo-apply` can compare); human runs keep the state dir.
+    let snaps = if as_agent {
+        let d = sandbox::agent_snapshots_dir();
+        let _ = std::fs::create_dir_all(&d);
+        d
+    } else {
+        let Some(d) = sandbox::snapshots_dir() else { return die("HOME is not set") };
+        d
+    };
     let run_id = format!("run-{}-{}", now(), std::process::id());
     let snap_dir = snaps.join(&run_id);
     let reflink = match sandbox::snapshot(&ws, &snap_dir.join("files")) {
@@ -177,14 +198,35 @@ fn cmd_run(args: &[String]) -> ExitCode {
         "solyra-agent: snapshot {run_id} taken ({}). Undo with: solyra-agent undo {run_id}",
         if reflink { "instant, copy-on-write" } else { "full copy" }
     );
-    audit(json!({"event":"run_started","run":run_id,"workspace":ws,"network":policy.network,"command":command}));
+    let mut relay_sock: Option<PathBuf> = None;
+    if as_agent && policy.wayland {
+        // The agent user cannot traverse the human's runtime dir, so bridge
+        // the Wayland socket through the shared agent directory.
+        let sock = PathBuf::from("/var/lib/solyra-agent").join(format!("wayland-{}", std::process::id()));
+        if let Err(e) = sandbox::wayland_relay(&sock) {
+            return die(format!("wayland relay: {e}"));
+        }
+        // bwrap runs as the agent user, who needs to reach the relay socket.
+        let _ = Command::new("chmod").arg("0666").arg(&sock).status();
+        std::env::set_var("SOLYRA_AGENT_WAYLAND_SOCK", &sock);
+        relay_sock = Some(sock);
+    }
+    audit(json!({"event":"run_started","run":run_id,"workspace":ws,"network":policy.network,
+        "space":policy.space,"wayland":policy.wayland,"agent_user":as_agent,"command":command}));
 
     let bw = sandbox::bwrap_args(&policy, &ws, command);
-    let status = Command::new("bwrap").args(&bw).status();
+    let status = if as_agent {
+        Command::new("sudo").args(["-n", "-u", "solyra-agent", "--", "bwrap"]).args(&bw).status()
+    } else {
+        Command::new("bwrap").args(&bw).status()
+    };
     let code = match status {
         Ok(s) => s.code().unwrap_or(1),
         Err(e) => return die(format!("could not start bubblewrap (is it installed?): {e}")),
     };
+    if let Some(sock) = relay_sock {
+        let _ = std::fs::remove_file(sock);
+    }
     let changes = sandbox::diff(&ws, &snap_dir.join("files")).ok();
     if let Some(c) = &changes {
         eprintln!(
@@ -196,6 +238,17 @@ fn cmd_run(args: &[String]) -> ExitCode {
         "added": changes.as_ref().map(|c| c.added.len()), "changed": changes.as_ref().map(|c| c.changed.len()),
         "removed": changes.as_ref().map(|c| c.removed.len())}));
     ExitCode::from(code.clamp(0, 255) as u8)
+}
+
+/// The dedicated agent identity exists once the base image's sysusers entry
+/// has been applied; on a dev box without it we run the sandbox as the caller
+/// and audit the difference.
+fn agent_user_available() -> bool {
+    Command::new("id")
+        .args(["-u", "solyra-agent"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn audit(entry: serde_json::Value) {
@@ -214,13 +267,41 @@ fn cmd_undo(args: &[String]) -> ExitCode {
     if !run.starts_with("run-") || run.contains('/') || run.contains("..") {
         return die("not a run id");
     }
-    let Some(snaps) = sandbox::snapshots_dir() else { return die("HOME is not set") };
-    let dir = snaps.join(run);
+    let dirs = [
+        sandbox::snapshots_dir().map(|d| d.join(run)),
+        Some(sandbox::agent_snapshots_dir().join(run)),
+    ];
+    let dir = dirs.into_iter().flatten().find(|d| d.join("workspace").exists());
+    let Some(dir) = dir else { return die(format!("no such run: {run}")) };
     let Ok(ws) = std::fs::read_to_string(dir.join("workspace")) else { return die(format!("no such run: {run}")) };
     let ws = PathBuf::from(ws.trim());
     // The same guard as at run time: undo never writes into a broad folder.
     if let Err(e) = sandbox::check_workspace(&ws) {
         return die(e);
+    }
+    // Agent-owned workspaces need the restore to run as the agent user: the
+    // files inside belong to it and the human cannot delete or replace them.
+    let writable = Command::new("test").arg("-w").arg(&ws).status().map(|s| s.success()).unwrap_or(false);
+    if !writable {
+        if !agent_user_available() {
+            return die(format!("{} is not writable; run undo as its owner", ws.display()));
+        }
+        let Ok(me) = std::env::current_exe() else { return die("cannot re-exec for undo") };
+        let status = Command::new("sudo")
+            .args(["-n", "-u", "solyra-agent", "--"])
+            .arg(me)
+            .args(["undo-apply"])
+            .arg(dir.join("files"))
+            .arg(&ws)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !status {
+            return die(format!("undo failed: could not restore as solyra-agent in {}", ws.display()));
+        }
+        eprintln!("solyra-agent: restored {} (as solyra-agent)", ws.display());
+        audit(json!({"event":"undo","run":run,"workspace":ws,"agent_user":true}));
+        return ExitCode::SUCCESS;
     }
     match sandbox::restore(&ws, &dir.join("files")) {
         Ok(c) => {
@@ -235,10 +316,33 @@ fn cmd_undo(args: &[String]) -> ExitCode {
     }
 }
 
+/// Internal: invoked as `solyra-agent` via sudo to restore an agent-owned
+/// workspace. Same workspace guard; the files dir must already exist.
+fn cmd_undo_apply(args: &[String]) -> ExitCode {
+    let (Some(files), Some(ws)) = (args.first(), args.get(1)) else {
+        return die("usage: solyra-agent undo-apply <files-dir> <workspace>");
+    };
+    let ws = PathBuf::from(ws);
+    if let Err(e) = sandbox::check_workspace(&ws) {
+        return die(e);
+    }
+    match sandbox::restore(&ws, Path::new(files)) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(e) => die(format!("undo failed: {e}")),
+    }
+}
+
 fn cmd_runs() -> ExitCode {
-    let Some(snaps) = sandbox::snapshots_dir() else { return die("HOME is not set") };
-    let mut runs: Vec<_> = std::fs::read_dir(snaps).into_iter().flatten().flatten().collect();
+    let mut runs: Vec<_> = [
+        sandbox::snapshots_dir(),
+        Some(sandbox::agent_snapshots_dir()),
+    ]
+    .into_iter()
+    .flatten()
+    .flat_map(|d| std::fs::read_dir(d).into_iter().flatten().flatten().collect::<Vec<_>>())
+    .collect();
     runs.sort_by_key(|e| e.file_name());
+    runs.dedup_by_key(|e| e.file_name());
     for r in runs {
         let ws = std::fs::read_to_string(r.path().join("workspace")).unwrap_or_default();
         println!("{}\t{}", r.file_name().to_string_lossy(), ws.trim());

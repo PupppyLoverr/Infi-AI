@@ -78,8 +78,11 @@ RUN mkdir -p /usr/etc && \
 # Provisioned via sysusers (bootc-friendly: no layer-time account state).
 # The first-boot setup wizard (P6) takes over real account setup later.
 COPY base/sysusers.d/10-solyra.conf /usr/lib/sysusers.d/10-solyra.conf
+COPY base/sysusers.d/20-solyra-agent.conf /usr/lib/sysusers.d/20-solyra-agent.conf
 COPY base/sudoers.d/solyra /etc/sudoers.d/solyra
-RUN systemd-sysusers --dry-run /usr/lib/sysusers.d/10-solyra.conf
+COPY base/sudoers.d/solyra-agent /etc/sudoers.d/solyra-agent
+RUN systemd-sysusers --dry-run /usr/lib/sysusers.d/10-solyra.conf /usr/lib/sysusers.d/20-solyra-agent.conf && \
+    chmod 0440 /etc/sudoers.d/solyra-agent
 
 # --- compositor and shell -----------------------------------------------------
 # Both are built in the dev container (comp/dev.Containerfile) and dropped at
@@ -105,6 +108,9 @@ COPY base/systemd/ /usr/lib/systemd/system/
 COPY base/tmpfiles.d/solyra-setup.conf /usr/lib/tmpfiles.d/solyra-setup.conf
 RUN systemctl enable solyra-setup-apply.path
 # Agent runtime pieces (agent/): hooks, terminal wrapper, level-1 sandbox.
+# Agent Space workspaces and the solyra-agent identity live in
+# solyra-config.kdl and sysusers.d/20-solyra-agent.conf.
+COPY base/tmpfiles.d/solyra-agent.conf /usr/lib/tmpfiles.d/solyra-agent.conf
 COPY apps/out/solyra-agent /usr/bin/solyra-agent
 COPY base/profile.d/solyra-agent.sh /etc/profile.d/solyra-agent.sh
 COPY base/applications/ /usr/share/applications/

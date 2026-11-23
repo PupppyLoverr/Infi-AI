@@ -22,6 +22,11 @@ pub struct Policy {
     pub network: bool,
     pub read_only: Vec<PathBuf>,
     pub env: Vec<String>,
+    /// Agent Space workspace (7-9) this run belongs to, or none.
+    pub space: Option<u8>,
+    /// Give the sandbox the Wayland socket so the agent can open windows on
+    /// its Agent Space workspace (app-id `solyra-agent-<space>`).
+    pub wayland: bool,
 }
 
 pub fn parse_policy(text: &str) -> Result<Policy, String> {
@@ -40,11 +45,23 @@ pub fn parse_policy(text: &str) -> Result<Policy, String> {
             .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
             .unwrap_or_default()
     };
+    let space = match s.get("space") {
+        None => None,
+        Some(v) => {
+            let n = v.as_integer().ok_or("[sandbox] space must be a number (7-9)")?;
+            if !(7..=9).contains(&n) {
+                return Err(format!("[sandbox] space must be 7, 8 or 9 (Agent Space), got {n}"));
+            }
+            Some(n as u8)
+        }
+    };
     Ok(Policy {
         workspace: PathBuf::from(workspace),
         network: s.get("network").and_then(|v| v.as_bool()).unwrap_or(false),
         read_only: strs("read_only").into_iter().map(PathBuf::from).collect(),
         env: strs("env"),
+        space,
+        wayland: s.get("wayland").and_then(|v| v.as_bool()).unwrap_or(false),
     })
 }
 
@@ -101,6 +118,31 @@ pub fn bwrap_args(p: &Policy, ws: &Path, command: &[String]) -> Vec<String> {
     for ro in &p.read_only {
         let ro = ro.to_string_lossy().into_owned();
         a.extend([s("--ro-bind"), ro.clone(), ro]);
+    }
+    if let Some(n) = p.space {
+        a.extend([s("--setenv"), s("SOLYRA_AGENT_SPACE"), n.to_string()]);
+    }
+    if p.wayland {
+        // Bind only the compositor socket, not the runtime directory: no
+        // PipeWire, bus or portal sockets leak in. The agent's windows are
+        // routed to Agent Space by their app-id, not by this socket.
+        // When the run goes through `sudo -u solyra-agent`, the caller cannot
+        // see the real runtime dir; main sets SOLYRA_AGENT_WAYLAND_SOCK to a
+        // relay socket it created inside /var/lib/solyra-agent instead.
+        if let Some(sock) = std::env::var_os("SOLYRA_AGENT_WAYLAND_SOCK")
+            .map(PathBuf::from)
+            .or_else(|| {
+                let dir = std::env::var_os("XDG_RUNTIME_DIR")?;
+                Some(PathBuf::from(dir).join(std::env::var_os("WAYLAND_DISPLAY")?))
+            })
+        {
+            let sock = sock.to_string_lossy().into_owned();
+            a.extend([
+                s("--bind"), sock.clone(), sock.clone(),
+                s("--setenv"), s("XDG_RUNTIME_DIR"), s("/tmp"),
+                s("--setenv"), s("WAYLAND_DISPLAY"), sock,
+            ]);
+        }
     }
     let w = ws.to_string_lossy().into_owned();
     a.extend([s("--bind"), w.clone(), w.clone(), s("--chdir"), w, s("--")]);
@@ -227,12 +269,54 @@ pub fn restore(ws: &Path, snap: &Path) -> io::Result<Changes> {
     Ok(c)
 }
 
+/// Listen on `dest` and forward every connection to the real Wayland socket.
+/// Used when the sandbox runs as `solyra-agent`, which cannot traverse the
+/// human's `$XDG_RUNTIME_DIR`; `dest` must live somewhere that user can read.
+/// Returns once the listener is bound; serving continues on a thread and dies
+/// with this process.
+pub fn wayland_relay(dest: &Path) -> io::Result<()> {
+    use std::os::unix::net::{UnixListener, UnixStream};
+    let real = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").ok_or_else(|| io::Error::other("XDG_RUNTIME_DIR is not set"))?)
+        .join(std::env::var_os("WAYLAND_DISPLAY").ok_or_else(|| io::Error::other("WAYLAND_DISPLAY is not set"))?);
+    let listener = UnixListener::bind(dest)?;
+    std::thread::spawn(move || {
+        for incoming in listener.incoming() {
+            let Ok(mut client) = incoming else { continue };
+            let Ok(mut compositor) = UnixStream::connect(&real) else { continue };
+            std::thread::spawn(move || {
+                let mut a = match client.try_clone() {
+                    Ok(c) => c,
+                    Err(_) => return,
+                };
+                let mut b = match compositor.try_clone() {
+                    Ok(c) => c,
+                    Err(_) => return,
+                };
+                let t = std::thread::spawn(move || {
+                    let _ = std::io::copy(&mut a, &mut b);
+                    let _ = b.shutdown(std::net::Shutdown::Both);
+                });
+                let _ = std::io::copy(&mut compositor, &mut client);
+                let _ = client.shutdown(std::net::Shutdown::Both);
+                let _ = t.join();
+            });
+        }
+    });
+    Ok(())
+}
+
 pub fn snapshots_dir() -> Option<PathBuf> {
     let base = match std::env::var_os("XDG_STATE_HOME") {
         Some(x) => PathBuf::from(x),
         None => PathBuf::from(std::env::var_os("HOME")?).join(".local/state"),
     };
     Some(base.join("solyra/agent-snapshots"))
+}
+
+/// Snapshots of agent-user runs live in the shared agent directory so the
+/// `solyra-agent` user can read them back during `undo-apply`.
+pub fn agent_snapshots_dir() -> PathBuf {
+    PathBuf::from("/var/lib/solyra-agent/snapshots")
 }
 
 #[cfg(test)]
@@ -245,7 +329,14 @@ mod tests {
         let p = parse_policy("[sandbox]\nworkspace = \"/home/u/p\"\nread_only = [\"/home/u/docs\"]\nenv = [\"EDITOR\"]\n").unwrap();
         assert_eq!(p.workspace, PathBuf::from("/home/u/p"));
         assert!(!p.network);
+        assert_eq!(p.space, None);
+        assert!(!p.wayland);
         assert_eq!(p.read_only, vec![PathBuf::from("/home/u/docs")]);
+        let p2 = parse_policy("[sandbox]\nworkspace = \"/h/u/p\"\nspace = 8\nwayland = true\n").unwrap();
+        assert_eq!(p2.space, Some(8));
+        assert!(p2.wayland);
+        assert!(parse_policy("[sandbox]\nworkspace = \"/h/u/p\"\nspace = 3\n").is_err(), "only Agent Space workspaces");
+        assert!(parse_policy("[sandbox]\nworkspace = \"/h/u/p\"\nspace = 10\n").is_err());
         assert!(parse_policy("nonsense").is_err());
         assert!(parse_policy("[sandbox]\nnetwork = true\n").unwrap_err().contains("workspace"));
     }
@@ -267,12 +358,13 @@ mod tests {
 
     #[test]
     fn bwrap_args_isolate_by_default_and_open_only_what_is_asked() {
-        let p = Policy { workspace: "/w/p".into(), network: false, read_only: vec!["/w/docs".into()], env: vec![] };
+        let p = Policy { workspace: "/w/p".into(), network: false, read_only: vec!["/w/docs".into()], env: vec![], space: Some(8), wayland: false };
         let a = bwrap_args(&p, Path::new("/w/p"), &["echo".into(), "hi".into()]);
         assert!(a.contains(&"--unshare-all".to_string()));
         assert!(!a.contains(&"--share-net".to_string()), "network stays off");
         assert!(a.windows(3).any(|w| w == ["--bind", "/w/p", "/w/p"]));
         assert!(a.windows(3).any(|w| w == ["--ro-bind", "/w/docs", "/w/docs"]));
+        assert!(a.windows(3).any(|w| w == ["--setenv", "SOLYRA_AGENT_SPACE", "8"]));
         assert!(a.windows(3).any(|w| w == ["--tmpfs", "/tmp", "--clearenv"]) || a.contains(&"--clearenv".to_string()));
         assert_eq!(&a[a.len() - 3..], ["--", "echo", "hi"].map(String::from));
         // The user's home is never bound.
@@ -357,7 +449,7 @@ mod tests {
         fs::create_dir_all(&ws).unwrap();
         let secret = base.join("secret.txt");
         fs::write(&secret, "top secret").unwrap();
-        let p = Policy { workspace: ws.clone(), network: false, read_only: vec![], env: vec![] };
+        let p = Policy { workspace: ws.clone(), network: false, read_only: vec![], env: vec![], space: None, wayland: false };
         let script = format!(
             "cat {} 2>/dev/null && echo LEAK; echo ok > inside.txt; ls /sys/class/net | grep -v '^lo$' | head -1 | sed 's/^/NET:/'",
             secret.display()

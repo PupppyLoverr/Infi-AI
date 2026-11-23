@@ -2,7 +2,18 @@
 
 Solyra is a desktop for humans and agents. That means agents get **their own
 space, their own identity, and a visible cost** — not a chat box bolted onto a
-terminal. The design below is what P5 builds; nothing here is implemented yet.
+terminal.
+
+Level 1 is implemented and verified on Linux: `solyra-agent run` executes the
+command inside bubblewrap as the dedicated `solyra-agent` user (no home, no
+network unless `network = true`), takes a reflink/full-copy snapshot for
+`solyra-agent undo`, writes a JSONL audit trail, and accepts `space = 7..9`
+plus `wayland = true` to land GUI windows on the reserved Agent Space
+workspaces via a socket relay (the agent user cannot traverse the human's
+`$XDG_RUNTIME_DIR`). The opencode bridge (`solyra-agent opencode`) is verified
+against a live `opencode serve` with the free `big-pickle` model: session,
+working/idle and tool events land as task files in the panel's runtime
+directory; permission asks round-trip through `requests/`/`decisions/`.
 
 The previous implementation (`docs/agent-platform-legacy.md`, CosmosOS v1–v6)
 had the right shape: a policy file, approvals rendered in the shell, a JSONL
@@ -36,7 +47,7 @@ writes niri window rules by `app_id`; agents launch inside a sandbox whose
 | Level | Isolation | Status |
 | --- | --- | --- |
 | 0 | Agent runs as the human, no sandbox | Never offered |
-| 1 | Dedicated user `solyra-agent`, `bubblewrap`, policy file, no host home | P5 target |
+| 1 | Dedicated user `solyra-agent`, `bubblewrap`, policy file, no host home | Implemented (`agent/`, `base/sysusers.d/20-solyra-agent.conf`) |
 | 2 | Per-agent micro-VM (QEMU or crosvm), virtio-gpu, PipeWire stream into Agent Space | Later |
 
 Level 1 detail, which is the one that ships first:

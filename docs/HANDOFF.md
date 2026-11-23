@@ -140,9 +140,10 @@ tooling; port them to `tests/` if they should be permanent.
 
 ## Known gaps and traps
 
-- **No display manager.** Nothing starts a session at boot unless the dev
-  autologin unit is enabled (the disk builder does this with
-  `SOLYRA_AUTOLOGIN=1`). The release image should not ship it.
+- **Display manager landed.** greetd runs `solyra-greet` (zgx) under cage on
+  tty1; it speaks the greetd IPC protocol and starts
+  `solyra-session --session`. The dev disk still adds the autologin
+  `initial_session` (`SOLYRA_AUTOLOGIN=1`); the release image does not.
 - **niri needs a real renderer.** Software EGL is rejected by design; VMs need
   VirGL, bare metal needs any GPU with EGL.
 - **`systemd-oomd` / `systemd-resolved`** log `Failed at step USER` early in
@@ -171,9 +172,11 @@ solyra-panel close                                 # dismiss overlays
 
 ## Next steps, in order
 
-1. **Snap zones + Snap Assist** in `comp/` (compositor work; the plan's P2 gate).
-2. **Display manager** (greetd + a Solyra greeter, or a session unit the setup
-   wizard enables) so a normal boot lands on the desktop.
+1. **Snap zones + Snap Assist** in `comp/` (compositor work; the plan's P2
+   gate). Edge-drop and `snap-left`/`snap-right` actions plus the
+   `SnapAssistOpened`/pick/dismiss IPC are in; the panel-side assist card and
+   floating-tile snapping remain.
+2. ~~**Display manager**~~ — done: greetd + cage + `solyra-greet`.
 3. **First-boot wizard** (`docs/setup.md`) with the Flatpak gaming bundle.
 4. **Terminal in zgx** (`docs/apps.md`) — the first P4 app, replacing Foot.
 5. **Agent sandbox level 1** (`docs/agent-platform.md`) — dedicated user,

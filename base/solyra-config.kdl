@@ -264,6 +264,42 @@ spawn-at-startup "swaybg" "-i" "/usr/share/solyra/wallpapers/beach.png" "-m" "fi
 spawn-at-startup "/usr/libexec/polkit-gnome-authentication-agent-1"
 spawn-at-startup "solyra-panel"
 
+// Agent Space (docs/agent-platform.md): workspaces 7-9 are reserved for agent
+// sessions. Naming them in order pins their positions, so Mod+7/8/9 lands on
+// the agent space and numbered workspaces keep their usual places. Windows
+// whose app-id is `solyra-agent-<n>` open on the matching workspace and are
+// marked with a thin accent border.
+workspace "1"
+workspace "2"
+workspace "3"
+workspace "4"
+workspace "5"
+workspace "6"
+workspace "agent-7"
+workspace "agent-8"
+workspace "agent-9"
+
+window-rule {
+    match app-id="^solyra-agent-7$"
+    open-on-workspace "agent-7"
+}
+window-rule {
+    match app-id="^solyra-agent-8$"
+    open-on-workspace "agent-8"
+}
+window-rule {
+    match app-id="^solyra-agent-9$"
+    open-on-workspace "agent-9"
+}
+window-rule {
+    match app-id="^solyra-agent-[0-9]+$"
+    border {
+        on
+        width 2
+        active-color "#5b8cf5"
+    }
+}
+
 binds {
     Mod+Shift+Slash { show-hotkey-overlay; }
 
@@ -317,6 +353,8 @@ binds {
     Mod+Period { expel-window-from-column; }
 
     // Snap Assist: sizes and places for tidy windows.
+    Mod+Alt+Left  { snap-left; }
+    Mod+Alt+Right { snap-right; }
     Mod+R { switch-preset-column-width; }
     Mod+Shift+R { switch-preset-window-height; }
     Mod+V { toggle-window-floating; }

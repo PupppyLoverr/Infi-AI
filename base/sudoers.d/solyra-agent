@@ -1,0 +1,3 @@
+# The desktop user may run bubblewrap sandboxes as the dedicated agent user —
+# nothing else as that user, nothing as root through this rule.
+solyra ALL=(solyra-agent) NOPASSWD: /usr/bin/bwrap, /usr/bin/test, /usr/bin/solyra-agent
