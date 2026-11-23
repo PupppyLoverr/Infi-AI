@@ -177,7 +177,13 @@ solyra-panel close                                 # dismiss overlays
    `SnapAssistOpened`/pick/dismiss IPC are in; the panel-side assist card and
    floating-tile snapping remain.
 2. ~~**Display manager**~~ — done: greetd + cage + `solyra-greet`.
-3. **First-boot wizard** (`docs/setup.md`) with the Flatpak gaming bundle.
-4. **Terminal in zgx** (`docs/apps.md`) — the first P4 app, replacing Foot.
-5. **Agent sandbox level 1** (`docs/agent-platform.md`) — dedicated user,
-   bubblewrap, policy file, audit trail.
+3. ~~**First-boot wiring**~~ — done: greetd `initial_session` runs
+   `solyra-setup` under cage as `solyra-setup` until `setup-done` exists.
+   Remaining: the Flatpak gaming bundle inside the wizard (`docs/setup.md`).
+4. **Terminal in zgx** (`docs/apps.md`) — exists as `solyra-term` (tabs,
+   panes); remaining P4 work is the daily-driver checklist on a real boot.
+5. ~~**Agent sandbox level 1**~~ — done and verified on Linux: dedicated
+   `solyra-agent` user + bubblewrap, `space`/`wayland` policy keys, Agent
+   Space on workspaces 7–9, snapshot/undo for agent-owned workspaces,
+   opencode bridge verified end-to-end. Remaining: rollback demo gate and
+   the panel-side snap-assist card above.

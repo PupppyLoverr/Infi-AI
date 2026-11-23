@@ -48,6 +48,13 @@ repository.workspace = true
 rust-version.workspace = true
 
 readme = "README.md"
+
+# solyra-comp ships stripped with thin LTO, matching the rest of the distro's
+# release builds (apps/, shell/panel/, agent/). Keeps the compositor binary
+# smaller and startup faster without the build-time cost of fat LTO.
+[profile.release]
+lto = "thin"
+strip = "symbols"
 keywords = ["wayland", "compositor", "tiling", "smithay", "wm"]
 
 [dependencies]
