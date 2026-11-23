@@ -123,6 +123,7 @@ pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
 }
 
 /// Paint a rounded body (radius 0 for full-width bars).
+/// Rounded slabs cast a soft drop shadow; full-width bars stay flush.
 pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f32) {
     if r <= 0.5 {
         if s.kind == Material::Glass {
@@ -134,6 +135,7 @@ pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f
         }
         return;
     }
+    cv.round_rect_shadow(x, y, w, h, r, 9.0, 28.0, 48);
     match s.kind {
         Material::Glass => {
             let a = s.fill.3;

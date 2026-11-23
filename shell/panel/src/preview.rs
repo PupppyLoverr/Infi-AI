@@ -220,7 +220,7 @@ fn launcher_shot(
     let mut scene = scene_pixels(
         fonts,
         kind,
-        "beach",
+        "perihelion",
         Material::Glass,
         Material::Glass,
         Material::Solid,
@@ -275,7 +275,7 @@ fn desk_shot(name: &str, kind: ThemeKind, fonts: &Fonts, named: bool) -> Shot {
     let mut scene = scene_pixels(
         fonts,
         kind,
-        "beach",
+        "perihelion",
         Material::Glass,
         Material::Glass,
         Material::Solid,
@@ -1330,7 +1330,7 @@ fn material_scenes_render() {
     let fonts = Fonts::load();
     let mut shots = Vec::new();
     for kind in [ThemeKind::Dark, ThemeKind::Light] {
-        let wp = if kind == ThemeKind::Dark { "beach" } else { "beach" };
+        let wp = if kind == ThemeKind::Dark { "perihelion" } else { "beach" };
         for m in Material::ALL {
             shots.push(material_scene(
                 &fonts,

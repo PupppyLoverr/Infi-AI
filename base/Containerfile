@@ -124,6 +124,7 @@ COPY assets/wallpapers/ocean-1920x1080.png /usr/share/solyra/wallpapers/ocean.pn
 COPY assets/wallpapers/sunset-1920x1080.png /usr/share/solyra/wallpapers/sunset.png
 COPY assets/wallpapers/forest-1920x1080.png /usr/share/solyra/wallpapers/forest.png
 COPY assets/wallpapers/graphite-1920x1080.png /usr/share/solyra/wallpapers/graphite.png
+COPY assets/wallpapers/perihelion-1920x1080.png /usr/share/solyra/wallpapers/perihelion.png
 COPY base/theme/foot.ini /etc/xdg/foot/foot.ini
 COPY base/theme/gtk-3.0/settings.ini /etc/gtk-3.0/settings.ini
 COPY base/theme/gtk-4.0/settings.ini /etc/gtk-4.0/settings.ini

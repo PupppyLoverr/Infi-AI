@@ -54,7 +54,9 @@ impl DockStyle {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WallpaperPreset {
-    /// Unsplash beach photograph — the default splash.
+    /// Solyra Perihelion — the signature iris-dawn artwork, the default.
+    Perihelion,
+    /// Unsplash beach photograph.
     Beach,
     Violet,
     Ocean,
@@ -64,7 +66,8 @@ pub enum WallpaperPreset {
 }
 
 impl WallpaperPreset {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
+        Self::Perihelion,
         Self::Beach,
         Self::Ocean,
         Self::Sunset,
@@ -75,6 +78,7 @@ impl WallpaperPreset {
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Perihelion => "perihelion",
             Self::Beach => "beach",
             Self::Violet => "violet",
             Self::Ocean => "ocean",
@@ -86,6 +90,7 @@ impl WallpaperPreset {
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::Perihelion => "Perihelion",
             Self::Beach => "Beach",
             Self::Violet => "Violet",
             Self::Ocean => "Ocean",
@@ -97,6 +102,7 @@ impl WallpaperPreset {
 
     pub fn swatch(self) -> Rgba {
         match self {
+            Self::Perihelion => Rgba::rgb(0x6f, 0x66, 0xff),
             Self::Beach => Rgba::rgb(0x3b, 0x9e, 0xd8),
             Self::Violet => Rgba::rgb(0xa8, 0x55, 0xf7),
             Self::Ocean => Rgba::rgb(0x0e, 0xa5, 0xe9),
@@ -108,6 +114,7 @@ impl WallpaperPreset {
 
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
+            "perihelion" | "iris" => Some(Self::Perihelion),
             "beach" | "splash" => Some(Self::Beach),
             "violet" => Some(Self::Violet),
             "ocean" => Some(Self::Ocean),
@@ -268,7 +275,7 @@ impl Default for ShellPrefs {
     fn default() -> Self {
         Self {
             dock_style: DockStyle::Floating,
-            wallpaper: WallpaperPreset::Beach,
+            wallpaper: WallpaperPreset::Perihelion,
             wallpaper_file: None,
             wallpaper_mode: WallpaperMode::Fill,
             theme: ThemeKind::Dark,

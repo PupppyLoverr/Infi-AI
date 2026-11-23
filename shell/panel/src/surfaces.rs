@@ -17,7 +17,7 @@ use crate::tokens::{
 };
 
 /// macOS menu-bar band: 24–28 px. Exclusive zone tracks this height.
-pub const BAR_HEIGHT: u32 = 26;
+pub const BAR_HEIGHT: u32 = 28;
 pub const NOTCH_WIDTH: i32 = 184;
 
 pub const CONTROL_W: u32 = 348;
@@ -118,7 +118,7 @@ pub fn draw_bar(
     let w = cv.width as i32;
     let h = cv.height as i32;
     let mut regions = Vec::new();
-    // Optical baseline for 26px Apple menu bar.
+    // Optical baseline for the menu bar.
     let text_y = (h as f32 * 0.69).round() as i32;
     let icon_cy = h as f32 * 0.5;
 
@@ -560,10 +560,10 @@ pub const SPOT_W: i32 = 580;
 const SPOT_PAD_X: i32 = 40;
 const SPOT_PAD_TOP: i32 = 20;
 const SPOT_PAD_BOTTOM: i32 = 52;
-const CAPSULE_H: i32 = 56;
+const CAPSULE_H: i32 = 58;
 const CARD_GAP: i32 = 10;
 const CARD_PAD: i32 = 8;
-const CARD_R: f32 = 24.0;
+const CARD_R: f32 = 26.0;
 const MAX_LIST_H: i32 = 304;
 const NO_MATCH_H: i32 = 64;
 const AGENT_NOTE_H: i32 = 22;
@@ -661,7 +661,7 @@ pub fn draw_launcher(
     let (glass, edge) = spot_glass(th);
 
     for (r, radius) in lay.shapes() {
-        cv.round_rect_shadow(r.x, r.y, r.w, r.h, radius, 10.0, 28.0, 42);
+        cv.round_rect_shadow(r.x, r.y, r.w, r.h, radius, 12.0, 34.0, 56);
     }
     for (r, radius) in lay.shapes() {
         cv.round_rect(r.x, r.y, r.w, r.h, radius, glass);

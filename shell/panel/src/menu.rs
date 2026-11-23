@@ -164,9 +164,9 @@ pub fn entries(id: MenuId, app: &AppCtx<'_>, dark: bool) -> Vec<Entry> {
     }
 }
 
-pub const ROW_H: i32 = 26;
+pub const ROW_H: i32 = 28;
 pub const SEP_H: i32 = 9;
-pub const PAD: i32 = 6;
+pub const PAD: i32 = 8;
 pub const MIN_W: i32 = 220;
 
 /// The panel's size for `entries`.
@@ -224,13 +224,14 @@ pub fn draw(
     let (pw, ph) = panel_size(fonts, entries);
     let px = (title.x - 8).clamp(4, (screen_w - pw - 4).max(4));
     let py = bar_h + 2;
-    cv.round_rect(px, py, pw, ph, 10.0, th.surface);
-    cv.stroke_round_rect(px, py, pw, ph, 10.0, 1.0, th.hairline);
+    cv.round_rect_shadow(px, py, pw, ph, 12.0, 9.0, 26.0, 46);
+    cv.round_rect(px, py, pw, ph, 12.0, th.surface);
+    cv.stroke_round_rect(px, py, pw, ph, 12.0, 1.0, th.hairline);
 
     let mut y = py + PAD;
     for (i, e) in entries.iter().enumerate() {
         let Some(action) = &e.action else {
-            cv.fill_rect(px + 10, y + SEP_H / 2, pw - 20, 1, th.separator);
+            cv.fill_rect(px + 12, y + SEP_H / 2, pw - 24, 1, th.separator);
             y += SEP_H;
             continue;
         };
@@ -258,7 +259,7 @@ pub fn draw(
             fonts.regular.as_ref(),
             label,
             rx + 12,
-            y + 18,
+            y + 19,
             T_LABEL + 0.5,
             fg,
         );
@@ -269,7 +270,7 @@ pub fn draw(
                 fonts.regular.as_ref(),
                 s,
                 rx + rw - 12 - sw,
-                y + 18,
+                y + 19,
                 T_LABEL,
                 sc,
             );

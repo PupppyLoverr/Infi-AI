@@ -22,10 +22,10 @@ use crate::state::{
 use crate::surfaces::{HitAction, Live, Region};
 use crate::tokens::Theme;
 
-/// Height of the floating card itself (floating dock ~56px).
-pub const CARD_H: i32 = 56;
+/// Height of the floating card itself.
+pub const CARD_H: i32 = 62;
 /// Corner radius of the floating glass pill.
-const DOCK_R: f32 = 19.0;
+const DOCK_R: f32 = 22.0;
 /// Extra room above the card for magnified icons.
 pub const MAGNIFY_ROOM: i32 = 30;
 /// Height of the taskbar-style taskbar.
@@ -112,21 +112,21 @@ struct Metrics {
 fn metrics(style: DockStyle) -> Metrics {
     match style {
         DockStyle::Minimal => Metrics {
-            cell: 38,
-            gap: 6,
-            pad: 12,
+            cell: 40,
+            gap: 7,
+            pad: 14,
         },
-        // floating dock: 42px sculpted squircles with airy spacing
+        // floating dock: 46px sculpted squircles with airy spacing
         // inside a luminous glass pill.
         DockStyle::Floating | DockStyle::Solyra => Metrics {
-            cell: 42,
-            gap: 7,
-            pad: 12,
+            cell: 46,
+            gap: 9,
+            pad: 16,
         },
         DockStyle::Taskbar => Metrics {
             cell: 40,
-            gap: 6,
-            pad: 14,
+            gap: 7,
+            pad: 16,
         },
     }
 }

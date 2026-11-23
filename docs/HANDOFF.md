@@ -166,7 +166,7 @@ solyra-panel toggle-control                        # Super+Shift+C
 solyra-panel toggle-island                         # Super+Shift+I
 solyra-panel toggle-agents                         # Super+Shift+A
 solyra-panel dock macos|windows|solyra             # switch dock variant
-solyra-panel wallpaper ocean|sunset|forest|graphite|violet
+solyra-panel wallpaper perihelion|ocean|sunset|forest|graphite|violet
 solyra-panel close                                 # dismiss overlays
 ```
 

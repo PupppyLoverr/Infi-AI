@@ -101,13 +101,13 @@ pub struct Theme {
 
 impl Theme {
     pub const fn dark() -> Self {
-        // Neutral cool graphite (macOS / Windows 11), not purple-tinted.
-        // Surfaces stay translucent so Glass/Acrylic can show the wallpaper.
+        // Cool graphite with a faint iris undertone — Solyra's own dusk.
+        // Surfaces stay translucent so Glass/Frost can show the wallpaper.
         Self {
-            surface: Rgba::rgba(0x1c, 0x1c, 0x1e, 196),
-            bar: Rgba::rgba(0x1c, 0x1c, 0x1e, 112),
+            surface: Rgba::rgba(0x1e, 0x1d, 0x2a, 196),
+            bar: Rgba::rgba(0x1e, 0x1d, 0x2a, 112),
             hairline: Rgba::rgba(0xff, 0xff, 0xff, 38),
-            field: Rgba::rgba(0x00, 0x00, 0x00, 112),
+            field: Rgba::rgba(0x0b, 0x0a, 0x16, 128),
             tile: Rgba::rgba(255, 255, 255, 16),
             tile_hover: Rgba::rgba(255, 255, 255, 30),
             separator: Rgba::rgba(255, 255, 255, 24),
@@ -115,23 +115,24 @@ impl Theme {
             text_med: Rgba::rgba(0xf2, 0xf2, 0xf7, 232),
             // Apple secondary label — stays ≥ AA on translucent glass.
             text_dim: Rgba::rgb(0xc7, 0xc7, 0xcc),
-            // System blue — crisp Apple hue that still clears AA with white.
-            accent: Rgba::rgb(0x00, 0x6a, 0xe0),
+            // Solyra Iris — the distro's signature violet, still AA with
+            // white on glass.
+            accent: Rgba::rgb(0x5b, 0x54, 0xd9),
             on_accent: Rgba::rgb(0xff, 0xff, 0xff),
-            selected_fill: Rgba::rgba(0x0a, 0x84, 0xff, 58),
-            selected_border: Rgba::rgba(0x40, 0x9c, 0xff, 120),
+            selected_fill: Rgba::rgba(0x6f, 0x66, 0xff, 58),
+            selected_border: Rgba::rgba(0x8f, 0x86, 0xff, 120),
             success: Rgba::rgb(0x32, 0xd7, 0x4b),
             warning: Rgba::rgb(0xff, 0xd6, 0x0a),
             danger: Rgba::rgb(0xff, 0x45, 0x3a),
-            agent_active: Rgba::rgb(0x00, 0x6a, 0xe0),
+            agent_active: Rgba::rgb(0x5b, 0x54, 0xd9),
             agent_approval: Rgba::rgb(0xff, 0x9f, 0x0a),
         }
     }
 
     pub const fn light() -> Self {
         Self {
-            surface: Rgba::rgba(0xf2, 0xf2, 0xf7, 210),
-            bar: Rgba::rgba(0xf2, 0xf2, 0xf7, 128),
+            surface: Rgba::rgba(0xf4, 0xf3, 0xfb, 210),
+            bar: Rgba::rgba(0xf4, 0xf3, 0xfb, 128),
             hairline: Rgba::rgba(0x00, 0x00, 0x00, 28),
             field: Rgba::rgba(255, 255, 255, 220),
             tile: Rgba::rgba(0x00, 0x00, 0x00, 10),
@@ -140,15 +141,15 @@ impl Theme {
             text: Rgba::rgb(0x1c, 0x1c, 0x1e),
             text_med: Rgba::rgba(0x3a, 0x3a, 0x3c, 230),
             text_dim: Rgba::rgb(0x48, 0x48, 0x4e),
-            accent: Rgba::rgb(0x00, 0x5c, 0xd0),
+            accent: Rgba::rgb(0x4f, 0x46, 0xc8),
             on_accent: Rgba::rgb(0xff, 0xff, 0xff),
-            selected_fill: Rgba::rgba(0x00, 0x5c, 0xd0, 28),
-            selected_border: Rgba::rgba(0x00, 0x5c, 0xd0, 150),
+            selected_fill: Rgba::rgba(0x4f, 0x46, 0xc8, 28),
+            selected_border: Rgba::rgba(0x4f, 0x46, 0xc8, 150),
             // Darker state colours so they stay AA on light glass.
             success: Rgba::rgb(0x18, 0x74, 0x30),
             warning: Rgba::rgb(0x9a, 0x60, 0x00),
             danger: Rgba::rgb(0xc4, 0x00, 0x12),
-            agent_active: Rgba::rgb(0x00, 0x5c, 0xd0),
+            agent_active: Rgba::rgb(0x4f, 0x46, 0xc8),
             agent_approval: Rgba::rgb(0x9a, 0x60, 0x00),
         }
     }
@@ -187,6 +188,8 @@ impl Theme {
 /// light-theme value tuned for contrast (tested below).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Accent {
+    /// Solyra Iris — the signature violet, first in the picker.
+    Iris,
     Mauve,
     Blue,
     Teal,
@@ -197,7 +200,8 @@ pub enum Accent {
 }
 
 impl Accent {
-    pub const ALL: [Accent; 7] = [
+    pub const ALL: [Accent; 8] = [
+        Accent::Iris,
         Accent::Mauve,
         Accent::Blue,
         Accent::Teal,
@@ -209,6 +213,7 @@ impl Accent {
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Iris => "iris",
             Self::Mauve => "mauve",
             Self::Blue => "blue",
             Self::Teal => "teal",
@@ -221,6 +226,7 @@ impl Accent {
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::Iris => "Solyra Iris",
             Self::Mauve => "Mauve",
             Self::Blue => "Blue",
             Self::Teal => "Teal",
@@ -242,9 +248,10 @@ impl Accent {
         let dark_on = Rgba::rgb(0x11, 0x11, 0x13);
         let white = Rgba::rgb(0xff, 0xff, 0xff);
         match (self, kind) {
+            (Self::Iris, ThemeKind::Dark) => (Rgba::rgb(0x5b, 0x54, 0xd9), white),
+            (Self::Iris, ThemeKind::Light) => (Rgba::rgb(0x4f, 0x46, 0xc8), white),
             (Self::Mauve, ThemeKind::Dark) => (Rgba::rgb(0xb4, 0x8a, 0xad), dark_on),
             (Self::Mauve, ThemeKind::Light) => (Rgba::rgb(0x8a, 0x4f, 0x80), white),
-            // System blue — crisp Apple hue that still clears AA with white.
             (Self::Blue, ThemeKind::Dark) => (Rgba::rgb(0x00, 0x6a, 0xe0), white),
             (Self::Blue, ThemeKind::Light) => (Rgba::rgb(0x00, 0x64, 0xd8), white),
             (Self::Teal, ThemeKind::Dark) => (Rgba::rgb(0x5f, 0xbf, 0xb4), dark_on),
