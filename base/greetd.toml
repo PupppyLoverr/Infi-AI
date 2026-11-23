@@ -1,9 +1,17 @@
 # greetd: the Solyra greeter (solyra-greet, under cage) collects the login on
-# tty1, then starts the Solyra session. The development disk
-# (scripts/build-disk.sh with SOLYRA_AUTOLOGIN=1) appends an [initial_session]
-# so a VM boots straight to the desktop. The release image never does.
+# tty1, then starts the Solyra session.
+#
+# [initial_session] runs the first-boot setup wizard (solyra-first-login, a
+# cage wrapper around solyra-setup) until /var/lib/solyra/setup-done exists;
+# the wrapper exits right away afterwards, and greetd falls back to the
+# greeter. The development disk (scripts/build-disk.sh with SOLYRA_AUTOLOGIN=1)
+# rewrites this block to log the "solyra" user straight in instead.
 [terminal]
 vt = 1
+
+[initial_session]
+command = "/usr/bin/solyra-first-login"
+user = "solyra-setup"
 
 [default_session]
 command = "cage -s -- /usr/bin/solyra-greet"

@@ -101,8 +101,10 @@ COPY apps/out/solyra-browse /usr/bin/solyra-browse
 # First-boot setup (experimental): wizard, root helper, units. See docs/setup.md.
 COPY apps/out/solyra-setup /usr/bin/solyra-setup
 COPY apps/out/solyra-setup-apply /usr/bin/solyra-setup-apply
-# Graphical greeter: runs under cage on tty1 via greetd.
+# Graphical greeter: runs under cage on tty1 via greetd. solyra-first-login
+# is greetd's initial_session: the setup wizard until setup-done exists.
 COPY apps/out/solyra-greet /usr/bin/solyra-greet
+COPY base/solyra-first-login /usr/bin/solyra-first-login
 COPY base/solyra-install /usr/bin/solyra-install
 COPY base/systemd/ /usr/lib/systemd/system/
 COPY base/tmpfiles.d/solyra-setup.conf /usr/lib/tmpfiles.d/solyra-setup.conf
@@ -114,7 +116,7 @@ COPY base/tmpfiles.d/solyra-agent.conf /usr/lib/tmpfiles.d/solyra-agent.conf
 COPY apps/out/solyra-agent /usr/bin/solyra-agent
 COPY base/profile.d/solyra-agent.sh /etc/profile.d/solyra-agent.sh
 COPY base/applications/ /usr/share/applications/
-RUN chmod +x /usr/bin/solyra-session /usr/bin/solyra-open /usr/bin/solyra-panel /usr/bin/solyra-settings /usr/bin/solyra-term /usr/bin/solyra-browse /usr/bin/solyra-setup /usr/bin/solyra-setup-apply /usr/bin/solyra-install /usr/bin/solyra-agent /usr/bin/solyra-greet && \
+RUN chmod +x /usr/bin/solyra-session /usr/bin/solyra-open /usr/bin/solyra-panel /usr/bin/solyra-settings /usr/bin/solyra-term /usr/bin/solyra-browse /usr/bin/solyra-setup /usr/bin/solyra-setup-apply /usr/bin/solyra-install /usr/bin/solyra-agent /usr/bin/solyra-greet /usr/bin/solyra-first-login && \
     ln -s solyra-comp /usr/bin/niri
 COPY assets/wallpapers/beach-1920x1080.png /usr/share/solyra/wallpapers/beach.png
 COPY assets/wallpapers/violet-1920x1080.png /usr/share/solyra/wallpapers/violet.png

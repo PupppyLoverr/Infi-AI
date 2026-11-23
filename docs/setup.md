@@ -89,9 +89,10 @@ anything we cannot license:
   before acting, runs `useradd`, `chpasswd` (password on stdin, never in argv)
   and `hostnamectl`, and writes the done marker only if all succeeded.
   Both are unit-tested; the helper's refusals are exercised with `--dry-run`.
-- **Not wired in:** nothing starts the wizard on a fresh install yet. That needs
-  a login flow for the very first boot (greetd would have to autologin a
-  temporary setup user only until setup is done), which is not built. The
-  development disk skips setup entirely (it creates `setup-done`).
+- **Wired in:** greetd's `initial_session` is `solyra-first-login`, which runs
+  `cage -s -- solyra-setup` as the `solyra-setup` user until
+  `/var/lib/solyra/setup-done` exists; the wizard's exit drops to the real
+  greeter. The development disk skips setup entirely (it creates `setup-done`
+  and rewrites the initial session to autologin `solyra`).
 - `solyra-install /dev/DISK` wraps `bootc install to-disk` with disk checks and
   a typed confirmation. It has not been run end to end, and there is no ISO.

@@ -124,11 +124,11 @@ if [[ "${SOLYRA_AUTOLOGIN:-0}" == "1" ]]; then
   mkdir -p "$VAR_DIR/lib/solyra" && : > "$VAR_DIR/lib/solyra/setup-done"
   log "enabling development autologin (greetd initial_session)"
   mkdir -p "$DEPLOY/etc/greetd"
-  {
-    cat "$DEPLOY/usr/etc/greetd/config.toml" 2>/dev/null || cat "$REPO_ROOT/base/greetd.toml"
-    printf '\n[initial_session]\ncommand = "/usr/bin/solyra-session --session"\nuser = "solyra"\n'
-  } > "$DEPLOY/etc/greetd/config.toml"
-  grep -q '^\[initial_session\]' "$DEPLOY/etc/greetd/config.toml"
+  cp "$DEPLOY/usr/etc/greetd/config.toml" "$DEPLOY/etc/greetd/config.toml" 2>/dev/null || cp "$REPO_ROOT/base/greetd.toml" "$DEPLOY/etc/greetd/config.toml"
+  # The base config already has an [initial_session] (the setup wizard);
+  # rewrite it to log the dev user straight in instead of adding a duplicate.
+  sed -i 's|^command = "/usr/bin/solyra-first-login"$|command = "/usr/bin/solyra-session --session"|; s|^user = "solyra-setup"$|user = "solyra"|' "$DEPLOY/etc/greetd/config.toml"
+  grep -q 'solyra-session --session' "$DEPLOY/etc/greetd/config.toml"
 fi
 if [[ -n "${SOLYRA_DEV_PASSWORD:-}" ]]; then
   log "setting a development password for solyra (first boot)"

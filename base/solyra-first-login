@@ -1,0 +1,12 @@
+#!/bin/sh
+# greetd's initial_session: the very first thing on a fresh install. While
+# first-boot setup is unfinished this runs the wizard full-screen under cage;
+# when it exits (done or skipped), greetd falls back to the real greeter.
+# Once setup is done — or on a development image, which writes setup-done at
+# provision time — this exits immediately so the greeter appears instead.
+set -eu
+
+if [ -f /var/lib/solyra/setup-done ]; then
+    exit 0
+fi
+exec /usr/bin/cage -s -- /usr/bin/solyra-setup
