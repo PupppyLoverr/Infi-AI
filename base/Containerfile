@@ -35,11 +35,11 @@ RUN dnf -y install \
 # --- everyday desktop -------------------------------------------------------
 # A usable system, not just a compositor: login manager, audio, networking
 # tools, a browser and an editor. Sizes are measured in CI (budget <= 4 GB).
-#   greetd + agreety  text login; the dev disk adds an autologin initial_session
+#   greetd + cage + solyra-greet  graphical login; the dev disk adds autologin
 #   wireplumber       `wpctl`, which the control centre volume slider drives
 #   NetworkManager-tui  `nmtui`, opened from the control centre network tile
 RUN dnf -y install \
-      greetd \
+      greetd cage \
       wireplumber pipewire-pulseaudio pipewire-alsa \
       NetworkManager-wifi NetworkManager-tui \
       brightnessctl \
@@ -98,6 +98,8 @@ COPY apps/out/solyra-browse /usr/bin/solyra-browse
 # First-boot setup (experimental): wizard, root helper, units. See docs/setup.md.
 COPY apps/out/solyra-setup /usr/bin/solyra-setup
 COPY apps/out/solyra-setup-apply /usr/bin/solyra-setup-apply
+# Graphical greeter: runs under cage on tty1 via greetd.
+COPY apps/out/solyra-greet /usr/bin/solyra-greet
 COPY base/solyra-install /usr/bin/solyra-install
 COPY base/systemd/ /usr/lib/systemd/system/
 COPY base/tmpfiles.d/solyra-setup.conf /usr/lib/tmpfiles.d/solyra-setup.conf
@@ -106,7 +108,7 @@ RUN systemctl enable solyra-setup-apply.path
 COPY apps/out/solyra-agent /usr/bin/solyra-agent
 COPY base/profile.d/solyra-agent.sh /etc/profile.d/solyra-agent.sh
 COPY base/applications/ /usr/share/applications/
-RUN chmod +x /usr/bin/solyra-session /usr/bin/solyra-open /usr/bin/solyra-panel /usr/bin/solyra-settings /usr/bin/solyra-term /usr/bin/solyra-browse /usr/bin/solyra-setup /usr/bin/solyra-setup-apply /usr/bin/solyra-install /usr/bin/solyra-agent && \
+RUN chmod +x /usr/bin/solyra-session /usr/bin/solyra-open /usr/bin/solyra-panel /usr/bin/solyra-settings /usr/bin/solyra-term /usr/bin/solyra-browse /usr/bin/solyra-setup /usr/bin/solyra-setup-apply /usr/bin/solyra-install /usr/bin/solyra-agent /usr/bin/solyra-greet && \
     ln -s solyra-comp /usr/bin/niri
 COPY assets/wallpapers/beach-1920x1080.png /usr/share/solyra/wallpapers/beach.png
 COPY assets/wallpapers/violet-1920x1080.png /usr/share/solyra/wallpapers/violet.png

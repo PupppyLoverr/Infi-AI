@@ -1,0 +1,13 @@
+[package]
+name = "solyra-greet"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Solyra graphical greeter for greetd (runs under cage)"
+
+[dependencies]
+zgx.workspace = true
+zgx-desktop.workspace = true
+solyra-ui.workspace = true
+solyra-tokens.workspace = true
+serde_json = "1"
