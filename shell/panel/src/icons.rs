@@ -109,7 +109,7 @@ mod tests {
         assert_eq!(name_for("firefox"), Some("browser"));
         assert_eq!(name_for("org.mozilla.firefox"), Some("browser"));
         assert_eq!(name_for("org.xfce.mousepad"), Some("editor"));
-        assert_eq!(name_for("com.google.Chrome"), Some("chrome"));
+        assert_eq!(name_for("com.google.Chrome"), Some("browser"));
         assert_eq!(name_for("solyra-settings"), Some("settings"));
         assert_eq!(name_for("solyra-agents"), None);
         assert_eq!(name_for("start"), None);
