@@ -2715,6 +2715,48 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         cancel_resize_for_column(&mut self.interactive_resize, col);
     }
 
+    /// Snap zones: pin the active column to a horizontal half of the working
+    /// area, Windows-11 style. Sets the column to half the working-area width
+    /// and animates the view so it lands flush against `edge`.
+    ///
+    /// Returns `false` when there is no active column or it is fullscreen.
+    pub fn snap_active_column(&mut self, left: bool) -> bool {
+        if self.columns.is_empty() {
+            return false;
+        }
+
+        let idx = self.active_column_idx;
+        if self.columns[idx].sizing_mode().is_fullscreen() {
+            return false;
+        }
+
+        self.columns[idx].set_column_width(SizeChange::SetProportion(50.), None, true);
+
+        // A column at `col_x` renders at `col_x - view_pos`, and the view
+        // offset is stored relative to the active column (`view_pos - col_x`).
+        // Pick the offset that puts the column flush with the working-area
+        // edge.
+        let area = self.working_area;
+        let col_w = self.columns[idx].width();
+        let offset = if left { 0. } else { col_w - area.size.w } - area.loc.x;
+        self.animate_view_offset(idx, offset);
+        true
+    }
+
+    /// Snap the column containing `window` to a horizontal half, making it
+    /// active. Used by snap assist to fill the complementary zone.
+    pub fn snap_window_to(&mut self, window: &W::Id, left: bool) -> bool {
+        let Some(idx) = self
+            .columns
+            .iter()
+            .position(|col| col.tiles.iter().any(|tile| tile.window().id() == window))
+        else {
+            return false;
+        };
+        self.activate_column(idx);
+        self.snap_active_column(left)
+    }
+
     pub fn set_window_height(&mut self, window: Option<&W::Id>, change: SizeChange) {
         if self.columns.is_empty() {
             return;

@@ -2013,6 +2013,38 @@ impl State {
             Action::MaximizeColumn => {
                 self.niri.layout.toggle_full_width();
             }
+            Action::SnapLeft => {
+                if self.niri.layout.snap_active_column(true) {
+                    self.ipc_emit_snap_assist();
+                }
+                // FIXME: granular
+                self.niri.queue_redraw_all();
+            }
+            Action::SnapRight => {
+                if self.niri.layout.snap_active_column(false) {
+                    self.ipc_emit_snap_assist();
+                }
+                // FIXME: granular
+                self.niri.queue_redraw_all();
+            }
+            Action::SnapAssistPick(id) => {
+                if let Some((_, left)) = self.niri.layout.snap_assist() {
+                    let id = MappedId::specific(id);
+                    if let Some(window) = self.niri.find_window_by_id(id) {
+                        if self.niri.layout.snap_window_to(&window, !left) {
+                            self.ipc_emit_snap_assist_closed();
+                        }
+                    }
+                }
+                // FIXME: granular
+                self.niri.queue_redraw_all();
+            }
+            Action::SnapAssistDismiss => {
+                if self.niri.layout.snap_assist().is_some() {
+                    self.niri.layout.dismiss_snap_assist();
+                    self.ipc_emit_snap_assist_closed();
+                }
+            }
             Action::MaximizeWindowToEdges => {
                 let focus = self.niri.layout.focus().map(|m| m.window.clone());
                 if let Some(window) = focus {

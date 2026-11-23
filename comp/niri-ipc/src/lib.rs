@@ -836,6 +836,19 @@ pub enum Action {
     },
     /// Toggle the maximized state of the focused column.
     MaximizeColumn {},
+    /// Snap the focused column to the left half of the working area (snap zone).
+    SnapLeft {},
+    /// Snap the focused column to the right half of the working area (snap zone).
+    SnapRight {},
+    /// Snap a snap-assist candidate into the complementary zone and close the
+    /// assist.
+    SnapAssistPick {
+        /// Id of the window to snap into the complementary zone.
+        #[cfg_attr(feature = "clap", arg(required = true))]
+        id: u64,
+    },
+    /// Dismiss the snap assist offer without picking.
+    SnapAssistDismiss {},
     /// Toggle the maximized-to-edges state of the focused window.
     MaximizeWindowToEdges {
         /// Id of the window to maximize.
@@ -1857,6 +1870,31 @@ pub enum Event {
         /// disabled in hardware, or via `input { touchpad { off; } }`—this is not reflected here.
         on: bool,
     },
+    /// A window was snapped to a zone (snap zones).
+    ///
+    /// Remaining windows are offered for the complementary zone (Snap Assist).
+    /// The offer stays open until a [`Action::SnapAssistPick`], a
+    /// [`Action::SnapAssistDismiss`], or the next snap replaces it.
+    SnapAssistOpened {
+        /// Id of the window that was snapped.
+        window_id: u64,
+        /// The zone the window was snapped to.
+        zone: SnapZone,
+        /// Ids of the other windows offered for the complementary zone.
+        candidates: Vec<u64>,
+    },
+    /// The snap assist offer closed.
+    SnapAssistClosed {},
+}
+
+/// One half of the working area for snapping.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub enum SnapZone {
+    /// The left half.
+    Left,
+    /// The right half.
+    Right,
 }
 
 impl From<Duration> for Timestamp {

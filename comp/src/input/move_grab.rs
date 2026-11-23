@@ -100,7 +100,31 @@ impl MoveGrab {
 
                 layout.activate_window(&self.window);
             }
-            GestureState::Move => layout.interactive_move_end(&self.window),
+            GestureState::Move => {
+                layout.interactive_move_end(&self.window);
+
+                // Snap zones: releasing within a thin strip at the left or
+                // right working-area edge snaps the column to that half.
+                const SNAP_ZONE: f64 = 24.;
+                if let Some(mon) = layout.monitor_for_output(&self.start_output) {
+                    let area = mon.working_area();
+                    let x = self.new_location.x;
+                    // Positions outside this output (e.g. dropped onto another
+                    // monitor) never snap.
+                    let edge = if x >= area.loc.x && x <= area.loc.x + SNAP_ZONE {
+                        Some(true)
+                    } else if x <= area.loc.x + area.size.w
+                        && x >= area.loc.x + area.size.w - SNAP_ZONE
+                    {
+                        Some(false)
+                    } else {
+                        None
+                    };
+                    if edge.is_some_and(|left| layout.snap_active_column(left)) {
+                        data.ipc_emit_snap_assist();
+                    }
+                }
+            }
             GestureState::ViewOffset => {
                 layout.view_offset_gesture_end(Some(false));
             }

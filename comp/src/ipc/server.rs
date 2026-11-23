@@ -18,7 +18,7 @@ use niri_config::OutputName;
 use niri_ipc::state::{EventStreamState, EventStreamStatePart as _};
 use niri_ipc::{
     Action, Event, KeyboardLayouts, OutputConfigChanged, Overview, Reply, Request, Response,
-    Timestamp, WindowLayout, Workspace,
+    SnapZone, Timestamp, WindowLayout, Workspace,
 };
 use smithay::backend::input::InputTime;
 use smithay::desktop::layer_map_for_output;
@@ -588,6 +588,42 @@ impl State {
         self.ipc_refresh_workspaces();
         self.ipc_refresh_windows();
         self.ipc_refresh_overview();
+    }
+
+    /// Emit the current snap-assist offer, if one is open.
+    pub fn ipc_emit_snap_assist(&mut self) {
+        let Some(server) = &self.niri.ipc_server else {
+            return;
+        };
+        let Some((snapped, left)) = self.niri.layout.snap_assist() else {
+            return;
+        };
+        let mut snapped_id = None;
+        let mut candidates = Vec::new();
+        for (_, m) in self.niri.layout.windows() {
+            if m.window == snapped {
+                snapped_id = Some(m.id().get());
+            } else {
+                candidates.push(m.id().get());
+            }
+        }
+        let Some(snapped) = snapped_id else {
+            return;
+        };
+        let zone = if left { SnapZone::Left } else { SnapZone::Right };
+        server.send_event(Event::SnapAssistOpened {
+            window_id: snapped,
+            zone,
+            candidates,
+        });
+    }
+
+    /// Emit that the snap-assist offer closed.
+    pub fn ipc_emit_snap_assist_closed(&mut self) {
+        let Some(server) = &self.niri.ipc_server else {
+            return;
+        };
+        server.send_event(Event::SnapAssistClosed {});
     }
 
     fn ipc_refresh_workspaces(&mut self) {

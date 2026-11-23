@@ -3092,6 +3092,36 @@ impl<W: LayoutElement> Layout<W> {
         workspace.toggle_full_width();
     }
 
+    /// Snap the active column on the focused workspace to the left or right
+    /// half of its working area (Windows-11-style snap zone). Returns `true`
+    /// when a column was snapped.
+    pub fn snap_active_column(&mut self, left: bool) -> bool {
+        let Some(workspace) = self.active_workspace_mut() else {
+            return false;
+        };
+        workspace.snap_active_column(left)
+    }
+
+    /// Snap the column containing `window` to a horizontal half (snap assist
+    /// pick). Returns `true` when the window was snapped.
+    pub fn snap_window_to(&mut self, window: &W::Id, left: bool) -> bool {
+        self.workspaces_mut().any(|ws| {
+            ws.windows().any(|w| w.id() == window) && ws.snap_window_to(window, left)
+        })
+    }
+
+    /// The open snap-assist offer on the focused workspace, if any.
+    pub fn snap_assist(&self) -> Option<(W::Id, bool)> {
+        self.active_workspace().and_then(|ws| ws.snap_assist())
+    }
+
+    /// Dismiss the snap-assist offer on the focused workspace.
+    pub fn dismiss_snap_assist(&mut self) {
+        if let Some(ws) = self.active_workspace_mut() {
+            ws.dismiss_snap_assist();
+        }
+    }
+
     pub fn set_column_width(&mut self, change: SizeChange) {
         let Some(workspace) = self.active_workspace_mut() else {
             return;

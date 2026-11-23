@@ -525,6 +525,19 @@ pub fn handle_msg(mut msg: Msg, json: bool, print_request: bool) -> anyhow::Resu
                     Event::TouchpadToggled { on } => {
                         println!("Touchpad enabled: {on}");
                     }
+                    Event::SnapAssistOpened {
+                        window_id,
+                        zone,
+                        candidates,
+                    } => {
+                        println!(
+                            "Snap assist opened: window {window_id} snapped {zone:?}, \
+                             candidates: {candidates:?}"
+                        );
+                    }
+                    Event::SnapAssistClosed {} => {
+                        println!("Snap assist closed");
+                    }
                 }
             }
         }

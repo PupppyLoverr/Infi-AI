@@ -473,6 +473,11 @@ pub enum Action {
     #[knuffel(skip)]
     SwitchPresetWindowHeightBackById(u64),
     MaximizeColumn,
+    SnapLeft,
+    SnapRight,
+    SnapAssistDismiss,
+    #[knuffel(skip)]
+    SnapAssistPick(u64),
     MaximizeWindowToEdges,
     #[knuffel(skip)]
     MaximizeWindowToEdgesById(u64),
@@ -812,6 +817,10 @@ impl From<niri_ipc::Action> for Action {
                 Self::SwitchPresetWindowHeightBackById(id)
             }
             niri_ipc::Action::MaximizeColumn {} => Self::MaximizeColumn,
+            niri_ipc::Action::SnapLeft {} => Self::SnapLeft,
+            niri_ipc::Action::SnapRight {} => Self::SnapRight,
+            niri_ipc::Action::SnapAssistPick { id } => Self::SnapAssistPick(id),
+            niri_ipc::Action::SnapAssistDismiss {} => Self::SnapAssistDismiss,
             niri_ipc::Action::MaximizeWindowToEdges { id: None } => Self::MaximizeWindowToEdges,
             niri_ipc::Action::MaximizeWindowToEdges { id: Some(id) } => {
                 Self::MaximizeWindowToEdgesById(id)

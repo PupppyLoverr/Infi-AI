@@ -604,6 +604,8 @@ enum Op {
         id: Option<usize>,
     },
     SetColumnWidth(#[proptest(strategy = "arbitrary_size_change()")] SizeChange),
+    SnapLeft,
+    SnapRight,
     SetWindowWidth {
         #[proptest(strategy = "proptest::option::of(1..=5usize)")]
         id: Option<usize>,
@@ -1378,6 +1380,12 @@ impl Op {
                 layout.toggle_maximized(&id);
             }
             Op::SetColumnWidth(change) => layout.set_column_width(change),
+            Op::SnapLeft => {
+                layout.snap_active_column(true);
+            }
+            Op::SnapRight => {
+                layout.snap_active_column(false);
+            }
             Op::SetWindowWidth { id, change } => {
                 let id = id.filter(|id| layout.has_window(id));
                 layout.set_window_width(id.as_ref(), change);
@@ -3598,6 +3606,51 @@ fn preset_column_width_matches_for_new_window() {
     let mut layout = check_ops_with_options(options, ops);
     let removed = layout.remove_window(&0, Transaction::new()).unwrap();
     assert_eq!(removed.width, ColumnWidth::Proportion(0.75));
+}
+
+#[test]
+fn snap_left_pins_column_to_left_edge() {
+    let ops = [
+        Op::AddOutput(0),
+        Op::AddWindow {
+            params: TestWindowParams::new(0),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::SnapLeft,
+    ];
+
+    let mut layout = check_ops(ops);
+
+    let ws = layout.active_workspace().unwrap();
+    // The snapped (active) column renders flush with the left edge: its own
+    // column x equals the view position.
+    assert_snapshot!(ws.scrolling().target_view_pos(), @"116");
+
+    let removed = layout.remove_window(&1, Transaction::new()).unwrap();
+    assert_eq!(removed.width, ColumnWidth::Proportion(0.5));
+}
+
+#[test]
+fn snap_right_pins_column_to_right_edge() {
+    let ops = [
+        Op::AddOutput(0),
+        Op::AddWindow {
+            params: TestWindowParams::new(0),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::SnapRight,
+    ];
+
+    let layout = check_ops(ops);
+
+    // view_pos - col_x(active) = col_w - area_w - area_x. The default test
+    // working area is 1280 wide at x = 0; the half-width column is 640.
+    let ws = layout.active_workspace().unwrap();
+    assert_snapshot!(ws.scrolling().target_view_pos(), @"-1064");
 }
 
 #[test]

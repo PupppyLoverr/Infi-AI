@@ -54,6 +54,12 @@ pub struct Workspace<W: LayoutElement> {
     /// Whether the floating layout is active instead of the scrolling layout.
     floating_is_active: FloatingActive,
 
+    /// Snap-assist state: a column was just snapped to a zone and the other
+    /// windows are offered for the complementary zone.
+    ///
+    /// (snapped window id, snapped to the left half)
+    snap_assist: Option<(W::Id, bool)>,
+
     /// The original outputs of this workspace, in preference order.
     ///
     /// Most of the time this will be the workspace's current output, however, after an output
@@ -262,6 +268,7 @@ impl<W: LayoutElement> Workspace<W> {
             scrolling,
             floating,
             floating_is_active: FloatingActive::No,
+            snap_assist: None,
             original_outputs,
             scale,
             transform: output.current_transform(),
@@ -324,6 +331,7 @@ impl<W: LayoutElement> Workspace<W> {
             scrolling,
             floating,
             floating_is_active: FloatingActive::No,
+            snap_assist: None,
             output: None,
             scale,
             transform: Transform::Normal,
@@ -1227,6 +1235,46 @@ impl<W: LayoutElement> Workspace<W> {
         } else {
             self.scrolling.set_window_width(None, change);
         }
+    }
+
+    /// Snap the active tiling column to a horizontal half of the working area.
+    /// Opens the snap-assist offer for the complementary zone on success.
+    /// Returns `false` when the active window is floating or nothing snapped.
+    pub fn snap_active_column(&mut self, left: bool) -> bool {
+        if self.floating_is_active.get() {
+            // FIXME: snap floating tiles to zone rectangles too.
+            return false;
+        }
+        if !self.scrolling.snap_active_column(left) {
+            return false;
+        }
+        if let Some(win) = self.active_window() {
+            self.snap_assist = Some((win.id().clone(), left));
+        }
+        true
+    }
+
+    /// Snap the column containing `window` to a horizontal half. Used by snap
+    /// assist to fill the complementary zone.
+    pub fn snap_window_to(&mut self, window: &W::Id, left: bool) -> bool {
+        if self.floating.has_window(window) {
+            return false;
+        }
+        if !self.scrolling.snap_window_to(window, left) {
+            return false;
+        }
+        self.snap_assist = None;
+        true
+    }
+
+    /// The open snap-assist offer: (snapped window id, snapped left).
+    pub fn snap_assist(&self) -> Option<(W::Id, bool)> {
+        self.snap_assist.clone()
+    }
+
+    /// Close the snap-assist offer without snapping anything else.
+    pub fn dismiss_snap_assist(&mut self) {
+        self.snap_assist = None;
     }
 
     pub fn set_window_width(&mut self, window: Option<&W::Id>, change: SizeChange) {
