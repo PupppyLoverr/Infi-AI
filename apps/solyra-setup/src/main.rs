@@ -17,6 +17,9 @@ use zgx::{compose::prelude::*, reactive::Signal};
 use zgx_components::segmented;
 use zgx_desktop::{Application, WindowOptions};
 
+/// Welcome → account → look → agents → done.
+const STEP_COUNT: usize = 5;
+
 /// `Signal::set` reports whether the value changed; the wizard only needs it set.
 trait Put<T> {
     fn put(&self, value: T);
@@ -78,6 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let again = rt.signal(String::new());
             let host = rt.signal("solyra".to_string());
             let theme_sel = rt.signal(0usize);
+            let agent_sel = rt.signal(0usize);
             let message = rt.signal(String::new());
             let done = rt.signal(false);
 
@@ -116,6 +120,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .child(text("Pick a background in Settings after you sign in."))
             };
 
+            let agents = {
+                let agent_sel = agent_sel.clone();
+                move || column()
+                .gap(12.)
+                .child(text("AI agents").text_size(20.).font_bold())
+                .child(text("Solyra can run coding agents in their own workspaces. They always ask before they act, and everything is logged."))
+                .child(segmented("Agents", agent_sel.clone(), ["Enable", "Not now"]))
+                .child(text("You can change this later in Settings."))
+            };
+
             let finish = {
                 let (done, message) = (done.clone(), message.clone());
                 move || column().gap(12.).child(text_signal({
@@ -141,6 +155,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     0 => welcome(),
                     1 => account(),
                     2 => look(),
+                    3 => agents(),
                     _ => finish(),
                 },
             );
@@ -153,9 +168,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }))
             };
             let next = {
-                let (step, message, username, full, password, again, host, theme_sel, done) = (
+                let (step, message, username, full, password, again, host, theme_sel, agent_sel, done) = (
                     step.clone(), message.clone(), username.clone(), full.clone(), password.clone(),
-                    again.clone(), host.clone(), theme_sel.clone(), done.clone(),
+                    again.clone(), host.clone(), theme_sel.clone(), agent_sel.clone(), done.clone(),
                 );
                 nav("Continue", Rc::new(move || {
                     let s = step.get();
@@ -165,7 +180,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             return;
                         }
                     }
-                    if s == 3 {
+                    if s == STEP_COUNT - 1 {
                         if done.get() {
                             return;
                         }
@@ -174,16 +189,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         match write_request(&req, &path) {
                             Ok(()) => {
                                 let _ = solyra_conf::config_path("shell.conf")
-                                    .map(|p| solyra_conf::update(&p, &[("theme", Some(if theme_sel.get() == 1 { "light" } else { "dark" }.into()))]));
+                                    .map(|p| solyra_conf::update(&p, &[
+                                        ("theme", Some(if theme_sel.get() == 1 { "light" } else { "dark" }.into())),
+                                        ("agent_env", Some(if agent_sel.get() == 0 { "1" } else { "0" }.into())),
+                                    ]));
                                 done.put(true);
                             }
                             Err(e) => message.put(format!("Could not save your answers: {e}")),
                         }
                         return;
                     }
-                    step.put((s + 1).min(3));
+                    step.put((s + 1).min(STEP_COUNT - 1));
                     message.put(String::new());
                 }))
+            };
+
+            let dots = {
+                let (step, done) = (step.clone(), done.clone());
+                let mut r = row().gap(6.);
+                for i in 0..STEP_COUNT {
+                    let (step, done) = (step.clone(), done.clone());
+                    r = r.child(
+                        text_signal(move || {
+                            // The final card counts as done once the request is written.
+                            let current = if done.get() && step.get() == STEP_COUNT - 1 {
+                                STEP_COUNT
+                            } else {
+                                step.get()
+                            };
+                            if i <= current { "●" } else { "○" }.to_string()
+                        })
+                        .text_color(solyra_ui::color(theme.accent)),
+                    );
+                }
+                r
             };
 
             cx.render(solyra_ui::scope(
@@ -200,6 +239,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let m = message.clone();
                         move || m.get()
                     }).text_color(solyra_ui::color(theme.danger)))
+                    .child(dots)
                     .child(row().gap(8.).child(back).child(next)),
             ));
 

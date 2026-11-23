@@ -16,8 +16,8 @@ pub const ISLAND_TTL_SECS: u64 = 10;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DockStyle {
     Solyra,
-    Macos,
-    Windows,
+    Floating,
+    Taskbar,
     /// Icons only: no start cell, no agent shelf, a smaller card.
     Minimal,
 }
@@ -26,8 +26,8 @@ impl DockStyle {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Solyra => "solyra",
-            Self::Macos => "macos",
-            Self::Windows => "windows",
+            Self::Floating => "floating",
+            Self::Taskbar => "taskbar",
             Self::Minimal => "minimal",
         }
     }
@@ -35,8 +35,8 @@ impl DockStyle {
     pub fn label(self) -> &'static str {
         match self {
             Self::Solyra => "Solyra",
-            Self::Macos => "Floating",
-            Self::Windows => "Taskbar",
+            Self::Floating => "Floating",
+            Self::Taskbar => "Taskbar",
             Self::Minimal => "Minimal",
         }
     }
@@ -44,8 +44,8 @@ impl DockStyle {
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "solyra" | "hybrid" => Some(Self::Solyra),
-            "macos" | "mac" => Some(Self::Macos),
-            "windows" | "win" | "taskbar" => Some(Self::Windows),
+            "floating" | "macos" | "mac" => Some(Self::Floating),
+            "taskbar" | "windows" | "win" => Some(Self::Taskbar),
             "minimal" => Some(Self::Minimal),
             _ => None,
         }
@@ -267,7 +267,7 @@ pub struct ShellPrefs {
 impl Default for ShellPrefs {
     fn default() -> Self {
         Self {
-            dock_style: DockStyle::Solyra,
+            dock_style: DockStyle::Floating,
             wallpaper: WallpaperPreset::Beach,
             wallpaper_file: None,
             wallpaper_mode: WallpaperMode::Fill,
@@ -795,7 +795,7 @@ pub fn dock_entries(wins: &[WindowInfo]) -> Vec<AppEntry> {
     let term_bin = role_binary("terminal", "foot");
     let files_bin = role_binary("files", "thunar");
 
-    // Pinned core apps in deterministic order (just like macOS / Windows 11),
+    // Pinned core apps in deterministic order (just like a floating dock / the taskbar),
     // enriched with live window state, followed by any unpinned running apps.
     let mut items = vec![
         AppEntry {
@@ -959,9 +959,9 @@ pub fn catalog_apps() -> Vec<AppEntry> {
             is_focused: false,
             app_id: "solyra-dock-mac".into(),
             role: "settings".into(),
-            title: "Dock: macOS style".into(),
+            title: "Dock: Floating".into(),
             subtitle: "Floating dock with running indicators".into(),
-            command: LaunchTarget::Internal(ShellCmd::SetDock(DockStyle::Macos)),
+            command: LaunchTarget::Internal(ShellCmd::SetDock(DockStyle::Floating)),
         },
         AppEntry {
             window: None,
@@ -971,7 +971,7 @@ pub fn catalog_apps() -> Vec<AppEntry> {
             role: "settings".into(),
             title: "Dock: Taskbar style".into(),
             subtitle: "Full-width bar along the bottom edge".into(),
-            command: LaunchTarget::Internal(ShellCmd::SetDock(DockStyle::Windows)),
+            command: LaunchTarget::Internal(ShellCmd::SetDock(DockStyle::Taskbar)),
         },
         AppEntry {
             window: None,

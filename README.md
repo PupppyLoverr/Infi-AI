@@ -40,7 +40,7 @@ running it in a VM.
 
 The desktop takes the best of macOS and Windows (see
 [docs/design-research.md](docs/design-research.md)): a Finder-style menu bar,
-a notch or Dynamic Island that carries agent approvals and now playing, four
+a notch or Island that carries agent approvals and now playing, four
 dock variants (including a Windows-style taskbar), Solid / See-through /
 Glass / Acrylic materials per surface, and macOS- and Windows-style lock
 screens. Every option is in Settings. To try it in VMware on Windows, use the

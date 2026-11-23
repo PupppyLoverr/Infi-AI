@@ -677,15 +677,15 @@ fn render_all() -> Vec<Shot> {
         let dock_wins = [win(1, "foot", "x", true), win(2, "thunar", "y", false)];
         for (name, style, magnify, hover) in [
             ("dock-solyra", DockStyle::Solyra, false, None),
-            ("dock-floating", DockStyle::Macos, false, None),
+            ("dock-floating", DockStyle::Floating, false, None),
             (
                 "dock-floating-magnify",
-                DockStyle::Macos,
+                DockStyle::Floating,
                 true,
                 Some(0.5f64),
             ),
             ("dock-minimal", DockStyle::Minimal, false, None),
-            ("dock-taskbar", DockStyle::Windows, false, None),
+            ("dock-taskbar", DockStyle::Taskbar, false, None),
         ] {
             let spec = crate::dock::spec(style, &dock_wins, magnify, false);
             let w = if spec.full_width { 1280 } else { spec.width };
@@ -1340,14 +1340,14 @@ fn material_scenes_render() {
                 *m,
                 *m,
                 *m,
-                DockStyle::Macos,
+                DockStyle::Floating,
                 NotchStyle::Notch,
             ));
         }
-        // Product default: Glass bar + dock over Beach, pure-black Dynamic Island.
+        // Product default: Glass bar + dock over Beach, pure-black Island.
         for (tag, dock) in [
             ("solyra", DockStyle::Solyra),
-            ("taskbar", DockStyle::Windows),
+            ("taskbar", DockStyle::Taskbar),
             ("minimal", DockStyle::Minimal),
         ] {
             shots.push(material_scene(

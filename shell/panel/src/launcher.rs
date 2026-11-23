@@ -21,7 +21,7 @@ pub enum Kind {
 }
 
 impl Kind {
-    /// Section title in the Spotlight list. Title case, the way a menu labels a group.
+    /// Section title in the launcher list. Title case, the way a menu labels a group.
     pub fn heading(self) -> &'static str {
         match self {
             Self::Application => "Applications",
@@ -241,18 +241,18 @@ pub struct Row {
 pub const HEADING_H: i32 = 22;
 pub const ROW_H: i32 = 40;
 
-fn section_label(items: &[Item], index: usize, first: usize, spotlight: bool) -> Option<&'static str> {
+fn section_label(items: &[Item], index: usize, first: usize, grouped: bool) -> Option<&'static str> {
     let kind = items[index].kind;
     // The best match stands alone as Top Hit. The rest of its group keeps the
     // normal section title on the following row.
-    if spotlight && index == 0 && kind != Kind::Agent {
+    if grouped && index == 0 && kind != Kind::Agent {
         return Some("Top Hit");
     }
     let new_group = index == first || items[index - 1].kind != kind;
     if new_group {
         return Some(kind.heading());
     }
-    if spotlight && kind != Kind::Agent && items.first().is_some_and(|i| i.kind == kind) {
+    if grouped && kind != Kind::Agent && items.first().is_some_and(|i| i.kind == kind) {
         let rest = (1..items.len()).find(|&i| items[i].kind == kind);
         if rest == Some(index) {
             return Some(kind.heading());
@@ -261,11 +261,11 @@ fn section_label(items: &[Item], index: usize, first: usize, spotlight: bool) ->
     None
 }
 
-fn rows_with(items: &[Item], first: usize, avail_h: i32, spotlight: bool) -> Vec<Row> {
+fn rows_with(items: &[Item], first: usize, avail_h: i32, grouped: bool) -> Vec<Row> {
     let mut rows = Vec::new();
     let mut used = 0;
     for (index, _) in items.iter().enumerate().skip(first) {
-        let heading = section_label(items, index, first, spotlight);
+        let heading = section_label(items, index, first, grouped);
         let need = ROW_H + if heading.is_some() { HEADING_H } else { 0 };
         if used + need > avail_h {
             break;
@@ -282,14 +282,14 @@ pub fn rows_from(items: &[Item], first: usize, avail_h: i32) -> Vec<Row> {
 }
 
 /// Same list as [`rows_from`], with the first direct match labelled Top Hit.
-pub fn spotlight_rows(items: &[Item], first: usize, avail_h: i32) -> Vec<Row> {
+pub fn results_rows(items: &[Item], first: usize, avail_h: i32) -> Vec<Row> {
     rows_with(items, first, avail_h, true)
 }
 
-fn first_with(items: &[Item], selected: usize, avail_h: i32, spotlight: bool) -> usize {
+fn first_with(items: &[Item], selected: usize, avail_h: i32, grouped: bool) -> usize {
     let selected = selected.min(items.len().saturating_sub(1));
     for first in 0..=selected {
-        if rows_with(items, first, avail_h, spotlight)
+        if rows_with(items, first, avail_h, grouped)
             .iter()
             .any(|r| r.index == selected)
         {
@@ -305,8 +305,8 @@ pub fn first_visible(items: &[Item], selected: usize, avail_h: i32) -> usize {
     first_with(items, selected, avail_h, false)
 }
 
-/// [`first_visible`] for the Spotlight section layout.
-pub fn spotlight_first(items: &[Item], selected: usize, avail_h: i32) -> usize {
+/// [`first_visible`] for the launcher section layout.
+pub fn results_first(items: &[Item], selected: usize, avail_h: i32) -> usize {
     first_with(items, selected, avail_h, true)
 }
 
@@ -515,15 +515,15 @@ mod tests {
     fn empty_query_leads_with_top_hit_then_applications() {
         let items = search("", &catalog(), &[], false);
         assert!(items.iter().any(|i| i.kind == Kind::Application));
-        let rows = spotlight_rows(&items, 0, 480);
+        let rows = results_rows(&items, 0, 480);
         assert_eq!(rows[0].heading, Some("Top Hit"));
         assert_eq!(rows[0].index, 0);
         assert!(
             rows.iter().any(|r| r.heading == Some("Applications")),
             "remaining apps keep their section: {rows:?}"
         );
-        let first = spotlight_first(&items, items.len() - 1, HEADING_H + 2 * ROW_H);
-        let visible = spotlight_rows(&items, first, HEADING_H + 2 * ROW_H);
+        let first = results_first(&items, items.len() - 1, HEADING_H + 2 * ROW_H);
+        let visible = results_rows(&items, first, HEADING_H + 2 * ROW_H);
         assert!(visible.iter().any(|r| r.index == items.len() - 1));
     }
 

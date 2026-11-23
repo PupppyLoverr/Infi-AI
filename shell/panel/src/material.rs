@@ -64,7 +64,7 @@ fn fights(dark: bool, tint: Option<Rgba>) -> bool {
 }
 
 /// Should content sitting straight on a Glass surface (menu-bar text, dock
-/// tray) flip to the opposite ink? Like macOS's automatic menu bar: dark text
+/// tray) flip to the opposite ink? Like the desktop's automatic menu bar: dark text
 /// over a bright wallpaper, light text over a dark one. Other materials carry
 /// their own tint, so their ink never flips.
 pub fn ink_flips(m: Material, base: Rgba, tint: Option<Rgba>) -> bool {
@@ -255,7 +255,7 @@ pub fn average(img: &Icon) -> Option<Rgba> {
     Some(Rgba::rgb((r / n) as u8, (g / n) as u8, (b / n) as u8))
 }
 
-/// The notch / Dynamic Island is pure hardware black — never mauve-tinted.
+/// The notch / Island is pure hardware black — never mauve-tinted.
 #[allow(dead_code)]
 pub fn notch_base(_m: Material) -> Rgba {
     Rgba::rgb(0, 0, 0)

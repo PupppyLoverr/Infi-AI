@@ -1,5 +1,5 @@
 //! Surface painters and hit-test layouts for Bar, Dock (3 variants),
-//! Launcher, Control Centre, and Expanded Dynamic Island.
+//! Launcher, Control Centre, and Expanded Island.
 
 use std::collections::HashMap;
 
@@ -215,7 +215,7 @@ pub fn draw_bar(
     if brand_hover {
         cv.round_rect(mark_x - 4, 2, mark_w + 8, h - 4, 5.0, hover_fill);
     }
-    let drawn = cv.mark_nl(mark_x, mark_y, mark_h, fonts);
+    let drawn = cv.mark_nl(mark_x, mark_y, mark_h, fonts, bar_text);
     debug_assert_eq!(drawn, mark_w);
     regions.push(Region {
         x: mark_x - 2,
@@ -505,7 +505,7 @@ pub fn draw_bar(
     regions
 }
 
-// ------------------------------------------------------ Spotlight Launcher
+// ------------------------------------------------------ the launcher Launcher
 
 /// Layered glass overlay card with subtle depth and directional specular rim.
 fn card(cv: &mut Canvas<'_>, th: &Theme, x: i32, y: i32, w: i32, h: i32, r: f32) {
@@ -552,7 +552,7 @@ fn hovered(hover: Option<(f64, f64)>, x: i32, y: i32, w: i32, h: i32) -> bool {
     })
 }
 
-/// Spotlight: a floating search capsule and, once something is typed, a card of
+/// the launcher: a floating search capsule and, once something is typed, a card of
 /// matches under it. Both shapes live on one transparent surface that is sized
 /// to fit them; the compositor blurs only the two shapes (`SpotLayout::blur`),
 /// and the room around them holds the shadow.
@@ -576,7 +576,7 @@ pub struct Rect {
     pub h: i32,
 }
 
-/// Where everything in the Spotlight surface sits.
+/// Where everything in the launcher surface sits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SpotLayout {
     pub w: u32,
@@ -600,7 +600,7 @@ fn only_agent_row(items: &[LauncherItem]) -> bool {
     !launcher::has_direct_match(items) && !items.is_empty()
 }
 
-/// Size the Spotlight surface for what it has to show. An empty query is just
+/// Size the launcher surface for what it has to show. An empty query is just
 /// the capsule: nothing is listed until there is something to match.
 pub fn spot_layout(query: &str, items: &[LauncherItem]) -> SpotLayout {
     let capsule = Rect {
@@ -614,7 +614,7 @@ pub fn spot_layout(query: &str, items: &[LauncherItem]) -> SpotLayout {
     } else if items.is_empty() {
         NO_MATCH_H - 2 * CARD_PAD
     } else {
-        let rows: i32 = launcher::spotlight_rows(items, 0, MAX_LIST_H)
+        let rows: i32 = launcher::results_rows(items, 0, MAX_LIST_H)
             .iter()
             .map(|r| launcher::ROW_H + r.heading.map_or(0, |_| launcher::HEADING_H))
             .sum();
@@ -734,9 +734,9 @@ pub fn draw_launcher(
 
     let sel = selected.min(items.len() - 1);
     let rows_h = lay.list_h - if only_agent_row(items) { AGENT_NOTE_H } else { 0 };
-    let first = launcher::spotlight_first(items, sel, rows_h);
+    let first = launcher::results_first(items, sel, rows_h);
     let mut y = top;
-    for row in launcher::spotlight_rows(items, first, rows_h) {
+    for row in launcher::results_rows(items, first, rows_h) {
         if let Some(label) = row.heading {
             cv.text(
                 fonts.semibold.as_ref(),
@@ -1028,8 +1028,8 @@ pub fn draw_control(
     let item_w = (seg_w - 8) / 4;
     for (i, style) in [
         DockStyle::Solyra,
-        DockStyle::Macos,
-        DockStyle::Windows,
+        DockStyle::Floating,
+        DockStyle::Taskbar,
         DockStyle::Minimal,
     ]
     .into_iter()

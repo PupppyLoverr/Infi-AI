@@ -2,9 +2,9 @@
 //!
 //! * **Solyra** – a floating card: start cell, pinned and running apps, and an
 //!   agent shelf.
-//! * **Floating** – a macOS-style dock: apps, the launcher after the first
+//! * **Floating** – a floating dock: apps, the launcher after the first
 //!   app, a separator and the trash; dots under running apps.
-//! * **Taskbar** – a Windows-style full-width bar: start, search, centred
+//! * **Taskbar** – a taskbar-style full-width bar: start, search, centred
 //!   apps with underlines, tray and clock on the right.
 //! * **Minimal** – apps only, small, nothing else.
 //!
@@ -22,13 +22,13 @@ use crate::state::{
 use crate::surfaces::{HitAction, Live, Region};
 use crate::tokens::Theme;
 
-/// Height of the floating card itself (macOS Liquid Glass dock ~56px).
+/// Height of the floating card itself (floating dock ~56px).
 pub const CARD_H: i32 = 56;
 /// Corner radius of the floating glass pill.
 const DOCK_R: f32 = 19.0;
 /// Extra room above the card for magnified icons.
 pub const MAGNIFY_ROOM: i32 = 30;
-/// Height of the Windows-style taskbar.
+/// Height of the taskbar-style taskbar.
 pub const TASKBAR_H: u32 = 48;
 /// What is left of an auto-hidden dock: a strip at the screen edge that
 /// brings it back when the pointer touches it.
@@ -116,14 +116,14 @@ fn metrics(style: DockStyle) -> Metrics {
             gap: 6,
             pad: 12,
         },
-        // macOS Liquid Glass dock: 42px sculpted squircles with airy spacing
+        // floating dock: 42px sculpted squircles with airy spacing
         // inside a luminous glass pill.
-        DockStyle::Macos | DockStyle::Solyra => Metrics {
+        DockStyle::Floating | DockStyle::Solyra => Metrics {
             cell: 42,
             gap: 7,
             pad: 12,
         },
-        DockStyle::Windows => Metrics {
+        DockStyle::Taskbar => Metrics {
             cell: 40,
             gap: 6,
             pad: 14,
@@ -146,7 +146,7 @@ fn items<'a>(style: DockStyle, entries: &'a [AppEntry], weather: bool) -> Vec<It
             }
             v.push(Item::Clock);
         }
-        DockStyle::Macos => {
+        DockStyle::Floating => {
             for (i, e) in entries.iter().enumerate() {
                 v.push(Item::App(e));
                 if i == 0 {
@@ -160,7 +160,7 @@ fn items<'a>(style: DockStyle, entries: &'a [AppEntry], weather: bool) -> Vec<It
             v.push(Item::Trash);
         }
         DockStyle::Minimal => v.extend(entries.iter().map(Item::App)),
-        DockStyle::Windows => {}
+        DockStyle::Taskbar => {}
     }
     v
 }
@@ -176,7 +176,7 @@ fn base_width(style: DockStyle, wins: &[WindowInfo]) -> i32 {
 
 /// The surface for `style`. `hidden` is the auto-hidden state.
 pub fn spec(style: DockStyle, wins: &[WindowInfo], magnify: bool, hidden: bool) -> Spec {
-    if style == DockStyle::Windows {
+    if style == DockStyle::Taskbar {
         return Spec {
             namespace: "solyra-taskbar",
             full_width: true,
@@ -259,7 +259,7 @@ pub fn draw(
         );
     }
     match style {
-        DockStyle::Windows => {
+        DockStyle::Taskbar => {
             let body = Body {
                 x: 0,
                 y: 0,
@@ -494,7 +494,7 @@ fn draw_floating(
 }
 
 fn running_mark(cv: &mut Canvas<'_>, ink: Rgba, x: i32, s: i32, card_y: i32, focused: bool) {
-    // One quiet dot under a running app, like macOS: the focused app's is only
+    // One quiet dot under a running app, like a floating dock: the focused app's is only
     // slightly stronger.
     let cx = x as f32 + s as f32 / 2.0;
     let cy = (card_y + CARD_H - 5) as f32;
@@ -593,7 +593,7 @@ fn draw_taskbar(
 
     let slab = slab_for(live, th.bar);
     if dark && slab.fill.3 < 150 {
-        // Windows 11 dark taskbar uses smoked Acrylic/Mica density so white
+        // The taskbar uses a smoked frosted density so white
         // Search, glyphs, and tray clock stay razor-sharp over bright sand.
         cv.fill_rect_vgrad(
             0,
@@ -606,7 +606,7 @@ fn draw_taskbar(
     } else {
         material::paint(cv, &slab, 0, 0, w, h, 0.0);
     }
-    // Crisp Windows 11 Acrylic/Mica top hairline catch-light.
+    // Crisp the taskbar's frosted top hairline catch-light.
     cv.fill_rect(
         0,
         0,
@@ -635,7 +635,7 @@ fn draw_taskbar(
         action: HitAction::Launch(LaunchTarget::Ipc("{\"Action\":{\"ToggleOverview\":{}}}")),
     });
 
-    // Centre: Windows 11 calm centred start mark, frosted search pill, apps.
+    // Centre: the taskbar calm centred start mark, frosted search pill, apps.
     let entries = dock_entries(wins);
     let search_w = 176;
     let search_h = 30;
@@ -853,10 +853,10 @@ mod tests {
     #[test]
     fn specs_per_style() {
         let wins = [];
-        let t = spec(DockStyle::Windows, &wins, true, false);
+        let t = spec(DockStyle::Taskbar, &wins, true, false);
         assert!(t.full_width && t.exclusive == TASKBAR_H as i32);
         assert_eq!(
-            spec(DockStyle::Windows, &wins, false, true).exclusive,
+            spec(DockStyle::Taskbar, &wins, false, true).exclusive,
             0,
             "a hidden taskbar reserves nothing"
         );
@@ -885,7 +885,7 @@ mod tests {
             Some(Item::Clock)
         ));
         assert!(matches!(
-            items(DockStyle::Macos, &e, true).last(),
+            items(DockStyle::Floating, &e, true).last(),
             Some(Item::Trash)
         ));
         let has = |on| {

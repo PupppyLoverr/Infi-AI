@@ -1,4 +1,4 @@
-//! The notch and Dynamic Island: one pure-black hardware capsule at the top
+//! The notch and Island: one pure-black hardware capsule at the top
 //! centre that morphs between an idle pill, a snug compact Live Activity, and
 //! a concentric expanded card.
 //!
@@ -249,7 +249,7 @@ pub fn draw(
     extra: &Extra<'_>,
     hover: Option<(f64, f64)>,
 ) -> Vec<Region> {
-    // Dynamic Island is always pure OLED hardware black — never a grey bar pill.
+    // Island is always pure OLED hardware black — never a grey bar pill.
     let th = Theme::dark();
     let s = anim.cur;
     let (x, y, w, h) = (s.x(), s.y, s.w, s.h);
@@ -430,7 +430,7 @@ fn compact_row(
             );
         }
         Content::Media(m) => {
-            // Iconic Dynamic Island compact media: concentric album art on left,
+            // Iconic Island compact media: concentric album art on left,
             // clean title in center, vibrant live waveform snugly on right.
             let art = 21;
             let art_x = x + 8;
@@ -611,7 +611,7 @@ fn expanded_body(
         }
         Content::Attention(a) => attention_body(cv, th, fonts, body, a, extra, hover, regions),
         Content::Media(m) => {
-            // Concentric Apple Dynamic Island Media Live Activity:
+            // Concentric Apple Island Media Live Activity:
             // Top row: 54x54 vibrant album art (concentric curve) + Bold title /
             // Medium artist + colorful top-right waveform.
             let art = 54;

@@ -3,9 +3,10 @@
 //!
 //! The installed icon theme on a Solyra image is Adwaita, whose app icons are
 //! flat symbolic-ish glyphs with transparent margins. A dock needs icons with
-//! real depth, so the panel carries a small curated set, baked to PNG from the
-//! WhiteSur icon theme (GPL-3.0, see `assets/icons/README.md`). Anything not
-//! in the set still falls back to the system theme on a neutral tile.
+//! real depth, so the panel carries a small curated set of first-party PNGs
+//! drawn for Solyra (see `assets/icons/README.md`). Anything not in the set
+//! still falls back to the system theme on a neutral tile — third-party apps
+//! keep their own real icons that way.
 
 use std::sync::OnceLock;
 
@@ -23,7 +24,7 @@ macro_rules! bundle {
 }
 
 const SET: &[(&str, &[u8])] = bundle![
-    "files", "terminal", "browser", "firefox", "chrome", "settings", "overview", "editor",
+    "files", "terminal", "browser", "settings", "overview", "editor",
     "trash", "wallpaper", "calculator", "music", "photos", "mail", "appstore", "monitor",
     "notes", "maps",
 ];
@@ -58,8 +59,7 @@ pub fn name_for(key: &str) -> Option<&'static str> {
         "editor" | "gedit" => "editor",
         "trash" => "trash",
         "wallpaper" => "wallpaper",
-        _ if has(&["firefox"]) => "firefox",
-        _ if has(&["chrome", "chromium"]) => "chrome",
+        _ if has(&["firefox", "chrome", "chromium", "edge", "brave", "safari"]) => "browser",
         _ if has(&["thunar", "nautilus", "pcmanfm", "dolphin", "file-manager"]) => "files",
         _ if has(&["term", "konsole", "alacritty", "kitty", "wezterm"]) => "terminal",
         _ if has(&["solyra-browse", "epiphany", "web-browser", "falkon"]) => "browser",
@@ -106,8 +106,8 @@ mod tests {
     fn roles_and_app_ids_resolve() {
         assert_eq!(name_for("files"), Some("files"));
         assert_eq!(name_for("foot"), Some("terminal"));
-        assert_eq!(name_for("firefox"), Some("firefox"));
-        assert_eq!(name_for("org.mozilla.firefox"), Some("firefox"));
+        assert_eq!(name_for("firefox"), Some("browser"));
+        assert_eq!(name_for("org.mozilla.firefox"), Some("browser"));
         assert_eq!(name_for("org.xfce.mousepad"), Some("editor"));
         assert_eq!(name_for("com.google.Chrome"), Some("chrome"));
         assert_eq!(name_for("solyra-settings"), Some("settings"));

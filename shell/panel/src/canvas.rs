@@ -509,7 +509,7 @@ impl<'a> Canvas<'a> {
     }
 
     /// Draw crisp text with a soft atmospheric shadow underneath for clean
-    /// legibility over photography and clear Liquid Glass.
+    /// legibility over photography and clear glass.
     #[allow(clippy::too_many_arguments)]
     pub fn text_shadow(
         &mut self,
@@ -1430,14 +1430,13 @@ impl<'a> Canvas<'a> {
         self.circle(cx + u * 0.65, cy - u * 0.55, 1.8, color);
     }
 
-    /// The **nL** brand mark: white semibold letters in a black rounded box,
-    /// sized to `h`. Returns the width so callers can size hit targets.
-    /// At the menu-bar height (`h` ≈ 22) the box lands around 36–44 px wide.
-    pub fn mark_nl(&mut self, x: i32, y: i32, h: i32, fonts: &Fonts) -> i32 {
+    /// The **nL** brand mark: plain semibold letters in the surface's ink
+    /// colour — no box, the way a text mark sits in a menu bar. `color` is
+    /// the bar's text colour (light ink on dark chrome, dark ink on light).
+    /// Returns the width so callers can size hit targets.
+    pub fn mark_nl(&mut self, x: i32, y: i32, h: i32, fonts: &Fonts, color: Rgba) -> i32 {
         let h = h.max(16);
         let (w, size, tw) = nl_metrics(h, fonts);
-        let r = (h as f32 * 0.28).clamp(4.0, 10.0);
-        self.round_rect(x, y, w, h, r, Rgba::rgb(0, 0, 0));
         let baseline = y + h / 2 + (size * 0.36) as i32;
         self.text(
             fonts.semibold.as_ref(),
@@ -1445,7 +1444,7 @@ impl<'a> Canvas<'a> {
             x + (w - tw) / 2,
             baseline,
             size,
-            Rgba::rgb(255, 255, 255),
+            color,
         );
         w
     }
@@ -1541,7 +1540,7 @@ impl<'a> Canvas<'a> {
         }
     }
 
-    /// macOS Control Centre twin pill-switches icon.
+    /// Control Centre twin pill-switches icon.
     pub fn icon_control_centre(&mut self, cx: f32, cy: f32, color: Rgba) {
         let x = cx.round() as i32 - 7;
         let y = cy.round() as i32 - 6;
@@ -1718,7 +1717,8 @@ impl<'a> Canvas<'a> {
         );
     }
 
-    /// The product mark: white `nL` on a black squircle.
+    /// The product mark: `nL` in dark ink on the neutral light tile every
+    /// unbranded app gets — no black box.
     fn brand_tile(&mut self, x: i32, y: i32, size: i32, fonts: &Fonts) {
         let s = size as f32;
         self.squircle_shadow(x, y, size, (s * 0.04).clamp(1.0, 2.0), (s * 0.10).clamp(2.5, 5.0), 56);
@@ -1726,17 +1726,17 @@ impl<'a> Canvas<'a> {
             x,
             y,
             size,
-            Rgba::rgb(0x1c, 0x1c, 0x1f),
-            Rgba::rgb(0x03, 0x03, 0x04),
+            Rgba::rgb(0xfb, 0xfb, 0xfd),
+            Rgba::rgb(0xdd, 0xe1, 0xe8),
             0.0,
         );
         self.squircle_glass_rim(
             x,
             y,
             size,
-            Rgba::rgba(255, 255, 255, 70),
-            Rgba::rgba(255, 255, 255, 22),
-            Rgba::rgba(255, 255, 255, 10),
+            Rgba::rgba(255, 255, 255, 90),
+            Rgba::rgba(255, 255, 255, 26),
+            Rgba::rgba(0, 0, 0, 18),
         );
         let font_px = (s * 0.42).clamp(9.0, 21.0);
         let tw = text_width(fonts.semibold.as_ref(), "nL", font_px);
@@ -1746,7 +1746,7 @@ impl<'a> Canvas<'a> {
             x + (size - tw) / 2,
             y + size / 2 + (font_px * 0.36) as i32,
             font_px,
-            Rgba::rgb(255, 255, 255),
+            Rgba::rgb(0x1c, 0x1c, 0x1e),
         );
     }
 
@@ -1791,15 +1791,13 @@ pub(crate) fn nl_mark_width(h: i32, fonts: &Fonts) -> i32 {
     nl_metrics(h, fonts).0
 }
 
-/// `(width, font size, text width)` for the nL box at height `h`.
+/// `(width, font size, text width)` for the nL mark at height `h`. The mark
+/// is just the text now, so the width is the text's own width.
 fn nl_metrics(h: i32, fonts: &Fonts) -> (i32, f32, i32) {
     let h = h.max(16);
-    let pad_x = (h as f32 * 0.34).round() as i32;
-    let size = (h as f32 * 0.56).clamp(11.0, 28.0);
+    let size = (h as f32 * 0.82).clamp(12.0, 30.0);
     let tw = text_width(fonts.semibold.as_ref(), "nL", size).max(1);
-    // Floor keeps the menu-bar mark (h ≈ 22) inside about 36–44 px.
-    let w = (tw + pad_x * 2).max((h as f32 * 1.72).round() as i32);
-    (w, size, tw)
+    (tw, size, tw)
 }
 
 pub fn text_width(font: Option<&FontRef<'_>>, value: &str, size: f32) -> i32 {
@@ -1946,21 +1944,18 @@ mod tests {
     }
 
     #[test]
-    fn nl_mark_is_a_black_box_in_the_bar_band() {
+    fn nl_mark_is_plain_text_with_no_box() {
         let fonts = Fonts::load();
         let mut buf = vec![0u8; 96 * 40 * 4];
         let drawn = {
             let mut cv = Canvas::new(&mut buf, 96, 40, 1);
-            let w = cv.mark_nl(8, 8, 22, &fonts);
+            let w = cv.mark_nl(8, 8, 22, &fonts, Rgba::rgb(255, 255, 255));
             assert_eq!(w, nl_mark_width(22, &fonts));
             w
         };
-        assert!(
-            (36..=44).contains(&drawn),
-            "bar mark width {drawn} px, want 36–44"
-        );
-        // Left padding of the box is opaque black (BGRA).
-        let i = ((18u32 * 96 + 12) * 4) as usize;
-        assert_eq!(&buf[i..i + 4], &[0, 0, 0, 255]);
+        assert!(drawn > 0, "the mark is its text width, got {drawn}");
+        // Just left of the text is untouched: no box is painted any more.
+        let i = ((18u32 * 96 + 6) * 4) as usize;
+        assert_eq!(&buf[i..i + 4], &[0, 0, 0, 0]);
     }
 }

@@ -37,7 +37,7 @@ choice! {
     /// The black shape at the top centre that carries live activity.
     NotchStyle {
         Notch = "notch" / "Notch",
-        Island = "island" / "Dynamic Island",
+        Island = "island" / "Island",
         Off = "off" / "Off",
     } default Notch
 }
@@ -46,10 +46,10 @@ choice! {
     /// Dock layout.
     DockKind {
         Solyra = "solyra" / "Solyra",
-        Floating = "macos" / "Floating",
-        Taskbar = "windows" / "Taskbar",
+        Floating = "floating" / "Floating",
+        Taskbar = "taskbar" / "Taskbar",
         Minimal = "minimal" / "Minimal",
-    } default Solyra
+    } default Floating
 }
 
 choice! {
@@ -80,7 +80,7 @@ choice! {
         Solid = "solid" / "Solid",
         Clear = "clear" / "See-through",
         Glass = "glass" / "Glass",
-        Acrylic = "acrylic" / "Acrylic",
+        Acrylic = "acrylic" / "Frost",
     } default Glass
 }
 
@@ -152,8 +152,8 @@ impl Look {
             dock: get(text, "dock_style")
                 .and_then(|v| match v {
                     "hybrid" => Some(DockKind::Solyra),
-                    "mac" => Some(DockKind::Floating),
-                    "win" | "taskbar" => Some(DockKind::Taskbar),
+                    "macos" | "mac" => Some(DockKind::Floating),
+                    "windows" | "win" => Some(DockKind::Taskbar),
                     other => DockKind::parse(other),
                 })
                 .unwrap_or(d.dock),

@@ -154,7 +154,7 @@ fn appearance_page(status: Signal<String>) -> View {
             ("solid", "Solid"),
             ("clear", "See-through"),
             ("glass", "Glass"),
-            ("acrylic", "Acrylic"),
+            ("acrylic", "Frost"),
         ];
         static ACCENTS: [(&str, &str); 7] = [
             ("blue", "Blue"),
@@ -171,7 +171,7 @@ fn appearance_page(status: Signal<String>) -> View {
             .child(conf_choice(cx, &status, "theme", "Theme", &[("dark", "Dark"), ("light", "Light")], &theme_now))
             .child(conf_choice(cx, &status, "accent", "Accent colour", &ACCENTS, &look.accent))
             .child(text("Materials").font_bold())
-            .child(caption("What the bar, dock and notch are made of. Glass blurs what is behind; Acrylic also takes the wallpaper's colour and adds a fine grain; See-through stays sharp."))
+            .child(caption("What the bar, dock and notch are made of. Glass blurs what is behind; Frost also takes the wallpaper's colour and adds a fine grain; See-through stays sharp."))
             .child(conf_choice(cx, &status, "bar_material", "Menu bar", &MATERIALS, look.bar_material.as_str()))
             .child(conf_choice(cx, &status, "dock_material", "Dock", &MATERIALS, look.dock_material.as_str()))
             .child(conf_choice(cx, &status, "notch_material", "Notch", &MATERIALS, look.notch_material.as_str()))
@@ -218,7 +218,7 @@ fn desktop_page(status: Signal<String>) -> View {
                 &status,
                 "notch_style",
                 "Live activity area",
-                &[("notch", "Notch"), ("island", "Dynamic Island"), ("off", "Off")],
+                &[("notch", "Notch"), ("island", "Island"), ("off", "Off")],
                 look.notch.as_str(),
             ))
             .child(caption("Shows approvals, agent progress, notifications and what is playing. Click it to expand."))
@@ -228,7 +228,7 @@ fn desktop_page(status: Signal<String>) -> View {
                 &status,
                 "dock_style",
                 "Style",
-                &[("solyra", "Solyra"), ("macos", "Floating"), ("windows", "Taskbar"), ("minimal", "Minimal")],
+                &[("solyra", "Solyra"), ("floating", "Floating"), ("taskbar", "Taskbar"), ("minimal", "Minimal")],
                 look.dock.as_str(),
             ))
             .child(conf_toggle(cx, &status, "dock_magnify", "Magnify icons under the pointer (floating docks)", look.dock_magnify))

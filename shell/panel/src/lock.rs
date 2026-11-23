@@ -10,10 +10,10 @@
 //! * **Solyra** – soft-blurred wallpaper under a light neutral veil, the clock
 //!   in the upper half, a single password pill.
 //! * **Classic** – sharp wallpaper, a large clock in the top third with the
-//!   date above it, avatar and password near the bottom (macOS-like).
+//!   date above it, avatar and password near the bottom (the centred layout).
 //! * **Clock corner** – a sharp wallpaper with a big clock in the lower left;
 //!   any key slides in a centred sign-in card over a blurred backdrop
-//!   (Windows-like).
+//!   (a full-width taskbar).
 //! * **Dashboard** – a calm glance: huge clock, one date line, a weather glass
 //!   chip, and either the nL mark or a now-playing capsule. Live weather,
 //!   media and agent counts come from the same places the panel uses.
@@ -860,8 +860,8 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
             );
             centred_display_clock(cv, v.fonts, &v.clock, w / 2, clock_base, clock_size);
 
-            // macOS-proportioned bottom sign-in anchor: sculpted avatar, clear
-            // vertical gap, bold username, frosted Liquid Glass password pill.
+            // proportioned bottom sign-in anchor: sculpted avatar, clear
+            // vertical gap, bold username, frosted glass password pill.
             let field_y = h - 104;
             let name_base = field_y - 18;
             let avatar_r = 28.0;
@@ -1017,7 +1017,7 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
             } else {
                 let mh = 26;
                 let mw = crate::canvas::nl_mark_width(mh, v.fonts);
-                cv.mark_nl((w - mw) / 2, 22, mh, v.fonts);
+                cv.mark_nl((w - mw) / 2, 22, mh, v.fonts, white);
             }
 
             // Monumental SF-Pro-weighted Display Clock with tracked date above.

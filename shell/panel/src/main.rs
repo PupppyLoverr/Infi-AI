@@ -2,10 +2,10 @@
 //!
 //! * **Top Bar** (`solyra-bar`): translucent glass menu bar with Solyra mark,
 //!   focused app & contextual menus, workspace pills, Apple-style notch +
-//!   Dynamic Island, Search button, Status capsule, and clock.
+//!   Island, Search button, Status capsule, and clock.
 //! * **Dock** (`solyra-dock` / `solyra-taskbar`): all 3 variants live-switchable
 //!   (`solyra` hybrid default, `macos` Sequoia dock, `windows` Fluent taskbar).
-//! * **Launcher** (`solyra-launcher`): Spotlight. A "Search or Ask" capsule that
+//! * **Launcher** (`solyra-launcher`): the launcher. A "Search or Ask" capsule that
 //!   opens a results card (Top Hit, Applications, windows) once there is a query.
 //! * **Control Centre** (`solyra-control`): quick toggles, sliders, live Dock
 //!   variant switcher, live Wallpaper switcher, and memory telemetry.
@@ -449,7 +449,7 @@ struct App {
     /// Right-side desk card when desktop mode is Agent workspace.
     desk: Option<SurfaceSlot>,
     desk_material: material::Material,
-    /// The notch / Dynamic Island surface (absent when the style is Off).
+    /// The notch / Island surface (absent when the style is Off).
     /// An open menu-bar menu: a full-screen transparent overlay.
     menu: Option<SurfaceSlot>,
     menu_open: Option<menu::MenuId>,
@@ -593,7 +593,7 @@ impl App {
                     self.launcher = Some(self.open_overlay(
                         "solyra-launcher",
                         Anchor::TOP,
-                        (self.spotlight_top(), 0, 0, 0),
+                        (self.launcher_top(), 0, 0, 0),
                         (lay.w, lay.h),
                         KeyboardInteractivity::Exclusive,
                     ));
@@ -834,15 +834,15 @@ impl App {
         }
     }
 
-    /// Space above the Spotlight capsule: it sits about a seventh of the way
-    /// down the screen, like macOS. The output's height is not known here, so
+    /// Space above the launcher capsule: it sits about a seventh of the way
+    /// down the screen, high on the screen. The output's height is not known here, so
     /// it is taken from the bar's width at 16:9.
-    fn spotlight_top(&self) -> i32 {
+    fn launcher_top(&self) -> i32 {
         let screen_h = self.bar.width.max(1024) as f32 * 9.0 / 16.0;
         ((screen_h * 0.14) as i32 - 20).max(32)
     }
 
-    /// Fit the Spotlight surface to the capsule and card it is showing, and
+    /// Fit the launcher surface to the capsule and card it is showing, and
     /// limit input and blur to those two shapes.
     fn sync_launcher(&mut self) {
         let lay = spot_layout(&self.launcher_query, &self.launcher_items);
