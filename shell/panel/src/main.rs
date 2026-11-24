@@ -35,7 +35,7 @@ mod preview;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use canvas::{Canvas, Fonts, Icon};
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
@@ -57,7 +57,8 @@ use state::{
     WindowInfo,
 };
 use surfaces::{
-    draw_agents, draw_bar, draw_control, draw_island_card, draw_launcher, spot_layout, AgentsView,
+    draw_about, draw_agents, draw_bar, draw_control, draw_island_card, draw_launcher,
+    draw_notifs, spot_layout, AgentsView,
     HitAction, Live, Region, AGENTS_H, AGENTS_W, BAR_HEIGHT, CONTROL_H, CONTROL_W, ISLAND_CARD_H,
     ISLAND_CARD_W,
 };
@@ -91,6 +92,9 @@ fn main() {
             "toggle-launcher" | "launcher" => Some("toggle-launcher".into()),
             "toggle-control" | "control" => Some("toggle-control".into()),
             "toggle-island" | "island" => Some("toggle-island".into()),
+            "about" => Some("about".into()),
+            "toggle-notifs" | "notifs" => Some("toggle-notifs".into()),
+            "clear-notifs" => Some("clear-notifs".into()),
             "toggle-agents" | "agents" => Some("toggle-agents".into()),
             "close" => Some("close".into()),
             "dock" => args.get(2).map(|v| format!("dock {v}")),
@@ -214,6 +218,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         launcher: None,
         control: None,
         island_card: None,
+        notifs_surface: None,
+        dock_ctx: None,
+        dock_ctx_entries: Vec::new(),
+        about: None,
+        notifs: std::collections::VecDeque::new(),
         agents: None,
         desk: None,
         desk_material: material::Material::Solid,
@@ -443,6 +452,13 @@ struct App {
     /// Wakes the event loop from another thread.
     waker: Arc<dyn Fn() + Send + Sync>,
     launcher: Option<SurfaceSlot>,
+    /// Notification centre drawer (right edge).
+    notifs_surface: Option<SurfaceSlot>,
+    /// Dock icon context menu (right-click).
+    dock_ctx: Option<SurfaceSlot>,
+    dock_ctx_entries: Vec<menu::Entry>,
+    /// "About This Computer" card.
+    about: Option<SurfaceSlot>,
     control: Option<SurfaceSlot>,
     island_card: Option<SurfaceSlot>,
     agents: Option<SurfaceSlot>,
@@ -497,6 +513,8 @@ struct App {
     ws_list: Vec<(u8, bool)>,
     island_msg: Option<String>,
     island_override: Option<(Instant, String)>,
+    /// Notification history for the centre: (unix secs, app, text).
+    notifs: std::collections::VecDeque<(u64, String, String)>,
     icons: HashMap<String, Option<Icon>>,
     fonts: Fonts,
     needs_redraw: bool,
@@ -530,6 +548,10 @@ impl App {
     fn close_overlays(&mut self) {
         self.launcher = None;
         self.control = None;
+        self.notifs_surface = None;
+        self.dock_ctx = None;
+        self.dock_ctx_entries.clear();
+        self.about = None;
         self.island_card = None;
         self.agents = None;
         self.agents_error = None;
@@ -569,16 +591,70 @@ impl App {
 
     fn apply_shell_cmd(&mut self, cmd: ShellCmd) {
         match cmd {
-            ShellCmd::Notify(text) => {
-                if text.trim().is_empty() {
+            ShellCmd::Notify(app, text) => {
+                let text = text.trim().to_string();
+                if text.is_empty() {
                     self.island_override = None;
-                } else if self.prefs.dnd_on {
-                    // Focus is on: hold plain messages. Agent approvals come
-                    // from the protocol, not from here, and are never muted.
                 } else {
-                    self.island_override = Some((Instant::now(), text));
+                    // The centre keeps history even when Focus holds the
+                    // banner back, like macOS Notification Centre.
+                    let ts = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    if self.notifs.back() != Some(&(ts, app.clone(), text.clone())) {
+                        self.notifs.push_back((ts, app.clone(), text.clone()));
+                        while self.notifs.len() > 30 {
+                            self.notifs.pop_front();
+                        }
+                    }
+                    if !self.prefs.dnd_on {
+                        self.island_override = Some((Instant::now(), text));
+                    }
                 }
                 self.island_card = None;
+            }
+            ShellCmd::ToggleNotifs => {
+                if self.notifs_surface.is_some() {
+                    self.notifs_surface = None;
+                } else {
+                    self.close_overlays();
+                    // Full-height right-edge drawer. Height is passed
+                    // explicitly: anchored to top+bottom niri reports 0 as
+                    // the configured size, and a 0-height buffer never draws.
+                    let out_h = self
+                        .output_state
+                        .outputs()
+                        .filter_map(|o| self.output_state.info(&o))
+                        .filter_map(|i| i.logical_size.map(|(_, h)| h))
+                        .max()
+                        .unwrap_or(768);
+                    self.notifs_surface = Some(self.open_overlay(
+                        "solyra-notifs",
+                        Anchor::TOP | Anchor::RIGHT | Anchor::BOTTOM,
+                        (8, 10, 8, 0),
+                        (340, (out_h - 16).max(1) as u32),
+                        KeyboardInteractivity::OnDemand,
+                    ));
+                }
+            }
+            ShellCmd::ClearNotifs => {
+                self.notifs.clear();
+                self.needs_redraw = true;
+            }
+            ShellCmd::About => {
+                if self.about.is_some() {
+                    self.about = None;
+                } else {
+                    self.close_overlays();
+                    self.about = Some(self.open_overlay(
+                        "solyra-about",
+                        Anchor::TOP,
+                        (140, 0, 0, 0),
+                        (340, 210),
+                        KeyboardInteractivity::OnDemand,
+                    ));
+                }
             }
             ShellCmd::ToggleLauncher => {
                 if self.launcher.is_some() {
@@ -1315,6 +1391,30 @@ impl App {
             agents_summary,
             hover,
         ));
+        let notifs_media = self.media.lock().ok().and_then(|g| g.clone());
+        overlay!(self.notifs_surface, |cv, hover| draw_notifs(
+            &mut cv,
+            &th,
+            &self.fonts,
+            &self.notifs,
+            notifs_media.as_ref(),
+            hover
+        ));
+        overlay!(self.dock_ctx, |cv, hover| menu::draw_ctx(
+            &mut cv,
+            &th,
+            &self.fonts,
+            &self.dock_ctx_entries,
+            hover
+        ));
+        let telem = read_telemetry();
+        let about_specs = self.about_specs(&telem);
+        overlay!(self.about, |cv, _hover| draw_about(
+            &mut cv,
+            &th,
+            &self.fonts,
+            &about_specs
+        ));
         overlay!(self.island_card, |cv, _hover| draw_island_card(
             &mut cv,
             &th,
@@ -1594,6 +1694,9 @@ impl App {
         [
             &self.launcher,
             &self.control,
+            &self.notifs_surface,
+            &self.dock_ctx,
+            &self.about,
             &self.island_card,
             &self.agents,
             &self.desk,
@@ -1637,6 +1740,12 @@ impl App {
                     "{{\"Action\":{{\"FocusWindow\":{{\"id\":{id}}}}}}}"
                 ));
                 self.launcher = None;
+            }
+            HitAction::CloseWindow(id) => {
+                send_ipc(&format!(
+                    "{{\"Action\":{{\"CloseWindow\":{{\"id\":{id}}}}}}}"
+                ));
+                self.close_overlays();
             }
             HitAction::Launch(target) => {
                 self.execute_launch(target);
@@ -1756,6 +1865,106 @@ impl App {
             self.close_overlays();
         }
         self.needs_state_sync = true;
+        self.needs_redraw = true;
+    }
+
+    /// Spec lines for the "About This Computer" card.
+    fn about_specs(&self, telem: &state::Telemetry) -> Vec<(String, String)> {
+        let os = std::fs::read_to_string("/etc/os-release")
+            .ok()
+            .and_then(|s| {
+                s.lines()
+                    .find(|l| l.starts_with("PRETTY_NAME="))
+                    .map(|l| {
+                        l.trim_start_matches("PRETTY_NAME=")
+                            .trim_matches('"')
+                            .to_string()
+                    })
+            })
+            .unwrap_or_else(|| "Solyra Linux".into());
+        let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease")
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        let chip = std::fs::read_to_string("/proc/cpuinfo")
+            .ok()
+            .and_then(|s| {
+                s.lines()
+                    .find(|l| l.starts_with("model name"))
+                    .and_then(|l| l.split(':').nth(1).map(|v| v.trim().to_string()))
+            })
+            .unwrap_or_else(|| "Unknown processor".into());
+        let memory = format!("{:.0} GB", telem.mem_total_mib as f64 / 1024.0);
+        let compositor = state::compositor_version()
+            .map(|v| format!("niri {v}"))
+            .unwrap_or_else(|| "niri".into());
+        vec![
+            ("OS".into(), os),
+            ("Kernel".into(), kernel),
+            ("Chip".into(), chip),
+            ("Memory".into(), memory),
+            ("Compositor".into(), compositor),
+        ]
+    }
+
+    /// Right-click: a dock icon's context card (macOS Dock style).
+    fn handle_right_click(&mut self, surface: &WlSurface, x: f64, y: f64) {
+        if &self.dock.surface != surface {
+            return;
+        }
+        let Some(region) = self.dock.regions.iter().find(|r| r.contains(x, y)) else {
+            return;
+        };
+        let icon_cx = region.x + region.w / 2;
+        let mut entries = Vec::new();
+        match region.action.clone() {
+            HitAction::FocusWindow(id) => {
+                entries.push(menu::ctx_item("Open".into(), HitAction::FocusWindow(id)));
+                entries.push(menu::ctx_sep());
+                entries.push(menu::ctx_item("Quit".into(), HitAction::CloseWindow(id)));
+            }
+            HitAction::Launch(t) => {
+                let is_trash = matches!(&t, LaunchTarget::Shell(c) if c.contains("trash:///"));
+                entries.push(menu::ctx_item("Open".into(), HitAction::Launch(t)));
+                if is_trash {
+                    entries.push(menu::ctx_sep());
+                    entries.push(menu::ctx_item(
+                        "Empty Trash".into(),
+                        HitAction::Launch(LaunchTarget::Shell(
+                            "rm -rf ~/.local/share/Trash/files/* ~/.local/share/Trash/info/*"
+                                .into(),
+                        )),
+                    ));
+                }
+            }
+            _ => return,
+        }
+        let (mw, mh) = menu::panel_size(&self.fonts, &entries);
+        // The dock is centred on the output: recover the icon's global x.
+        let out_w = self
+            .output_state
+            .outputs()
+            .filter_map(|o| self.output_state.info(&o))
+            .filter_map(|i| i.logical_size.map(|(w, _)| w))
+            .max()
+            .unwrap_or(0);
+        let spec = dock::spec(
+            self.prefs.dock_style,
+            &self.wins,
+            self.prefs.look.dock_magnify,
+            self.dock_hidden,
+        );
+        let global_cx = ((out_w - spec.width as i32) / 2).max(0) + icon_cx;
+        let left = (global_cx - mw / 2).clamp(8, (out_w - mw - 8).max(8));
+        let bottom = spec.bottom_margin + spec.height as i32 + 6;
+        let slot = self.open_overlay(
+            "solyra-dock-ctx",
+            Anchor::BOTTOM | Anchor::LEFT,
+            (0, 0, bottom, left),
+            (mw as u32, mh as u32),
+            KeyboardInteractivity::OnDemand,
+        );
+        self.dock_ctx = Some(slot);
+        self.dock_ctx_entries = entries;
         self.needs_redraw = true;
     }
 
@@ -2215,6 +2424,9 @@ impl LayerShellHandler for App {
         for slot in [
             &mut self.launcher,
             &mut self.control,
+            &mut self.notifs_surface,
+            &mut self.dock_ctx,
+            &mut self.about,
             &mut self.island_card,
             &mut self.agents,
             &mut self.island,
@@ -2253,6 +2465,9 @@ impl LayerShellHandler for App {
         for slot in [
             &mut self.launcher,
             &mut self.control,
+            &mut self.notifs_surface,
+            &mut self.dock_ctx,
+            &mut self.about,
             &mut self.island_card,
             &mut self.agents,
             &mut self.island,
@@ -2391,6 +2606,11 @@ impl PointerHandler for App {
                     let surface = event.surface.clone();
                     let (x, y) = event.position;
                     self.handle_click(&surface, x, y);
+                }
+                PointerEventKind::Press { button, .. } if *button == 0x111 => {
+                    let surface = event.surface.clone();
+                    let (x, y) = event.position;
+                    self.handle_right_click(&surface, x, y);
                 }
                 _ => {}
             }

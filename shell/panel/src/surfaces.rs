@@ -55,6 +55,8 @@ impl Region {
 pub enum HitAction {
     Workspace(u8),
     FocusWindow(u64),
+    /// Close the window with this niri id (dock context menu Quit).
+    CloseWindow(u64),
     Launch(LaunchTarget),
     Shell(ShellCmd),
     ToggleDnd,
@@ -385,7 +387,7 @@ pub fn draw_bar(
     let now = chrono::Local::now();
     let clock_str = now.format(prefs.look.clock_format()).to_string();
     let date_str = if prefs.look.show_date {
-        now.format("%a %b %-d").to_string()
+        now.format("%a %-d %b").to_string()
     } else {
         String::new()
     };
@@ -428,13 +430,21 @@ pub fn draw_bar(
         y: 0,
         w: clock_x + clock_w + 8 - (time_left - 4),
         h,
-        action: HitAction::Shell(ShellCmd::ToggleIsland),
+        // macOS: clicking the clock/date opens Notification Centre.
+        action: HitAction::Shell(ShellCmd::ToggleNotifs),
     });
 
     // Search, Wi-Fi, volume, battery, control centre — crisp unboxed glyphs.
     let mut edge = time_left - 16;
     edge -= 18;
     let cc_cx = edge as f32 + 9.0;
+    // Focus mode: the bar carries the moon like the real menu bar does.
+    let focus_cx = if prefs.dnd_on {
+        edge -= 6 + 18;
+        Some(edge as f32 + 9.0)
+    } else {
+        None
+    };
     let bat = if let Some(pct) = telem.battery_pct {
         edge -= 6 + 22;
         Some((edge as f32 + 11.0, pct))
@@ -459,6 +469,9 @@ pub fn draw_bar(
         if let Some((cx, pct)) = bat {
             cv.icon_battery(cx, icon_cy + 1.0, pct, sh, sh);
         }
+        if let Some(cx) = focus_cx {
+            cv.icon_moon(cx, icon_cy + 1.0, sh);
+        }
         cv.icon_control_centre(cc_cx, icon_cy + 1.0, sh);
     }
     cv.icon_network(
@@ -473,6 +486,9 @@ pub fn draw_bar(
     if let Some((cx, pct)) = bat {
         let level = if pct <= 15 { th.danger } else { bar_text };
         cv.icon_battery(cx, icon_cy, pct, bar_text, level);
+    }
+    if let Some(cx) = focus_cx {
+        cv.icon_moon(cx, icon_cy, bar_text);
     }
     cv.icon_control_centre(cc_cx, icon_cy, bar_text);
     regions.push(Region {
@@ -864,6 +880,236 @@ fn draw_launcher_row(
             action,
         });
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+/// The notification centre drawer: full-height card at the right edge,
+/// history of notifications newest-first, Clear All at the top. With media
+/// playing a Now Playing card sits at the top, as in the real thing.
+pub fn draw_notifs(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    fonts: &Fonts,
+    notifs: &std::collections::VecDeque<(u64, String, String)>,
+    media: Option<&crate::media::Media>,
+    hover: Option<(f64, f64)>,
+) -> Vec<Region> {
+    let w = cv.width as i32;
+    let h = cv.height as i32;
+    let mut regions = Vec::new();
+    card(cv, th, 0, 0, w, h, R_CARD);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    cv.text(
+        fonts.semibold.as_ref(),
+        "Notification Centre",
+        16,
+        26,
+        14.0,
+        th.text,
+    );
+    cv.text(
+        fonts.regular.as_ref(),
+        &chrono::Local::now().format("%A %-d %B").to_string(),
+        16,
+        44,
+        11.0,
+        th.text_dim,
+    );
+    if !notifs.is_empty() {
+        let label = "Clear All";
+        let lw = text_width(fonts.regular.as_ref(), label, 11.0);
+        let bx = w - 16 - lw - 16;
+        let hot = hover.is_some_and(|(hx, hy)| {
+            hx >= bx as f64 && hx <= (bx + lw + 16) as f64 && hy >= 12.0 && hy <= 40.0
+        });
+        cv.round_rect(
+            bx,
+            14,
+            lw + 16,
+            24,
+            12.0,
+            if hot { th.tile_hover } else { th.tile },
+        );
+        cv.text(
+            fonts.regular.as_ref(),
+            label,
+            bx + 8,
+            30,
+            11.0,
+            th.accent,
+        );
+        regions.push(Region {
+            x: bx,
+            y: 14,
+            w: lw + 16,
+            h: 24,
+            action: HitAction::Shell(ShellCmd::ClearNotifs),
+        });
+    }
+
+    // Now Playing widget (the real NC's top card): album art, title,
+    // artist and transport controls.
+    let mut y = 58;
+    if let Some(m) = media {
+        let ch = 72;
+        cv.round_rect(12, y, w - 24, ch, 10.0, th.tile);
+        cv.text(
+            fonts.semibold.as_ref(),
+            "NOW PLAYING",
+            22,
+            y + 14,
+            8.5,
+            th.text_dim,
+        );
+        let art = 40;
+        cv.draw_album_art(22, y + 24, art, 9.0);
+        let tx = 22 + art + 10;
+        let tw = w - 24 - tx - 112;
+        cv.text_truncated(
+            fonts.semibold.as_ref(),
+            &m.title,
+            tx,
+            y + 38,
+            11.5,
+            tw.max(20),
+            th.text,
+        );
+        cv.text_truncated(
+            fonts.regular.as_ref(),
+            &m.artist,
+            tx,
+            y + 56,
+            10.5,
+            tw.max(20),
+            th.text_dim,
+        );
+        let btn = 32;
+        let gap = 4;
+        let start = w - 24 - (btn * 3 + gap * 2);
+        for (i, c) in [
+            crate::media::Control::Previous,
+            crate::media::Control::PlayPause,
+            crate::media::Control::Next,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let bx0 = start + i as i32 * (btn + gap);
+            if hovered(hover, bx0, y + 32, btn, 32) {
+                cv.round_rect(bx0, y + 32, btn, 32, 16.0, th.tile_hover);
+            }
+            let cx = (bx0 + btn / 2) as f32;
+            let cy = (y + 48) as f32;
+            match c {
+                crate::media::Control::Previous => {
+                    cv.icon_skip(cx, cy, 13.0, false, th.text)
+                }
+                crate::media::Control::Next => cv.icon_skip(cx, cy, 13.0, true, th.text),
+                crate::media::Control::PlayPause if m.playing => {
+                    cv.icon_pause(cx, cy, 15.0, th.text)
+                }
+                crate::media::Control::PlayPause => cv.icon_play(cx, cy, 15.0, th.text),
+            }
+            regions.push(Region {
+                x: bx0,
+                y: y + 32,
+                w: btn,
+                h: 32,
+                action: HitAction::Media(c),
+            });
+        }
+        y += ch + 8;
+    }
+
+    if notifs.is_empty() {
+        cv.text(
+            fonts.regular.as_ref(),
+            "No Notifications",
+            w / 2 - 52,
+            if media.is_some() { y + 60 } else { h / 2 },
+            13.0,
+            th.text_dim,
+        );
+        return regions;
+    }
+    for (ts, app, text) in notifs.iter().rev() {
+        let card_h = 48;
+        if y + card_h > h - 12 {
+            break;
+        }
+        cv.round_rect(12, y, w - 24, card_h, 10.0, th.tile);
+        let age = now.saturating_sub(*ts);
+        let ago = if age < 60 {
+            "just now".to_string()
+        } else if age < 3600 {
+            format!("{}m ago", age / 60)
+        } else if age < 86400 {
+            format!("{}h ago", age / 3600)
+        } else {
+            format!("{}d ago", age / 86400)
+        };
+        // App icon and name, like the real centre's per-app cards.
+        cv.draw_app_squircle(20, y + 7, 34, app, None, fonts);
+        let tx = 62;
+        if !app.is_empty() {
+            cv.text_tracked(
+                fonts.semibold.as_ref(),
+                &app.to_uppercase(),
+                tx,
+                y + 14,
+                8.5,
+                0.5,
+                th.text_dim,
+            );
+        }
+        let aw = text_width(fonts.regular.as_ref(), &ago, 9.5);
+        cv.text(fonts.regular.as_ref(), &ago, w - 20 - aw, y + 14, 9.5, th.text_dim);
+        cv.text_truncated(
+            fonts.regular.as_ref(),
+            text,
+            tx,
+            y + 33,
+            11.5,
+            w - 24 - tx - 8,
+            th.text,
+        );
+        y += card_h + 6;
+    }
+    regions
+}
+
+// ------------------------------------------------------- About this computer
+
+/// The "About This Computer" card: a centred OS mark, the name, and
+/// two-column spec lines (label dim left, value right).
+pub fn draw_about(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    fonts: &Fonts,
+    specs: &[(String, String)],
+) -> Vec<Region> {
+    let w = cv.width as i32;
+    let h = cv.height as i32;
+    cv.round_rect_shadow(0, 0, w, h, 14.0, 10.0, 30.0, 48);
+    cv.round_rect(0, 0, w, h, 14.0, th.surface);
+    cv.stroke_round_rect(0, 0, w, h, 14.0, 1.0, th.hairline);
+    let cx0 = w / 2;
+    cv.draw_app_squircle(cx0 - 21, 14, 42, "solyra", None, fonts);
+    let title = "Solyra OS";
+    let tw = text_width(fonts.semibold.as_ref(), title, 15.0);
+    cv.text(fonts.semibold.as_ref(), title, cx0 - tw / 2, 74, 15.0, th.text);
+    let mut y = 98;
+    for (label, value) in specs {
+        cv.text(fonts.regular.as_ref(), label, 44, y, 11.0, th.text_dim);
+        cv.text(fonts.regular.as_ref(), value, 132, y, 11.0, th.text);
+        y += 22;
+    }
+    Vec::new()
 }
 
 // --------------------------------------------------------- Control Centre

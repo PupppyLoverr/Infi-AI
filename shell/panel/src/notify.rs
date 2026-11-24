@@ -125,7 +125,8 @@ fn serve(
                 if let Ok(mut q) = queue.lock() {
                     // Bounded: a runaway sender cannot grow memory without limit.
                     if q.len() < 64 {
-                        q.push(ShellCmd::Notify(island_line(&app, &summary, &body)));
+                        let line = island_line(&app, &summary, &body);
+                        q.push(ShellCmd::Notify(app, line));
                     }
                 }
                 if let Ok(w) = wake.lock() {
@@ -214,7 +215,7 @@ mod tests {
         assert_eq!(caps.0, vec!["body"], "no actions or images are claimed");
         let q = queue.lock().unwrap();
         assert!(
-            matches!(&q[0], ShellCmd::Notify(t) if t == "Firefox · Download finished — report.pdf"),
+            matches!(&q[0], ShellCmd::Notify(a, t) if a == "Firefox" && t == "Firefox · Download finished — report.pdf"),
             "{q:?}"
         );
         assert!(woke.load(Ordering::Relaxed) >= 1);

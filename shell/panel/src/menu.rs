@@ -93,7 +93,7 @@ pub struct AppCtx<'a> {
 pub fn entries(id: MenuId, app: &AppCtx<'_>, dark: bool) -> Vec<Entry> {
     match id {
         MenuId::Solyra => vec![
-            item("About This Computer", None, sh("solyra-settings --page about")),
+            item("About This Computer", None, HitAction::Shell(ShellCmd::About)),
             item("System Settings…", Some("Super+S"), sh("solyra-settings")),
             sep(),
             item("Lock Screen", Some("Super+Ctrl+L"), HitAction::Shell(ShellCmd::Lock)),
@@ -113,14 +113,19 @@ pub fn entries(id: MenuId, app: &AppCtx<'_>, dark: bool) -> Vec<Entry> {
             },
         ],
         MenuId::App => {
-            let mut v = Vec::new();
+            let mut v = vec![item(
+                &format!("About {}", app.name),
+                None,
+                HitAction::Shell(ShellCmd::About),
+            )];
+            v.push(sep());
             if let Some(cmd) = &app.launch {
                 v.push(item(&format!("New {} Window", app.name), None, sh(cmd)));
             }
             if app.has_window {
                 v.push(item("Close Window", Some("Super+W"), ipc("{\"Action\":{\"CloseWindow\":{\"id\":null}}}")));
             }
-            if v.is_empty() {
+            if !app.has_window && app.launch.is_none() {
                 v.push(item("Open the Launcher", Some("Super+D"), HitAction::Shell(ShellCmd::ToggleLauncher)));
             }
             v
@@ -203,6 +208,63 @@ pub struct Title {
 /// Draw the open menu below `title` on a full-screen transparent surface.
 /// `armed` is the index of an item waiting for its confirming second click.
 #[allow(clippy::too_many_arguments)]
+/// One row of the dock icon context menu (built in main.rs).
+pub fn ctx_item(label: String, action: HitAction) -> Entry {
+    Entry {
+        label,
+        shortcut: None,
+        action: Some(action),
+        confirm: None,
+    }
+}
+
+/// A separator row in the dock context menu.
+pub fn ctx_sep() -> Entry {
+    sep()
+}
+
+/// The dock's right-click card: a small floating column of menu rows.
+pub fn draw_ctx(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    fonts: &Fonts,
+    entries: &[Entry],
+    hover: Option<(f64, f64)>,
+) -> Vec<Region> {
+    let w = cv.width as i32;
+    let h = cv.height as i32;
+    let mut regions = Vec::new();
+    cv.round_rect_shadow(0, 0, w, h, 12.0, 9.0, 26.0, 46);
+    cv.round_rect(0, 0, w, h, 12.0, th.surface);
+    cv.stroke_round_rect(0, 0, w, h, 12.0, 1.0, th.hairline);
+    let mut y = PAD;
+    for e in entries {
+        let Some(action) = &e.action else {
+            cv.fill_rect(12, y + SEP_H / 2, w - 24, 1, th.separator);
+            y += SEP_H;
+            continue;
+        };
+        let (rx, rw) = (5, w - 10);
+        let hov = hover.is_some_and(|(hx, hy)| {
+            hx >= rx as f64 && hx < (rx + rw) as f64 && hy >= y as f64 && hy < (y + ROW_H) as f64
+        });
+        if hov {
+            cv.round_rect(rx, y, rw, ROW_H, 6.0, th.accent);
+        }
+        let fg = if hov { th.on_accent } else { th.text };
+        cv.text(fonts.regular.as_ref(), &e.label, rx + 12, y + 19, T_LABEL + 0.5, fg);
+        regions.push(Region {
+            x: rx,
+            y,
+            w: rw,
+            h: ROW_H,
+            action: action.clone(),
+        });
+        y += ROW_H;
+    }
+    regions
+}
+
 pub fn draw(
     cv: &mut Canvas<'_>,
     th: &Theme,
@@ -361,7 +423,9 @@ mod tests {
             has_window: false,
         };
         let e = entries(MenuId::App, &none, true);
-        assert_eq!(e.len(), 1);
+        // About + a separator + the launcher fallback, and nothing else.
+        assert_eq!(e.len(), 3);
+        assert!(e.iter().any(|x| x.label == "About Solyra"));
         assert!(!e.iter().any(|x| x.label.contains("Close")));
     }
 

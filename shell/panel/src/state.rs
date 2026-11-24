@@ -162,11 +162,17 @@ impl WallpaperMode {
 
 #[derive(Clone, Debug)]
 pub enum ShellCmd {
-    Notify(String),
+    /// (sending app, display line); an empty line dismisses the banner.
+    Notify(String, String),
     ToggleLauncher,
     ToggleControl,
     ToggleIsland,
     ToggleAgents,
+    /// Notification centre drawer (history of notifications).
+    ToggleNotifs,
+    ClearNotifs,
+    /// Open the "About This Computer" card.
+    About,
     CloseOverlays,
     SetDock(DockStyle),
     SetWallpaper(WallpaperPreset),
@@ -370,6 +376,7 @@ impl ShellPrefs {
                         prefs.volume = n.min(100);
                     }
                 }
+                "dnd" => prefs.dnd_on = v.trim() == "1",
                 "brightness" => {
                     if let Ok(n) = v.trim().parse::<u8>() {
                         prefs.brightness = n.clamp(15, 100);
@@ -405,6 +412,7 @@ impl ShellPrefs {
             ("volume", Some(self.volume.to_string())),
             ("brightness", Some(self.brightness.to_string())),
             ("agent_env", Some(agent_env_name(self.agent_env).into())),
+            ("dnd", Some(if self.dnd_on { "1" } else { "0" }.into())),
         ];
         if let Err(err) = solyra_conf::update(&path, &pairs) {
             eprintln!("solyra-panel: cannot save {}: {err}", path.display());
@@ -479,7 +487,7 @@ where
 fn parse_cmd_line(raw: &str) -> Option<ShellCmd> {
     let s = raw.trim();
     if let Some(rest) = s.strip_prefix("notify ") {
-        return Some(ShellCmd::Notify(rest.trim().to_string()));
+        return Some(ShellCmd::Notify("Shell".into(), rest.trim().to_string()));
     }
     if let Some(rest) = s.strip_prefix("dock ") {
         return DockStyle::parse(rest).map(ShellCmd::SetDock);
@@ -505,6 +513,9 @@ fn parse_cmd_line(raw: &str) -> Option<ShellCmd> {
         "toggle-control" | "control" => Some(ShellCmd::ToggleControl),
         "toggle-island" | "island" => Some(ShellCmd::ToggleIsland),
         "toggle-agents" | "agents" => Some(ShellCmd::ToggleAgents),
+        "about" => Some(ShellCmd::About),
+        "toggle-notifs" | "notifs" => Some(ShellCmd::ToggleNotifs),
+        "clear-notifs" => Some(ShellCmd::ClearNotifs),
         "close" => Some(ShellCmd::CloseOverlays),
         "lock" => Some(ShellCmd::Lock),
         _ => None,
@@ -630,6 +641,13 @@ pub fn ipc(request: &str) -> Option<String> {
 
 pub fn send_ipc(request: &str) {
     let _ = ipc(request);
+}
+
+/// niri's reported version string, when the IPC socket answers.
+pub fn compositor_version() -> Option<String> {
+    let reply = ipc("\"Version\"")?;
+    let v: serde_json::Value = serde_json::from_str(&reply).ok()?;
+    v.get("Ok")?.get("Version")?.as_str().map(String::from)
 }
 
 pub fn workspaces() -> Vec<(u8, bool)> {
@@ -1315,7 +1333,7 @@ mod tests {
             Some(ShellCmd::ToggleAgents)
         ));
         assert!(
-            matches!(parse_cmd_line("notify hi there"), Some(ShellCmd::Notify(t)) if t == "hi there")
+            matches!(parse_cmd_line("notify hi there"), Some(ShellCmd::Notify(_, t)) if t == "hi there")
         );
         assert!(parse_cmd_line("rm -rf /").is_none());
     }

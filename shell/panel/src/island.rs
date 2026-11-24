@@ -581,7 +581,7 @@ fn expanded_body(
                 y: r.1,
                 w: r.2,
                 h: r.3,
-                action: HitAction::Shell(ShellCmd::Notify(String::new())),
+                action: HitAction::Shell(ShellCmd::Notify(String::new(), String::new())),
             });
         }
         Content::Activity { who, text } => {
