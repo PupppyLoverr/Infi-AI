@@ -408,6 +408,8 @@ fn draw_floating(
     let card_x = ((w - card_w) / 2).max(1);
 
     let slab = slab_for(live, th.surface);
+    // Elevation (Liquid Glass "depth"): a soft shadow under the shelf.
+    cv.round_rect_shadow(card_x, card_y, card_w, CARD_H, DOCK_R, 6.0, 14.0, 54);
     material::paint(cv, &slab, card_x, card_y, card_w, CARD_H, DOCK_R);
     let body = Body {
         x: card_x,

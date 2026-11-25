@@ -1197,6 +1197,24 @@ fn scene_pixels(
     notch: solyra_conf::look::NotchStyle,
     media: bool,
 ) -> Scene {
+    scene_pixels_with(fonts, kind, wallpaper, bar_m, dock_m, notch_m, dock_style, notch, media, |_, _, _| {})
+}
+
+/// [`scene_pixels`], with `under` painting onto the desktop before the shell
+/// surfaces go on top (a window behind the dock, to show the glass).
+#[allow(clippy::too_many_arguments)]
+fn scene_pixels_with(
+    fonts: &Fonts,
+    kind: ThemeKind,
+    wallpaper: &str,
+    bar_m: crate::material::Material,
+    dock_m: crate::material::Material,
+    notch_m: crate::material::Material,
+    dock_style: DockStyle,
+    notch: solyra_conf::look::NotchStyle,
+    media: bool,
+    under: impl FnOnce(&mut [u8], u32, u32),
+) -> Scene {
     use crate::island::{self, Anim, Content, Extra, Glance};
     use crate::lock::{backdrop, blur};
     let (w, h) = (1280u32, 800u32);
@@ -1206,7 +1224,8 @@ fn scene_pixels(
     ))
     .ok()
     .and_then(|b| crate::canvas::decode_png(&b));
-    let sharp = backdrop(wp.as_ref(), w, h);
+    let mut sharp = backdrop(wp.as_ref(), w, h);
+    under(&mut sharp, w, h);
     let soft = blur(&blur(&sharp, w, h), w, h);
     let mut out = sharp.clone();
 
@@ -1282,10 +1301,7 @@ fn scene_pixels(
         h as i32 - spec.height as i32 - spec.bottom_margin,
     );
     if let Some(b) = body {
-        if !spec.full_width {
-            let mut cv = Canvas::new_keep(&mut out, w, h, 1);
-            cv.round_rect_shadow(at.0 + b.x, at.1 + b.y, b.w, b.h, b.r, 8.0, 18.0, 72);
-        }
+        // The dock draws its own elevation shadow (dock.rs); none is added here.
         if crate::material::blurs(dock_m) {
             let rects = crate::material::blur_rects(b.x, b.y, b.w, b.h, b.r);
             compositor_backdrop(&sharp, &soft, w, dock_m, &rects, at, &mut out);
@@ -1445,6 +1461,48 @@ fn default_desktop_renders() {
         .count();
     let frac = diff as f64 / (shots[0].w * shots[0].h) as f64;
     assert!(frac > 0.25, "dark and light defaults differ in only {:.1} % of pixels", frac * 100.0);
+    if let Some(dir) = std::env::var_os("SOLYRA_RENDER_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for s in &shots {
+            write_png(&dir, s);
+        }
+    }
+}
+
+/// The dock over a window, the way it is used: the window's colours show
+/// through the glass, blurred.
+#[test]
+fn dock_glass_over_a_window_renders() {
+    let fonts = Fonts::load();
+    let d = ShellPrefs::default();
+    let mut shots = Vec::new();
+    for (kind, wp) in [(ThemeKind::Dark, "silk"), (ThemeKind::Light, "silk-light")] {
+        let scene = scene_pixels_with(
+            &fonts, kind, wp, d.look.bar_material, d.look.dock_material, d.look.notch_material,
+            d.dock_style, d.look.notch, false,
+            |px, w, h| {
+                let mut cv = Canvas::new_keep(px, w, h, 1);
+                // A photo-viewer-like window reaching under the dock.
+                cv.round_rect(250, 420, 780, 420, 16.0, Rgba::rgb(250, 250, 252));
+                let cols = [
+                    Rgba::rgb(0xff, 0x6b, 0x6b), Rgba::rgb(0xff, 0xc1, 0x45), Rgba::rgb(0x4c, 0xd9, 0x7b),
+                    Rgba::rgb(0x3b, 0x9b, 0xf2), Rgba::rgb(0xa8, 0x6b, 0xf7), Rgba::rgb(0xff, 0x8a, 0xc6),
+                ];
+                for i in 0..12 {
+                    let (c, r) = (i % 6, i / 6);
+                    cv.round_rect(274 + c * 124, 470 + r * 150, 112, 136, 10.0, cols[(i as usize + r as usize) % 6]);
+                }
+                cv.text(fonts.semibold.as_ref(), "Pictures", 274, 450, 15.0, Rgba::rgb(30, 30, 34));
+            },
+        );
+        shots.push(Shot {
+            name: format!("dock-glass-{}", kind.as_str()),
+            w: scene.w,
+            h: scene.h,
+            rgba: flatten(&scene.out, scene.w, scene.h, Rgba::rgb(0, 0, 0)),
+        });
+    }
     if let Some(dir) = std::env::var_os("SOLYRA_RENDER_DIR") {
         let dir = std::path::PathBuf::from(dir);
         std::fs::create_dir_all(&dir).unwrap();

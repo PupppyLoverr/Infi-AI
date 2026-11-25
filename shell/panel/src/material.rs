@@ -112,9 +112,9 @@ pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
         // and a specular top edge, so the wallpaper's colour shows through.
         Material::Glass if dark => Slab {
             kind: m,
-            fill: Rgba::rgba(30, 30, 36, boost(54)),
-            edge: Rgba::rgba(255, 255, 255, 64),
-            highlight: Some(Rgba::rgba(255, 255, 255, 150)),
+            fill: Rgba::rgba(255, 255, 255, boost(40)),
+            edge: Rgba::rgba(255, 255, 255, 80),
+            highlight: Some(Rgba::rgba(255, 255, 255, 220)),
         },
         Material::Glass => Slab {
             kind: m,
@@ -153,29 +153,12 @@ pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f
         return;
     }
     match s.kind {
-        Material::Glass if is_dark(s.fill) => {
-            // A faint wash so icons sit on something, then the glass itself.
-            cv.round_rect(x, y, w, h, r, s.fill);
-            cv.round_rect_vgrad(
-                x,
-                y,
-                w,
-                h,
-                r,
-                Rgba::rgba(255, 255, 255, 40),
-                Rgba::rgba(255, 255, 255, 10),
-            );
-            let hl = s.highlight.unwrap_or(s.edge);
-            cv.round_rect_glass_rim(
-                x,
-                y,
-                w,
-                h,
-                r,
-                hl,
-                Rgba::rgba(255, 255, 255, s.edge.3),
-                Rgba::rgba(255, 255, 255, s.edge.3 / 2),
-            );
+        Material::Glass if s.fill.0 == 255 && s.fill.3 < 60 => {
+            // Liquid Glass (dark theme), Droppy's / macOS 26's recipe: the
+            // blurred desktop shows through a thin white veil; the rim is lit
+            // sharply at the top, clear in the middle and occluded at the
+            // bottom; a soft shadow lifts it off the desktop.
+            liquid_glass(cv, x, y, w, h, r, s.fill.3, 0.9);
         }
         Material::Glass => {
             let a = s.fill.3;
@@ -235,6 +218,38 @@ pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f
             cv.stroke_round_rect(x, y, w, h, r, 1.0, s.edge);
         }
     }
+}
+
+/// The Liquid Glass body: veil + specular rim (top 70 % white, middle 10 %,
+/// bottom occluded) + a hairline that separates it from bright wallpapers.
+pub fn liquid_glass(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32, veil: u8, depth: f32) {
+    // Veil: brighter toward the top, like light falling on a droplet.
+    cv.round_rect_vgrad(
+        x,
+        y,
+        w,
+        h,
+        r,
+        Rgba::rgba(255, 255, 255, veil.saturating_add(22)),
+        Rgba::rgba(255, 255, 255, veil / 2),
+    );
+    // Outer hairline (occlusion) so the glass edge reads on any wallpaper.
+    cv.stroke_round_rect(x - 1, y - 1, w + 2, h + 2, r + 1.0, 1.0, Rgba::rgba(0, 0, 0, 46));
+    // Specular rim: sharp at the top, clear at the sides, dark at the bottom.
+    let top = (255.0 * 0.7 * depth).round() as u8;
+    cv.round_rect_glass_rim(
+        x,
+        y,
+        w,
+        h,
+        r,
+        Rgba::rgba(255, 255, 255, top),
+        Rgba::rgba(255, 255, 255, 26),
+        Rgba::rgba(0, 0, 0, 52),
+    );
+    // A second, softer inner highlight one pixel in, for thickness.
+    let inset = (r * 0.8).round() as i32;
+    cv.fill_rect_vgrad(x + inset, y + 1, (w - 2 * inset).max(0), 2, Rgba::rgba(255, 255, 255, top / 2), Rgba::rgba(255, 255, 255, 0));
 }
 
 /// A rounded rectangle as row strips, for a `wl_region`: corners are
