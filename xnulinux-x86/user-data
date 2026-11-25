@@ -1,0 +1,10 @@
+#cloud-config
+users:
+  - name: ubuntu
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: false
+    plain_text_passwd: ubuntu
+    shell: /bin/bash
+ssh_pwauth: true
+runcmd:
+  - echo ready > /var/tmp/ready
