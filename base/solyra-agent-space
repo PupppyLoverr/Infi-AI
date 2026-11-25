@@ -1,0 +1,12 @@
+#!/bin/sh
+# solyra-agent-space [command args...]
+#
+# Open something in the Agent Space (workspace 7, docs/agent-platform.md):
+# the space is focused first, so the new window opens there, apart from your
+# own work. With no command, a terminal opens there (agent CLIs run in it are
+# wrapped for the notch by /etc/profile.d/solyra-agent.sh).
+niri msg action focus-workspace 7 >/dev/null 2>&1 || true
+if [ $# -eq 0 ]; then
+  exec solyra-open terminal
+fi
+exec "$@"

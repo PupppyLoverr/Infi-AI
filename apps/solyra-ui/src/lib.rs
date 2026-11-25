@@ -12,6 +12,8 @@
 //! control) onto Solyra's, so segmented controls, tabs and checkboxes look
 //! like the shell, accent included.
 
+pub mod chrome;
+
 use solyra_conf::look::Look;
 use solyra_tokens::{Accent, Rgba, Theme, ThemeKind};
 use zgx::compose::prelude::*;

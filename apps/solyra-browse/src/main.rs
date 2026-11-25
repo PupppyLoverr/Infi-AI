@@ -384,13 +384,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             cx.render(solyra_ui::scope(
                 &style,
-                column()
+                {
+                    let w_close = cx.window.clone();
+                    let w_zoom = cx.window.clone();
+                    let maxed = std::rc::Rc::new(std::cell::Cell::new(false));
+                    let ctl = solyra_ui::chrome::WindowCtl {
+                        close: std::rc::Rc::new(move || w_close.close()),
+                        zoom: std::rc::Rc::new(move || {
+                            let m = !maxed.get();
+                            maxed.set(m);
+                            w_zoom.set_maximized(m);
+                        }),
+                    };
+                    let bar = solyra_ui::chrome::titlebar(&cx.ui.runtime.clone(), &style, "Browser", ctl, None);
+                    column()
+                        .w_full()
+                        .h_full()
+                        .child(bar)
+                        .child(column()
                     .w_full()
                     .h_full()
                     .bg(style.content_bg())
                     .text_color(solyra_ui::color(theme.text))
                     .child(strip.grow().w_full().bg(style.sidebar_bg()))
-,
+.grow())
+                },
             ));
 
             if self_test {

@@ -55,17 +55,20 @@ layout {
     }
     background-color "#121016"
     focus-ring { off; }
+    // pearOS window frame (FIGMA spec): a 1 px white 20 % rim and a deep,
+    // soft shadow (0 18 54 at 57 %); no coloured focus border.
     border {
         width 1
-        active-color "#b48aad"
-        inactive-color "#3a3342"
+        active-color "#ffffff33"
+        inactive-color "#ffffff1a"
     }
     shadow {
         on
-        softness 40
-        spread 6
-        offset x=0 y=8
-        color "#00000080"
+        softness 54
+        spread 0
+        offset x=0 y=18
+        color "#00000091"
+        inactive-color "#00000060"
     }
     struts {
         left 8
@@ -90,7 +93,19 @@ window-rule {
     match app-id="^xdg-desktop-portal-gtk$"
     match app-id="^polkit-gnome-authentication-agent-1$"
     match app-id="^(org\\.gnome\\.)?(Calculator|FileRoller)$"
+    match app-id="^galculator$"
     open-floating true
+}
+
+// Windows owned by an agent (app id solyra-agent-*) are marked with the agent
+// colour, so it is always clear what an agent opened.
+window-rule {
+    match app-id="^solyra-agent-"
+    border {
+        width 2
+        active-color "#ff9f0a"
+        inactive-color "#ff9f0a99"
+    }
 }
 
 window-rule {
@@ -106,7 +121,7 @@ window-rule {
 }
 
 window-rule {
-    geometry-corner-radius 12
+    geometry-corner-radius 16
     clip-to-geometry true
     // Translucent apps (the terminal) get the same glass treatment as chrome.
     background-effect {
@@ -281,6 +296,9 @@ binds {
     Mod+Shift+C hotkey-overlay-title="Control Centre" { spawn "solyra-panel" "toggle-control"; }
     Mod+Shift+I hotkey-overlay-title="Dynamic Island" { spawn "solyra-panel" "toggle-island"; }
     Mod+Shift+A hotkey-overlay-title="Agent tasks" { spawn "solyra-panel" "toggle-agents"; }
+    // Agent Space (docs/agent-platform.md): workspace 7, apart from your own.
+    Mod+A hotkey-overlay-title="Agent Space" { focus-workspace 7; }
+    Mod+Shift+Return hotkey-overlay-title="Terminal in the Agent Space" { spawn "solyra-agent-space"; }
 
     // Sessions.
     Mod+Shift+E { quit; }
