@@ -165,6 +165,17 @@ pub enum Control {
     PlayPause,
     Next,
     Previous,
+    /// Jump to this position (microseconds) in the current track.
+    SeekTo(i64),
+}
+
+/// The scrubber is clickable in `SEEK_STEPS` slices; slice `i` of `n` seeks
+/// to the middle of that slice of the track.
+pub const SEEK_STEPS: i32 = 48;
+
+pub fn seek_target(slice: i32, steps: i32, length_us: i64) -> i64 {
+    let f = (slice as f64 + 0.5) / steps.max(1) as f64;
+    (length_us as f64 * f.clamp(0.0, 1.0)) as i64
 }
 
 /// Send a control to the player, off the UI thread.
@@ -174,10 +185,20 @@ pub fn control(bus: String, what: Control) {
             return;
         };
         let p = conn.with_proxy(bus.as_str(), PATH, Duration::from_millis(500));
+        if let Control::SeekTo(target) = what {
+            // MPRIS Seek is relative: move by the distance from where the
+            // player is now (SetPosition would need the track id).
+            let now: i64 = p.get(PLAYER, "Position").unwrap_or(0);
+            if let Err(e) = p.method_call::<(), _, _, _>(PLAYER, "Seek", (target - now,)) {
+                eprintln!("solyra-panel: media Seek: {e}");
+            }
+            return;
+        }
         let method = match what {
             Control::PlayPause => "PlayPause",
             Control::Next => "Next",
             Control::Previous => "Previous",
+            Control::SeekTo(_) => unreachable!(),
         };
         if let Err(e) = p.method_call::<(), _, _, _>(PLAYER, method, ()) {
             eprintln!("solyra-panel: media {method}: {e}");
@@ -199,6 +220,13 @@ mod tests {
             position_us: None,
             length_us: None,
         }
+    }
+
+    #[test]
+    fn seek_slices_cover_the_track() {
+        assert_eq!(seek_target(0, 4, 400), 50);
+        assert_eq!(seek_target(3, 4, 400), 350);
+        assert_eq!(seek_target(SEEK_STEPS - 1, SEEK_STEPS, 0), 0);
     }
 
     #[test]

@@ -1017,6 +1017,7 @@ pub fn draw_notifs(
                     cv.icon_pause(cx, cy, 15.0, th.text)
                 }
                 crate::media::Control::PlayPause => cv.icon_play(cx, cy, 15.0, th.text),
+                crate::media::Control::SeekTo(_) => {}
             }
             regions.push(Region {
                 x: bx0,

@@ -182,6 +182,12 @@ pub enum ShellCmd {
     Lock,
     /// Turn dock auto-hide on or off.
     ToggleDockAutohide,
+    /// Show the island's shelf (true) or what is live (false).
+    IslandShelf(bool),
+    /// Forget shelf item `n` (the file itself is untouched).
+    ShelfRemove(usize),
+    /// Files dropped on the island.
+    ShelfAdd(Vec<std::path::PathBuf>),
     /// A user-chosen image. The path is validated before use.
     SetWallpaperFile {
         mode: WallpaperMode,

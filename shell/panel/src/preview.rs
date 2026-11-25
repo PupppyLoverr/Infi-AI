@@ -831,6 +831,16 @@ fn island_shots(fonts: &Fonts) -> Vec<Shot> {
             Content::Message("Firefox · Download finished — report.pdf".into()),
             true,
         ),
+        ("shelf-empty", Content::Shelf(vec![]), true),
+        (
+            "shelf",
+            Content::Shelf(
+                ["/home/me/Q3 report.pdf", "/home/me/Pictures/beach.jpg", "/home/me/notes.md", "/home/me/song.flac", "/home/me/build.tar.zst"]
+                    .map(std::path::PathBuf::from)
+                    .to_vec(),
+            ),
+            true,
+        ),
     ];
     let (w, h) = (island::SURF_W, island::SURF_H);
     let beach_px = std::fs::read(concat!(
@@ -1049,7 +1059,7 @@ fn lock_screens_render() {
 fn island_previews_render() {
     let fonts = Fonts::load();
     let shots = island_shots(&fonts);
-    assert_eq!(shots.len(), 18);
+    assert_eq!(shots.len(), 22, "11 states x 2 styles");
     if let Some(dir) = std::env::var_os("SOLYRA_RENDER_DIR") {
         let dir = std::path::PathBuf::from(dir);
         std::fs::create_dir_all(&dir).unwrap();

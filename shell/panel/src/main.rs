@@ -26,6 +26,7 @@ mod media;
 mod menu;
 mod notify;
 mod pam;
+mod shelf;
 mod state;
 mod surfaces;
 mod tokens;
@@ -39,6 +40,17 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use canvas::{Canvas, Fonts, Icon};
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
+use smithay_client_toolkit::data_device_manager::{
+    data_device::{DataDevice, DataDeviceHandler},
+    data_offer::{DataOfferHandler, DragOffer},
+    data_source::DataSourceHandler,
+    DataDeviceManagerState, WritePipe,
+};
+use smithay_client_toolkit::reexports::client::protocol::{
+    wl_data_device::WlDataDevice,
+    wl_data_device_manager::DndAction,
+    wl_data_source::WlDataSource,
+};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
 use smithay_client_toolkit::registry_handlers;
@@ -129,6 +141,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let shm = Shm::bind(&globals, &qh)?;
     let pool = SlotPool::new(8 * 1024 * 1024, &shm)?;
     let seat_state = SeatState::new(&globals, &qh);
+    // Drag and drop onto the notch's shelf; optional, the shell runs without it.
+    let data_devices = DataDeviceManagerState::bind(&globals, &qh).ok();
 
     let mut prefs = ShellPrefs::load();
     prefs.compute_wall_tint();
@@ -197,6 +211,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mut app = App {
+        data_devices,
+        data_device: None,
         blur_mgr,
         bar_material,
         dock_material,
@@ -241,6 +257,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         island_last_frame: Instant::now(),
         island_frame_only: false,
         island_left_at: None,
+        island_hover_at: None,
+        island_tab_shelf: false,
+        shelf: shelf::load(),
+        island_by_hover: false,
         media: media_slot,
         prefs_mtime: ShellPrefs::config_mtime(),
         agent_tasks: Vec::new(),
@@ -484,6 +504,15 @@ struct App {
     /// The next redraw is only an island animation frame.
     island_frame_only: bool,
     island_left_at: Option<Instant>,
+    /// When the pointer came to rest on the island (hover-to-open).
+    island_hover_at: Option<Instant>,
+    /// The open island shows the shelf tab rather than what is live.
+    island_tab_shelf: bool,
+    /// Files parked on the notch.
+    shelf: Vec<std::path::PathBuf>,
+    /// The island was opened by hovering, so it closes as soon as the
+    /// pointer leaves (a clicked-open island lingers).
+    island_by_hover: bool,
     media: Arc<Mutex<Option<media::Media>>>,
     /// The config file's mtime as we last read or wrote it.
     prefs_mtime: Option<std::time::SystemTime>,
@@ -515,6 +544,9 @@ struct App {
 
     prefs: ShellPrefs,
     cmd_queue: Arc<Mutex<Vec<ShellCmd>>>,
+    data_devices: Option<DataDeviceManagerState>,
+    /// The seat's data device, kept alive for drag-and-drop.
+    data_device: Option<DataDevice>,
     wins: Vec<WindowInfo>,
     ws_list: Vec<(u8, bool)>,
     island_msg: Option<String>,
@@ -697,6 +729,8 @@ impl App {
             }
             ShellCmd::ToggleIsland if self.island.is_some() => {
                 self.island_expanded = !self.island_expanded;
+                // A click makes it stay open until clicked again or left.
+                self.island_by_hover = false;
                 self.island_left_at = None;
                 if !self.island_expanded {
                     self.reply_mode = false;
@@ -750,6 +784,24 @@ impl App {
             ShellCmd::Lock => {
                 self.close_overlays();
                 spawn_lock();
+            }
+            ShellCmd::IslandShelf(on) => {
+                self.island_tab_shelf = on;
+                self.retarget_island();
+            }
+            ShellCmd::ShelfRemove(i) => {
+                if i < self.shelf.len() {
+                    self.shelf.remove(i);
+                    shelf::save(&self.shelf);
+                }
+                self.retarget_island();
+            }
+            ShellCmd::ShelfAdd(paths) => {
+                shelf::add(&mut self.shelf, paths);
+                shelf::save(&self.shelf);
+                self.island_tab_shelf = true;
+                self.island_expanded = true;
+                self.retarget_island();
             }
             ShellCmd::ToggleDockAutohide => {
                 let on = !self.prefs.look.dock_autohide;
@@ -1131,6 +1183,9 @@ impl App {
                 sent: t.decision_sent.is_some(),
             });
         }
+        if self.island_expanded && self.island_tab_shelf {
+            return island::Content::Shelf(self.shelf.clone());
+        }
         if let Some(msg) = &self.island_msg {
             return island::Content::Message(msg.clone());
         }
@@ -1237,9 +1292,28 @@ impl App {
         self.update_dock_autohide();
         self.ensure_dock();
         self.ensure_desk();
+        // pearos-notch: rest the pointer on the island for 300 ms and it opens.
+        if let Some(t) = self.island_hover_at {
+            let still_over = self.island.as_ref().is_some_and(|s| {
+                self.pointer_surface.as_ref() == Some(&s.surface)
+            });
+            if !still_over {
+                self.island_hover_at = None;
+            } else if t.elapsed() >= Duration::from_millis(300) && !self.island_expanded {
+                self.island_hover_at = None;
+                self.island_expanded = true;
+                self.island_by_hover = true;
+            }
+        }
         if let Some(t) = self.island_left_at {
-            if self.island_expanded && t.elapsed() >= Duration::from_secs(4) && !self.reply_mode {
+            let linger = if self.island_by_hover {
+                Duration::from_millis(450)
+            } else {
+                Duration::from_secs(4)
+            };
+            if self.island_expanded && t.elapsed() >= linger && !self.reply_mode {
                 self.island_expanded = false;
+                self.island_by_hover = false;
                 self.island_left_at = None;
             }
         }
@@ -2527,7 +2601,13 @@ impl SeatHandler for App {
     fn seat_state(&mut self) -> &mut SeatState {
         &mut self.seat_state
     }
-    fn new_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: WlSeat) {}
+    fn new_seat(&mut self, _: &Connection, qh: &QueueHandle<Self>, seat: WlSeat) {
+        if self.data_device.is_none() {
+            if let Some(ddm) = &self.data_devices {
+                self.data_device = Some(ddm.get_data_device(qh, &seat));
+            }
+        }
+    }
     fn new_capability(
         &mut self,
         _: &Connection,
@@ -2584,6 +2664,14 @@ impl PointerHandler for App {
                         .is_some_and(|s| s.surface == event.surface)
                     {
                         self.island_left_at = None;
+                        if self.prefs.look.notch_hover && !self.island_expanded {
+                            self.island_hover_at = Some(Instant::now());
+                            let wake = self.waker.clone();
+                            std::thread::spawn(move || {
+                                std::thread::sleep(Duration::from_millis(320));
+                                wake();
+                            });
+                        }
                     }
                     if event.surface == self.dock.surface {
                         self.dock_left_at = None;
@@ -2604,8 +2692,9 @@ impl PointerHandler for App {
                     {
                         self.island_left_at = Some(Instant::now());
                         let wake = self.waker.clone();
+                        let after = if self.island_by_hover { 480 } else { 4100 };
                         std::thread::spawn(move || {
-                            std::thread::sleep(Duration::from_millis(4100));
+                            std::thread::sleep(Duration::from_millis(after));
                             wake();
                         });
                     }
@@ -2734,3 +2823,91 @@ smithay_client_toolkit::delegate_layer!(App);
 smithay_client_toolkit::delegate_registry!(App);
 smithay_client_toolkit::delegate_seat!(App);
 smithay_client_toolkit::delegate_pointer!(App);
+smithay_client_toolkit::delegate_data_device!(App);
+
+const URI_LIST: &str = "text/uri-list";
+
+impl App {
+    fn on_island(&self, surface: &WlSurface) -> bool {
+        self.island.as_ref().is_some_and(|s| &s.surface == surface)
+    }
+}
+
+/// Files dragged onto the notch open the shelf; dropping parks them there
+/// (`shelf.rs`). Only `text/uri-list` is taken, and only local files.
+impl DataDeviceHandler for App {
+    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, dd: &WlDataDevice, _: f64, _: f64, surface: &WlSurface) {
+        let Some(offer) = self.data_device.as_ref().filter(|d| d.inner() == dd).and_then(|d| d.data().drag_offer()) else {
+            return;
+        };
+        let files = offer.with_mime_types(|m| m.iter().any(|t| t == URI_LIST));
+        if !files || !self.on_island(surface) {
+            offer.accept_mime_type(offer.serial, None);
+            return;
+        }
+        offer.accept_mime_type(offer.serial, Some(URI_LIST.into()));
+        offer.set_actions(DndAction::Copy, DndAction::Copy);
+        self.island_tab_shelf = true;
+        self.island_expanded = true;
+        self.island_by_hover = true;
+        self.retarget_island();
+        self.needs_redraw = true;
+    }
+
+    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice) {}
+
+    fn motion(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice, _: f64, _: f64) {}
+
+    fn selection(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice) {}
+
+    fn drop_performed(&mut self, conn: &Connection, _: &QueueHandle<Self>, dd: &WlDataDevice) {
+        let Some(offer) = self.data_device.as_ref().filter(|d| d.inner() == dd).and_then(|d| d.data().drag_offer()) else {
+            return;
+        };
+        if !self.on_island(&offer.surface) {
+            return;
+        }
+        let Ok(pipe) = offer.receive(URI_LIST.into()) else {
+            return;
+        };
+        let _ = conn.flush();
+        let (queue, wake) = (self.cmd_queue.clone(), self.waker.clone());
+        // The source writes on its own schedule: read off the UI thread.
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut text = String::new();
+            let mut pipe = pipe;
+            let _ = pipe.read_to_string(&mut text);
+            finish_offer(offer);
+            let paths = shelf::parse_uri_list(&text);
+            if !paths.is_empty() {
+                if let Ok(mut q) = queue.lock() {
+                    q.push(ShellCmd::ShelfAdd(paths));
+                }
+            }
+            wake();
+        });
+    }
+}
+
+fn finish_offer(offer: DragOffer) {
+    offer.finish();
+    offer.destroy();
+}
+
+impl DataOfferHandler for App {
+    fn source_actions(&mut self, _: &Connection, _: &QueueHandle<Self>, offer: &mut DragOffer, _: DndAction) {
+        offer.set_actions(DndAction::Copy, DndAction::Copy);
+    }
+    fn selected_action(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &mut DragOffer, _: DndAction) {}
+}
+
+/// The shell never offers data of its own; these are required by the trait.
+impl DataSourceHandler for App {
+    fn accept_mime(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource, _: Option<String>) {}
+    fn send_request(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource, _: String, _: WritePipe) {}
+    fn cancelled(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {}
+    fn dnd_dropped(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {}
+    fn dnd_finished(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {}
+    fn action(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource, _: DndAction) {}
+}

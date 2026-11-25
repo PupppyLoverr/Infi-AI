@@ -15,7 +15,7 @@
 use crate::agent::{AskKind, Scope, Verdict};
 use crate::canvas::{text_width, wrap_text, Canvas, Fonts, Rgba};
 use crate::media::{Control, Media};
-use crate::state::ShellCmd;
+use crate::state::{LaunchTarget, ShellCmd};
 use crate::surfaces::{HitAction, Region};
 use crate::tokens::{Theme, T_BODY, T_CAPTION, T_LABEL, T_META};
 use solyra_conf::look::NotchStyle;
@@ -34,6 +34,8 @@ pub enum Content {
     Activity { who: String, text: String },
     Attention(Ask),
     Media(Media),
+    /// The shelf tab: files parked on the notch (newest first).
+    Shelf(Vec<std::path::PathBuf>),
 }
 
 /// An approval or question waiting on the human.
@@ -80,7 +82,7 @@ impl Shape {
 fn expanded_shape(style: NotchStyle, content: &Content) -> Shape {
     let island = style == NotchStyle::Island;
     let (w, h) = match content {
-        Content::Media(_) => (440.0, 156.0),
+        Content::Media(_) | Content::Shelf(_) => (440.0, 156.0),
         Content::Idle => (if island { 348.0 } else { 392.0 }, 132.0),
         _ => (if island { 440.0 } else { 448.0 }, 196.0),
     };
@@ -113,7 +115,7 @@ pub fn target(style: NotchStyle, content: &Content, expanded: bool) -> Shape {
                 match content {
                     // pearOS island: a 170 x 30 black pill 5 px below the
                     // top edge; live activities keep that height and widen.
-                    Content::Idle => Shape {
+                    Content::Idle | Content::Shelf(_) => Shape {
                         w: 170.0,
                         h: 30.0,
                         y: 5.0,
@@ -146,7 +148,7 @@ pub fn target(style: NotchStyle, content: &Content, expanded: bool) -> Shape {
                 expanded_shape(style, content)
             } else {
                 match content {
-                    Content::Idle => Shape {
+                    Content::Idle | Content::Shelf(_) => Shape {
                         w: 188.0,
                         h: 32.0,
                         y: 0.0,
@@ -310,11 +312,149 @@ pub fn draw(
             (wi - 2 * pad_x).max(0),
             (hi - 2 * pad_y).max(0),
         );
-        expanded_body(cv, &th, fonts, body, content, extra, hover, &mut regions);
+        if let Content::Shelf(items) = content {
+            shelf_body(cv, &th, fonts, body, items, hover, &mut regions);
+        } else {
+            expanded_body(cv, &th, fonts, body, content, extra, hover, &mut regions);
+        }
+        // pearos-notch's tabs: what is live, and the shelf. Agents asking
+        // for a decision always own the island, so no tabs then.
+        if matches!(content, Content::Idle | Content::Media(_) | Content::Shelf(_)) {
+            tabs(cv, xi, yi, wi, matches!(content, Content::Shelf(_)), hover, &mut regions);
+        }
     } else {
         compact_row(cv, &th, fonts, xi, yi, wi, hi, content, style);
     }
     regions
+}
+
+/// Two small round tabs centred at the top of the card, where no content
+/// sits (titles start at the left, the waveform sits at the right).
+fn tabs(
+    cv: &mut Canvas<'_>,
+    x: i32,
+    y: i32,
+    w: i32,
+    shelf: bool,
+    hover: Option<(f64, f64)>,
+    regions: &mut Vec<Region>,
+) {
+    let d = 22;
+    let gap = 6;
+    let top = y + 8;
+    let left = x + (w - (2 * d + gap)) / 2;
+    for (i, is_shelf) in [(0, false), (1, true)] {
+        let bx = left + i * (d + gap);
+        let on = shelf == is_shelf;
+        let hot = hovered(hover, bx, top, d, d);
+        if on || hot {
+            cv.round_rect(bx, top, d, d, d as f32 / 2.0, Rgba::rgba(255, 255, 255, if on { 40 } else { 22 }));
+        }
+        let (cx, cy) = ((bx + d / 2) as f32, (top + d / 2) as f32);
+        let ink = Rgba::rgba(255, 255, 255, if on { 255 } else { 150 });
+        if is_shelf {
+            tray_glyph(cv, cx, cy, ink);
+        } else {
+            cv.icon_note(cx, cy, ink);
+        }
+        regions.push(Region {
+            x: bx,
+            y: top,
+            w: d,
+            h: d,
+            action: HitAction::Shell(ShellCmd::IslandShelf(is_shelf)),
+        });
+    }
+}
+
+/// An open tray: a shallow box with a raised lip.
+fn tray_glyph(cv: &mut Canvas<'_>, cx: f32, cy: f32, c: Rgba) {
+    let (x, y) = (cx as i32 - 7, cy as i32 - 4);
+    cv.stroke_round_rect(x, y, 14, 9, 2.5, 1.4, c);
+    cv.fill_rect(x + 4, y + 4, 6, 1, c);
+}
+
+/// The shelf: up to eight parked files as tiles; click opens, × forgets.
+fn shelf_body(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    fonts: &Fonts,
+    body: (i32, i32, i32, i32),
+    items: &[std::path::PathBuf],
+    hover: Option<(f64, f64)>,
+    regions: &mut Vec<Region>,
+) {
+    let (bx, by, bw, bh) = body;
+    cv.text(fonts.semibold.as_ref(), "Shelf", bx, by + 14, 14.0, th.text);
+    let top = by + 28;
+    let avail_h = (bh - 28).max(20);
+    if items.is_empty() {
+        let (dx, dy, dw, dh) = (bx, top, bw, avail_h);
+        cv.stroke_round_rect(dx, dy, dw, dh, 14.0, 1.2, Rgba::rgba(255, 255, 255, 60));
+        let msg = "Drop files here to keep them close";
+        let tw = text_width(fonts.medium.as_ref(), msg, 12.5);
+        cv.text(fonts.medium.as_ref(), msg, dx + (dw - tw) / 2, dy + dh / 2 + 4, 12.5, Rgba::rgba(255, 255, 255, 150));
+        return;
+    }
+    let cols = 4;
+    let gap = 10;
+    let tw = (bw - gap * (cols - 1)) / cols;
+    let th_ = ((avail_h - gap) / 2).max(30);
+    for (i, p) in items.iter().take(8).enumerate() {
+        let (c, r) = ((i as i32) % cols, (i as i32) / cols);
+        let (tx, ty) = (bx + c * (tw + gap), top + r * (th_ + gap));
+        let hot = hovered(hover, tx, ty, tw, th_);
+        cv.round_rect(tx, ty, tw, th_, 10.0, Rgba::rgba(255, 255, 255, if hot { 34 } else { 20 }));
+        // A document glyph tinted by kind, then the name.
+        let col = file_tint(p);
+        cv.round_rect(tx + 8, ty + (th_ - 22) / 2, 17, 22, 3.0, col);
+        cv.fill_rect(tx + 11, ty + (th_ - 22) / 2 + 8, 10, 1, Rgba::rgba(255, 255, 255, 160));
+        cv.fill_rect(tx + 11, ty + (th_ - 22) / 2 + 12, 8, 1, Rgba::rgba(255, 255, 255, 160));
+        cv.text_truncated(
+            fonts.medium.as_ref(),
+            &crate::shelf::label(p),
+            tx + 31,
+            ty + th_ / 2 + 4,
+            11.5,
+            tw - 40,
+            th.text,
+        );
+        regions.push(Region {
+            x: tx,
+            y: ty,
+            w: tw,
+            h: th_,
+            action: HitAction::Launch(LaunchTarget::Shell(crate::shelf::open_command(p))),
+        });
+        if hot {
+            let (xx, xy) = (tx + tw - 16, ty + 3);
+            cv.circle((xx + 6) as f32, (xy + 6) as f32, 6.5, Rgba::rgba(255, 255, 255, 60));
+            cv.text(fonts.semibold.as_ref(), "×", xx + 2, xy + 10, 11.0, th.text);
+            regions.push(Region {
+                x: xx - 2,
+                y: xy - 2,
+                w: 16,
+                h: 16,
+                action: HitAction::Shell(ShellCmd::ShelfRemove(i)),
+            });
+        }
+    }
+}
+
+fn file_tint(p: &std::path::Path) -> Rgba {
+    let ext = p
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "pdf" => Rgba::rgb(0xe5, 0x48, 0x4d),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" => Rgba::rgb(0x34, 0xa8, 0x53),
+        "mp3" | "flac" | "ogg" | "wav" | "m4a" => Rgba::rgb(0xf2, 0x55, 0x8a),
+        "mp4" | "mkv" | "webm" | "mov" => Rgba::rgb(0x9b, 0x59, 0xd0),
+        "zip" | "tar" | "gz" | "xz" | "zst" | "7z" => Rgba::rgb(0xb0, 0x8a, 0x5a),
+        "" if p.is_dir() => Rgba::rgb(0x3b, 0x9b, 0xf2),
+        _ => Rgba::rgb(0x8e, 0x8e, 0x93),
+    }
 }
 
 /// Live audio bars in soft white, like the Now Playing Live Activity.
@@ -348,7 +488,7 @@ fn compact_row(
     let baseline = y + h / 2 + 4;
     let pad = if style == NotchStyle::Island { 10 } else { 14 };
     match content {
-        Content::Idle => {}
+        Content::Idle | Content::Shelf(_) => {}
         Content::Message(t) => {
             // Snug leading icon + crisp title.
             cv.icon_bell((x + pad + 8) as f32, mid, th.text);
@@ -519,6 +659,8 @@ fn expanded_body(
     let (bx, by, bw, bh) = body;
     let buttons_y = by + bh - 32;
     match content {
+        // Drawn by `shelf_body`.
+        Content::Shelf(_) => {}
         Content::Idle => {
             // Crisp Apple glance: bold tracked clock, medium date, quiet facts.
             cv.text_tracked(
@@ -670,6 +812,22 @@ fn expanded_body(
                     2.5,
                     Rgba::rgba(255, 255, 255, 42),
                 );
+                // Click anywhere on the bar to jump there (pearos-notch's
+                // seekable scrubber): one thin region per slice.
+                if let Some(len) = m.length_us.filter(|l| *l > 0) {
+                    let n = crate::media::SEEK_STEPS;
+                    for i in 0..n {
+                        let x0 = bar_x + bar_w * i / n;
+                        let x1 = bar_x + bar_w * (i + 1) / n;
+                        regions.push(Region {
+                            x: x0,
+                            y: bar_y - 7,
+                            w: (x1 - x0).max(1),
+                            h: bar_h + 14,
+                            action: HitAction::Media(Control::SeekTo(crate::media::seek_target(i, n, len))),
+                        });
+                    }
+                }
                 let fill = ((bar_w as f32) * pct).round() as i32;
                 if fill > 0 {
                     cv.round_rect(
@@ -712,6 +870,7 @@ fn expanded_body(
                     Control::PlayPause => {
                         cv.icon_play(cx as f32, cy as f32, 22.0, Rgba::rgb(255, 255, 255))
                     }
+                    Control::SeekTo(_) => {}
                 }
                 regions.push(Region {
                     x: r.0,
