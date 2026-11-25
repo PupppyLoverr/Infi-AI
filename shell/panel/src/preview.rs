@@ -224,8 +224,9 @@ fn launcher_shot(
         Material::Glass,
         Material::Glass,
         Material::Solid,
-        DockStyle::Solyra,
+        DockStyle::Macos,
         NotchStyle::Island,
+        false,
     );
     let lay = spot_layout(query, &items);
     let at = (
@@ -279,8 +280,9 @@ fn desk_shot(name: &str, kind: ThemeKind, fonts: &Fonts, named: bool) -> Shot {
         Material::Glass,
         Material::Glass,
         Material::Solid,
-        DockStyle::Solyra,
+        DockStyle::Macos,
         NotchStyle::Island,
+        false,
     );
     let (cw, ch) = (desk::W as u32, desk::H as u32);
     let at = (scene.w as i32 - desk::W - 36, BAR_HEIGHT as i32 + 36);
@@ -1153,7 +1155,7 @@ fn material_scene(
     notch: solyra_conf::look::NotchStyle,
 ) -> Shot {
     let scene = scene_pixels(
-        fonts, kind, wallpaper, bar_m, dock_m, notch_m, dock_style, notch,
+        fonts, kind, wallpaper, bar_m, dock_m, notch_m, dock_style, notch, true,
     );
     Shot {
         name: format!("{name}-{}", kind.as_str()),
@@ -1183,6 +1185,7 @@ fn scene_pixels(
     notch_m: crate::material::Material,
     dock_style: DockStyle,
     notch: solyra_conf::look::NotchStyle,
+    media: bool,
 ) -> Scene {
     use crate::island::{self, Anim, Content, Extra, Glance};
     use crate::lock::{backdrop, blur};
@@ -1282,14 +1285,14 @@ fn scene_pixels(
 
     // Notch / island, showing what is playing.
     if notch != solyra_conf::look::NotchStyle::Off {
-        let content = Content::Media(crate::media::Media {
+        let content = if !media { Content::Idle } else { Content::Media(crate::media::Media {
             bus: "x".into(),
             title: "Clair de Lune".into(),
             artist: "Claude Debussy".into(),
             playing: true,
             position_us: Some(15_000_000),
             length_us: Some(203_000_000),
-        });
+        }) };
         let anim = Anim::new(island::target(notch, &content, false));
         let glance = Glance {
             battery: Some(64),
@@ -1330,7 +1333,8 @@ fn material_scenes_render() {
     let fonts = Fonts::load();
     let mut shots = Vec::new();
     for kind in [ThemeKind::Dark, ThemeKind::Light] {
-        let wp = if kind == ThemeKind::Dark { "beach" } else { "beach" };
+        // Dark scenes over a dark wallpaper, so a light-tinted "dark" theme shows up.
+        let wp = if kind == ThemeKind::Dark { "graphite" } else { "beach" };
         for m in Material::ALL {
             shots.push(material_scene(
                 &fonts,
@@ -1367,6 +1371,50 @@ fn material_scenes_render() {
     let solid = &shots[0];
     let glass = &shots[2];
     assert_ne!(solid.rgba, glass.rgba);
+    if let Some(dir) = std::env::var_os("SOLYRA_RENDER_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for s in &shots {
+            write_png(&dir, s);
+        }
+    }
+}
+
+/// The out-of-box desktop, straight from the defaults (`Look::default`):
+/// what someone sees on first boot. Compared against pearOS by eye.
+#[test]
+fn default_desktop_renders() {
+    let fonts = Fonts::load();
+    let d = ShellPrefs::default();
+    let mut shots = Vec::new();
+    for (kind, wp) in [(ThemeKind::Dark, "graphite"), (ThemeKind::Light, "beach")] {
+        let scene = scene_pixels(
+            &fonts,
+            kind,
+            wp,
+            d.look.bar_material,
+            d.look.dock_material,
+            d.look.notch_material,
+            d.dock_style,
+            d.look.notch,
+            false,
+        );
+        shots.push(Shot {
+            name: format!("desktop-default-{}", kind.as_str()),
+            w: scene.w,
+            h: scene.h,
+            rgba: flatten(&scene.out, scene.w, scene.h, Rgba::rgb(0, 0, 0)),
+        });
+    }
+    // Dark and light must look clearly different (the gap report found 3.7 %).
+    let diff = shots[0]
+        .rgba
+        .chunks_exact(4)
+        .zip(shots[1].rgba.chunks_exact(4))
+        .filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > 24))
+        .count();
+    let frac = diff as f64 / (shots[0].w * shots[0].h) as f64;
+    assert!(frac > 0.25, "dark and light defaults differ in only {:.1} % of pixels", frac * 100.0);
     if let Some(dir) = std::env::var_os("SOLYRA_RENDER_DIR") {
         let dir = std::path::PathBuf::from(dir);
         std::fs::create_dir_all(&dir).unwrap();

@@ -39,7 +39,7 @@ choice! {
         Notch = "notch" / "Notch",
         Island = "island" / "Dynamic Island",
         Off = "off" / "Off",
-    } default Notch
+    } default Island
 }
 
 choice! {
@@ -49,7 +49,7 @@ choice! {
         Floating = "macos" / "Floating",
         Taskbar = "windows" / "Taskbar",
         Minimal = "minimal" / "Minimal",
-    } default Solyra
+    } default Floating
 }
 
 choice! {
@@ -114,8 +114,8 @@ impl Default for Look {
             notch: NotchStyle::default(),
             dock: DockKind::default(),
             dock_autohide: false,
-            dock_magnify: false,
-            show_workspaces: true,
+            dock_magnify: true,
+            show_workspaces: false,
             clock_24h: true,
             show_date: true,
             show_seconds: false,

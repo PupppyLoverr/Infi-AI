@@ -68,7 +68,9 @@ fn fights(dark: bool, tint: Option<Rgba>) -> bool {
 /// over a bright wallpaper, light text over a dark one. Other materials carry
 /// their own tint, so their ink never flips.
 pub fn ink_flips(m: Material, base: Rgba, tint: Option<Rgba>) -> bool {
-    m == Material::Glass && fights(is_dark(base), tint)
+    // Dark glass is smoked, so white text always reads on it; only the light
+    // veil can end up fighting the wallpaper.
+    m == Material::Glass && !is_dark(base) && fights(false, tint)
 }
 
 /// The slab for `base` (the theme colour the surface would otherwise use).
@@ -102,11 +104,19 @@ pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
         // Frosted glass: a neutral white veil, never a grey one. Darkening a
         // warm wallpaper with grey is what turns sand into mauve; a white veil
         // keeps its hue and only lifts it, the way the macOS dock does.
+        // Dark theme: smoked glass, the pearOS / macOS Tahoe Dark dock: a
+        // near-black tint over the blur with a 1 px white 20 % rim.
+        Material::Glass if dark => Slab {
+            kind: m,
+            fill: Rgba::rgba(28, 28, 30, boost(150)),
+            edge: Rgba::rgba(255, 255, 255, 51),
+            highlight: Some(Rgba::rgba(255, 255, 255, 64)),
+        },
         Material::Glass => Slab {
             kind: m,
-            fill: Rgba::rgba(255, 255, 255, if dark { 38 } else { 96 }),
-            edge: rim(if dark { 36 } else { 24 }),
-            highlight: Some(Rgba::rgba(255, 255, 255, if dark { 150 } else { 220 })),
+            fill: Rgba::rgba(255, 255, 255, 96),
+            edge: rim(24),
+            highlight: Some(Rgba::rgba(255, 255, 255, 220)),
         },
         Material::Acrylic => {
             // Windows Acrylic / Mica: wallpaper hue + denser luminosity fill + soft rim.
@@ -125,7 +135,11 @@ pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
 /// Paint a rounded body (radius 0 for full-width bars).
 pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f32) {
     if r <= 0.5 {
-        if s.kind == Material::Glass {
+        if s.kind == Material::Glass && is_dark(s.fill) {
+            // Dark menu bar: a thin smoke that fades out, so white text reads
+            // over any wallpaper while the bar still looks clear.
+            cv.fill_rect_vgrad(x, y, w, h, Rgba::rgba(18, 18, 20, 110), Rgba::rgba(18, 18, 20, 60));
+        } else if s.kind == Material::Glass {
             // A glass bar is only a veil that fades into the wallpaper.
             let top = Rgba::rgba(255, 255, 255, s.fill.3 / 2);
             cv.fill_rect_vgrad(x, y, w, h, top, Rgba::rgba(255, 255, 255, 0));
@@ -135,6 +149,23 @@ pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f
         return;
     }
     match s.kind {
+        Material::Glass if is_dark(s.fill) => {
+            let f = s.fill;
+            cv.round_rect_vgrad(
+                x,
+                y,
+                w,
+                h,
+                r,
+                Rgba::rgba(f.0.saturating_add(10), f.1.saturating_add(10), f.2.saturating_add(12), f.3),
+                f,
+            );
+            cv.stroke_round_rect(x, y, w, h, r, 1.0, s.edge);
+            if let Some(hl) = s.highlight {
+                let inset = (r * 0.7).round() as i32;
+                cv.fill_rect(x + inset, y + 1, (w - 2 * inset).max(0), 1, hl);
+            }
+        }
         Material::Glass => {
             let a = s.fill.3;
             cv.round_rect_vgrad(
@@ -294,13 +325,15 @@ mod tests {
     }
 
     #[test]
-    fn glass_is_a_neutral_white_veil_that_never_greys_the_wallpaper() {
-        for base in [Theme::dark().bar, Theme::light().bar] {
-            for tint in [None, Some(Rgba::rgb(240, 200, 170)), Some(Rgba::rgb(10, 30, 60))] {
-                let f = slab(Material::Glass, base, tint).fill;
-                assert_eq!((f.0, f.1, f.2), (255, 255, 255), "{base:?} {tint:?}");
-                assert!(f.3 > 0 && f.3 < 120, "{}", f.3);
-            }
+    fn light_glass_is_a_white_veil_and_dark_glass_is_smoked() {
+        for tint in [None, Some(Rgba::rgb(240, 200, 170)), Some(Rgba::rgb(10, 30, 60))] {
+            let f = slab(Material::Glass, Theme::light().bar, tint).fill;
+            assert_eq!((f.0, f.1, f.2), (255, 255, 255), "{tint:?}");
+            assert!(f.3 > 0 && f.3 < 120, "{}", f.3);
+            let d = slab(Material::Glass, Theme::dark().bar, tint);
+            assert!(luma(d.fill) < 60, "dark glass is smoked: {:?}", d.fill);
+            assert!(d.fill.3 >= 100, "and dense enough for white text: {}", d.fill.3);
+            assert_eq!(d.edge, Rgba::rgba(255, 255, 255, 51), "1 px white 20 % rim");
         }
     }
 
@@ -310,7 +343,7 @@ mod tests {
         let light_bar = Theme::light().bar;
         let sand = Some(Rgba::rgb(235, 205, 175));
         let night = Some(Rgba::rgb(14, 30, 60));
-        assert!(ink_flips(Material::Glass, dark_bar, sand));
+        assert!(!ink_flips(Material::Glass, dark_bar, sand), "smoked glass keeps white ink");
         assert!(!ink_flips(Material::Glass, dark_bar, night));
         assert!(!ink_flips(Material::Glass, dark_bar, None));
         assert!(ink_flips(Material::Glass, light_bar, night));
