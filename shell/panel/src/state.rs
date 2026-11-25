@@ -811,7 +811,7 @@ pub fn role_binary(role: &str, fallback: &str) -> String {
 
 pub fn dock_entries(wins: &[WindowInfo]) -> Vec<AppEntry> {
     let term_bin = role_binary("terminal", "foot");
-    let files_bin = role_binary("files", "thunar");
+    let files_bin = role_binary("files", "solyra-files");
 
     // Pinned core apps in deterministic order (just like macOS / Windows 11),
     // enriched with live window state, followed by any unpinned running apps.
@@ -897,7 +897,7 @@ pub fn dock_entries(wins: &[WindowInfo]) -> Vec<AppEntry> {
 
 pub fn catalog_apps() -> Vec<AppEntry> {
     let term_bin = role_binary("terminal", "foot");
-    let files_bin = role_binary("files", "thunar");
+    let files_bin = role_binary("files", "solyra-files");
     let mut list = vec![
         AppEntry {
             window: None,
