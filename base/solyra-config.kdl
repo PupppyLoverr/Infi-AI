@@ -159,6 +159,14 @@ layer-rule {
     }
 }
 
+// Desktop widgets: blur behind each card (the panel sends the card shapes).
+layer-rule {
+    match namespace="^solyra-widgets$"
+    background-effect {
+        xray false
+    }
+}
+
 layer-rule {
     match namespace=r#"^solyra-(taskbar|dock-magnify|dock-hidden|notch)(\..+)?$"#
     background-effect {

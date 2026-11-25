@@ -1398,7 +1398,7 @@ fn default_desktop_renders() {
     let d = ShellPrefs::default();
     let mut shots = Vec::new();
     for (kind, wp) in [(ThemeKind::Dark, "graphite"), (ThemeKind::Light, "beach")] {
-        let scene = scene_pixels(
+        let mut scene = scene_pixels(
             &fonts,
             kind,
             wp,
@@ -1409,6 +1409,26 @@ fn default_desktop_renders() {
             d.look.notch,
             false,
         );
+        // Desktop widgets at the top left, under the menu bar.
+        {
+            use crate::widgets;
+            let (ww, wh) = (widgets::W as u32, widgets::H as u32);
+            let mut buf = vec![0u8; (ww * wh * 4) as usize];
+            {
+                let mut cv = Canvas::new(&mut buf, ww, wh, 1);
+                let today = chrono::NaiveDate::from_ymd_opt(2026, 11, 25).unwrap();
+                let sample = widgets::Weather { city: "Phoenix".into(), temp: 16.0, code: 2, hi: 21.0, lo: 9.0 };
+                let dark = kind == ThemeKind::Dark;
+                widgets::paint(&mut cv, &fonts, dark, today, dark.then_some(&sample), false);
+            }
+            let at = (14, BAR_HEIGHT as i32 + 14);
+            let rects: Vec<_> = [(0, 0), (widgets::CARD + widgets::GAP, 0)]
+                .iter()
+                .flat_map(|&(x, y)| crate::material::blur_rects(x, y, widgets::CARD, widgets::CARD, widgets::RADIUS))
+                .collect();
+            compositor_backdrop(&scene.sharp, &scene.soft, scene.w, crate::material::Material::Glass, &rects, at, &mut scene.out);
+            over(&mut scene.out, scene.w, &buf, ww, wh, at);
+        }
         shots.push(Shot {
             name: format!("desktop-default-{}", kind.as_str()),
             w: scene.w,

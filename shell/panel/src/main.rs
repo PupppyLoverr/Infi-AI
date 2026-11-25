@@ -27,6 +27,7 @@ mod menu;
 mod notify;
 mod pam;
 mod shelf;
+mod widgets;
 mod state;
 mod surfaces;
 mod tokens;
@@ -210,6 +211,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    let weather_slot: Arc<Mutex<Option<widgets::Weather>>> =
+        Arc::new(Mutex::new(widgets::cached()));
+    {
+        let w = waker.clone();
+        widgets::spawn_fetcher(weather_slot.clone(), weather_city, move || w());
+    }
     let mut app = App {
         data_devices,
         data_device: None,
@@ -243,6 +250,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         notifs: std::collections::VecDeque::new(),
         agents: None,
         desk: None,
+        widgets: None,
+        weather: weather_slot,
         desk_material: material::Material::Solid,
         menu: None,
         menu_open: None,
@@ -490,6 +499,9 @@ struct App {
     agents: Option<SurfaceSlot>,
     /// Right-side desk card when desktop mode is Agent workspace.
     desk: Option<SurfaceSlot>,
+    /// Calendar and weather cards on the desktop.
+    widgets: Option<SurfaceSlot>,
+    weather: Arc<Mutex<Option<widgets::Weather>>>,
     desk_material: material::Material,
     /// The notch / Dynamic Island surface (absent when the style is Off).
     /// An open menu-bar menu: a full-screen transparent overlay.
@@ -887,6 +899,7 @@ impl App {
         }
         self.ensure_dock();
         self.ensure_desk();
+        self.ensure_widgets();
         self.needs_redraw = true;
     }
 
@@ -1292,6 +1305,7 @@ impl App {
         self.update_dock_autohide();
         self.ensure_dock();
         self.ensure_desk();
+        self.ensure_widgets();
         // pearos-notch: rest the pointer on the island for 300 ms and it opens.
         if let Some(t) = self.island_hover_at {
             let still_over = self.island.as_ref().is_some_and(|s| {
@@ -1598,6 +1612,7 @@ impl App {
 
         self.draw_island(scale);
         self.draw_desk(scale, &th);
+        self.draw_widgets(scale);
         let _ = conn.flush();
     }
 
@@ -1675,6 +1690,73 @@ impl App {
             slot,
             rects,
         );
+        present(buffer, &slot.surface, w * scale, h * scale, scale as i32);
+    }
+
+    fn ensure_widgets(&mut self) {
+        let want = self.prefs.look.desktop_widgets;
+        match (want, self.widgets.is_some()) {
+            (true, false) => {
+                // Bottom layer: over the wallpaper, under every window; the
+                // bar's exclusive zone already keeps it below the menu bar.
+                self.widgets = Some(make_layer_surface(
+                    &self.compositor,
+                    &self.layer_shell,
+                    &self.qh,
+                    Layer::Bottom,
+                    "solyra-widgets",
+                    Anchor::TOP | Anchor::LEFT,
+                    0,
+                    (14, 0, 0, 14),
+                    widgets::W as u32,
+                    widgets::H as u32,
+                    KeyboardInteractivity::None,
+                ));
+                self.needs_redraw = true;
+            }
+            (false, true) => {
+                self.widgets = None;
+                self.needs_redraw = true;
+            }
+            _ => {}
+        }
+    }
+
+    fn draw_widgets(&mut self, scale: u32) {
+        let dark = self.prefs.theme == tokens::ThemeKind::Dark;
+        let weather = self.weather.lock().ok().and_then(|w| w.clone());
+        let city_set = weather_city().is_some();
+        let Some(slot) = self.widgets.as_mut() else {
+            return;
+        };
+        if !slot.configured || slot.width == 0 {
+            return;
+        }
+        let (w, h) = (slot.width, slot.height);
+        let Ok((buffer, bytes)) = self.pool.create_buffer(
+            (w * scale) as i32,
+            (h * scale) as i32,
+            (w * scale * 4) as i32,
+            Format::Argb8888,
+        ) else {
+            return;
+        };
+        let mut cv = Canvas::new(bytes, w, h, scale as i32);
+        let today = chrono::Local::now().date_naive();
+        widgets::paint(&mut cv, &self.fonts, dark, today, weather.as_ref(), city_set);
+        // The weather card opens Settings › Desktop (where the city is set).
+        slot.regions = vec![Region {
+            x: widgets::CARD + widgets::GAP,
+            y: 0,
+            w: widgets::CARD,
+            h: widgets::H,
+            action: HitAction::Launch(LaunchTarget::Shell("solyra-settings --page desktop".into())),
+        }];
+        let rects: Vec<_> = [(0, 0), (widgets::CARD + widgets::GAP, 0)]
+            .iter()
+            .flat_map(|&(x, y)| material::blur_rects(x, y, widgets::CARD, widgets::CARD, widgets::RADIUS))
+            .collect();
+        set_blur(self.blur_mgr.as_ref(), &self.compositor, &self.qh, slot, rects);
         present(buffer, &slot.surface, w * scale, h * scale, scale as i32);
     }
 
@@ -1807,6 +1889,7 @@ impl App {
             &self.island_card,
             &self.agents,
             &self.desk,
+            &self.widgets,
         ]
         .into_iter()
         .flatten()
@@ -2547,6 +2630,7 @@ impl LayerShellHandler for App {
             &mut self.island,
             &mut self.menu,
             &mut self.desk,
+            &mut self.widgets,
         ] {
             if slot.as_ref().is_some_and(|s| &s.layer == layer) {
                 *slot = None;
@@ -2588,6 +2672,7 @@ impl LayerShellHandler for App {
             &mut self.island,
             &mut self.menu,
             &mut self.desk,
+            &mut self.widgets,
         ] {
             if let Some(s) = slot.as_mut().filter(|s| &s.layer == layer) {
                 apply(s);
@@ -2826,6 +2911,16 @@ smithay_client_toolkit::delegate_pointer!(App);
 smithay_client_toolkit::delegate_data_device!(App);
 
 const URI_LIST: &str = "text/uri-list";
+
+/// The city for the weather card, from `weather_city` in `shell.conf`.
+fn weather_city() -> Option<String> {
+    let path = solyra_conf::config_path("shell.conf")?;
+    let text = std::fs::read_to_string(path).ok()?;
+    solyra_conf::get(&text, "weather_city")
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(str::to_string)
+}
 
 impl App {
     fn on_island(&self, surface: &WlSurface) -> bool {

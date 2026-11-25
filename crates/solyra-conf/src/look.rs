@@ -94,6 +94,8 @@ pub struct Look {
     pub dock_magnify: bool,
     /// The notch opens when the pointer rests on it (pearOS), not only on click.
     pub notch_hover: bool,
+    /// Calendar and weather cards at the top left of the desktop.
+    pub desktop_widgets: bool,
     pub show_workspaces: bool,
     pub clock_24h: bool,
     pub show_date: bool,
@@ -118,6 +120,7 @@ impl Default for Look {
             dock_autohide: false,
             dock_magnify: true,
             notch_hover: true,
+            desktop_widgets: true,
             show_workspaces: false,
             clock_24h: true,
             show_date: true,
@@ -163,6 +166,7 @@ impl Look {
             dock_autohide: flag(text, "dock_autohide", d.dock_autohide),
             dock_magnify: flag(text, "dock_magnify", d.dock_magnify),
             notch_hover: flag(text, "notch_hover", d.notch_hover),
+            desktop_widgets: flag(text, "desktop_widgets", d.desktop_widgets),
             show_workspaces: flag(text, "show_workspaces", d.show_workspaces),
             clock_24h: flag(text, "clock_24h", d.clock_24h),
             show_date: flag(text, "show_date", d.show_date),
@@ -198,6 +202,7 @@ impl Look {
             ("dock_autohide", b(self.dock_autohide)),
             ("dock_magnify", b(self.dock_magnify)),
             ("notch_hover", b(self.notch_hover)),
+            ("desktop_widgets", b(self.desktop_widgets)),
             ("show_workspaces", b(self.show_workspaces)),
             ("clock_24h", b(self.clock_24h)),
             ("show_date", b(self.show_date)),
