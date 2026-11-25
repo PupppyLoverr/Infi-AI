@@ -33,6 +33,7 @@ enum Location {
     Home,
     Starred,
     Trash,
+    Tag(String),
     Folder(PathBuf),
 }
 
@@ -43,6 +44,13 @@ impl Location {
             Self::Home => "Home".into(),
             Self::Starred => "Starred".into(),
             Self::Trash => "Trash".into(),
+            Self::Tag(color) => {
+                let mut chars = color.chars();
+                chars
+                    .next()
+                    .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
+                    .unwrap_or_else(|| "Tagged".into())
+            }
             Self::Folder(path) if path == Path::new("/") => "Computer".into(),
             Self::Folder(path) => path
                 .file_name()
@@ -195,6 +203,10 @@ fn load_entries(location: &Location, show_hidden: bool) -> Result<Vec<Entry>, St
             .filter_map(|p| entry_for_path(p))
             .collect()),
         Location::Starred => Ok(model::starred()
+            .iter()
+            .filter_map(|p| entry_for_path(p))
+            .collect()),
+        Location::Tag(color) => Ok(model::paths_tagged(color)
             .iter()
             .filter_map(|p| entry_for_path(p))
             .collect()),
@@ -421,6 +433,62 @@ fn sidebar_button(
         )
 }
 
+fn tag_color(name: &str) -> Color {
+    match name {
+        "red" => rgb(0xff5f57),
+        "orange" => rgb(0xff9f0a),
+        "yellow" => rgb(0xffd60a),
+        "green" => rgb(0x32d74b),
+        "blue" => rgb(0x0a84ff),
+        "purple" => rgb(0xbf5af2),
+        _ => rgb(0x8e8e93),
+    }
+}
+
+fn tag_sidebar_button(app: &FilesApp, style: &solyra_ui::Style, color_name: &str) -> View {
+    let location = Location::Tag(color_name.to_string());
+    let selected = {
+        let (current, wanted) = (app.location.clone(), location.clone());
+        move || current.get() == wanted
+    };
+    let theme = style.theme;
+    let click = {
+        let app = app.clone();
+        move || app.navigate(location.clone())
+    };
+    let mut label = color_name.chars();
+    let label = label
+        .next()
+        .map(|first| first.to_uppercase().collect::<String>() + label.as_str())
+        .unwrap_or_else(|| color_name.to_string());
+    button()
+        .h(28.)
+        .w_full()
+        .px(10.)
+        .rounded(8.)
+        .border(0.)
+        .items_center()
+        .reactive_style(move || {
+            if selected() {
+                Styles::new()
+                    .bg(solyra_ui::color(theme.selected_fill))
+                    .text_color(solyra_ui::color(theme.text))
+            } else {
+                Styles::new()
+                    .bg(Color(0, 0, 0, 0))
+                    .text_color(solyra_ui::color(theme.text_med))
+            }
+        })
+        .on_click(click)
+        .child(
+            row()
+                .gap(9.)
+                .items_center()
+                .child(div().w(9.).h(9.).rounded(5.).bg(tag_color(color_name)))
+                .child(text(label).text_size(12.5).truncate()),
+        )
+}
+
 fn sidebar_section(title: &str, style: &solyra_ui::Style, body: View) -> View {
     column()
         .gap(3.)
@@ -497,6 +565,11 @@ fn sidebar(app: &FilesApp, style: &solyra_ui::Style) -> View {
                 Location::Folder(path),
             ))
         });
+    let tags = model::TAG_COLORS
+        .iter()
+        .fold(column().gap(1.), |col, color| {
+            col.child(tag_sidebar_button(app, style, color))
+        });
     column()
         .w(214.)
         .h_full()
@@ -514,6 +587,7 @@ fn sidebar(app: &FilesApp, style: &solyra_ui::Style) -> View {
         .border_color(style.hairline())
         .child(sidebar_section("Favourites", style, favourites))
         .child(sidebar_section("Locations", style, locations))
+        .child(sidebar_section("Tags", style, tags))
 }
 
 fn folder_icon(style: &solyra_ui::Style) -> View {
@@ -671,6 +745,7 @@ fn list_item(app: &FilesApp, style: &solyra_ui::Style, entry: Entry) -> View {
     };
     let theme = style.theme;
     let kind = if entry.is_dir { "Folder" } else { "File" };
+    let tag = model::tag_for(&entry.path);
     let size = if entry.is_dir {
         "—".into()
     } else {
@@ -695,6 +770,13 @@ fn list_item(app: &FilesApp, style: &solyra_ui::Style, entry: Entry) -> View {
                         .w(20.),
                 )
                 .child(text(entry.name.clone()).text_size(12.5).truncate().grow())
+                .child(
+                    div()
+                        .w(8.)
+                        .h(8.)
+                        .rounded(4.)
+                        .bg(tag.as_deref().map(tag_color).unwrap_or(Color(0, 0, 0, 0))),
+                )
                 .child(
                     text(size)
                         .text_size(11.5)
@@ -835,6 +917,28 @@ fn action_bar_for(app: &FilesApp, style: &solyra_ui::Style, in_trash: bool) -> V
         })
         .disabled_when(disabled)
     };
+    let tag = {
+        let disabled = selection_disabled(&app);
+        let app = app.clone();
+        action_button("Tag", move || {
+            let Some(path) = app.selected.get() else {
+                return;
+            };
+            match model::cycle_tag(&path) {
+                Ok(Some(color)) => {
+                    app.status.set(format!("Tagged {color}."));
+                }
+                Ok(None) => {
+                    app.status.set("Tag removed.".into());
+                }
+                Err(e) => {
+                    app.status.set(format!("Could not update the tag: {e}"));
+                }
+            };
+            app.refresh();
+        })
+        .disabled_when(disabled)
+    };
     let trash = {
         let disabled = selection_disabled(&app);
         let app = app.clone();
@@ -865,7 +969,12 @@ fn action_bar_for(app: &FilesApp, style: &solyra_ui::Style, in_trash: bool) -> V
         })
         .disabled_when(disabled)
     };
-    let mut controls = row().gap(6.).child(open).child(rename).child(star);
+    let mut controls = row()
+        .gap(6.)
+        .child(open)
+        .child(rename)
+        .child(star)
+        .child(tag);
     controls = if in_trash {
         controls.child(restore)
     } else {

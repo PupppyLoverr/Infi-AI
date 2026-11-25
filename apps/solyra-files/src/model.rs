@@ -181,6 +181,78 @@ pub fn recent() -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
+pub const TAG_COLORS: [&str; 6] = ["red", "orange", "yellow", "green", "blue", "purple"];
+
+fn read_tags(root: &Path) -> Vec<(String, PathBuf)> {
+    fs::read_to_string(root.join("tags"))
+        .ok()
+        .into_iter()
+        .flat_map(|text| {
+            text.lines()
+                .filter_map(|line| {
+                    let (color, path) = line.split_once('\t')?;
+                    Some((color.to_string(), PathBuf::from(percent_decode(path))))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn write_tags(root: &Path, items: &[(String, PathBuf)]) -> io::Result<()> {
+    fs::create_dir_all(root)?;
+    let text = items
+        .iter()
+        .map(|(color, path)| format!("{color}\t{}", percent_encode_path(path)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(root.join("tags"), format!("{text}\n"))
+}
+
+pub fn paths_tagged(color: &str) -> Vec<PathBuf> {
+    data_root()
+        .map(|root| {
+            read_tags(&root)
+                .into_iter()
+                .filter(|(tag, path)| tag == color && path.exists())
+                .map(|(_, path)| path)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub fn tag_for(path: &Path) -> Option<String> {
+    data_root().and_then(|root| {
+        read_tags(&root)
+            .into_iter()
+            .find_map(|(color, item)| (item == path).then_some(color))
+    })
+}
+
+/// Cycle the Finder-style colour tag on a path. Returns the new tag, or `None`
+/// when the path has come back around to untagged.
+pub fn cycle_tag(path: &Path) -> io::Result<Option<String>> {
+    let Some(root) = data_root() else {
+        return Err(io::Error::new(io::ErrorKind::NotFound, "HOME is not set"));
+    };
+    let mut items = read_tags(&root);
+    let current = items
+        .iter()
+        .position(|(_, item)| item == path)
+        .map(|pos| items.remove(pos).0);
+    let next = match current.as_deref() {
+        None => Some(TAG_COLORS[0]),
+        Some(color) => TAG_COLORS
+            .iter()
+            .position(|c| *c == color)
+            .and_then(|pos| TAG_COLORS.get(pos + 1).copied()),
+    };
+    if let Some(color) = next {
+        items.insert(0, (color.to_string(), path.to_path_buf()));
+    }
+    write_tags(&root, &items)?;
+    Ok(next.map(str::to_string))
+}
+
 pub fn trash_dir() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("XDG_DATA_HOME") {
         return Some(PathBuf::from(dir).join("Trash"));
@@ -422,6 +494,31 @@ mod tests {
         let dest = rename_entry(&src, "renamed.txt").unwrap();
         assert!(dest.exists());
         assert!(!src.exists());
+    }
+
+    #[test]
+    fn colour_tags_cycle_and_filter() {
+        let root = temp_root("tags");
+        let data = root.join("data");
+        let file = root.join("tagged.txt");
+        fs::write(&file, "").unwrap();
+        let old_data = std::env::var_os("SOLYRA_FILES_DATA");
+        unsafe { std::env::set_var("SOLYRA_FILES_DATA", &data) };
+
+        assert_eq!(cycle_tag(&file).unwrap().as_deref(), Some("red"));
+        assert_eq!(tag_for(&file).as_deref(), Some("red"));
+        assert_eq!(paths_tagged("red"), vec![file.clone()]);
+        assert!(paths_tagged("blue").is_empty());
+        assert_eq!(cycle_tag(&file).unwrap().as_deref(), Some("orange"));
+        for _ in 0..5 {
+            let _ = cycle_tag(&file).unwrap();
+        }
+        assert_eq!(tag_for(&file), None);
+
+        match old_data {
+            Some(value) => unsafe { std::env::set_var("SOLYRA_FILES_DATA", value) },
+            None => unsafe { std::env::remove_var("SOLYRA_FILES_DATA") },
+        }
     }
 
     #[test]
