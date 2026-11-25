@@ -801,6 +801,46 @@ fn list_item(app: &FilesApp, style: &solyra_ui::Style, entry: Entry, tag: Option
         )
 }
 
+fn list_header(style: &solyra_ui::Style) -> View {
+    let theme = style.theme;
+    row()
+        .w_full()
+        .h(25.)
+        .px(12.)
+        .gap(10.)
+        .items_center()
+        .border_edges(zgx::scene::Insets {
+            top: 0.,
+            right: 0.,
+            bottom: 1.,
+            left: 0.,
+        })
+        .border_color(style.hairline())
+        .child(div().w(20.))
+        .child(
+            text("Name")
+                .text_size(11.)
+                .font_bold()
+                .text_color(solyra_ui::color(theme.text_dim))
+                .grow(),
+        )
+        .child(div().w(8.))
+        .child(
+            text("Size")
+                .text_size(11.)
+                .font_bold()
+                .text_color(solyra_ui::color(theme.text_dim))
+                .w(72.),
+        )
+        .child(
+            text("Kind")
+                .text_size(11.)
+                .font_bold()
+                .text_color(solyra_ui::color(theme.text_dim))
+                .w(58.),
+        )
+}
+
 fn empty_state(message: &str, style: &solyra_ui::Style) -> View {
     column()
         .w_full()
@@ -848,17 +888,15 @@ fn entries_view(
             .child(row().flex_wrap().gap(10.).p(18.).w_full().children(cards))
     } else {
         let tags: HashMap<PathBuf, String> = model::tags().into_iter().collect();
-        let rows = entries
-            .into_iter()
-            .map(|entry| {
-                let tag = tags.get(&entry.path).cloned();
-                list_item(app, style, entry, tag)
-            })
-            .collect::<Vec<_>>();
+        let mut rows = vec![list_header(style)];
+        rows.extend(entries.into_iter().map(|entry| {
+            let tag = tags.get(&entry.path).cloned();
+            list_item(app, style, entry, tag)
+        }));
         scroll(offset)
             .grow()
             .w_full()
-            .child(column().gap(2.).p(12.).w_full().children(rows))
+            .child(column().gap(2.).p(12.).pt(0.).w_full().children(rows))
     }
 }
 

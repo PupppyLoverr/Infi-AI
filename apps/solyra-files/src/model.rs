@@ -271,14 +271,6 @@ pub fn paths_tagged(color: &str) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-pub fn tag_for(path: &Path) -> Option<String> {
-    data_root().and_then(|root| {
-        read_tags(&root)
-            .into_iter()
-            .find_map(|(color, item)| (item == path).then_some(color))
-    })
-}
-
 /// Cycle the Finder-style colour tag on a path. Returns the new tag, or `None`
 /// when the path has come back around to untagged.
 pub fn cycle_tag(path: &Path) -> io::Result<Option<String>> {
@@ -580,14 +572,21 @@ mod tests {
         unsafe { std::env::set_var("SOLYRA_FILES_DATA", &data) };
 
         assert_eq!(cycle_tag(&file).unwrap().as_deref(), Some("red"));
-        assert_eq!(tag_for(&file).as_deref(), Some("red"));
+        assert_eq!(
+            tags()
+                .into_iter()
+                .find(|(path, _)| path == &file)
+                .map(|(_, color)| color)
+                .as_deref(),
+            Some("red")
+        );
         assert_eq!(paths_tagged("red"), vec![file.clone()]);
         assert!(paths_tagged("blue").is_empty());
         assert_eq!(cycle_tag(&file).unwrap().as_deref(), Some("orange"));
         for _ in 0..5 {
             let _ = cycle_tag(&file).unwrap();
         }
-        assert_eq!(tag_for(&file), None);
+        assert!(tags().into_iter().all(|(path, _)| path != file));
 
         match old_data {
             Some(value) => unsafe { std::env::set_var("SOLYRA_FILES_DATA", value) },
