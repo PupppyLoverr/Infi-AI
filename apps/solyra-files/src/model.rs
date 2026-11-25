@@ -104,6 +104,45 @@ pub fn rename_entry(path: &Path, new_name: &str) -> Result<PathBuf, String> {
     Ok(dest)
 }
 
+pub fn create_folder(parent: &Path) -> Result<PathBuf, String> {
+    if !parent.is_dir() {
+        return Err("The current location is not a folder.".into());
+    }
+    let dest = unique_destination(parent, "untitled folder");
+    fs::create_dir(&dest).map_err(|e| format!("Could not create the folder: {e}"))?;
+    Ok(dest)
+}
+
+/// Copy or move one item into `dest_dir`, never overwriting an existing item.
+pub fn paste_entry(source: &Path, dest_dir: &Path, cut: bool) -> Result<PathBuf, String> {
+    if !source.exists() {
+        return Err("The copied item no longer exists.".into());
+    }
+    if !dest_dir.is_dir() {
+        return Err("The destination is not a folder.".into());
+    }
+    let source_abs = std::path::absolute(source).unwrap_or_else(|_| source.to_path_buf());
+    let dest_abs = std::path::absolute(dest_dir).unwrap_or_else(|_| dest_dir.to_path_buf());
+    if source_abs.is_dir() && dest_abs.starts_with(&source_abs) {
+        return Err("A folder cannot be pasted inside itself.".into());
+    }
+    let name = source
+        .file_name()
+        .ok_or_else(|| "This item has no file name.".to_string())?
+        .to_string_lossy();
+    let dest = unique_destination(dest_dir, &name);
+    if cut {
+        if fs::rename(source, &dest).is_err() {
+            copy_tree(source, &dest)
+                .and_then(|()| remove_tree(source))
+                .map_err(|e| format!("Could not move the item: {e}"))?;
+        }
+    } else {
+        copy_tree(source, &dest).map_err(|e| format!("Could not copy the item: {e}"))?;
+    }
+    Ok(dest)
+}
+
 fn data_root() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("SOLYRA_FILES_DATA") {
         return Some(PathBuf::from(dir));
@@ -494,6 +533,29 @@ mod tests {
         let dest = rename_entry(&src, "renamed.txt").unwrap();
         assert!(dest.exists());
         assert!(!src.exists());
+    }
+
+    #[test]
+    fn copy_cut_and_new_folder_never_overwrite() {
+        let root = temp_root("paste");
+        let source = root.join("source.txt");
+        let dest = root.join("dest");
+        fs::create_dir(&dest).unwrap();
+        fs::write(&source, "hello").unwrap();
+
+        let copied = paste_entry(&source, &dest, false).unwrap();
+        assert_eq!(fs::read_to_string(&copied).unwrap(), "hello");
+        assert!(source.exists());
+        let copied_again = paste_entry(&source, &dest, false).unwrap();
+        assert_ne!(copied, copied_again);
+
+        let moved = paste_entry(&source, &dest, true).unwrap();
+        assert!(!source.exists());
+        assert_eq!(fs::read_to_string(&moved).unwrap(), "hello");
+
+        let folder = create_folder(&root).unwrap();
+        assert!(folder.is_dir());
+        assert!(paste_entry(&dest, &dest.join("child"), false).is_err());
     }
 
     #[test]

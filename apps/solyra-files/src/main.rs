@@ -75,6 +75,7 @@ struct FilesApp {
     back: Rc<RefCell<Vec<Location>>>,
     forward: Rc<RefCell<Vec<Location>>>,
     last_click: Rc<RefCell<Option<(PathBuf, Instant)>>>,
+    clipboard: Rc<RefCell<Option<(PathBuf, bool)>>>,
 }
 
 impl FilesApp {
@@ -210,6 +211,14 @@ fn load_entries(location: &Location, show_hidden: bool) -> Result<Vec<Entry>, St
             .iter()
             .filter_map(|p| entry_for_path(p))
             .collect()),
+    }
+}
+
+fn location_dir(location: &Location) -> Option<PathBuf> {
+    match location {
+        Location::Home => Some(model::home_dir()),
+        Location::Folder(path) => Some(path.clone()),
+        _ => None,
     }
 }
 
@@ -865,7 +874,8 @@ fn selection_disabled(app: &FilesApp) -> impl FnMut() -> bool + 'static {
     move || selected.get().is_none()
 }
 
-fn action_bar_for(app: &FilesApp, style: &solyra_ui::Style, in_trash: bool) -> View {
+fn action_bar_for(app: &FilesApp, style: &solyra_ui::Style, location: &Location) -> View {
+    let in_trash = location == &Location::Trash;
     let open = {
         let disabled = selection_disabled(&app);
         let app = app.clone();
@@ -939,6 +949,88 @@ fn action_bar_for(app: &FilesApp, style: &solyra_ui::Style, in_trash: bool) -> V
         })
         .disabled_when(disabled)
     };
+    let copy = {
+        let disabled = selection_disabled(&app);
+        let app = app.clone();
+        action_button("Copy", move || {
+            let Some(path) = app.selected.get() else {
+                return;
+            };
+            *app.clipboard.borrow_mut() = Some((path, false));
+            app.status.set("Copied.".into());
+            app.refresh();
+        })
+        .disabled_when(disabled)
+    };
+    let cut = {
+        let disabled = selection_disabled(&app);
+        let app = app.clone();
+        action_button("Cut", move || {
+            let Some(path) = app.selected.get() else {
+                return;
+            };
+            *app.clipboard.borrow_mut() = Some((path, true));
+            app.status
+                .set("Cut. Paste it somewhere else to move it.".into());
+            app.refresh();
+        })
+        .disabled_when(disabled)
+    };
+    let paste = {
+        let paste_disabled = {
+            let app = app.clone();
+            move || {
+                let _ = app.revision.get();
+                app.clipboard.borrow().is_none() || location_dir(&app.location.get()).is_none()
+            }
+        };
+        let app = app.clone();
+        action_button("Paste", move || {
+            let item = app.clipboard.borrow().clone();
+            let Some((source, cut)) = item else {
+                return;
+            };
+            let Some(dir) = location_dir(&app.location.get()) else {
+                return;
+            };
+            match model::paste_entry(&source, &dir, cut) {
+                Ok(dest) => {
+                    if cut {
+                        *app.clipboard.borrow_mut() = None;
+                    }
+                    app.status.set(format!("Pasted as {}.", dest.display()));
+                    app.selected.set(Some(dest));
+                }
+                Err(e) => {
+                    app.status.set(e);
+                }
+            };
+            app.refresh();
+        })
+        .disabled_when(paste_disabled)
+    };
+    let new_folder = {
+        let disabled = location_dir(location).is_none();
+        let app = app.clone();
+        action_button("New Folder", move || {
+            let Some(dir) = location_dir(&app.location.get()) else {
+                return;
+            };
+            match model::create_folder(&dir) {
+                Ok(path) => {
+                    app.status.set("Created a new folder.".into());
+                    app.rename_text.set("untitled folder".into());
+                    app.renaming.set(Some(path.clone()));
+                    app.selected.set(Some(path));
+                }
+                Err(e) => {
+                    app.status.set(e);
+                }
+            };
+            app.refresh();
+        })
+        .disabled_when(move || disabled)
+    };
     let trash = {
         let disabled = selection_disabled(&app);
         let app = app.clone();
@@ -971,10 +1063,14 @@ fn action_bar_for(app: &FilesApp, style: &solyra_ui::Style, in_trash: bool) -> V
     };
     let mut controls = row()
         .gap(6.)
+        .child(new_folder)
         .child(open)
         .child(rename)
         .child(star)
-        .child(tag);
+        .child(tag)
+        .child(copy)
+        .child(cut)
+        .child(paste);
     controls = if in_trash {
         controls.child(restore)
     } else {
@@ -1014,7 +1110,7 @@ fn action_bar(app: &FilesApp, style: &solyra_ui::Style) -> View {
             let location = app.location.clone();
             move || location.get()
         },
-        move |location, _cx| action_bar_for(&app, &style, location == Location::Trash),
+        move |location, _cx| action_bar_for(&app, &style, &location),
     )
 }
 
@@ -1278,6 +1374,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 back: Rc::default(),
                 forward: Rc::default(),
                 last_click: Rc::default(),
+                clipboard: Rc::default(),
             };
             let window = cx.window.clone();
 
