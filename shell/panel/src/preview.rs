@@ -699,7 +699,7 @@ fn render_all() -> Vec<Shot> {
                 let mut icons = HashMap::new();
                 let hover = hover.map(|f| (w as f64 * f, spec.height as f64 - 20.0));
                 crate::dock::draw(
-                    cv, th, &fonts, style, &dock_wins, &mut icons, hover, &live, magnify, false,
+                    cv, th, &fonts, style, &dock_wins, &mut icons, hover, &live, magnify, false, &[],
                 );
             }));
         }
@@ -1260,7 +1260,7 @@ fn scene_pixels(
         };
         let mut icons = HashMap::new();
         body = crate::dock::draw(
-            &mut cv, &th, fonts, dock_style, &wins, &mut icons, None, &live, false, false,
+            &mut cv, &th, fonts, dock_style, &wins, &mut icons, None, &live, false, false, &[],
         )
         .1;
     }

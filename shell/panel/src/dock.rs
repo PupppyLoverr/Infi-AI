@@ -27,16 +27,20 @@ pub const CARD_H: i32 = 56;
 /// Corner radius of the floating glass pill.
 const DOCK_R: f32 = 19.0;
 /// Extra room above the card for magnified icons.
-pub const MAGNIFY_ROOM: i32 = 30;
+pub const MAGNIFY_ROOM: i32 = 40;
 /// Height of the Windows-style taskbar.
 pub const TASKBAR_H: u32 = 48;
 /// What is left of an auto-hidden dock: a strip at the screen edge that
 /// brings it back when the pointer touches it.
 pub const HIDDEN_H: u32 = 3;
-/// Strongest magnification (1.0 = none).
-const MAX_SCALE: f32 = 1.55;
-/// How far, in cells, the magnification reaches either side of the pointer.
-const REACH: f32 = 2.2;
+/// Strongest magnification (1.0 = none). pearOS/macOS magnify 80% at the
+/// pointer.
+const MAX_SCALE: f32 = 1.8;
+/// Gaussian width in icon cells (pearOS `amplitud` = 1.5).
+const SIGMA: f32 = 1.5;
+/// How far, in cells, the magnification reaches either side of the pointer
+/// (3 sigma, where the gaussian has faded to nothing).
+const REACH: f32 = 4.5;
 
 /// How the layer surface for the dock is set up.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -226,9 +230,34 @@ pub fn magnification(dist: f32) -> f32 {
     if dist.abs() >= REACH {
         return 1.0;
     }
-    // Cosine falloff: smooth, 1 at the edge of reach, MAX at the pointer.
-    let t = (dist.abs() / REACH * std::f32::consts::PI).cos() * 0.5 + 0.5;
-    1.0 + (MAX_SCALE - 1.0) * t
+    // Gaussian falloff, the curve pearOS (and the real Dock) use:
+    // 1 + zoom·exp(-d²/2σ²), smooth at every distance.
+    1.0 + (MAX_SCALE - 1.0) * (-dist * dist / (2.0 * SIGMA * SIGMA)).exp()
+}
+
+/// Bounce height for a launching icon at this point in its cycle: up in
+/// 300 ms with OutQuad, down in 300 ms with InQuad, like pearOS's dock.
+/// `icon` is the icon's current (magnified) size; the jump is 60% of it.
+pub fn bounce_offset(elapsed: std::time::Duration, icon: f32) -> f32 {
+    let ms = elapsed.as_millis() as f32 % 600.0;
+    let jump = icon * 0.6;
+    let p = ms / 300.0;
+    if p < 1.0 {
+        jump * (1.0 - (1.0 - p) * (1.0 - p))
+    } else {
+        let q = p - 1.0;
+        jump * (1.0 - q * q)
+    }
+}
+
+/// The key a dock click records so the matching icon bounces while the app
+/// starts.
+pub fn launch_key(target: &LaunchTarget) -> String {
+    match target {
+        LaunchTarget::Shell(c) => c.clone(),
+        LaunchTarget::Ipc(j) => j.to_string(),
+        LaunchTarget::Internal(_) => "internal".into(),
+    }
 }
 
 /// Draw the dock into the whole surface. Returns hit regions.
@@ -244,6 +273,7 @@ pub fn draw(
     live: &Live<'_>,
     magnify: bool,
     hidden: bool,
+    launching: &[(String, std::time::Instant)],
 ) -> (Vec<Region>, Option<Body>) {
     if hidden {
         // A clear strip: the pointer touching it brings the dock back.
@@ -272,7 +302,7 @@ pub fn draw(
                 Some(body),
             )
         }
-        _ => draw_floating(cv, th, fonts, style, wins, icons, hover, live, magnify),
+        _ => draw_floating(cv, th, fonts, style, wins, icons, hover, live, magnify, launching),
     }
 }
 
@@ -307,6 +337,7 @@ fn draw_floating(
     hover: Option<(f64, f64)>,
     live: &Live<'_>,
     magnify: bool,
+    launching: &[(String, std::time::Instant)],
 ) -> (Vec<Region>, Option<Body>) {
     let w = cv.width as i32;
     let h = cv.height as i32;
@@ -466,7 +497,15 @@ fn draw_floating(
                     Item::Separator | Item::Weather | Item::Clock => unreachable!(),
                 };
                 let icon = app_id.and_then(|id| load_app_icon(icons, id));
-                cv.draw_app_squircle(x, y, s, role, icon, fonts);
+                let bounce = match it {
+                    Item::App(e) if e.window.is_none() => launching
+                        .iter()
+                        .find(|(k, _)| *k == launch_key(&e.command))
+                        .map(|(_, t0)| bounce_offset(t0.elapsed(), s as f32).round() as i32)
+                        .unwrap_or(0),
+                    _ => 0,
+                };
+                cv.draw_app_squircle(x, y - bounce, s, role, icon, fonts);
 
                 if let Item::App(e) = it {
                     if e.window_count > 0 {

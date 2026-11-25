@@ -219,6 +219,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         control: None,
         island_card: None,
         notifs_surface: None,
+        dock_mouse_smooth: None,
+        launching: Vec::new(),
         dock_ctx: None,
         dock_ctx_entries: Vec::new(),
         about: None,
@@ -454,6 +456,10 @@ struct App {
     launcher: Option<SurfaceSlot>,
     /// Notification centre drawer (right edge).
     notifs_surface: Option<SurfaceSlot>,
+    /// Smoothed pointer x over the dock (pearOS lerp), drives magnification.
+    dock_mouse_smooth: Option<f32>,
+    /// Apps clicked open from the dock: icons bounce while they start.
+    launching: Vec<(String, Instant)>,
     /// Dock icon context menu (right-click).
     dock_ctx: Option<SurfaceSlot>,
     dock_ctx_entries: Vec<menu::Entry>,
@@ -1300,7 +1306,26 @@ impl App {
         }
 
         if self.dock.configured && self.dock.width > 0 {
-            let hover = self.hover_on(&self.dock.surface);
+            let raw_hover = self.hover_on(&self.dock.surface);
+            // pearOS smooths the magnification pointer: it lerps toward the
+            // real position instead of snapping, which is the fluid feel.
+            let mut residual = 0.0f32;
+            let hover = match raw_hover {
+                Some((hx, hy)) => {
+                    let cur = self.dock_mouse_smooth.unwrap_or(hx as f32);
+                    let next = cur + (hx as f32 - cur) * 0.3;
+                    self.dock_mouse_smooth = Some(next);
+                    residual = (hx as f32 - next).abs();
+                    Some((next as f64, hy))
+                }
+                None => {
+                    self.dock_mouse_smooth = None;
+                    None
+                }
+            };
+            self.launching
+                .retain(|(_, t0)| t0.elapsed() < Duration::from_millis(3000));
+            let animating = !self.launching.is_empty() || residual > 0.5;
             let w = self.dock.width;
             let h = self.dock.height;
             if let Ok((buffer, bytes)) = self.pool.create_buffer(
@@ -1326,6 +1351,7 @@ impl App {
                     &live,
                     self.prefs.look.dock_magnify,
                     self.dock_hidden && self.prefs.look.dock_autohide,
+                    &self.launching,
                 );
                 self.dock.regions = regions;
                 let rects = match body {
@@ -1342,6 +1368,13 @@ impl App {
                     h * scale,
                     scale as i32,
                 );
+                if animating && !self.prefs.look.reduced_motion {
+                    // Keep drawing frames while icons bounce or the smoothed
+                    // pointer is still catching up.
+                    self.dock
+                        .surface
+                        .frame(&self.qh, self.dock.surface.clone());
+                }
             }
         }
 
@@ -1748,6 +1781,11 @@ impl App {
                 self.close_overlays();
             }
             HitAction::Launch(target) => {
+                if surface == &self.dock.surface {
+                    self.launching
+                        .push((dock::launch_key(&target), Instant::now()));
+                    self.needs_redraw = true;
+                }
                 self.execute_launch(target);
                 self.launcher = None;
             }
@@ -2376,6 +2414,9 @@ impl CompositorHandler for App {
         if self.island.as_ref().is_some_and(|s| &s.surface == surface) {
             self.needs_redraw = true;
             self.island_frame_only = true;
+        }
+        if surface == &self.dock.surface {
+            self.needs_redraw = true;
         }
     }
     fn surface_enter(
