@@ -9,3 +9,4 @@ description = "Solyra look for zgx apps: theme from the shared tokens, small hel
 zgx.workspace = true
 solyra-tokens.workspace = true
 solyra-conf.workspace = true
+png = "0.17"

@@ -2,19 +2,19 @@
 # solyra-open <terminal|files|browser|editor|viewer|calculator> [args...]
 #
 # Opens whichever program is chosen for a role in Settings -> Default apps
-# (~/.config/solyra/defaults.toml, then /etc/solyra/defaults.toml). The
-# original program is the fallback: if the chosen one is missing, or exits
-# with an error within three seconds of starting, the original opens instead.
-# Nothing is ever left without a working terminal, file manager or browser.
+# (~/.config/solyra/defaults.toml, then /etc/solyra/defaults.toml). If that
+# program is missing, or exits with an error within three seconds of starting,
+# the other installed role app opens instead. Nothing is ever left without a
+# working terminal, file manager or browser.
 role=${1:-}
 [ $# -gt 0 ] && shift
 case $role in
-  terminal) original=foot ;;
-  files)    original=thunar ;;
-  browser)  original=firefox ;;
-  editor)   original=mousepad ;;
-  viewer)   original=ristretto ;;
-  calculator) original=galculator ;;
+  terminal) default=foot; alternate=foot ;;
+  files)    default=solyra-files; alternate=thunar ;;
+  browser)  default=firefox; alternate=firefox ;;
+  editor)   default=mousepad; alternate=mousepad ;;
+  viewer)   default=ristretto; alternate=ristretto ;;
+  calculator) default=galculator; alternate=galculator ;;
   *) echo "usage: solyra-open terminal|files|browser|editor|viewer|calculator [args...]" >&2; exit 2 ;;
 esac
 
@@ -25,8 +25,17 @@ for f in "${XDG_CONFIG_HOME:-$HOME/.config}/solyra/defaults.toml" /etc/solyra/de
   if [ -n "$line" ]; then chosen=${line%.desktop}; break; fi
 done
 
-if [ -z "$chosen" ] || [ "$chosen" = "$original" ] || ! command -v "$chosen" >/dev/null 2>&1; then
-  exec "$original" "$@"
+[ -z "$chosen" ] && chosen=$default
+if ! command -v "$chosen" >/dev/null 2>&1; then
+  chosen=$default
+fi
+if [ "$chosen" = "$default" ]; then
+  fallback=$alternate
+else
+  fallback=$default
+fi
+if ! command -v "$chosen" >/dev/null 2>&1; then
+  chosen=$fallback
 fi
 
 "$chosen" "$@" &
@@ -36,8 +45,10 @@ while [ "$i" -lt 30 ]; do
   if ! kill -0 "$pid" 2>/dev/null; then
     wait "$pid"
     rc=$?
-    [ "$rc" -ne 0 ] && exec "$original" "$@"
-    exit 0
+    if [ "$rc" -ne 0 ] && [ "$chosen" != "$fallback" ] && command -v "$fallback" >/dev/null 2>&1; then
+      exec "$fallback" "$@"
+    fi
+    exit "$rc"
   fi
   sleep 0.1
   i=$((i + 1))

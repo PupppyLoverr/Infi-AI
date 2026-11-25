@@ -45,11 +45,18 @@ impl Role {
                     original: false,
                 },
             ],
-            Self::Files => &[Candidate {
-                bin: "thunar",
-                name: "Thunar",
-                original: true,
-            }],
+            Self::Files => &[
+                Candidate {
+                    bin: "thunar",
+                    name: "Thunar",
+                    original: true,
+                },
+                Candidate {
+                    bin: "solyra-files",
+                    name: "Solyra Files",
+                    original: false,
+                },
+            ],
             Self::Browser => &[
                 Candidate {
                     bin: "firefox",
@@ -67,6 +74,16 @@ impl Role {
 
     pub fn original(self) -> &'static Candidate {
         &self.candidates()[0]
+    }
+
+    /// The factory default. Files uses Solyra's own Finder-style app; the
+    /// upstream program remains installed and selectable as the way back.
+    pub fn default(self) -> &'static Candidate {
+        if self == Self::Files {
+            &self.candidates()[1]
+        } else {
+            self.original()
+        }
     }
 }
 
@@ -86,7 +103,7 @@ pub fn available(role: Role, installed: impl Fn(&str) -> bool) -> Vec<&'static C
         .collect()
 }
 
-/// The binary chosen for `role` in `defaults.toml` text, or the original.
+/// The binary chosen for `role` in `defaults.toml` text, or the factory default.
 pub fn chosen(text: &str, role: Role) -> String {
     for line in text.lines() {
         let line = line.split('#').next().unwrap_or("").trim();
@@ -99,7 +116,7 @@ pub fn chosen(text: &str, role: Role) -> String {
             }
         }
     }
-    role.original().bin.to_string()
+    role.default().bin.to_string()
 }
 
 /// `defaults.toml` text with `role` set to `bin`. Only known candidates are
@@ -120,11 +137,11 @@ pub fn set(text: &str, role: Role, bin: &str) -> Result<String, String> {
     Ok(solyra_conf::merge(&text, &[(role.key(), Some(value))]))
 }
 
-/// Every role back to its original.
+/// Every role back to its factory default.
 pub fn reset_all(text: &str) -> String {
     let mut text = text.to_string();
     for role in Role::ALL {
-        text = set(&text, role, role.original().bin).expect("originals are always valid");
+        text = set(&text, role, role.default().bin).expect("defaults are always valid");
     }
     text
 }
@@ -136,6 +153,7 @@ mod tests {
     #[test]
     fn original_is_the_default_and_always_listed() {
         assert_eq!(chosen("", Role::Terminal), "foot");
+        assert_eq!(chosen("", Role::Files), "solyra-files");
         let none_installed = |_: &str| false;
         let list = available(Role::Terminal, none_installed);
         assert_eq!(list.len(), 1);
@@ -157,7 +175,7 @@ mod tests {
         let t = set("", Role::Terminal, "solyra-term").unwrap();
         assert!(t.starts_with("[roles]"));
         assert_eq!(chosen(&t, Role::Terminal), "solyra-term");
-        assert_eq!(chosen(&t, Role::Files), "thunar");
+        assert_eq!(chosen(&t, Role::Files), "solyra-files");
     }
 
     #[test]
@@ -176,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn reset_returns_every_role_to_the_original() {
+    fn reset_returns_every_role_to_the_default() {
         let t = set(
             &set("", Role::Terminal, "solyra-term").unwrap(),
             Role::Browser,
@@ -185,7 +203,7 @@ mod tests {
         .unwrap();
         let back = reset_all(&t);
         for role in Role::ALL {
-            assert_eq!(chosen(&back, role), role.original().bin);
+            assert_eq!(chosen(&back, role), role.default().bin);
         }
     }
 }

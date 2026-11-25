@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Solyra Files
+Comment=Browse folders and drives
+Exec=solyra-files
+Icon=system-file-manager
+Categories=System;FileManager;

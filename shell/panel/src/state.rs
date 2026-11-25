@@ -843,7 +843,7 @@ pub fn floating_dock_entries(wins: &[WindowInfo]) -> Vec<AppEntry> {
         command: LaunchTarget::Shell(open.into()),
     };
     let candidates = vec![
-        (role_binary("files", "thunar"), pin("files", role_binary("files", "thunar"), "Files", "Browse folders and drives", "solyra-open files")),
+        (role_binary("files", "solyra-files"), pin("files", role_binary("files", "solyra-files"), "Files", "Browse folders and drives", "solyra-open files")),
         (role_binary("browser", "firefox"), pin("browser", role_binary("browser", "firefox"), "Browser", "Browse the web", "solyra-open browser")),
         (role_binary("terminal", "foot"), pin("terminal", role_binary("terminal", "foot"), "Terminal", "Command line shell", "solyra-open terminal")),
         (role_binary("editor", "mousepad"), pin("editor", role_binary("editor", "mousepad"), "Text Editor", "Edit text files", "solyra-open editor")),
@@ -891,7 +891,7 @@ fn merge_windows(mut items: Vec<AppEntry>, wins: &[WindowInfo]) -> Vec<AppEntry>
 
 pub fn dock_entries(wins: &[WindowInfo]) -> Vec<AppEntry> {
     let term_bin = role_binary("terminal", "foot");
-    let files_bin = role_binary("files", "thunar");
+    let files_bin = role_binary("files", "solyra-files");
 
     // Pinned core apps in deterministic order (just like macOS / Windows 11),
     // enriched with live window state, followed by any unpinned running apps.
@@ -977,7 +977,7 @@ pub fn dock_entries(wins: &[WindowInfo]) -> Vec<AppEntry> {
 
 pub fn catalog_apps() -> Vec<AppEntry> {
     let term_bin = role_binary("terminal", "foot");
-    let files_bin = role_binary("files", "thunar");
+    let files_bin = role_binary("files", "solyra-files");
     let mut list = vec![
         AppEntry {
             window: None,

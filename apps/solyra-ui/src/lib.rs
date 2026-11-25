@@ -13,6 +13,7 @@
 //! like the shell, accent included.
 
 pub mod chrome;
+pub mod icons;
 
 use solyra_conf::look::Look;
 use solyra_tokens::{Accent, Rgba, Theme, ThemeKind};

@@ -12,7 +12,7 @@ cheapest insurance while zgx is at 0.1.
 | Terminal | Foot | `solyra-term` | Built: tabs, clear regression tests. Self-tested in CI; not yet driven by a person in a VM |
 | Browser | Firefox | `solyra-browse` | Built over zgx's WebKitGTK view: tabs, address bar, bookmarks, history, downloads. Same caveat |
 | Settings | the system tools (`nmtui`, `pavucontrol`, ...) | `solyra-settings` | Built: appearance, background, sound, network, default apps, agents, display, about |
-| Files | Thunar | none yet | Thunar only |
+| Files | Thunar | `solyra-files` (default) | Built: Finder-style sidebar, icon and list views, search, rename, copy/cut/paste, new folders, trash/restore, recents, stars and colour tags. Same caveat |
 | Launcher | Fuzzel | built into `solyra-panel` | Shipped |
 | First-boot setup | none | `solyra-setup` | Experimental, not started by default (docs/setup.md) |
 
@@ -55,7 +55,7 @@ One file decides which app answers a role:
 # /etc/solyra/defaults.toml (system) or ~/.config/solyra/defaults.toml (user)
 [roles]
 terminal = "foot.desktop"
-files = "thunar.desktop"
+files = "solyra-files.desktop"
 ```
 
 - Both the upstream and the Solyra app install a desktop entry, so either can
