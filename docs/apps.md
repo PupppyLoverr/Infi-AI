@@ -12,7 +12,7 @@ cheapest insurance while zgx is at 0.1.
 | Terminal | Foot | `solyra-term` | Built: tabs, clear regression tests. Self-tested in CI; not yet driven by a person in a VM |
 | Browser | Firefox | `solyra-browse` | Built over zgx's WebKitGTK view: tabs, address bar, bookmarks, history, downloads. Same caveat |
 | Settings | the system tools (`nmtui`, `pavucontrol`, ...) | `solyra-settings` | Built: appearance, background, sound, network, default apps, agents, display, about |
-| Files | Thunar | none yet | Thunar only |
+| Files | Thunar | `solyra-files` | Built: Finder-style sidebar, icon and list views, search, rename, trash/restore, recents and stars. Same caveat |
 | Launcher | Fuzzel | built into `solyra-panel` | Shipped |
 | First-boot setup | none | `solyra-setup` | Experimental, not started by default (docs/setup.md) |
 

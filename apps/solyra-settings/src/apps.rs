@@ -45,11 +45,18 @@ impl Role {
                     original: false,
                 },
             ],
-            Self::Files => &[Candidate {
-                bin: "thunar",
-                name: "Thunar",
-                original: true,
-            }],
+            Self::Files => &[
+                Candidate {
+                    bin: "thunar",
+                    name: "Thunar",
+                    original: true,
+                },
+                Candidate {
+                    bin: "solyra-files",
+                    name: "Solyra Files",
+                    original: false,
+                },
+            ],
             Self::Browser => &[
                 Candidate {
                     bin: "firefox",

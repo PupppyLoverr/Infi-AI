@@ -95,6 +95,7 @@ COPY shell/out/solyra-panel /usr/bin/solyra-panel
 COPY apps/out/solyra-settings /usr/bin/solyra-settings
 COPY apps/out/solyra-term /usr/bin/solyra-term
 COPY apps/out/solyra-browse /usr/bin/solyra-browse
+COPY apps/out/solyra-files /usr/bin/solyra-files
 # First-boot setup (experimental): wizard, root helper, units. See docs/setup.md.
 COPY apps/out/solyra-setup /usr/bin/solyra-setup
 COPY apps/out/solyra-setup-apply /usr/bin/solyra-setup-apply
@@ -106,7 +107,7 @@ RUN systemctl enable solyra-setup-apply.path
 COPY apps/out/solyra-agent /usr/bin/solyra-agent
 COPY base/profile.d/solyra-agent.sh /etc/profile.d/solyra-agent.sh
 COPY base/applications/ /usr/share/applications/
-RUN chmod +x /usr/bin/solyra-session /usr/bin/solyra-open /usr/bin/solyra-panel /usr/bin/solyra-settings /usr/bin/solyra-term /usr/bin/solyra-browse /usr/bin/solyra-setup /usr/bin/solyra-setup-apply /usr/bin/solyra-install /usr/bin/solyra-agent && \
+RUN chmod +x /usr/bin/solyra-session /usr/bin/solyra-open /usr/bin/solyra-panel /usr/bin/solyra-settings /usr/bin/solyra-term /usr/bin/solyra-browse /usr/bin/solyra-files /usr/bin/solyra-setup /usr/bin/solyra-setup-apply /usr/bin/solyra-install /usr/bin/solyra-agent && \
     ln -s solyra-comp /usr/bin/niri
 COPY assets/wallpapers/beach-1920x1080.png /usr/share/solyra/wallpapers/beach.png
 COPY assets/wallpapers/violet-1920x1080.png /usr/share/solyra/wallpapers/violet.png
