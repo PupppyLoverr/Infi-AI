@@ -59,7 +59,7 @@ choice! {
         Classic = "classic" / "Centred",
         Corner = "corner" / "Clock corner",
         Dashboard = "dashboard" / "Dashboard",
-    } default Solyra
+    } default Classic
 }
 
 choice! {

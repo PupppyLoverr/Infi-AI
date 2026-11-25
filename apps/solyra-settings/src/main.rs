@@ -221,7 +221,12 @@ fn desktop_page(status: Signal<String>) -> View {
                 &[("notch", "Notch"), ("island", "Dynamic Island"), ("off", "Off")],
                 look.notch.as_str(),
             ))
-            .child(caption("Shows approvals, agent progress, notifications and what is playing. Click it to expand."))
+            .child(caption("Shows approvals, agent progress, notifications and what is playing, and a shelf you can drop files on."))
+            .child(conf_toggle(cx, &status, "notch_hover", "Open the notch when the pointer rests on it", look.notch_hover))
+            .child(text("Widgets").font_bold())
+            .child(conf_toggle(cx, &status, "desktop_widgets", "Calendar and weather on the desktop", look.desktop_widgets))
+            .child(weather_city_row(cx, &status))
+            .child(caption("Weather comes from Open-Meteo (free, no account) for the city you enter, every 30 minutes. Leave it empty and nothing is fetched."))
             .child(text("Dock").font_bold())
             .child(conf_choice(
                 cx,
@@ -235,6 +240,22 @@ fn desktop_page(status: Signal<String>) -> View {
             .child(conf_toggle(cx, &status, "dock_autohide", "Hide the dock until the pointer reaches the bottom edge", look.dock_autohide));
         scrolling(cx, body)
     })
+}
+
+/// The weather card's city, saved as `weather_city` in shell.conf.
+fn weather_city_row(cx: &mut zgx::compose::Context, status: &Signal<String>) -> View {
+    let now = solyra_conf::get(&read(conf_path()), "weather_city").unwrap_or("").to_string();
+    let city = cx.runtime().signal(now);
+    let (c2, st) = (city.clone(), status.clone());
+    row()
+        .gap(8.)
+        .items_center()
+        .child(text("City"))
+        .child(text_input("Weather city", city).w(220.).h(32.).px(10.).rounded(8.))
+        .child(action("Save", move || {
+            let v = c2.get().trim().replace(['\n', '='], " ");
+            save_conf(&[("weather_city", if v.is_empty() { None } else { Some(v) })], &st);
+        }))
 }
 
 fn lock_page(status: Signal<String>) -> View {

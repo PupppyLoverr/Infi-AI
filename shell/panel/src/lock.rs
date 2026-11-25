@@ -343,7 +343,7 @@ impl App {
                     .to_string()
                     .to_uppercase()
             } else {
-                chrono::Local::now().format("%A %-d %B").to_string()
+                chrono::Local::now().format("%a %b %-d").to_string()
             };
             let playing = self.media.lock().ok().and_then(|g| g.clone());
             let media_title = playing.as_ref().and_then(|m| {
@@ -617,6 +617,20 @@ fn centred_display_clock(
     baseline: i32,
     size: f32,
 ) {
+    centred_display_clock_a(cv, fonts, clock, cx, baseline, size, 238)
+}
+
+/// The display clock at `alpha`: the macOS Sonoma / pearOS lock clock is
+/// frosted, about 60 % white, so the wallpaper shows through the digits.
+fn centred_display_clock_a(
+    cv: &mut Canvas<'_>,
+    fonts: &Fonts,
+    clock: &str,
+    cx: i32,
+    baseline: i32,
+    size: f32,
+    alpha: u8,
+) {
     let font = fonts.semibold.as_ref();
     let tracking = -(size * 0.03).clamp(1.2, 4.8);
     let tw = text_width_tracked(font, clock, size, tracking);
@@ -638,7 +652,7 @@ fn centred_display_clock(
         baseline,
         size,
         tracking,
-        Rgba::rgba(255, 255, 255, 238),
+        Rgba::rgba(255, 255, 255, alpha),
     );
 }
 
@@ -842,12 +856,14 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
             field(cv, v, w / 2, field_y, 260);
         }
         LockStyle::Classic => {
-            // Sharp Beach with calibrated top/bottom edge scrims only.
+            // pearOS / macOS Sonoma: the sharp wallpaper, a short date over a
+            // huge frosted clock near the top, and the sign-in low on the
+            // screen: avatar, a small password pill, a hint under it.
             classic_scrims(cv, w, h);
-            let clock_size = (h as f32 * 0.165).clamp(88.0, 160.0);
-            let clock_base = (h as f32 * 0.295) as i32;
-            let date_size = (clock_size * 0.185).clamp(18.0, 26.0);
-            let date_base = clock_base - (clock_size * 0.80) as i32;
+            let clock_size = (h as f32 * 0.20).clamp(96.0, 190.0);
+            let clock_base = (h as f32 * 0.29) as i32;
+            let date_size = (clock_size * 0.17).clamp(18.0, 30.0);
+            let date_base = clock_base - (clock_size * 0.82) as i32;
             centred_shadow(
                 cv,
                 v.fonts.semibold.as_ref(),
@@ -855,29 +871,27 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
                 w / 2,
                 date_base,
                 date_size,
-                soft,
-                74,
+                Rgba::rgba(255, 255, 255, 170),
+                40,
             );
-            centred_display_clock(cv, v.fonts, &v.clock, w / 2, clock_base, clock_size);
+            centred_display_clock_a(cv, v.fonts, &v.clock, w / 2, clock_base, clock_size, 160);
 
-            // macOS-proportioned bottom sign-in anchor: sculpted avatar, clear
-            // vertical gap, bold username, frosted Liquid Glass password pill.
-            let field_y = h - 104;
-            let name_base = field_y - 18;
-            let avatar_r = 28.0;
-            let avatar_cy = name_base - avatar_r as i32 - 20;
+            let field_y = (h as f32 * 0.80) as i32;
+            let avatar_r = 27.0;
+            let avatar_cy = field_y - avatar_r as i32 - 16;
             avatar(cv, v, w / 2, avatar_cy, avatar_r);
+            field(cv, v, w / 2, field_y, 160);
+            let hint = v.message.unwrap_or(v.name);
             centred_shadow(
                 cv,
-                v.fonts.semibold.as_ref(),
-                v.name,
+                v.fonts.medium.as_ref(),
+                hint,
                 w / 2,
-                name_base,
-                16.0,
+                field_y + 38 + 22,
+                12.0,
                 white,
-                82,
+                70,
             );
-            field(cv, v, w / 2, field_y, 224);
         }
         LockStyle::Corner => {
             if v.card {
