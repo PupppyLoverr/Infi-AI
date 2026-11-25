@@ -307,7 +307,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     app.ensure_desk();
 
     // Re-apply the saved wallpaper: the session config only starts a default.
-    if app.prefs.wallpaper_file.is_some() || app.prefs.wallpaper != state::WallpaperPreset::Graphite
+    if app.prefs.wallpaper_file.is_some() || app.prefs.wallpaper != state::WallpaperPreset::Silk
     {
         app.apply_saved_wallpaper();
     }

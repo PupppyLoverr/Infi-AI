@@ -110,6 +110,8 @@ COPY base/profile.d/solyra-agent.sh /etc/profile.d/solyra-agent.sh
 COPY base/applications/ /usr/share/applications/
 RUN chmod +x /usr/bin/solyra-session /usr/bin/solyra-open /usr/bin/solyra-agent-space /usr/bin/solyra-panel /usr/bin/solyra-settings /usr/bin/solyra-term /usr/bin/solyra-browse /usr/bin/solyra-files /usr/bin/solyra-setup /usr/bin/solyra-setup-apply /usr/bin/solyra-install /usr/bin/solyra-agent && \
     ln -s solyra-comp /usr/bin/niri
+COPY assets/wallpapers/silk-1920x1080.png /usr/share/solyra/wallpapers/silk.png
+COPY assets/wallpapers/silk-light-1920x1080.png /usr/share/solyra/wallpapers/silk-light.png
 COPY assets/wallpapers/beach-1920x1080.png /usr/share/solyra/wallpapers/beach.png
 COPY assets/wallpapers/violet-1920x1080.png /usr/share/solyra/wallpapers/violet.png
 COPY assets/wallpapers/ocean-1920x1080.png /usr/share/solyra/wallpapers/ocean.png

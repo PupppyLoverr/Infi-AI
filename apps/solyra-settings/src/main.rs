@@ -310,7 +310,7 @@ fn background_page(
                 .unwrap_or_else(|| {
                     format!(
                         "Preset: {}",
-                        solyra_conf::get(&conf, "wallpaper").unwrap_or("graphite")
+                        solyra_conf::get(&conf, "wallpaper").unwrap_or("silk")
                     )
                 }),
         );
@@ -352,7 +352,7 @@ fn background_page(
             }));
         }
 
-        let presets = ["violet", "ocean", "sunset", "forest", "graphite"]
+        let presets = ["silk", "beach", "violet", "ocean", "sunset", "forest", "graphite"]
             .into_iter()
             .fold(row().gap(8.).flex_wrap(), |r, name| {
                 let (status, current) = (status.clone(), current.clone());

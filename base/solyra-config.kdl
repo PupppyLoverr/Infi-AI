@@ -283,7 +283,7 @@ animations {
 
 // The shell: bar, dock, island. Clients, so killing one never takes the
 // session down; the compositor respawns nothing.
-spawn-at-startup "swaybg" "-i" "/usr/share/solyra/wallpapers/beach.png" "-m" "fill"
+spawn-at-startup "swaybg" "-i" "/usr/share/solyra/wallpapers/silk.png" "-m" "fill"
 spawn-at-startup "/usr/libexec/polkit-gnome-authentication-agent-1"
 spawn-at-startup "solyra-panel"
 

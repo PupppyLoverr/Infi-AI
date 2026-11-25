@@ -1344,7 +1344,7 @@ fn material_scenes_render() {
     let mut shots = Vec::new();
     for kind in [ThemeKind::Dark, ThemeKind::Light] {
         // Dark scenes over a dark wallpaper, so a light-tinted "dark" theme shows up.
-        let wp = if kind == ThemeKind::Dark { "graphite" } else { "beach" };
+        let wp = if kind == ThemeKind::Dark { "silk" } else { "beach" };
         for m in Material::ALL {
             shots.push(material_scene(
                 &fonts,
@@ -1397,7 +1397,7 @@ fn default_desktop_renders() {
     let fonts = Fonts::load();
     let d = ShellPrefs::default();
     let mut shots = Vec::new();
-    for (kind, wp) in [(ThemeKind::Dark, "graphite"), (ThemeKind::Light, "beach")] {
+    for (kind, wp) in [(ThemeKind::Dark, "silk"), (ThemeKind::Light, "silk-light")] {
         let mut scene = scene_pixels(
             &fonts,
             kind,
