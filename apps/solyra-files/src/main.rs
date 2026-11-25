@@ -8,6 +8,7 @@
 
 use std::{
     cell::RefCell,
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     rc::Rc,
@@ -731,7 +732,7 @@ fn grid_item(app: &FilesApp, style: &solyra_ui::Style, entry: Entry) -> View {
         )
 }
 
-fn list_item(app: &FilesApp, style: &solyra_ui::Style, entry: Entry) -> View {
+fn list_item(app: &FilesApp, style: &solyra_ui::Style, entry: Entry, tag: Option<String>) -> View {
     let selected = {
         let (selected, path) = (app.selected.clone(), entry.path.clone());
         move || selected.get().as_ref() == Some(&path)
@@ -754,7 +755,6 @@ fn list_item(app: &FilesApp, style: &solyra_ui::Style, entry: Entry) -> View {
     };
     let theme = style.theme;
     let kind = if entry.is_dir { "Folder" } else { "File" };
-    let tag = model::tag_for(&entry.path);
     let size = if entry.is_dir {
         "—".into()
     } else {
@@ -847,9 +847,13 @@ fn entries_view(
             .w_full()
             .child(row().flex_wrap().gap(10.).p(18.).w_full().children(cards))
     } else {
+        let tags: HashMap<PathBuf, String> = model::tags().into_iter().collect();
         let rows = entries
             .into_iter()
-            .map(|entry| list_item(app, style, entry))
+            .map(|entry| {
+                let tag = tags.get(&entry.path).cloned();
+                list_item(app, style, entry, tag)
+            })
             .collect::<Vec<_>>();
         scroll(offset)
             .grow()

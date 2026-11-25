@@ -247,6 +247,18 @@ fn write_tags(root: &Path, items: &[(String, PathBuf)]) -> io::Result<()> {
     fs::write(root.join("tags"), format!("{text}\n"))
 }
 
+pub fn tags() -> Vec<(PathBuf, String)> {
+    data_root()
+        .map(|root| {
+            read_tags(&root)
+                .into_iter()
+                .filter(|(_, path)| path.exists())
+                .map(|(color, path)| (path, color))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub fn paths_tagged(color: &str) -> Vec<PathBuf> {
     data_root()
         .map(|root| {
