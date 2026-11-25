@@ -17,7 +17,7 @@ use crate::tokens::{
 };
 
 /// macOS menu-bar band: 24–28 px. Exclusive zone tracks this height.
-pub const BAR_HEIGHT: u32 = 26;
+pub const BAR_HEIGHT: u32 = 30;
 pub const NOTCH_WIDTH: i32 = 184;
 
 pub const CONTROL_W: u32 = 348;
@@ -573,7 +573,10 @@ fn hovered(hover: Option<(f64, f64)>, x: i32, y: i32, w: i32, h: i32) -> bool {
 /// to fit them; the compositor blurs only the two shapes (`SpotLayout::blur`),
 /// and the room around them holds the shadow.
 pub const SPOT_W: i32 = 580;
-const SPOT_PAD_X: i32 = 40;
+const SURFACE_W: i32 = 820;
+const SPOT_PAD_X: i32 = (SURFACE_W - SPOT_W) / 2;
+const GRID_COLS: usize = 7;
+const GRID_CELL_H: i32 = 98;
 const SPOT_PAD_TOP: i32 = 20;
 const SPOT_PAD_BOTTOM: i32 = 52;
 const CAPSULE_H: i32 = 56;
@@ -625,8 +628,14 @@ pub fn spot_layout(query: &str, items: &[LauncherItem]) -> SpotLayout {
         w: SPOT_W,
         h: CAPSULE_H,
     };
+    let launchpad = query.trim().is_empty() && !items.is_empty();
     let list_h = if query.trim().is_empty() {
-        0
+        if launchpad {
+            let rows = items.len().div_ceil(GRID_COLS) as i32;
+            rows * GRID_CELL_H + 8
+        } else {
+            0
+        }
     } else if items.is_empty() {
         NO_MATCH_H - 2 * CARD_PAD
     } else {
@@ -634,17 +643,21 @@ pub fn spot_layout(query: &str, items: &[LauncherItem]) -> SpotLayout {
             .iter()
             .map(|r| launcher::ROW_H + r.heading.map_or(0, |_| launcher::HEADING_H))
             .sum();
-        rows + if only_agent_row(items) { AGENT_NOTE_H } else { 0 }
+        rows + if only_agent_row(items) {
+            AGENT_NOTE_H
+        } else {
+            0
+        }
     };
     let card = (list_h > 0).then(|| Rect {
-        x: SPOT_PAD_X,
+        x: if launchpad { 40 } else { SPOT_PAD_X },
         y: capsule.y + CAPSULE_H + CARD_GAP,
-        w: SPOT_W,
+        w: if launchpad { SURFACE_W - 80 } else { SPOT_W },
         h: list_h + 2 * CARD_PAD,
     });
     let bottom = card.map_or(capsule.y + CAPSULE_H, |c| c.y + c.h);
     SpotLayout {
-        w: (SPOT_W + 2 * SPOT_PAD_X) as u32,
+        w: SURFACE_W as u32,
         h: (bottom + SPOT_PAD_BOTTOM) as u32,
         capsule,
         card,
@@ -748,8 +761,28 @@ pub fn draw_launcher(
         return regions;
     }
 
+    if query.trim().is_empty() {
+        draw_launchpad_grid(
+            cv,
+            th,
+            fonts,
+            icons,
+            &mut regions,
+            card,
+            items,
+            selected.min(items.len() - 1),
+            hover,
+        );
+        return regions;
+    }
+
     let sel = selected.min(items.len() - 1);
-    let rows_h = lay.list_h - if only_agent_row(items) { AGENT_NOTE_H } else { 0 };
+    let rows_h = lay.list_h
+        - if only_agent_row(items) {
+            AGENT_NOTE_H
+        } else {
+            0
+        };
     let first = launcher::spotlight_first(items, sel, rows_h);
     let mut y = top;
     for row in launcher::spotlight_rows(items, first, rows_h) {
@@ -792,6 +825,85 @@ pub fn draw_launcher(
     regions
 }
 
+/// pearOS Launchpad: application icons in a wide glass grid. Typing in the
+/// same overlay switches back to the focused Spotlight result list.
+#[allow(clippy::too_many_arguments)]
+fn draw_launchpad_grid(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    fonts: &Fonts,
+    icons: &mut HashMap<String, Option<Icon>>,
+    regions: &mut Vec<Region>,
+    card: Rect,
+    items: &[LauncherItem],
+    selected: usize,
+    hover: Option<(f64, f64)>,
+) {
+    let inner_x = card.x + 24;
+    let inner_w = card.w - 48;
+    let cell_w = inner_w / GRID_COLS as i32;
+    let top = card.y + CARD_PAD + 8;
+    for (index, item) in items.iter().enumerate() {
+        let col = index % GRID_COLS;
+        let row = index / GRID_COLS;
+        let x = inner_x + col as i32 * cell_w;
+        let y = top + row as i32 * GRID_CELL_H;
+        let cx = x + cell_w / 2;
+        let icon = 62;
+        let ix = cx - icon / 2;
+        let iy = y + 4;
+        let hot = index == selected || hovered(hover, x, y, cell_w, GRID_CELL_H);
+        if hot && item.is_runnable() {
+            cv.round_rect(
+                x + 5,
+                y,
+                cell_w - 10,
+                GRID_CELL_H - 6,
+                16.0,
+                if index == selected {
+                    th.accent
+                } else {
+                    th.tile_hover
+                },
+            );
+        }
+        let sys_ic = load_app_icon(icons, &item.app_id);
+        cv.draw_app_squircle(ix, iy, icon, &item.role, sys_ic, fonts);
+        let label_col = if index == selected {
+            th.on_accent
+        } else {
+            th.text
+        };
+        let tw = text_width(fonts.regular.as_ref(), &item.title, 11.5);
+        let max_w = cell_w - 12;
+        let tx = if tw <= max_w { cx - tw / 2 } else { x + 6 };
+        cv.text_truncated(
+            fonts.regular.as_ref(),
+            &item.title,
+            tx,
+            y + 86,
+            11.5,
+            max_w,
+            label_col,
+        );
+        if item.is_runnable() {
+            let action = match &item.action {
+                LauncherAction::Launch(t) => HitAction::Launch(t.clone()),
+                LauncherAction::FocusWindow(id) => HitAction::FocusWindow(*id),
+                LauncherAction::AgentRequest(q) => HitAction::AgentRequest(q.clone()),
+                LauncherAction::Unavailable => continue,
+            };
+            regions.push(Region {
+                x,
+                y,
+                w: cell_w,
+                h: GRID_CELL_H,
+                action,
+            });
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_launcher_row(
     cv: &mut Canvas<'_>,
@@ -815,7 +927,14 @@ fn draw_launcher_row(
 
     let icon = 28;
     let sys_ic = load_app_icon(icons, &item.app_id);
-    cv.draw_app_squircle(rx + 10, y + (rh - icon) / 2, icon, &item.role, sys_ic, fonts);
+    cv.draw_app_squircle(
+        rx + 10,
+        y + (rh - icon) / 2,
+        icon,
+        &item.role,
+        sys_ic,
+        fonts,
+    );
 
     let title_col = if selected {
         th.on_accent
@@ -935,14 +1054,7 @@ pub fn draw_notifs(
             12.0,
             if hot { th.tile_hover } else { th.tile },
         );
-        cv.text(
-            fonts.regular.as_ref(),
-            label,
-            bx + 8,
-            30,
-            11.0,
-            th.accent,
-        );
+        cv.text(fonts.regular.as_ref(), label, bx + 8, 30, 11.0, th.accent);
         regions.push(Region {
             x: bx,
             y: 14,
@@ -1006,9 +1118,7 @@ pub fn draw_notifs(
             let cx = (bx0 + btn / 2) as f32;
             let cy = (y + 48) as f32;
             match c {
-                crate::media::Control::Previous => {
-                    cv.icon_skip(cx, cy, 13.0, false, th.text)
-                }
+                crate::media::Control::Previous => cv.icon_skip(cx, cy, 13.0, false, th.text),
                 crate::media::Control::Next => cv.icon_skip(cx, cy, 13.0, true, th.text),
                 crate::media::Control::PlayPause if m.playing => {
                     cv.icon_pause(cx, cy, 15.0, th.text)
@@ -1068,7 +1178,14 @@ pub fn draw_notifs(
             );
         }
         let aw = text_width(fonts.regular.as_ref(), &ago, 9.5);
-        cv.text(fonts.regular.as_ref(), &ago, w - 20 - aw, y + 14, 9.5, th.text_dim);
+        cv.text(
+            fonts.regular.as_ref(),
+            &ago,
+            w - 20 - aw,
+            y + 14,
+            9.5,
+            th.text_dim,
+        );
         cv.text_truncated(
             fonts.regular.as_ref(),
             text,
@@ -1102,7 +1219,14 @@ pub fn draw_about(
     cv.draw_app_squircle(cx0 - 21, 14, 42, "solyra", None, fonts);
     let title = "Solyra OS";
     let tw = text_width(fonts.semibold.as_ref(), title, 15.0);
-    cv.text(fonts.semibold.as_ref(), title, cx0 - tw / 2, 74, 15.0, th.text);
+    cv.text(
+        fonts.semibold.as_ref(),
+        title,
+        cx0 - tw / 2,
+        74,
+        15.0,
+        th.text,
+    );
     let mut y = 98;
     for (label, value) in specs {
         cv.text(fonts.regular.as_ref(), label, 44, y, 11.0, th.text_dim);
@@ -2252,22 +2376,28 @@ mod tests {
     }
 
     #[test]
-    fn empty_query_is_a_lone_capsule_that_can_be_dismissed() {
+    fn empty_query_is_a_launchpad_grid_that_can_be_dismissed() {
         let cat = vec![app("Files", "thunar"), app("Terminal", "foot")];
         let items = launcher::search("", &cat, &[], false);
         let (lay, regions) = paint("", &items);
-        assert!(lay.card.is_none(), "nothing is listed before there is a query");
-        assert!(regions.iter().all(|r| !matches!(r.action, HitAction::Launch(_))));
+        assert!(lay.card.is_some(), "Launchpad shows its application grid");
+        assert!(regions
+            .iter()
+            .any(|r| matches!(r.action, HitAction::Launch(_))));
         assert!(regions
             .iter()
             .any(|r| matches!(r.action, HitAction::Shell(ShellCmd::CloseOverlays))));
         let (small, _) = paint("zzzz", &[]);
-        assert!(small.h > lay.h, "a query opens the results card");
+        assert!(small.card.is_some(), "a query opens the results card");
     }
 
     #[test]
     fn a_query_lists_matches_in_a_card_sized_to_fit() {
-        let cat = vec![app("Files", "thunar"), app("Terminal", "foot"), app("Text Editor", "mousepad")];
+        let cat = vec![
+            app("Files", "thunar"),
+            app("Terminal", "foot"),
+            app("Text Editor", "mousepad"),
+        ];
         let one = launcher::search("files", &cat, &[], false);
         let two = launcher::search("t", &cat, &[], false);
         let (a, regions) = paint("files", &one);
@@ -2281,10 +2411,17 @@ mod tests {
         assert!(!rows.is_empty());
         assert!(rows.iter().all(|r| (30..=42).contains(&r.h)));
         assert!(
-            rows.iter().all(|r| r.y >= card.y && r.y + r.h <= card.y + card.h),
+            rows.iter()
+                .all(|r| r.y >= card.y && r.y + r.h <= card.y + card.h),
             "every row sits inside the card"
         );
-        assert!(a.capsule.y + a.capsule.h < card.y, "the card floats below the capsule");
-        assert!((a.h as i32) >= card.y + card.h, "the surface holds the card and its shadow");
+        assert!(
+            a.capsule.y + a.capsule.h < card.y,
+            "the card floats below the capsule"
+        );
+        assert!(
+            (a.h as i32) >= card.y + card.h,
+            "the surface holds the card and its shadow"
+        );
     }
 }

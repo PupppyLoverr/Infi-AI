@@ -49,7 +49,7 @@ choice! {
         Floating = "macos" / "Floating",
         Taskbar = "windows" / "Taskbar",
         Minimal = "minimal" / "Minimal",
-    } default Solyra
+    } default Floating
 }
 
 choice! {
@@ -114,8 +114,8 @@ impl Default for Look {
             notch: NotchStyle::default(),
             dock: DockKind::default(),
             dock_autohide: false,
-            dock_magnify: false,
-            show_workspaces: true,
+            dock_magnify: true,
+            show_workspaces: false,
             clock_24h: true,
             show_date: true,
             show_seconds: false,
@@ -211,7 +211,11 @@ impl Look {
     /// The material a surface really uses: "Solid surfaces" (the
     /// accessibility switch) overrides every per-surface choice.
     pub fn material(&self, chosen: Material) -> Material {
-        if self.opaque { Material::Solid } else { chosen }
+        if self.opaque {
+            Material::Solid
+        } else {
+            chosen
+        }
     }
 
     /// strftime pattern for the clock.

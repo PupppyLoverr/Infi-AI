@@ -16,6 +16,8 @@ use crate::tokens::{Theme, T_LABEL};
 pub enum MenuId {
     Solyra,
     App,
+    File,
+    Edit,
     Go,
     Window,
     View,
@@ -24,12 +26,21 @@ pub enum MenuId {
 
 impl MenuId {
     /// The titles after the app name, in bar order.
-    pub const TITLES: [MenuId; 4] = [MenuId::Go, MenuId::Window, MenuId::View, MenuId::Help];
+    pub const TITLES: [MenuId; 6] = [
+        MenuId::File,
+        MenuId::Edit,
+        MenuId::View,
+        MenuId::Go,
+        MenuId::Window,
+        MenuId::Help,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {
             Self::Solyra => "Solyra",
             Self::App => "App",
+            Self::File => "File",
+            Self::Edit => "Edit",
             Self::Go => "Go",
             Self::Window => "Window",
             Self::View => "View",
@@ -130,6 +141,29 @@ pub fn entries(id: MenuId, app: &AppCtx<'_>, dark: bool) -> Vec<Entry> {
             }
             v
         }
+        MenuId::File => {
+            let mut v = Vec::new();
+            if let Some(cmd) = &app.launch {
+                v.push(item(&format!("New {} Window", app.name), None, sh(cmd)));
+            }
+            if app.has_window {
+                v.push(item("Close Window", Some("Super+W"), ipc("{\"Action\":{\"CloseWindow\":{\"id\":null}}}")));
+            }
+            if v.is_empty() {
+                v.push(item("Open the Launcher", Some("Super+D"), HitAction::Shell(ShellCmd::ToggleLauncher)));
+            }
+            v
+        }
+        MenuId::Edit => vec![
+            item("Undo", Some("Ctrl+Z"), sh("wtype -M ctrl -k z -m ctrl")),
+            item("Redo", Some("Ctrl+Shift+Z"), sh("wtype -M ctrl -M shift -k z -m shift -m ctrl")),
+            sep(),
+            item("Cut", Some("Ctrl+X"), sh("wtype -M ctrl -k x -m ctrl")),
+            item("Copy", Some("Ctrl+C"), sh("wtype -M ctrl -k c -m ctrl")),
+            item("Paste", Some("Ctrl+V"), sh("wtype -M ctrl -k v -m ctrl")),
+            sep(),
+            item("Select All", Some("Ctrl+A"), sh("wtype -M ctrl -k a -m ctrl")),
+        ],
         MenuId::Go => vec![
             item("Home", None, sh("solyra-open files \"$HOME\"")),
             item("Documents", None, sh("solyra-open files \"$(xdg-user-dir DOCUMENTS 2>/dev/null || echo $HOME/Documents)\"")),
@@ -252,7 +286,14 @@ pub fn draw_ctx(
             cv.round_rect(rx, y, rw, ROW_H, 6.0, th.accent);
         }
         let fg = if hov { th.on_accent } else { th.text };
-        cv.text(fonts.regular.as_ref(), &e.label, rx + 12, y + 19, T_LABEL + 0.5, fg);
+        cv.text(
+            fonts.regular.as_ref(),
+            &e.label,
+            rx + 12,
+            y + 19,
+            T_LABEL + 0.5,
+            fg,
+        );
         regions.push(Region {
             x: rx,
             y,

@@ -273,7 +273,7 @@ pub struct ShellPrefs {
 impl Default for ShellPrefs {
     fn default() -> Self {
         Self {
-            dock_style: DockStyle::Solyra,
+            dock_style: DockStyle::Macos,
             wallpaper: WallpaperPreset::Beach,
             wallpaper_file: None,
             wallpaper_mode: WallpaperMode::Fill,

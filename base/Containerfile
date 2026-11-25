@@ -29,7 +29,7 @@ RUN dnf -y install \
       mesa-libgbm mesa-libEGL mesa-dri-drivers libglvnd \
       pipewire-libs pango cairo-gobject \
       dbus-broker dbus-tools udisks2 xwayland-satellite \
-      foot fuzzel thunar swaylock swaybg dejavu-sans-mono-fonts \
+      foot fuzzel thunar swaylock swaybg wtype dejavu-sans-mono-fonts \
  && dnf -y clean all
 
 # --- everyday desktop -------------------------------------------------------

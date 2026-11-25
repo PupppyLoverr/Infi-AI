@@ -101,7 +101,7 @@ around the island is never blurred.
 | --- | --- | --- | --- |
 | **Solid** | opaque fill, faint rim | nothing | maximum legibility; the classic black notch |
 | **See-through** | light tint (alpha ~150), rim | nothing; the desktop stays sharp | minimal looks |
-| **Glass** (default bar, dock) | near-clear tint (alpha 18 dark / 42 light), continuous optical glass rim | blur, saturation x1.18 | the macOS-like look |
+| **Glass** (default bar, dock) | smoked graphite tint in dark mode and a pale veil in light mode, continuous optical glass rim | blur, saturation x1.18 | the macOS-like look |
 | **Acrylic** | tint mixed 24-30 % with the wallpaper's average colour (alpha ~164-176) | blur, saturation x1.12, grain 0.05 | the Windows-like look |
 
 **Adaptive density.** See-through gets denser (alpha +70) when the wallpaper's
@@ -129,9 +129,10 @@ compositor's blur is approximated there.
 
 ### 6.1 Bar — **shipped**
 
-26 px, full width, exclusive zone 26. Styles (`bar_style`): **Menu bar**
+30 px, full width, exclusive zone 30. Styles (`bar_style`): **Menu bar**
 (Finder-style: a small Solyra mark, the focused app's name in semibold, then
-Go, Window, View, Help in `text-dim` until hovered, each a real dropdown),
+File, Edit, View, Go, Window, Help in `text-dim` until hovered, each a real
+dropdown),
 **Compact** (workspaces and status only) and **Hidden** (no strip, nothing
 reserved). Right side, unboxed glyphs: search, network, volume, battery when
 present, control centre, then the date and the clock as plain text (date
@@ -156,31 +157,45 @@ a glance: time, date, battery, network, running agents.
 
 ### 6.3 Dock — **shipped** (four variants)
 
-`dock_style`: **Solyra** (floating card), **Floating** (macOS-like, optional
-magnification), **Taskbar** (Windows-like full-width bar: task view, start,
-a quiet search pill, centred apps, a grouped tray, clock) and **Minimal**
-(icons only). The floating card is 56 px tall, radius 19, with 42 px cells,
-a 7 px gap and 12 px padding, lifted 12 px off the bottom edge. Running apps
-carry a small dot; a hairline separates the trash. Auto-hide
+`dock_style`: **Floating** (default, pearOS/macOS-like with magnification),
+**Solyra** (compact floating card), **Taskbar** (Windows-like full-width bar:
+task view, start, a quiet search pill, centred apps, a grouped tray, clock) and
+**Minimal** (icons only). The default floating shelf is 66 px tall, radius 18,
+with 48 px cells, a 6 px gap and 14 px padding, lifted 12 px off the bottom
+edge. Magnification uses pearOS's Gaussian falloff and the surface leaves room
+above the shelf so enlarged edge icons do not clip. Running apps carry a small
+dot; a hairline separates the trash. Auto-hide
 tucks the dock away 0.7 s after the pointer leaves; touching the bottom
 edge brings it back. One cell per app; a click focuses the latest window or
 launches the app.
 
 ### 6.4 Launcher — **shipped**
 
-Spotlight is a floating search capsule (580×56, fully rounded) about a seventh
-of the way down the screen, with the placeholder "Search or Ask". An empty
-query is only the capsule: nothing is listed until there is something to match,
-and `⏎` does nothing. A typed query opens a results card (24 px radius, 10 px
-under the capsule) with ranked groups (Top Hit, applications, open windows,
-commands, then an agent row) and the first result selected. Rows are 40 px and
-single line: icon, title, then the subtitle in a dimmer tone. The selection is
-a flat accent pill with a `↵` mark. `esc` dismisses. There is no footer.
+The launcher combines pearOS Launchpad with Spotlight. It opens as a floating
+search capsule (580×56, fully rounded) about a seventh of the way down the
+screen, with the placeholder "Search or Ask". An empty query shows a wide glass
+Launchpad grid of the installed applications, seven columns with large squircle
+icons and labels. A typed query replaces the grid with a Spotlight results card
+(24 px radius, 10 px under the capsule) with ranked groups (Top Hit,
+applications, open windows, commands, then an agent row) and the first result
+selected. Rows are 40 px and single line: icon, title, then the subtitle in a
+dimmer tone. The selection is a flat accent pill with a `↵` mark. `esc`
+dismisses. There is no footer.
 
 The capsule and card are two shapes on one transparent surface that the panel
 resizes to fit. The panel draws their shadow and asks the compositor (through
 `ext-background-effect`) to blur behind just those two shapes, so the layer
 rule for `solyra-launcher` neither blurs nor shadows the whole surface.
+
+### 6.10 Desktop widgets — **shipped**
+
+A bottom-layer, input-transparent widget surface sits at the upper left under
+the menu bar (`solyra-widgets`): a Monday-first month calendar with the current
+day in red, beside a blue Today/weather glance card. The cards use the same
+rounded smoked-glass language as the dock, sit below windows, and never take
+clicks away from the desktop. Weather is shown only when the shell has a real
+reading in `weather.txt`; otherwise the card remains a clock/date glance rather
+than inventing a forecast.
 
 ### 6.11 Agent desk — **shipped**
 
@@ -267,7 +282,7 @@ every duration to zero.
 ## 9. Accessibility
 
 - Focus is always visible: the 2 px accent border, never a colour-only change.
-- Minimum target 24 × 24; dock cells are 40 × 40.
+- Minimum target 24 × 24; dock cells are 48 × 48 in the default floating dock.
 - Text scales with the compositor's scale factor; the bar grows with it.
 - Reduced motion, and no animation on the lock screen.
 - The shell never relies on colour alone: running apps also carry a dot,

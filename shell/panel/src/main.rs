@@ -3,10 +3,10 @@
 //! * **Top Bar** (`solyra-bar`): translucent glass menu bar with Solyra mark,
 //!   focused app & contextual menus, workspace pills, Apple-style notch +
 //!   Dynamic Island, Search button, Status capsule, and clock.
-//! * **Dock** (`solyra-dock` / `solyra-taskbar`): all 3 variants live-switchable
-//!   (`solyra` hybrid default, `macos` Sequoia dock, `windows` Fluent taskbar).
-//! * **Launcher** (`solyra-launcher`): Spotlight. A "Search or Ask" capsule that
-//!   opens a results card (Top Hit, Applications, windows) once there is a query.
+//! * **Dock** (`solyra-dock` / `solyra-taskbar`): four live-switchable variants,
+//!   with the pearOS-style floating dock as the default.
+//! * **Launcher** (`solyra-launcher`): a pearOS-style application grid that
+//!   turns into Spotlight search results once there is a query.
 //! * **Control Centre** (`solyra-control`): quick toggles, sliders, live Dock
 //!   variant switcher, live Wallpaper switcher, and memory telemetry.
 //! * **Expanded Island** (`solyra-island`): activity popover.
@@ -29,6 +29,7 @@ mod pam;
 mod state;
 mod surfaces;
 mod tokens;
+mod widgets;
 
 #[cfg(test)]
 mod preview;
@@ -57,10 +58,9 @@ use state::{
     WindowInfo,
 };
 use surfaces::{
-    draw_about, draw_agents, draw_bar, draw_control, draw_island_card, draw_launcher,
-    draw_notifs, spot_layout, AgentsView,
-    HitAction, Live, Region, AGENTS_H, AGENTS_W, BAR_HEIGHT, CONTROL_H, CONTROL_W, ISLAND_CARD_H,
-    ISLAND_CARD_W,
+    draw_about, draw_agents, draw_bar, draw_control, draw_island_card, draw_launcher, draw_notifs,
+    spot_layout, AgentsView, HitAction, Live, Region, AGENTS_H, AGENTS_W, BAR_HEIGHT, CONTROL_H,
+    CONTROL_W, ISLAND_CARD_H, ISLAND_CARD_W,
 };
 use tokens::Theme;
 use wayland_client::globals::registry_queue_init;
@@ -226,6 +226,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         about: None,
         notifs: std::collections::VecDeque::new(),
         agents: None,
+        widgets: None,
+        widgets_material: material::Material::Solid,
         desk: None,
         desk_material: material::Material::Solid,
         menu: None,
@@ -275,6 +277,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     app.ensure_island();
     app.ensure_bar();
+    app.ensure_widgets();
     app.ensure_desk();
 
     // Re-apply the saved wallpaper: the session config only starts a default.
@@ -422,8 +425,9 @@ fn set_dock_input_region(compositor: &CompositorState, surface: &WlSurface, spec
         return;
     }
     if let Ok(region) = smithay_client_toolkit::compositor::Region::new(compositor) {
-        let card_top = spec.height as i32 - dock::CARD_H;
-        region.add(0, card_top, spec.width as i32, dock::CARD_H);
+        let card_h = spec.height as i32 - dock::MAGNIFY_ROOM;
+        let card_top = spec.height as i32 - card_h;
+        region.add(0, card_top, spec.width as i32, card_h);
         surface.set_input_region(Some(region.wl_region()));
     }
 }
@@ -468,6 +472,9 @@ struct App {
     control: Option<SurfaceSlot>,
     island_card: Option<SurfaceSlot>,
     agents: Option<SurfaceSlot>,
+    /// Desktop calendar/glance cards at the upper left.
+    widgets: Option<SurfaceSlot>,
+    widgets_material: material::Material,
     /// Right-side desk card when desktop mode is Agent workspace.
     desk: Option<SurfaceSlot>,
     desk_material: material::Material,
@@ -530,8 +537,7 @@ struct App {
 
 impl App {
     fn theme(&self) -> Theme {
-        let accent =
-            tokens::Accent::parse(&self.prefs.look.accent).unwrap_or(tokens::Accent::Blue);
+        let accent = tokens::Accent::parse(&self.prefs.look.accent).unwrap_or(tokens::Accent::Blue);
         let t = Theme::with(self.prefs.theme, accent);
         if self.prefs.look.opaque {
             t.opaque()
@@ -834,6 +840,7 @@ impl App {
             self.apply_saved_wallpaper();
         }
         self.ensure_dock();
+        self.ensure_widgets();
         self.ensure_desk();
         self.needs_redraw = true;
     }
@@ -950,7 +957,13 @@ impl App {
             }
             slot.surface.set_input_region(Some(region.wl_region()));
         }
-        set_blur(self.blur_mgr.as_ref(), &self.compositor, &self.qh, slot, rects);
+        set_blur(
+            self.blur_mgr.as_ref(),
+            &self.compositor,
+            &self.qh,
+            slot,
+            rects,
+        );
     }
 
     fn refresh_launcher_items(&mut self) {
@@ -1236,6 +1249,7 @@ impl App {
 
         self.update_dock_autohide();
         self.ensure_dock();
+        self.ensure_widgets();
         self.ensure_desk();
         if let Some(t) = self.island_left_at {
             if self.island_expanded && t.elapsed() >= Duration::from_secs(4) && !self.reply_mode {
@@ -1294,7 +1308,13 @@ impl App {
                 } else {
                     Vec::new()
                 };
-                set_blur(self.blur_mgr.as_ref(), &self.compositor, &self.qh, &mut self.bar, rects);
+                set_blur(
+                    self.blur_mgr.as_ref(),
+                    &self.compositor,
+                    &self.qh,
+                    &mut self.bar,
+                    rects,
+                );
                 present(
                     buffer,
                     &self.bar.surface,
@@ -1360,7 +1380,13 @@ impl App {
                     }
                     _ => Vec::new(),
                 };
-                set_blur(self.blur_mgr.as_ref(), &self.compositor, &self.qh, &mut self.dock, rects);
+                set_blur(
+                    self.blur_mgr.as_ref(),
+                    &self.compositor,
+                    &self.qh,
+                    &mut self.dock,
+                    rects,
+                );
                 present(
                     buffer,
                     &self.dock.surface,
@@ -1371,9 +1397,7 @@ impl App {
                 if animating && !self.prefs.look.reduced_motion {
                     // Keep drawing frames while icons bounce or the smoothed
                     // pointer is still catching up.
-                    self.dock
-                        .surface
-                        .frame(&self.qh, self.dock.surface.clone());
+                    self.dock.surface.frame(&self.qh, self.dock.surface.clone());
                 }
             }
         }
@@ -1463,7 +1487,10 @@ impl App {
         let clock = chrono::Local::now()
             .format(self.prefs.look.clock_format())
             .to_string();
-        let date = chrono::Local::now().format("%a %-d %b").to_string().to_uppercase();
+        let date = chrono::Local::now()
+            .format("%a %-d %b")
+            .to_string()
+            .to_uppercase();
         let project_lines = desk::project_lines();
         let project_refs: Vec<&str> = project_lines.iter().map(String::as_str).collect();
         let view = AgentsView {
@@ -1522,9 +1549,72 @@ impl App {
             ));
         }
 
+        self.draw_widgets(scale);
         self.draw_island(scale);
         self.draw_desk(scale, &th);
         let _ = conn.flush();
+    }
+
+    /// Desktop widgets sit below windows and never take input.
+    fn draw_widgets(&mut self, scale: u32) {
+        let th = self.theme();
+        let Some(slot) = self.widgets.as_mut() else {
+            return;
+        };
+        if !slot.configured || slot.width == 0 {
+            return;
+        }
+        let (w, h) = (slot.width, slot.height);
+        let Ok((buffer, bytes)) = self.pool.create_buffer(
+            (w * scale) as i32,
+            (h * scale) as i32,
+            (w * scale * 4) as i32,
+            Format::Argb8888,
+        ) else {
+            return;
+        };
+        let mut cv = Canvas::new(bytes, w, h, scale as i32);
+        widgets::draw(&mut cv, &th, &self.fonts);
+        slot.regions.clear();
+        let rects = if material::blurs(self.widgets_material) {
+            widgets::blur_shapes()
+        } else {
+            Vec::new()
+        };
+        set_blur(
+            self.blur_mgr.as_ref(),
+            &self.compositor,
+            &self.qh,
+            slot,
+            rects,
+        );
+        present(buffer, &slot.surface, w * scale, h * scale, scale as i32);
+    }
+
+    fn ensure_widgets(&mut self) {
+        let mat = self.prefs.look.material(self.prefs.look.dock_material);
+        if self.widgets.is_some() && mat == self.widgets_material {
+            return;
+        }
+        let slot = make_layer_surface(
+            &self.compositor,
+            &self.layer_shell,
+            &self.qh,
+            Layer::Bottom,
+            &material::namespace("solyra-widgets", mat),
+            Anchor::TOP | Anchor::LEFT,
+            0,
+            (BAR_HEIGHT as i32 + 8, 0, 0, 10),
+            widgets::W,
+            widgets::H,
+            KeyboardInteractivity::None,
+        );
+        if let Ok(region) = smithay_client_toolkit::compositor::Region::new(&self.compositor) {
+            slot.surface.set_input_region(Some(region.wl_region()));
+        }
+        self.widgets = Some(slot);
+        self.widgets_material = mat;
+        self.needs_redraw = true;
     }
 
     /// Agent workspace: a glass card on the right with clock, project, and chips.
@@ -1701,7 +1791,13 @@ impl App {
             slot.surface.set_input_region(Some(region.wl_region()));
         }
         // The island is opaque black: there is nothing to blur behind it.
-        set_blur(self.blur_mgr.as_ref(), &self.compositor, &self.qh, slot, Vec::new());
+        set_blur(
+            self.blur_mgr.as_ref(),
+            &self.compositor,
+            &self.qh,
+            slot,
+            Vec::new(),
+        );
         if moving {
             // Ask for the next frame; `CompositorHandler::frame` redraws.
             slot.surface.frame(&self.qh, slot.surface.clone());
@@ -1911,13 +2007,11 @@ impl App {
         let os = std::fs::read_to_string("/etc/os-release")
             .ok()
             .and_then(|s| {
-                s.lines()
-                    .find(|l| l.starts_with("PRETTY_NAME="))
-                    .map(|l| {
-                        l.trim_start_matches("PRETTY_NAME=")
-                            .trim_matches('"')
-                            .to_string()
-                    })
+                s.lines().find(|l| l.starts_with("PRETTY_NAME=")).map(|l| {
+                    l.trim_start_matches("PRETTY_NAME=")
+                        .trim_matches('"')
+                        .to_string()
+                })
             })
             .unwrap_or_else(|| "Solyra Linux".into());
         let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease")
@@ -2146,16 +2240,31 @@ impl App {
                 if let Some(item) = self
                     .launcher_items
                     .get(self.launcher_selected.min(max_idx))
-                    .filter(|_| !self.launcher_query.trim().is_empty())
                     .cloned()
                 {
                     self.run_launcher_item(item);
                 }
             }
-            103 | 105 => {
+            103 => {
+                let step = if self.launcher_query.trim().is_empty() {
+                    7
+                } else {
+                    1
+                };
+                self.launcher_selected = self.launcher_selected.saturating_sub(step);
+            }
+            105 => {
                 self.launcher_selected = self.launcher_selected.saturating_sub(1);
             }
-            108 | 106 | 15 => {
+            108 => {
+                let step = if self.launcher_query.trim().is_empty() {
+                    7
+                } else {
+                    1
+                };
+                self.launcher_selected = (self.launcher_selected + step).min(max_idx);
+            }
+            106 | 15 => {
                 self.launcher_selected = (self.launcher_selected + 1).min(max_idx);
             }
             _ => {

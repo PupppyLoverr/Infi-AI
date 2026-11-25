@@ -22,10 +22,12 @@ use crate::state::{
 use crate::surfaces::{HitAction, Live, Region};
 use crate::tokens::Theme;
 
-/// Height of the floating card itself (macOS Liquid Glass dock ~56px).
-pub const CARD_H: i32 = 56;
-/// Corner radius of the floating glass pill.
-const DOCK_R: f32 = 19.0;
+/// Height of the pearOS-style floating shelf itself.
+pub const CARD_H: i32 = 66;
+/// Height of the smaller Solyra/minimal floating card.
+const COMPACT_CARD_H: i32 = 56;
+/// Corner radius of the floating glass shelf.
+const DOCK_R: f32 = 18.0;
 /// Extra room above the card for magnified icons.
 pub const MAGNIFY_ROOM: i32 = 40;
 /// Height of the Windows-style taskbar.
@@ -120,9 +122,13 @@ fn metrics(style: DockStyle) -> Metrics {
             gap: 6,
             pad: 12,
         },
-        // macOS Liquid Glass dock: 42px sculpted squircles with airy spacing
-        // inside a luminous glass pill.
-        DockStyle::Macos | DockStyle::Solyra => Metrics {
+        // pearOS dock: 48px icons in a 66px translucent shelf.
+        DockStyle::Macos => Metrics {
+            cell: 48,
+            gap: 6,
+            pad: 14,
+        },
+        DockStyle::Solyra => Metrics {
             cell: 42,
             gap: 7,
             pad: 12,
@@ -178,6 +184,15 @@ fn base_width(style: DockStyle, wins: &[WindowInfo]) -> i32 {
     content + m.pad * 2
 }
 
+/// Height of the floating card for `style`.
+pub fn card_height(style: DockStyle) -> i32 {
+    match style {
+        DockStyle::Macos => CARD_H,
+        DockStyle::Solyra | DockStyle::Minimal => COMPACT_CARD_H,
+        DockStyle::Windows => TASKBAR_H as i32,
+    }
+}
+
 /// The surface for `style`. `hidden` is the auto-hidden state.
 pub fn spec(style: DockStyle, wins: &[WindowInfo], magnify: bool, hidden: bool) -> Spec {
     if style == DockStyle::Windows {
@@ -203,15 +218,17 @@ pub fn spec(style: DockStyle, wins: &[WindowInfo], magnify: bool, hidden: bool) 
         };
     }
     if magnify {
-        // Room for every icon to grow, centred.
-        let extra = ((MAX_SCALE - 1.0) * m.cell as f32 * 3.0).ceil() as i32;
+        // Room for every icon to grow, centred. The gaussian adds roughly
+        // three cells of total width across the dock, so 2.4 cells is not
+        // enough and edge icons clip; four cells leaves clear margin.
+        let extra = ((MAX_SCALE - 1.0) * m.cell as f32 * 4.0).ceil() as i32;
         Spec {
             namespace: "solyra-dock-magnify",
             full_width: false,
             exclusive: 0,
             bottom_margin: 12,
             width: (w + extra) as u32,
-            height: (CARD_H + MAGNIFY_ROOM) as u32,
+            height: (card_height(style) + MAGNIFY_ROOM) as u32,
         }
     } else {
         Spec {
@@ -220,7 +237,7 @@ pub fn spec(style: DockStyle, wins: &[WindowInfo], magnify: bool, hidden: bool) 
             exclusive: 0,
             bottom_margin: 12,
             width: w as u32,
-            height: CARD_H as u32,
+            height: card_height(style) as u32,
         }
     }
 }
@@ -302,7 +319,9 @@ pub fn draw(
                 Some(body),
             )
         }
-        _ => draw_floating(cv, th, fonts, style, wins, icons, hover, live, magnify, launching),
+        _ => draw_floating(
+            cv, th, fonts, style, wins, icons, hover, live, magnify, launching,
+        ),
     }
 }
 
@@ -345,7 +364,8 @@ fn draw_floating(
     let entries = dock_entries(wins);
     let weather = weather_reading();
     let its = items(style, &entries, weather.is_some());
-    let card_y = h - CARD_H;
+    let card_h = card_height(style);
+    let card_y = h - card_h;
     let base_w = base_width(style, wins);
     let base_left = (w - base_w) / 2;
 
@@ -382,12 +402,12 @@ fn draw_floating(
     let card_x = (w - card_w) / 2;
 
     let slab = slab_for(live, th.surface);
-    material::paint(cv, &slab, card_x, card_y, card_w, CARD_H, DOCK_R);
+    material::paint(cv, &slab, card_x, card_y, card_w, card_h, DOCK_R);
     let body = Body {
         x: card_x,
         y: card_y,
         w: card_w,
-        h: CARD_H,
+        h: card_h,
         r: DOCK_R,
     };
 
@@ -408,14 +428,14 @@ fn draw_floating(
     let mut regions = Vec::new();
     let mut x = card_x + m.pad;
     // Icons sit a touch above centre so the running dots have room beneath them.
-    let base_y = card_y + (CARD_H - m.cell) / 2 - 3;
+    let base_y = card_y + (card_h - m.cell) / 2 - 3;
     let clock = chrono::Local::now()
         .format(live.prefs.look.clock_format())
         .to_string();
     for (it, size) in its.iter().zip(&sizes) {
         if let Item::Separator = it {
             let sep_h = 28;
-            let sep_y = card_y + (CARD_H - sep_h) / 2;
+            let sep_y = card_y + (card_h - sep_h) / 2;
             let sw = *size;
             let sx = x + (sw - 1) / 2;
             let mid = Rgba::rgba(ink.0, ink.1, ink.2, 52);
@@ -434,14 +454,14 @@ fn draw_floating(
         let y = base_y + (m.cell - s) - lift;
         match it {
             Item::Weather => {
-                let cy = (card_y + CARD_H / 2) as f32;
+                let cy = (card_y + card_h / 2) as f32;
                 let wx = x + 4;
                 cv.icon_sun(wx as f32 + 7.0, cy, ink);
                 cv.text_truncated(
                     fonts.medium.as_ref(),
                     weather.as_deref().unwrap_or_default(),
                     wx + 18,
-                    card_y + CARD_H / 2 + 5,
+                    card_y + card_h / 2 + 5,
                     12.5,
                     (s - 22).max(8),
                     ink,
@@ -450,7 +470,7 @@ fn draw_floating(
                     x,
                     y: card_y,
                     w: s,
-                    h: CARD_H,
+                    h: card_h,
                     action: HitAction::Shell(ShellCmd::ToggleControl),
                 });
             }
@@ -462,7 +482,7 @@ fn draw_floating(
                     fonts.semibold.as_ref(),
                     &clock,
                     x + (s - tw).max(0) / 2,
-                    card_y + CARD_H / 2 + 5,
+                    card_y + card_h / 2 + 5,
                     size,
                     max_w,
                     ink,
@@ -471,7 +491,7 @@ fn draw_floating(
                     x,
                     y: card_y,
                     w: s,
-                    h: CARD_H,
+                    h: card_h,
                     action: HitAction::Shell(ShellCmd::ToggleControl),
                 });
             }
@@ -509,7 +529,7 @@ fn draw_floating(
 
                 if let Item::App(e) = it {
                     if e.window_count > 0 {
-                        running_mark(cv, ink, x, s, card_y, e.is_focused);
+                        running_mark(cv, ink, x, s, card_y, card_h, e.is_focused);
                     }
                     if hov && magnify {
                         tooltip(cv, th, fonts, &e.title, x + s / 2, y - 6, w);
@@ -522,7 +542,7 @@ fn draw_floating(
                     x,
                     y: card_y,
                     w: s,
-                    h: CARD_H,
+                    h: card_h,
                     action,
                 });
             }
@@ -532,11 +552,19 @@ fn draw_floating(
     (regions, Some(body))
 }
 
-fn running_mark(cv: &mut Canvas<'_>, ink: Rgba, x: i32, s: i32, card_y: i32, focused: bool) {
+fn running_mark(
+    cv: &mut Canvas<'_>,
+    ink: Rgba,
+    x: i32,
+    s: i32,
+    card_y: i32,
+    card_h: i32,
+    focused: bool,
+) {
     // One quiet dot under a running app, like macOS: the focused app's is only
     // slightly stronger.
     let cx = x as f32 + s as f32 / 2.0;
-    let cy = (card_y + CARD_H - 5) as f32;
+    let cy = (card_y + card_h - 5) as f32;
     let (r, a) = if focused { (2.0, 235) } else { (1.7, 150) };
     cv.circle(cx, cy, r, Rgba::rgba(ink.0, ink.1, ink.2, a));
 }
@@ -860,7 +888,13 @@ fn draw_taskbar(
     cv.icon_network(net_cx, 24.0, 13.0, telem.network, th.text, th.text_dim);
     cv.icon_volume(vol_cx, 24.0, 13.0, prefs.volume, th.text);
     if let Some((cx, pct)) = bat {
-        cv.icon_battery(cx, 24.0, pct, th.text, if pct <= 15 { th.danger } else { th.text });
+        cv.icon_battery(
+            cx,
+            24.0,
+            pct,
+            th.text,
+            if pct <= 15 { th.danger } else { th.text },
+        );
     }
     regions.push(Region {
         x: tray_left,

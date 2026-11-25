@@ -53,12 +53,12 @@ layout {
         proportion 0.66667
         proportion 1.0
     }
-    background-color "#121016"
+    background-color "#1c1c1e"
     focus-ring { off; }
     border {
         width 1
-        active-color "#b48aad"
-        inactive-color "#3a3342"
+        active-color "#0a84ff"
+        inactive-color "#3a3a3e"
     }
     shadow {
         on
@@ -106,7 +106,7 @@ window-rule {
 }
 
 window-rule {
-    geometry-corner-radius 12
+    geometry-corner-radius 16
     clip-to-geometry true
     // Translucent apps (the terminal) get the same glass treatment as chrome.
     background-effect {
@@ -139,6 +139,13 @@ layer-rule {
         offset x=0 y=10
         color "#00000090"
     }
+    background-effect {
+        xray false
+    }
+}
+
+layer-rule {
+    match namespace=r#"^solyra-widgets(\..+)?$"#
     background-effect {
         xray false
     }

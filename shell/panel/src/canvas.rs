@@ -31,6 +31,7 @@ impl Fonts {
                 "/usr/share/fonts/open-sans/OpenSans-Regular.ttf",
                 "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/System/Library/Fonts/Supplemental/Arial.ttf",
             ]),
             medium: try_load_font(&[
                 "/usr/share/fonts/adwaita-sans-fonts/AdwaitaSans-Medium.ttf",
@@ -41,6 +42,7 @@ impl Fonts {
                 "/usr/share/fonts/adwaita-sans-fonts/AdwaitaSans-Regular.ttf",
                 "/usr/share/fonts/truetype/macos/Inter-Regular.ttf",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/System/Library/Fonts/Supplemental/Arial.ttf",
             ]),
             semibold: try_load_font(&[
                 "/usr/share/fonts/adwaita-sans-fonts/AdwaitaSans-SemiBold.ttf",
@@ -52,6 +54,7 @@ impl Fonts {
                 "/usr/share/fonts/open-sans/OpenSans-Semibold.ttf",
                 "/usr/share/fonts/open-sans/OpenSans-Bold.ttf",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
             ]),
             bold: try_load_font(&[
                 "/usr/share/fonts/adwaita-sans-fonts/AdwaitaSans-Bold.ttf",
@@ -62,6 +65,7 @@ impl Fonts {
                 "/usr/share/fonts/truetype/macos/Inter-SemiBold.ttf",
                 "/usr/share/fonts/open-sans/OpenSans-Bold.ttf",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
             ]),
             mono: try_load_font(&[
                 "/usr/share/fonts/adwaita-mono-fonts/AdwaitaMono-Regular.ttf",
@@ -69,6 +73,7 @@ impl Fonts {
                 "/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-Regular.ttf",
                 "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+                "/System/Library/Fonts/Supplemental/Courier New.ttf",
             ]),
         }
     }

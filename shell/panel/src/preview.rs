@@ -237,7 +237,9 @@ fn launcher_shot(
         let th = Theme::for_kind(kind);
         let mut cv = Canvas::new(&mut buf, lay.w, lay.h, 1);
         let mut icons = HashMap::new();
-        draw_launcher(&mut cv, &th, fonts, query, &items, selected, &mut icons, None);
+        draw_launcher(
+            &mut cv, &th, fonts, query, &items, selected, &mut icons, None,
+        );
     }
     let rects: Vec<_> = lay
         .shapes()
@@ -441,13 +443,13 @@ fn render_all() -> Vec<Shot> {
                     error: None,
                     reply: "",
                     typing: false,
-                desk: true,
-                clock: "09:41",
-                date: "TUE 17 NOV",
-                project_lines: &[],
-                environment: 1,
-                agents_running: None,
-            };
+                    desk: true,
+                    clock: "09:41",
+                    date: "TUE 17 NOV",
+                    project_lines: &[],
+                    environment: 1,
+                    agents_running: None,
+                };
                 draw_agents(cv, th, &fonts, &v, None);
             },
         ));
@@ -485,13 +487,13 @@ fn render_all() -> Vec<Shot> {
                     error: None,
                     reply: "",
                     typing: false,
-                desk: false,
-                clock: "09:41",
-                date: "TUE 17 NOV",
-                project_lines: &[],
-                environment: 1,
-                agents_running: None,
-            };
+                    desk: false,
+                    clock: "09:41",
+                    date: "TUE 17 NOV",
+                    project_lines: &[],
+                    environment: 1,
+                    agents_running: None,
+                };
                 draw_agents(cv, th, &fonts, &v, None);
             },
         ));
@@ -510,13 +512,13 @@ fn render_all() -> Vec<Shot> {
                     error: Some("Decision not recorded: permission denied"),
                     reply: "",
                     typing: false,
-                desk: false,
-                clock: "09:41",
-                date: "TUE 17 NOV",
-                project_lines: &[],
-                environment: 1,
-                agents_running: None,
-            };
+                    desk: false,
+                    clock: "09:41",
+                    date: "TUE 17 NOV",
+                    project_lines: &[],
+                    environment: 1,
+                    agents_running: None,
+                };
                 draw_agents(cv, th, &fonts, &v, None);
             },
         ));
@@ -543,13 +545,13 @@ fn render_all() -> Vec<Shot> {
                     error: None,
                     reply: "",
                     typing: false,
-                desk: false,
-                clock: "09:41",
-                date: "TUE 17 NOV",
-                project_lines: &[],
-                environment: 1,
-                agents_running: None,
-            };
+                    desk: false,
+                    clock: "09:41",
+                    date: "TUE 17 NOV",
+                    project_lines: &[],
+                    environment: 1,
+                    agents_running: None,
+                };
                 draw_agents(cv, th, &fonts, &v, None);
             },
         ));
@@ -569,13 +571,13 @@ fn render_all() -> Vec<Shot> {
                     error: None,
                     reply: "",
                     typing: false,
-                desk: false,
-                clock: "09:41",
-                date: "TUE 17 NOV",
-                project_lines: &[],
-                environment: 1,
-                agents_running: None,
-            };
+                    desk: false,
+                    clock: "09:41",
+                    date: "TUE 17 NOV",
+                    project_lines: &[],
+                    environment: 1,
+                    agents_running: None,
+                };
                 draw_agents(cv, th, &fonts, &v, None);
             }));
         }
@@ -601,13 +603,13 @@ fn render_all() -> Vec<Shot> {
                     error: None,
                     reply,
                     typing,
-                desk: false,
-                clock: "09:41",
-                date: "TUE 17 NOV",
-                project_lines: &[],
-                environment: 1,
-                agents_running: None,
-            };
+                    desk: false,
+                    clock: "09:41",
+                    date: "TUE 17 NOV",
+                    project_lines: &[],
+                    environment: 1,
+                    agents_running: None,
+                };
                 draw_agents(cv, th, &fonts, &v, None);
             }));
         }
@@ -699,7 +701,17 @@ fn render_all() -> Vec<Shot> {
                 let mut icons = HashMap::new();
                 let hover = hover.map(|f| (w as f64 * f, spec.height as f64 - 20.0));
                 crate::dock::draw(
-                    cv, th, &fonts, style, &dock_wins, &mut icons, hover, &live, magnify, false, &[],
+                    cv,
+                    th,
+                    &fonts,
+                    style,
+                    &dock_wins,
+                    &mut icons,
+                    hover,
+                    &live,
+                    magnify,
+                    false,
+                    &[],
                 );
             }));
         }
@@ -853,7 +865,9 @@ fn island_shots(fonts: &Fonts) -> Vec<Shot> {
             let mut buf = beach.clone();
             {
                 let mut cv = crate::canvas::Canvas::new_keep(&mut buf, w, h, 1);
-                island::draw(&mut cv, fonts, style, &anim, content, *expanded, &extra, None);
+                island::draw(
+                    &mut cv, fonts, style, &anim, content, *expanded, &extra, None,
+                );
             }
             out.push(Shot {
                 name: tag,
@@ -993,7 +1007,13 @@ fn lock_screens_render() {
             Some("Wrong password"),
         ),
         ("lock-dashboard", LockStyle::Dashboard, false, 0, None),
-        ("lock-dashboard-glance", LockStyle::Dashboard, false, 4, None),
+        (
+            "lock-dashboard-glance",
+            LockStyle::Dashboard,
+            false,
+            4,
+            None,
+        ),
     ] {
         let mut buf = if crate::lock::sharp_backdrop(style, card) {
             sharp.clone()
@@ -1008,7 +1028,11 @@ fn lock_screens_render() {
                 theme: &th,
                 fonts: &fonts,
                 style,
-                clock: if dashboard { "20:46".into() } else { "09:41".into() },
+                clock: if dashboard {
+                    "20:46".into()
+                } else {
+                    "09:41".into()
+                },
                 date: if dashboard {
                     "SAT 17 NOV".into()
                 } else {
@@ -1104,7 +1128,8 @@ fn compositor_backdrop(
                 let px = &soft[i..i + 3];
                 let l = 0.114 * px[0] as f32 + 0.587 * px[1] as f32 + 0.299 * px[2] as f32;
                 // Deterministic grain: a hash of the position.
-                let hash = ((gx as u32).wrapping_mul(73_856_093) ^ (gy as u32).wrapping_mul(19_349_663))
+                let hash = ((gx as u32).wrapping_mul(73_856_093)
+                    ^ (gy as u32).wrapping_mul(19_349_663))
                     % 1000;
                 let g = (hash as f32 / 1000.0 - 0.5) * 2.0 * noise * 255.0;
                 for c in 0..3 {
@@ -1132,8 +1157,9 @@ fn over(out: &mut [u8], w: u32, surface: &[u8], sw: u32, sh: u32, at: (i32, i32)
             }
             let a = surface[si + 3] as f32 / 255.0;
             for c in 0..3 {
-                out[di + c] =
-                    (surface[si + c] as f32 + out[di + c] as f32 * (1.0 - a)).round().min(255.0) as u8;
+                out[di + c] = (surface[si + c] as f32 + out[di + c] as f32 * (1.0 - a))
+                    .round()
+                    .min(255.0) as u8;
             }
         }
     }
@@ -1240,6 +1266,34 @@ fn scene_pixels(
     }
     over(&mut out, w, &buf, w, bh, (0, 0));
 
+    // Desktop widgets, the calendar and glance cards pearOS puts beneath the
+    // menu bar at the upper left.
+    let widget_at = (10, bh as i32 + 8);
+    if crate::material::blurs(dock_m) {
+        compositor_backdrop(
+            &sharp,
+            &soft,
+            w,
+            dock_m,
+            &crate::widgets::blur_shapes(),
+            widget_at,
+            &mut out,
+        );
+    }
+    let mut widget_buf = vec![0u8; (crate::widgets::W * crate::widgets::H * 4) as usize];
+    {
+        let mut cv = Canvas::new(&mut widget_buf, crate::widgets::W, crate::widgets::H, 1);
+        crate::widgets::draw(&mut cv, &th, fonts);
+    }
+    over(
+        &mut out,
+        w,
+        &widget_buf,
+        crate::widgets::W,
+        crate::widgets::H,
+        widget_at,
+    );
+
     // Dock.
     let wins = [
         win(1, "firefox", "Firefox", true),
@@ -1260,7 +1314,17 @@ fn scene_pixels(
         };
         let mut icons = HashMap::new();
         body = crate::dock::draw(
-            &mut cv, &th, fonts, dock_style, &wins, &mut icons, None, &live, false, false, &[],
+            &mut cv,
+            &th,
+            fonts,
+            dock_style,
+            &wins,
+            &mut icons,
+            None,
+            &live,
+            false,
+            false,
+            &[],
         )
         .1;
     }
@@ -1330,7 +1394,11 @@ fn material_scenes_render() {
     let fonts = Fonts::load();
     let mut shots = Vec::new();
     for kind in [ThemeKind::Dark, ThemeKind::Light] {
-        let wp = if kind == ThemeKind::Dark { "beach" } else { "beach" };
+        let wp = if kind == ThemeKind::Dark {
+            "beach"
+        } else {
+            "beach"
+        };
         for m in Material::ALL {
             shots.push(material_scene(
                 &fonts,
