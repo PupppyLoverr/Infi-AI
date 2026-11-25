@@ -106,11 +106,15 @@ pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
         // keeps its hue and only lifts it, the way the macOS dock does.
         // Dark theme: smoked glass, the pearOS / macOS Tahoe Dark dock: a
         // near-black tint over the blur with a 1 px white 20 % rim.
+        // Dark theme: real frosted glass (macOS Tahoe dark dock). The
+        // compositor blurs the wallpaper behind; the panel adds only a faint
+        // grey wash, a white veil that brightens toward the top, a lit rim
+        // and a specular top edge, so the wallpaper's colour shows through.
         Material::Glass if dark => Slab {
             kind: m,
-            fill: Rgba::rgba(36, 36, 42, boost(118)),
-            edge: Rgba::rgba(255, 255, 255, 51),
-            highlight: Some(Rgba::rgba(255, 255, 255, 64)),
+            fill: Rgba::rgba(30, 30, 36, boost(54)),
+            edge: Rgba::rgba(255, 255, 255, 64),
+            highlight: Some(Rgba::rgba(255, 255, 255, 150)),
         },
         Material::Glass => Slab {
             kind: m,
@@ -150,21 +154,28 @@ pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f
     }
     match s.kind {
         Material::Glass if is_dark(s.fill) => {
-            let f = s.fill;
+            // A faint wash so icons sit on something, then the glass itself.
+            cv.round_rect(x, y, w, h, r, s.fill);
             cv.round_rect_vgrad(
                 x,
                 y,
                 w,
                 h,
                 r,
-                Rgba::rgba(f.0.saturating_add(10), f.1.saturating_add(10), f.2.saturating_add(12), f.3),
-                f,
+                Rgba::rgba(255, 255, 255, 40),
+                Rgba::rgba(255, 255, 255, 10),
             );
-            cv.stroke_round_rect(x, y, w, h, r, 1.0, s.edge);
-            if let Some(hl) = s.highlight {
-                let inset = (r * 0.7).round() as i32;
-                cv.fill_rect(x + inset, y + 1, (w - 2 * inset).max(0), 1, hl);
-            }
+            let hl = s.highlight.unwrap_or(s.edge);
+            cv.round_rect_glass_rim(
+                x,
+                y,
+                w,
+                h,
+                r,
+                hl,
+                Rgba::rgba(255, 255, 255, s.edge.3),
+                Rgba::rgba(255, 255, 255, s.edge.3 / 2),
+            );
         }
         Material::Glass => {
             let a = s.fill.3;
@@ -325,15 +336,14 @@ mod tests {
     }
 
     #[test]
-    fn light_glass_is_a_white_veil_and_dark_glass_is_smoked() {
+    fn glass_is_see_through_with_a_lit_edge_in_both_themes() {
         for tint in [None, Some(Rgba::rgb(240, 200, 170)), Some(Rgba::rgb(10, 30, 60))] {
             let f = slab(Material::Glass, Theme::light().bar, tint).fill;
             assert_eq!((f.0, f.1, f.2), (255, 255, 255), "{tint:?}");
             assert!(f.3 > 0 && f.3 < 120, "{}", f.3);
             let d = slab(Material::Glass, Theme::dark().bar, tint);
-            assert!(luma(d.fill) < 60, "dark glass is smoked: {:?}", d.fill);
-            assert!(d.fill.3 >= 100, "and dense enough for white text: {}", d.fill.3);
-            assert_eq!(d.edge, Rgba::rgba(255, 255, 255, 51), "1 px white 20 % rim");
+            assert!(d.fill.3 <= 124, "dark glass stays see-through: {:?}", d.fill);
+            assert!(d.highlight.is_some(), "and has a lit edge");
         }
     }
 

@@ -603,8 +603,8 @@ fn sidebar(app: &FilesApp, style: &solyra_ui::Style) -> View {
 }
 
 fn folder_icon(style: &solyra_ui::Style) -> View {
-    // The same folder artwork as the dock (WhiteSur, bundled in solyra-ui).
-    if let Some(img) = solyra_ui::icons::get("files") {
+    // The same folder artwork as the dock (Solyra's own, bundled in solyra-ui).
+    if let Some(img) = solyra_ui::icons::get("folder") {
         return image("Folder", img).w(64.).h(64.);
     }
     let folder = rgb(0x53a7f3);

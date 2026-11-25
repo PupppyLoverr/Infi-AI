@@ -1,5 +1,5 @@
-//! The shell's bundled app and place icons (WhiteSur, GPL-3.0; see
-//! `shell/panel/assets/icons/README.md`), for Solyra apps, so an app and the
+//! The shell's bundled app and place icons (Solyra's own, drawn by
+//! `shell/panel/assets/icons/make_icons.py`), for Solyra apps, so an app and the
 //! dock show the same folder, trash and app artwork.
 
 use std::sync::{Arc, OnceLock};
@@ -12,7 +12,7 @@ macro_rules! bundle {
     };
 }
 
-const SET: &[(&str, &[u8])] = bundle!["files", "downloads", "trash", "settings", "terminal", "editor", "viewer", "music"];
+const SET: &[(&str, &[u8])] = bundle!["files", "folder", "downloads", "trash", "settings", "terminal", "editor", "viewer", "music"];
 
 fn decode(bytes: &[u8]) -> Option<ImageData> {
     let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
