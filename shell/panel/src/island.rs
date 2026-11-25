@@ -111,30 +111,31 @@ pub fn target(style: NotchStyle, content: &Content, expanded: bool) -> Shape {
                 expanded_shape(style, content)
             } else {
                 match content {
+                    // pearOS island: a 170 x 30 black pill 5 px below the
+                    // top edge; live activities keep that height and widen.
                     Content::Idle => Shape {
-                        w: 126.0,
-                        h: 36.0,
-                        y: 4.0,
-                        r: 18.0,
+                        w: 170.0,
+                        h: 30.0,
+                        y: 5.0,
+                        r: 15.0,
                     },
-                    // Snug Live Activity capsules — tight leading/trailing, no dead ears.
                     Content::Media(m) => Shape {
-                        w: compact_media_width(m, 176.0, 264.0),
-                        h: 37.0,
-                        y: 4.0,
-                        r: 18.5,
+                        w: compact_media_width(m, 200.0, 280.0),
+                        h: 30.0,
+                        y: 5.0,
+                        r: 15.0,
                     },
                     Content::Activity { .. } | Content::Message(_) => Shape {
-                        w: 268.0,
-                        h: 37.0,
-                        y: 4.0,
-                        r: 18.5,
+                        w: 280.0,
+                        h: 30.0,
+                        y: 5.0,
+                        r: 15.0,
                     },
                     Content::Attention(_) => Shape {
-                        w: 298.0,
-                        h: 37.0,
-                        y: 4.0,
-                        r: 18.5,
+                        w: 310.0,
+                        h: 30.0,
+                        y: 5.0,
+                        r: 15.0,
                     },
                 }
             }
@@ -951,16 +952,15 @@ mod tests {
             length_us: Some(203_000_000),
         });
         let idle = target(NotchStyle::Island, &Content::Idle, false);
-        assert_eq!(idle.w, 126.0);
-        assert_eq!(idle.h, 36.0);
-        assert!(idle.y > 0.0);
+        // pearOS idle island: 170 x 30, 5 px below the top edge.
+        assert_eq!((idle.w, idle.h, idle.y), (170.0, 30.0, 5.0));
         assert!(
             (idle.r - idle.h / 2.0).abs() < 0.6,
             "idle island is a capsule"
         );
         let busy = target(NotchStyle::Island, &media, false);
-        assert!(busy.h > idle.h, "busy compact is taller than idle");
-        assert!((busy.h - 37.0).abs() < 0.6);
+        assert_eq!(busy.h, idle.h, "a live activity keeps the pill's height");
+        assert!(busy.w > idle.w, "and widens");
         let open = target(NotchStyle::Island, &media, true);
         assert_eq!(open.w, 440.0);
         assert!(

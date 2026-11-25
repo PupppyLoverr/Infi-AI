@@ -17,7 +17,8 @@ use crate::tokens::{
 };
 
 /// macOS menu-bar band: 24–28 px. Exclusive zone tracks this height.
-pub const BAR_HEIGHT: u32 = 26;
+/// pearOS / macOS menu bar height at 1x.
+pub const BAR_HEIGHT: u32 = 30;
 pub const NOTCH_WIDTH: i32 = 184;
 
 pub const CONTROL_W: u32 = 348;
@@ -120,7 +121,7 @@ pub fn draw_bar(
     let w = cv.width as i32;
     let h = cv.height as i32;
     let mut regions = Vec::new();
-    // Optical baseline for 26px Apple menu bar.
+    // Optical baseline for the 30 px menu bar.
     let text_y = (h as f32 * 0.69).round() as i32;
     let icon_cy = h as f32 * 0.5;
 
@@ -235,7 +236,7 @@ pub fn draw_bar(
     if menubar {
         // SF-weight hierarchy: focused app name in Semibold, menus in Regular.
         let (app_name, _) = focused_app_menus(wins);
-        let app_size = 13.0;
+        let app_size = 14.0;
         let aw = text_width(fonts.semibold.as_ref(), &app_name, app_size);
         if hovered(hover, x - 6, 0, aw + 12, h) {
             cv.round_rect(x - 6, 2, aw + 12, h - 4, 5.0, hover_fill);
@@ -256,8 +257,8 @@ pub fn draw_bar(
             h,
             action: HitAction::OpenMenu(MenuId::App),
         });
-        x += aw + 18;
-        let menu_size = 13.0;
+        x += aw + 22;
+        let menu_size = 14.0;
         for id in MenuId::TITLES {
             let t = id.title();
             let mw = text_width(fonts.regular.as_ref(), t, menu_size);
@@ -284,7 +285,7 @@ pub fn draw_bar(
                 h,
                 action: HitAction::OpenMenu(id),
             });
-            x += mw + 18;
+            x += mw + 22;
         }
         x += 6;
     }
@@ -387,12 +388,12 @@ pub fn draw_bar(
     let now = chrono::Local::now();
     let clock_str = now.format(prefs.look.clock_format()).to_string();
     let date_str = if prefs.look.show_date {
-        now.format("%a %-d %b").to_string()
+        now.format("%a %b %-d").to_string()
     } else {
         String::new()
     };
-    let clock_size = 13.0;
-    let date_size = 13.0;
+    let clock_size = 14.0;
+    let date_size = 14.0;
     let clock_w = text_width(fonts.regular.as_ref(), &clock_str, clock_size);
     let date_w = if date_str.is_empty() {
         0
@@ -435,25 +436,27 @@ pub fn draw_bar(
     });
 
     // Search, Wi-Fi, volume, battery, control centre — crisp unboxed glyphs.
-    let mut edge = time_left - 16;
+    // pearOS / macOS spacing: icons ~28 px apart.
+    let gap = 12;
+    let mut edge = time_left - 18;
     edge -= 18;
     let cc_cx = edge as f32 + 9.0;
     // Focus mode: the bar carries the moon like the real menu bar does.
     let focus_cx = if prefs.dnd_on {
-        edge -= 6 + 18;
+        edge -= gap + 18;
         Some(edge as f32 + 9.0)
     } else {
         None
     };
     let bat = if let Some(pct) = telem.battery_pct {
-        edge -= 6 + 22;
+        edge -= gap + 22;
         Some((edge as f32 + 11.0, pct))
     } else {
         None
     };
-    edge -= 6 + 18;
+    edge -= gap + 18;
     let vol_cx = edge as f32 + 9.0;
-    edge -= 6 + 18;
+    edge -= gap + 18;
     let net_cx = edge as f32 + 9.0;
     let status_left = edge;
     let status_right = time_left - 10;
@@ -500,7 +503,7 @@ pub fn draw_bar(
     });
 
     let search_w = 22;
-    let search_x = status_left - 12 - search_w;
+    let search_x = status_left - gap - search_w;
     if search_x > (w / 2) + center_reserved_half {
         if hovered(hover, search_x, 0, search_w, h) {
             cv.round_rect(search_x, 2, search_w, h - 4, 6.0, hover_fill);

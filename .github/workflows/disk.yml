@@ -74,7 +74,7 @@ jobs:
           docker image inspect solyra-base:ci --format 'image size: {{.Size}} bytes'
           # Fail loudly if an expected program is missing from the image.
           docker run --rm --entrypoint sh solyra-base:ci -ec '
-            for b in solyra-comp solyra-panel solyra-agent solyra-settings solyra-term solyra-browse solyra-setup solyra-setup-apply solyra-install bwrap foot thunar firefox mousepad ristretto galculator wpctl brightnessctl nmtui agreety swaylock; do
+            for b in solyra-comp solyra-panel solyra-agent solyra-settings solyra-term solyra-browse solyra-setup solyra-setup-apply solyra-install bwrap foot thunar firefox mousepad ristretto galculator wtype wpctl brightnessctl nmtui agreety swaylock; do
               command -v "$b" >/dev/null || { echo "missing in image: $b"; exit 1; }
             done
             systemctl is-enabled greetd.service'

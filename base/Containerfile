@@ -43,7 +43,7 @@ RUN dnf -y install \
       wireplumber pipewire-pulseaudio pipewire-alsa \
       NetworkManager-wifi NetworkManager-tui \
       brightnessctl \
-      firefox mousepad ristretto galculator \
+      firefox mousepad ristretto galculator wtype \
       rsms-inter-fonts adwaita-icon-theme \
       xdg-desktop-portal-gtk gvfs \
       mesa-vulkan-drivers vulkan-loader fontconfig \

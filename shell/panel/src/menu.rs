@@ -1,7 +1,9 @@
 //! The menu bar's dropdown menus. Every item does something real: a niri
 //! action, opening a folder, a shell command, or a power action behind a
 //! confirmation. There are no per-application menus (Wayland has no global
-//! menu protocol); the app menu offers what the shell can do to any app.
+//! menu protocol); the app, File and Edit menus offer what the shell can do
+//! to any app: Edit sends the standard keystroke (Ctrl+C, ...) to the focused
+//! window through `wtype`, which works in every toolkit.
 //!
 //! A menu is drawn on a full-screen transparent overlay: a click anywhere
 //! outside the menu closes it, as on macOS, and moving across the bar's other
@@ -16,6 +18,8 @@ use crate::tokens::{Theme, T_LABEL};
 pub enum MenuId {
     Solyra,
     App,
+    File,
+    Edit,
     Go,
     Window,
     View,
@@ -24,12 +28,21 @@ pub enum MenuId {
 
 impl MenuId {
     /// The titles after the app name, in bar order.
-    pub const TITLES: [MenuId; 4] = [MenuId::Go, MenuId::Window, MenuId::View, MenuId::Help];
+    pub const TITLES: [MenuId; 6] = [
+        MenuId::File,
+        MenuId::Edit,
+        MenuId::View,
+        MenuId::Go,
+        MenuId::Window,
+        MenuId::Help,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {
             Self::Solyra => "Solyra",
             Self::App => "App",
+            Self::File => "File",
+            Self::Edit => "Edit",
             Self::Go => "Go",
             Self::Window => "Window",
             Self::View => "View",
@@ -72,6 +85,18 @@ fn ipc(json: &'static str) -> HitAction {
 
 fn sh(cmd: &str) -> HitAction {
     HitAction::Launch(LaunchTarget::Shell(cmd.into()))
+}
+
+/// Send a keystroke to the focused window once the menu has closed and the
+/// window has its keyboard focus back. `mods` are wtype modifier names.
+pub fn keystroke(mods: &[&str], key: &str) -> String {
+    let press: String = mods.iter().map(|m| format!(" -M {m}")).collect();
+    let release: String = mods.iter().rev().map(|m| format!(" -m {m}")).collect();
+    format!("sleep 0.12; wtype{press} {key}{release}")
+}
+
+fn keys(mods: &[&str], key: &str) -> HitAction {
+    sh(&keystroke(mods, key))
 }
 
 const MOVE_TO: [&str; 5] = [
@@ -130,6 +155,33 @@ pub fn entries(id: MenuId, app: &AppCtx<'_>, dark: bool) -> Vec<Entry> {
             }
             v
         }
+        MenuId::File => {
+            let mut v = Vec::new();
+            if let Some(cmd) = &app.launch {
+                v.push(item("New Window", Some("Ctrl+N"), sh(cmd)));
+            }
+            v.push(item("Open Files…", Some("Super+E"), sh("solyra-open files")));
+            v.push(item("Find…", Some("Super+Space"), HitAction::Shell(ShellCmd::ToggleLauncher)));
+            if app.has_window {
+                v.push(sep());
+                v.push(item("Save", Some("Ctrl+S"), keys(&["ctrl"], "s")));
+                v.push(item("Print…", Some("Ctrl+P"), keys(&["ctrl"], "p")));
+                v.push(sep());
+                v.push(item("Close Window", Some("Super+W"), ipc("{\"Action\":{\"CloseWindow\":{\"id\":null}}}")));
+            }
+            v
+        }
+        MenuId::Edit => vec![
+            item("Undo", Some("Ctrl+Z"), keys(&["ctrl"], "z")),
+            item("Redo", Some("Ctrl+Shift+Z"), keys(&["ctrl", "shift"], "z")),
+            sep(),
+            item("Cut", Some("Ctrl+X"), keys(&["ctrl"], "x")),
+            item("Copy", Some("Ctrl+C"), keys(&["ctrl"], "c")),
+            item("Paste", Some("Ctrl+V"), keys(&["ctrl"], "v")),
+            item("Select All", Some("Ctrl+A"), keys(&["ctrl"], "a")),
+            sep(),
+            item("Find", Some("Ctrl+F"), keys(&["ctrl"], "f")),
+        ],
         MenuId::Go => vec![
             item("Home", None, sh("solyra-open files \"$HOME\"")),
             item("Documents", None, sh("solyra-open files \"$(xdg-user-dir DOCUMENTS 2>/dev/null || echo $HOME/Documents)\"")),
@@ -392,6 +444,8 @@ mod tests {
         for id in [
             MenuId::Solyra,
             MenuId::App,
+            MenuId::File,
+            MenuId::Edit,
             MenuId::Go,
             MenuId::Window,
             MenuId::View,
@@ -435,5 +489,19 @@ mod tests {
             let v: serde_json::Value = serde_json::from_str(j).unwrap();
             assert!(v["Action"]["MoveWindowToWorkspace"]["reference"]["Index"].is_u64());
         }
+    }
+
+    #[test]
+    fn titles_follow_the_mac_order_and_edit_sends_real_keys() {
+        let t: Vec<&str> = MenuId::TITLES.iter().map(|m| m.title()).collect();
+        assert_eq!(t, ["File", "Edit", "View", "Go", "Window", "Help"]);
+        assert_eq!(keystroke(&["ctrl"], "c"), "sleep 0.12; wtype -M ctrl c -m ctrl");
+        assert_eq!(
+            keystroke(&["ctrl", "shift"], "z"),
+            "sleep 0.12; wtype -M ctrl -M shift z -m shift -m ctrl"
+        );
+        let edit = entries(MenuId::Edit, &app(), true);
+        let copy = edit.iter().find(|e| e.label == "Copy").unwrap();
+        assert!(matches!(&copy.action, Some(HitAction::Launch(LaunchTarget::Shell(s))) if s.contains("wtype -M ctrl c")));
     }
 }
