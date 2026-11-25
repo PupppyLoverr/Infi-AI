@@ -776,8 +776,14 @@ pub fn role_for_app_id(app_id: &str) -> String {
         "files".into()
     } else if lower.contains("foot") || lower.contains("term") {
         "terminal".into()
-    } else if lower.contains("solyra-browse") {
+    } else if lower.contains("solyra-browse") || lower.contains("firefox") {
         "browser".into()
+    } else if lower.contains("mousepad") || lower.contains("texteditor") {
+        "editor".into()
+    } else if lower.contains("ristretto") || lower.contains("loupe") || lower.contains("eog") {
+        "viewer".into()
+    } else if lower.contains("galculator") || lower.contains("calculator") {
+        "calculator".into()
     } else {
         lower
     }
@@ -807,6 +813,74 @@ pub fn role_binary(role: &str, fallback: &str) -> String {
         }
     }
     fallback.to_string()
+}
+
+/// Is `bin` on `PATH`? Pinned apps that are not installed are left out of the
+/// dock rather than shown as icons that do nothing. Tests and previews see
+/// every pin, so the dock renders the same everywhere.
+pub fn pin_available(bin: &str) -> bool {
+    cfg!(test) || on_path(bin)
+}
+
+/// The floating dock's pins, in the pearOS / macOS order: Files, then the
+/// apps people use every day, Settings last. The launcher goes in after
+/// Files (see `dock::items`).
+pub fn floating_dock_entries(wins: &[WindowInfo]) -> Vec<AppEntry> {
+    let pin = |role: &str, bin: String, title: &str, subtitle: &str, open: &str| AppEntry {
+        window: None,
+        window_count: 0,
+        is_focused: false,
+        app_id: bin,
+        role: role.into(),
+        title: title.into(),
+        subtitle: subtitle.into(),
+        command: LaunchTarget::Shell(open.into()),
+    };
+    let candidates = vec![
+        (role_binary("files", "thunar"), pin("files", role_binary("files", "thunar"), "Files", "Browse folders and drives", "solyra-open files")),
+        (role_binary("browser", "firefox"), pin("browser", role_binary("browser", "firefox"), "Browser", "Browse the web", "solyra-open browser")),
+        (role_binary("terminal", "foot"), pin("terminal", role_binary("terminal", "foot"), "Terminal", "Command line shell", "solyra-open terminal")),
+        (role_binary("editor", "mousepad"), pin("editor", role_binary("editor", "mousepad"), "Text Editor", "Edit text files", "solyra-open editor")),
+        (role_binary("viewer", "ristretto"), pin("viewer", role_binary("viewer", "ristretto"), "Image Viewer", "Look at photos and pictures", "solyra-open viewer")),
+        (role_binary("calculator", "galculator"), pin("calculator", role_binary("calculator", "galculator"), "Calculator", "Do the maths", "solyra-open calculator")),
+        ("solyra-settings".to_string(), pin("settings", "solyra-settings".into(), "System Settings", "Appearance, dock, network and more", "solyra-settings")),
+    ];
+    let items: Vec<AppEntry> = candidates
+        .into_iter()
+        .filter(|(bin, _)| pin_available(bin))
+        .map(|(_, e)| e)
+        .collect();
+    merge_windows(items, wins)
+}
+
+/// Fold the open windows into pinned entries, appending apps that are running
+/// but not pinned.
+fn merge_windows(mut items: Vec<AppEntry>, wins: &[WindowInfo]) -> Vec<AppEntry> {
+    for win in wins {
+        let win_role = role_for_app_id(&win.app_id);
+        if let Some(existing) = items
+            .iter_mut()
+            .find(|e| e.app_id.eq_ignore_ascii_case(&win.app_id) || e.role == win_role)
+        {
+            existing.window_count += 1;
+            if existing.window.is_none() || win.is_focused {
+                existing.window = Some(win.id);
+            }
+            existing.is_focused |= win.is_focused;
+        } else {
+            items.push(AppEntry {
+                window: Some(win.id),
+                window_count: 1,
+                is_focused: win.is_focused,
+                app_id: win.app_id.clone(),
+                role: win_role,
+                title: pretty_app_name(&win.app_id),
+                subtitle: win.title.clone(),
+                command: LaunchTarget::Shell(win.app_id.clone()),
+            });
+        }
+    }
+    items
 }
 
 pub fn dock_entries(wins: &[WindowInfo]) -> Vec<AppEntry> {

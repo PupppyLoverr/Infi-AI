@@ -25,7 +25,7 @@ macro_rules! bundle {
 const SET: &[(&str, &[u8])] = bundle![
     "files", "terminal", "browser", "firefox", "chrome", "settings", "overview", "editor",
     "trash", "wallpaper", "calculator", "music", "photos", "mail", "appstore", "monitor",
-    "notes", "maps",
+    "notes", "maps", "launchpad", "downloads", "viewer",
 ];
 
 static DECODED: OnceLock<Vec<(&'static str, Icon)>> = OnceLock::new();
@@ -58,6 +58,9 @@ pub fn name_for(key: &str) -> Option<&'static str> {
         "editor" | "gedit" => "editor",
         "trash" => "trash",
         "wallpaper" => "wallpaper",
+        "start" | "launchpad" => "launchpad",
+        "downloads" => "downloads",
+        "viewer" | "ristretto" | "org.xfce.ristretto" => "viewer",
         _ if has(&["firefox"]) => "firefox",
         _ if has(&["chrome", "chromium"]) => "chrome",
         _ if has(&["thunar", "nautilus", "pcmanfm", "dolphin", "file-manager"]) => "files",
@@ -84,6 +87,8 @@ pub fn name_for(key: &str) -> Option<&'static str> {
 pub fn fit(name: &str) -> (f32, f32) {
     match name {
         "trash" => (1.10, 0.045),
+        // A free-standing folder: the same visual weight as the squircles.
+        "downloads" => (1.04, 0.0),
         _ => (1.0, 0.0),
     }
 }
@@ -112,7 +117,8 @@ mod tests {
         assert_eq!(name_for("com.google.Chrome"), Some("chrome"));
         assert_eq!(name_for("solyra-settings"), Some("settings"));
         assert_eq!(name_for("solyra-agents"), None);
-        assert_eq!(name_for("start"), None);
+        assert_eq!(name_for("start"), Some("launchpad"));
+        assert_eq!(name_for("downloads"), Some("downloads"));
         assert!(get("files").is_some() && get("nope").is_none());
     }
 

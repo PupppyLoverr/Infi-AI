@@ -1,5 +1,5 @@
 #!/bin/sh
-# solyra-open <terminal|files|browser> [args...]
+# solyra-open <terminal|files|browser|editor|viewer|calculator> [args...]
 #
 # Opens whichever program is chosen for a role in Settings -> Default apps
 # (~/.config/solyra/defaults.toml, then /etc/solyra/defaults.toml). The
@@ -12,7 +12,10 @@ case $role in
   terminal) original=foot ;;
   files)    original=thunar ;;
   browser)  original=firefox ;;
-  *) echo "usage: solyra-open terminal|files|browser [args...]" >&2; exit 2 ;;
+  editor)   original=mousepad ;;
+  viewer)   original=ristretto ;;
+  calculator) original=galculator ;;
+  *) echo "usage: solyra-open terminal|files|browser|editor|viewer|calculator [args...]" >&2; exit 2 ;;
 esac
 
 chosen=

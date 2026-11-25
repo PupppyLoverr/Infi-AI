@@ -17,17 +17,20 @@ use std::collections::HashMap;
 use crate::canvas::{text_width, Canvas, Fonts, Icon, Rgba};
 use crate::material;
 use crate::state::{
-    dock_entries, load_app_icon, AppEntry, DockStyle, LaunchTarget, ShellCmd, WindowInfo,
+    dock_entries, floating_dock_entries, load_app_icon, AppEntry, DockStyle, LaunchTarget,
+    ShellCmd, WindowInfo,
 };
 use crate::surfaces::{HitAction, Live, Region};
 use crate::tokens::Theme;
 
-/// Height of the floating card itself (macOS Liquid Glass dock ~56px).
-pub const CARD_H: i32 = 56;
-/// Corner radius of the floating glass pill.
-const DOCK_R: f32 = 19.0;
-/// Extra room above the card for magnified icons.
-pub const MAGNIFY_ROOM: i32 = 40;
+/// Height of the floating shelf (pearOS / macOS: 48 px icons in a ~64 px
+/// shelf).
+pub const CARD_H: i32 = 64;
+/// Corner radius of the shelf.
+const DOCK_R: f32 = 18.0;
+/// Extra room above the card for magnified icons: the biggest icon is
+/// `MAX_SCALE` times a cell, plus space for its tooltip.
+pub const MAGNIFY_ROOM: i32 = 66;
 /// Height of the Windows-style taskbar.
 pub const TASKBAR_H: u32 = 48;
 /// What is left of an auto-hidden dock: a strip at the screen edge that
@@ -60,6 +63,8 @@ enum Item<'a> {
     App(&'a AppEntry),
     Agent,
     Trash,
+    /// The Downloads folder stack, right of the separator.
+    Downloads,
     Separator,
     /// Solyra dock tray: weather chip (from `~/.config/solyra/weather.txt`).
     Weather,
@@ -120,10 +125,14 @@ fn metrics(style: DockStyle) -> Metrics {
             gap: 6,
             pad: 12,
         },
-        // macOS Liquid Glass dock: 42px sculpted squircles with airy spacing
-        // inside a luminous glass pill.
-        DockStyle::Macos | DockStyle::Solyra => Metrics {
-            cell: 42,
+        // pearOS / macOS dock: 48 px icons, 8 px apart, a 64 px shelf.
+        DockStyle::Macos => Metrics {
+            cell: 48,
+            gap: 8,
+            pad: 9,
+        },
+        DockStyle::Solyra => Metrics {
+            cell: 44,
             gap: 7,
             pad: 12,
         },
@@ -150,6 +159,8 @@ fn items<'a>(style: DockStyle, entries: &'a [AppEntry], weather: bool) -> Vec<It
             }
             v.push(Item::Clock);
         }
+        // pearOS order: Files, the launcher, the apps, the agents, then a
+        // separator, the Downloads stack and the Trash.
         DockStyle::Macos => {
             for (i, e) in entries.iter().enumerate() {
                 v.push(Item::App(e));
@@ -160,7 +171,9 @@ fn items<'a>(style: DockStyle, entries: &'a [AppEntry], weather: bool) -> Vec<It
             if entries.is_empty() {
                 v.push(Item::Start);
             }
+            v.push(Item::Agent);
             v.push(Item::Separator);
+            v.push(Item::Downloads);
             v.push(Item::Trash);
         }
         DockStyle::Minimal => v.extend(entries.iter().map(Item::App)),
@@ -169,8 +182,16 @@ fn items<'a>(style: DockStyle, entries: &'a [AppEntry], weather: bool) -> Vec<It
     v
 }
 
+/// The app entries a style shows.
+fn entries_for(style: DockStyle, wins: &[WindowInfo]) -> Vec<AppEntry> {
+    match style {
+        DockStyle::Macos => floating_dock_entries(wins),
+        _ => dock_entries(wins),
+    }
+}
+
 fn base_width(style: DockStyle, wins: &[WindowInfo]) -> i32 {
-    let entries = dock_entries(wins);
+    let entries = entries_for(style, wins);
     let m = metrics(style);
     let its = items(style, &entries, weather_reading().is_some());
     let content: i32 = its.iter().map(|i| item_span(i, m.cell)).sum::<i32>()
@@ -203,8 +224,11 @@ pub fn spec(style: DockStyle, wins: &[WindowInfo], magnify: bool, hidden: bool) 
         };
     }
     if magnify {
-        // Room for every icon to grow, centred.
-        let extra = ((MAX_SCALE - 1.0) * m.cell as f32 * 3.0).ceil() as i32;
+        // Room for every icon to grow: the gaussian adds (MAX_SCALE - 1) ·
+        // σ·√(2π) cells in total (≈ 3 cells), plus a margin so the shelf's
+        // rim and shadow never touch the surface edge.
+        let grown = (MAX_SCALE - 1.0) * SIGMA * (2.0 * std::f32::consts::PI).sqrt();
+        let extra = (grown * m.cell as f32).ceil() as i32 + 2 * m.cell;
         Spec {
             namespace: "solyra-dock-magnify",
             full_width: false,
@@ -342,7 +366,7 @@ fn draw_floating(
     let w = cv.width as i32;
     let h = cv.height as i32;
     let m = metrics(style);
-    let entries = dock_entries(wins);
+    let entries = entries_for(style, wins);
     let weather = weather_reading();
     let its = items(style, &entries, weather.is_some());
     let card_y = h - CARD_H;
@@ -378,8 +402,10 @@ fn draw_floating(
         })
         .collect();
     let content: i32 = sizes.iter().sum::<i32>() + m.gap * (its.len() as i32 - 1).max(0);
-    let card_w = content + m.pad * 2;
-    let card_x = (w - card_w) / 2;
+    // Never wider than the surface: with an icon magnified the shelf grows,
+    // and it stays one pixel inside the surface so its rim is never cut.
+    let card_w = (content + m.pad * 2).min(w - 2);
+    let card_x = ((w - card_w) / 2).max(1);
 
     let slab = slab_for(live, th.surface);
     material::paint(cv, &slab, card_x, card_y, card_w, CARD_H, DOCK_R);
@@ -477,7 +503,18 @@ fn draw_floating(
             }
             _ => {
                 let (role, app_id, action) = match it {
-                    Item::Start => ("start", None, HitAction::Shell(ShellCmd::ToggleLauncher)),
+                    Item::Start => (
+                        if style == DockStyle::Macos { "launchpad" } else { "start" },
+                        None,
+                        HitAction::Shell(ShellCmd::ToggleLauncher),
+                    ),
+                    Item::Downloads => (
+                        "downloads",
+                        None,
+                        HitAction::Launch(LaunchTarget::Shell(
+                            "solyra-open files \"$HOME/Downloads\"".into(),
+                        )),
+                    ),
                     Item::Agent => ("agent", None, HitAction::Shell(ShellCmd::ToggleAgents)),
                     Item::Trash => (
                         "trash",
@@ -505,14 +542,30 @@ fn draw_floating(
                         .unwrap_or(0),
                     _ => 0,
                 };
-                cv.draw_app_squircle(x, y - bounce, s, role, icon, fonts);
+                // An app's own icon wins over its role's (the browser pin is
+                // Firefox when Firefox is what it opens).
+                let key = app_id
+                    .filter(|id| crate::icons::name_for(id).is_some())
+                    .unwrap_or(role);
+                cv.draw_app_squircle(x, y - bounce, s, key, icon, fonts);
 
                 if let Item::App(e) = it {
                     if e.window_count > 0 {
                         running_mark(cv, ink, x, s, card_y, e.is_focused);
                     }
-                    if hov && magnify {
-                        tooltip(cv, th, fonts, &e.title, x + s / 2, y - 6, w);
+                }
+                // Hovered icons name themselves, as on macOS / pearOS.
+                if hov {
+                    let label = match it {
+                        Item::App(e) => e.title.as_str(),
+                        Item::Start => "Launchpad",
+                        Item::Agent => "Agents",
+                        Item::Downloads => "Downloads",
+                        Item::Trash => "Trash",
+                        _ => "",
+                    };
+                    if !label.is_empty() {
+                        tooltip(cv, th, fonts, label, x + s / 2, y - bounce - 6, w);
                     }
                 }
                 if let Item::Agent = it {
@@ -933,6 +986,54 @@ mod tests {
                 .any(|i| matches!(i, Item::Weather))
         };
         assert!(has(true) && !has(false), "no reading, no weather chip");
+    }
+
+    #[test]
+    fn floating_dock_follows_the_pearos_order() {
+        let e = crate::state::floating_dock_entries(&[]);
+        assert_eq!(e[0].role, "files", "Files first");
+        assert_eq!(e.last().unwrap().role, "settings", "Settings last");
+        let its = items(DockStyle::Macos, &e, false);
+        assert!(matches!(its[1], Item::Start), "the launcher second");
+        let n = its.len();
+        assert!(matches!(its[n - 3], Item::Separator));
+        assert!(matches!(its[n - 2], Item::Downloads));
+        assert!(matches!(its[n - 1], Item::Trash));
+    }
+
+    /// The gap report found the magnified shelf clipped at the surface edge:
+    /// with the pointer anywhere along it, the grown shelf must fit inside
+    /// the surface with room to spare.
+    #[test]
+    fn a_magnified_shelf_never_reaches_the_surface_edge() {
+        let wins = [];
+        let sp = spec(DockStyle::Macos, &wins, true, false);
+        let (w, h) = (sp.width, sp.height);
+        let fonts = crate::canvas::Fonts::load();
+        let th = Theme::dark();
+        let t = crate::state::Telemetry {
+            mem_used_mib: 0,
+            mem_total_mib: 0,
+            battery_pct: None,
+            network: crate::state::NetworkState::Offline,
+            brightness_controllable: false,
+            volume_controllable: false,
+        };
+        let prefs = crate::state::ShellPrefs::default();
+        let live = Live { agents: Default::default(), telem: &t, prefs: &prefs };
+        let mut x = 0.0;
+        while x < w as f64 {
+            let mut buf = vec![0u8; (w * h * 4) as usize];
+            let mut cv = Canvas::new(&mut buf, w, h, 1);
+            let mut icons = HashMap::new();
+            let (_, body) = draw(
+                &mut cv, &th, &fonts, DockStyle::Macos, &wins, &mut icons,
+                Some((x, h as f64 - 10.0)), &live, true, false, &[],
+            );
+            let b = body.unwrap();
+            assert!(b.x >= 4 && b.x + b.w <= w as i32 - 4, "pointer at {x}: shelf {b:?} in {w}");
+            x += 23.0;
+        }
     }
 
     #[test]

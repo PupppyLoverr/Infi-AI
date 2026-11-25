@@ -108,7 +108,7 @@ pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
         // near-black tint over the blur with a 1 px white 20 % rim.
         Material::Glass if dark => Slab {
             kind: m,
-            fill: Rgba::rgba(28, 28, 30, boost(150)),
+            fill: Rgba::rgba(36, 36, 42, boost(118)),
             edge: Rgba::rgba(255, 255, 255, 51),
             highlight: Some(Rgba::rgba(255, 255, 255, 64)),
         },

@@ -18,6 +18,9 @@
     "appstore": "apps/scalable/softwarecenter.svg",
     "monitor": "apps/scalable/utilities-system-monitor.svg",
     "notes": "apps/scalable/basket.svg",
-    "maps": "apps/scalable/gnome-maps.svg"
+    "maps": "apps/scalable/gnome-maps.svg",
+    "launchpad": "apps/scalable/view-app-grid.svg",
+    "downloads": "places/scalable/folder-download.svg",
+    "viewer": "apps/scalable/org.gnome.Loupe.svg"
   }
 }

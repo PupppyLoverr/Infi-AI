@@ -38,12 +38,15 @@ ICONS = {
     "monitor": "apps/scalable/utilities-system-monitor.svg",
     "notes": "apps/scalable/basket.svg",
     "maps": "apps/scalable/gnome-maps.svg",
+    "launchpad": "apps/scalable/view-app-grid.svg",
+    "downloads": "places/scalable/folder-download.svg",
+    "viewer": "apps/scalable/org.gnome.Loupe.svg",
 }
 
 
 # Icons that are a free-standing shape rather than a squircle body (the folder)
 # are scaled so their bounding box fits the same 168/192 body as the rest.
-FIT_TO_BODY = {"files"}
+FIT_TO_BODY = {"files", "downloads"}
 
 
 def fit_to_body(tile):
