@@ -208,9 +208,9 @@ pub fn paint(cv: &mut Canvas<'_>, fonts: &Fonts, dark: bool, today: NaiveDate, w
 
 fn calendar(cv: &mut Canvas<'_>, fonts: &Fonts, dark: bool, today: NaiveDate, x: i32, y: i32) {
     let (bg, ink, dim) = if dark {
-        (Rgba::rgba(24, 26, 32, 128), Rgba::rgb(245, 245, 250), Rgba::rgba(235, 235, 245, 148))
+        (Rgba::rgba(20, 21, 26, 208), Rgba::rgb(245, 245, 250), Rgba::rgba(235, 235, 245, 148))
     } else {
-        (Rgba::rgba(255, 255, 255, 152), Rgba::rgb(28, 28, 30), Rgba::rgba(60, 60, 67, 140))
+        (Rgba::rgba(255, 255, 255, 188), Rgba::rgb(28, 28, 30), Rgba::rgba(60, 60, 67, 140))
     };
     cv.round_rect(x, y, CARD, CARD, RADIUS, bg);
     cv.round_rect_vgrad(
@@ -219,8 +219,8 @@ fn calendar(cv: &mut Canvas<'_>, fonts: &Fonts, dark: bool, today: NaiveDate, x:
         CARD,
         CARD,
         RADIUS,
-        Rgba::rgba(255, 255, 255, if dark { 28 } else { 48 }),
-        Rgba::rgba(255, 255, 255, 6),
+        Rgba::rgba(255, 255, 255, if dark { 20 } else { 42 }),
+        Rgba::rgba(255, 255, 255, 4),
     );
     cv.round_rect_glass_rim(
         x,
@@ -228,9 +228,9 @@ fn calendar(cv: &mut Canvas<'_>, fonts: &Fonts, dark: bool, today: NaiveDate, x:
         CARD,
         CARD,
         RADIUS,
-        Rgba::rgba(255, 255, 255, if dark { 112 } else { 196 }),
-        Rgba::rgba(255, 255, 255, if dark { 54 } else { 110 }),
-        Rgba::rgba(255, 255, 255, if dark { 28 } else { 70 }),
+        Rgba::rgba(255, 255, 255, if dark { 86 } else { 196 }),
+        Rgba::rgba(255, 255, 255, if dark { 42 } else { 110 }),
+        Rgba::rgba(255, 255, 255, if dark { 22 } else { 70 }),
     );
     let red = Rgba::rgb(0xff, 0x45, 0x3a);
     let month = today.format("%B").to_string().to_uppercase();
@@ -262,8 +262,8 @@ fn calendar(cv: &mut Canvas<'_>, fonts: &Fonts, dark: bool, today: NaiveDate, x:
 }
 
 fn weather_card(cv: &mut Canvas<'_>, fonts: &Fonts, w: Option<&Weather>, city_set: bool, x: i32, y: i32) {
-    let top = Rgba::rgba(0x4c, 0x9b, 0xf8, 178);
-    let bottom = Rgba::rgba(0x24, 0x62, 0xd4, 194);
+    let top = Rgba::rgba(0x1e, 0x5d, 0xb8, 212);
+    let bottom = Rgba::rgba(0x2c, 0x7b, 0xe0, 218);
     cv.round_rect_vgrad(x, y, CARD, CARD, RADIUS, top, bottom);
     cv.round_rect_vgrad(
         x,

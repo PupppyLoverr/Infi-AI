@@ -1169,9 +1169,19 @@ fn action_bar(app: &FilesApp, style: &solyra_ui::Style) -> View {
     switch(
         {
             let location = app.location.clone();
-            move || location.get()
+            let selected = app.selected.clone();
+            let status = app.status.clone();
+            move || (location.get(), selected.get().is_some(), !status.get().is_empty())
         },
-        move |location, _cx| action_bar_for(&app, &style, &location),
+        move |(location, has_selection, has_status), _cx| {
+            // Keep the Finder canvas clean like pearOS when nothing is selected;
+            // reveal contextual file actions as soon as an item is selected.
+            if !has_selection && !has_status {
+                column().h(0.)
+            } else {
+                action_bar_for(&app, &style, &location)
+            }
+        },
     )
 }
 

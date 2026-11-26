@@ -111,9 +111,9 @@ pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
         // the glass rather than turning into opaque dark grey mud.
         Material::Glass if dark => Slab {
             kind: m,
-            fill: Rgba::rgba(22, 24, 30, 42),
-            edge: Rgba::rgba(255, 255, 255, 92),
-            highlight: Some(Rgba::rgba(255, 255, 255, 196)),
+            fill: Rgba::rgba(20, 22, 28, 30),
+            edge: Rgba::rgba(255, 255, 255, 76),
+            highlight: Some(Rgba::rgba(255, 255, 255, 162)),
         },
         Material::Glass => Slab {
             kind: m,
@@ -176,8 +176,8 @@ pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f
                 w,
                 h,
                 r,
-                Rgba::rgba(255, 255, 255, 42),
-                Rgba::rgba(255, 255, 255, 14),
+                Rgba::rgba(255, 255, 255, 26),
+                Rgba::rgba(255, 255, 255, 8),
             );
             let hl = s.highlight.unwrap_or(s.edge);
             cv.round_rect_glass_rim(
@@ -188,7 +188,7 @@ pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f
                 r,
                 hl,
                 Rgba::rgba(255, 255, 255, s.edge.3),
-                Rgba::rgba(255, 255, 255, (s.edge.3 / 2).max(40)),
+                Rgba::rgba(255, 255, 255, (s.edge.3 / 2).max(32)),
             );
         }
         Material::Glass => {

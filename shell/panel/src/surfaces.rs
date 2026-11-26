@@ -136,22 +136,11 @@ pub fn draw_bar(
     // menu bar, so it needs no scrim at all and the sky stays untouched.
     let flip = crate::material::ink_flips(bar_mat, th.bar, prefs.wall_tint);
     if bar_mat == crate::material::Material::Glass {
-        if !flip {
-            if dark_theme {
-                // pearOS / Cupertino dark glass menu bar: smoked translucent band + 1px bottom hairline.
-                cv.fill_rect_vgrad(
-                    0,
-                    0,
-                    w,
-                    h,
-                    Rgba::rgba(16, 16, 20, 96),
-                    Rgba::rgba(16, 16, 20, 52),
-                );
-                cv.fill_rect(0, h - 1, w, 1, Rgba::rgba(255, 255, 255, 22));
-            } else {
-                let top = Rgba::rgba(0, 0, 0, 34);
-                cv.fill_rect_vgrad(0, 0, w, h, top, Rgba::rgba(0, 0, 0, 0));
-            }
+        // Real pearOS / macOS menu bar: completely transparent over the
+        // wallpaper with no heavy grey band or bottom hairline; legibility
+        // comes from crisp shadowed white text (or dark ink when flipped).
+        if !flip && !dark_theme {
+            cv.fill_rect_vgrad(0, 0, w, h, Rgba::rgba(0, 0, 0, 18), Rgba::rgba(0, 0, 0, 0));
         }
     } else {
         crate::material::paint(cv, &slab, 0, 0, w, h, 0.0);
@@ -186,9 +175,9 @@ pub fn draw_bar(
         )
     } else if is_glass_bar && dark_theme {
         (
-            Rgba::rgba(255, 255, 255, 244),
-            Rgba::rgba(255, 255, 255, 224),
-            Some(Rgba::rgba(0, 0, 0, 34)),
+            Rgba::rgba(255, 255, 255, 252),
+            Rgba::rgba(255, 255, 255, 240),
+            Some(Rgba::rgba(0, 0, 0, 128)),
             th.tile_hover,
         )
     } else {
