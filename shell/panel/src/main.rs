@@ -15,6 +15,7 @@
 
 mod agent;
 mod canvas;
+mod clipboard;
 mod desk;
 mod dock;
 mod glass_proto;
@@ -24,6 +25,7 @@ mod icons;
 mod island;
 mod launcher;
 mod lock;
+mod lyrics;
 mod material;
 mod media;
 mod menu;
@@ -294,6 +296,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         island_left_at: None,
         island_hover_at: None,
         island_tab_shelf: false,
+        island_tab: 0,
+        island_lyrics: false,
+        clipboard_items: clipboard::load(),
+        clipboard_filter: clipboard::ClipCategory::All,
         hud: None,
         last_charging: hud::charging(),
         shelf: shelf::load(),
@@ -650,6 +656,10 @@ struct App {
     island_hover_at: Option<Instant>,
     /// The open island shows the shelf tab rather than what is live.
     island_tab_shelf: bool,
+    island_tab: u8,
+    island_lyrics: bool,
+    clipboard_items: Vec<clipboard::ClipItem>,
+    clipboard_filter: clipboard::ClipCategory,
     /// Files parked on the notch.
     shelf: Vec<std::path::PathBuf>,
     /// A HUD showing in the notch, and since when.
@@ -989,7 +999,49 @@ impl App {
             }
             ShellCmd::IslandShelf(on) => {
                 self.island_tab_shelf = on;
+                self.island_tab = if on { 1 } else { 0 };
                 self.retarget_island();
+            }
+            ShellCmd::IslandTab(tab) => {
+                self.island_tab = tab.min(3);
+                self.island_tab_shelf = self.island_tab == 1;
+                self.island_expanded = true;
+                self.retarget_island();
+            }
+            ShellCmd::ToggleIslandLyrics => {
+                self.island_lyrics = !self.island_lyrics;
+                self.island_tab = 0;
+                self.island_tab_shelf = false;
+                self.island_expanded = true;
+                self.retarget_island();
+            }
+            ShellCmd::ClipboardFilter(cat) => {
+                self.clipboard_filter = cat;
+                self.retarget_island();
+            }
+            ShellCmd::ClipboardCopy(idx) => {
+                if let Some(it) = self.clipboard_items.get(idx) {
+                    let cmd = clipboard::copy_command(&it.text);
+                    self.execute_launch(LaunchTarget::Shell(cmd));
+                }
+            }
+            ShellCmd::ClipboardPin(idx) => {
+                if let Some(it) = self.clipboard_items.get_mut(idx) {
+                    it.pinned = !it.pinned;
+                    clipboard::save(&self.clipboard_items);
+                }
+            }
+            ShellCmd::ClipboardFav(idx) => {
+                if let Some(it) = self.clipboard_items.get_mut(idx) {
+                    it.favorite = !it.favorite;
+                    clipboard::save(&self.clipboard_items);
+                }
+            }
+            ShellCmd::ClipboardDelete(idx) => {
+                if idx < self.clipboard_items.len() {
+                    self.clipboard_items.remove(idx);
+                    clipboard::save(&self.clipboard_items);
+                }
             }
             ShellCmd::ShelfRemove(i) => {
                 if i < self.shelf.len() {
@@ -1518,14 +1570,51 @@ impl App {
                 return (island::Content::Hud(h.clone()), badge_from_rest());
             }
         }
-        if self.island_expanded && self.island_tab_shelf {
+        if self.island_expanded && (self.island_tab_shelf || self.island_tab == 1) {
             return (island::Content::Shelf(self.shelf.clone()), badge_from_rest());
+        }
+        if self.island_expanded && self.island_tab == 2 {
+            return (
+                island::Content::Clipboard {
+                    items: self.clipboard_items.clone(),
+                    filter: self.clipboard_filter,
+                    context_menu: None,
+                },
+                badge_from_rest(),
+            );
+        }
+        if self.island_expanded && self.island_tab == 3 {
+            return (
+                island::Content::Droplets {
+                    note: "Ship macOS 27 + Droppy UI polish".into(),
+                    pomodoro_secs: 25 * 60,
+                    pomodoro_running: false,
+                },
+                badge_from_rest(),
+            );
         }
         if let Some(msg) = &self.island_msg {
             return (island::Content::Message(msg.clone()), badge_from_rest());
         }
         if let Some(m) = media {
             let badge = activity.map(|_| island::LiveBadge::Activity);
+            if self.island_expanded && self.island_lyrics {
+                let lyr = lyrics::load_local(&m.artist, &m.title)
+                    .unwrap_or_else(|| lyrics::fallback_for(&m.title));
+                let pos_ms = (m.position_us.unwrap_or(0).max(0) / 1000) as u64;
+                let lines = lyr
+                    .window(pos_ms, 1, 2)
+                    .into_iter()
+                    .map(|(off, s)| (off, s.to_string()))
+                    .collect();
+                return (
+                    island::Content::MediaLyrics {
+                        media: m,
+                        lyrics: lines,
+                    },
+                    badge,
+                );
+            }
             return (island::Content::Media(m), badge);
         }
         if let Some(t) = activity {

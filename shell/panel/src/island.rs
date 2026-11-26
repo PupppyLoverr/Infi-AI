@@ -20,9 +20,9 @@ use crate::surfaces::{HitAction, Region};
 use crate::tokens::{Theme, T_BODY, T_CAPTION, T_LABEL, T_META};
 use solyra_conf::look::NotchStyle;
 
-/// The island's surface; the shape never exceeds it.
-pub const SURF_W: u32 = 480;
-pub const SURF_H: u32 = 214;
+/// The island's surface; the shape + detached mode-switcher pill never exceed it.
+pub const SURF_W: u32 = 680;
+pub const SURF_H: u32 = 400;
 /// Concave fillet radius joining a notch to the top edge.
 /// Droppy's notch wings: the top corners curve outward 10 px.
 const EAR: f32 = 10.0;
@@ -38,8 +38,27 @@ pub enum Content {
     },
     Attention(Ask),
     Media(Media),
+    /// Droppy expanded media player with synced live lyrics drawer (Reference 2).
+    MediaLyrics {
+        media: Media,
+        /// `(relative_offset, line_text)` where `0` is the active sung line.
+        lyrics: Vec<(isize, String)>,
+    },
     /// The shelf tab: files parked on the notch (newest first).
     Shelf(Vec<std::path::PathBuf>),
+    /// Droppy rich clipboard manager (Reference 4).
+    Clipboard {
+        items: Vec<crate::clipboard::ClipItem>,
+        filter: crate::clipboard::ClipCategory,
+        /// Optional open right-click context menu on card index.
+        context_menu: Option<usize>,
+    },
+    /// Droppy modular Droplets tab (Quick Notes, Pomodoro timer, quick status).
+    Droplets {
+        note: String,
+        pomodoro_secs: u32,
+        pomodoro_running: bool,
+    },
     /// A system HUD (volume, brightness, charging, Focus, unlock) for a moment.
     Hud(crate::hud::Hud),
 }
@@ -87,17 +106,20 @@ impl Shape {
 /// height.
 fn expanded_shape(style: NotchStyle, content: &Content) -> Shape {
     let island = style == NotchStyle::Island;
-    let (w, h) = match content {
-        Content::Media(_) | Content::Shelf(_) => (450.0, 156.0),
-        Content::Hud(_) => (300.0, 37.0),
-        Content::Idle => (if island { 348.0 } else { 392.0 }, 132.0),
-        _ => (if island { 440.0 } else { 448.0 }, 196.0),
+    let (w, h, r) = match content {
+        Content::Media(_) => (332.0, 146.0, if island { 34.0 } else { 26.0 }),
+        Content::MediaLyrics { .. } => (320.0, 316.0, if island { 34.0 } else { 28.0 }),
+        Content::Clipboard { .. } => (628.0, 224.0, if island { 30.0 } else { 26.0 }),
+        Content::Shelf(_) | Content::Droplets { .. } => (468.0, 174.0, if island { 34.0 } else { 28.0 }),
+        Content::Hud(_) => (300.0, 37.0, 18.0),
+        Content::Idle => (if island { 348.0 } else { 392.0 }, 132.0, if island { 36.0 } else { 28.0 }),
+        _ => (if island { 440.0 } else { 448.0 }, 196.0, if island { 40.0 } else { 30.0 }),
     };
     Shape {
         w,
         h,
         y: if island { 6.0 } else { 0.0 },
-        r: if island { 44.0 } else { 30.0 },
+        r,
     }
 }
 
@@ -129,7 +151,10 @@ pub fn target(style: NotchStyle, content: &Content, expanded: bool) -> Shape {
                 match content {
                     // Droppy's Dynamic Island: a 210 x 37 pill floating 4 px
                     // below the top edge; live activities keep that height.
-                    Content::Idle | Content::Shelf(_) => Shape {
+                    Content::Idle
+                    | Content::Shelf(_)
+                    | Content::Clipboard { .. }
+                    | Content::Droplets { .. } => Shape {
                         w: 136.0,
                         h: 30.0,
                         y: 4.0,
@@ -141,7 +166,7 @@ pub fn target(style: NotchStyle, content: &Content, expanded: bool) -> Shape {
                         y: 4.0,
                         r: 15.0,
                     },
-                    Content::Media(m) => Shape {
+                    Content::Media(m) | Content::MediaLyrics { media: m, .. } => Shape {
                         w: compact_media_width(m, 240.0, 320.0),
                         h: 30.0,
                         y: 4.0,
@@ -169,7 +194,10 @@ pub fn target(style: NotchStyle, content: &Content, expanded: bool) -> Shape {
             } else {
                 match content {
                     // Droppy notch: 180 px, rounded 16 px at the bottom.
-                    Content::Idle | Content::Shelf(_) => Shape {
+                    Content::Idle
+                    | Content::Shelf(_)
+                    | Content::Clipboard { .. }
+                    | Content::Droplets { .. } => Shape {
                         w: 140.0,
                         h: 26.0,
                         y: 0.0,
@@ -181,7 +209,7 @@ pub fn target(style: NotchStyle, content: &Content, expanded: bool) -> Shape {
                         y: 0.0,
                         r: 13.0,
                     },
-                    Content::Media(m) => Shape {
+                    Content::Media(m) | Content::MediaLyrics { media: m, .. } => Shape {
                         w: compact_media_width(m, 212.0, 300.0),
                         h: 30.0,
                         y: 0.0,
@@ -256,12 +284,14 @@ impl Anim {
 }
 
 /// The shape's rectangle in surface pixels, for the input region.
+/// Includes room below an expanded card for Droppy's detached mode-switcher pill.
 pub fn input_rect(s: &Shape) -> (i32, i32, i32, i32) {
+    let extra_h = if s.h > 80.0 { 44 } else { 0 };
     (
         s.x().floor() as i32,
         s.y.floor() as i32,
         s.w.ceil() as i32,
-        s.h.ceil() as i32,
+        (s.h.ceil() as i32 + extra_h).min(SURF_H as i32),
     )
 }
 
@@ -413,34 +443,85 @@ pub fn draw(
     }
 
     if expanded {
-        let pad_x = if style == NotchStyle::Island { 24 } else { 20 };
-        let pad_y = if style == NotchStyle::Island { 20 } else { 16 };
+        let pad_x = if matches!(content, Content::Clipboard { .. }) {
+            16
+        } else if style == NotchStyle::Island {
+            20
+        } else {
+            18
+        };
+        let pad_y = if matches!(content, Content::Clipboard { .. }) {
+            14
+        } else {
+            16
+        };
         let body = (
             xi + pad_x,
             yi + pad_y,
             (wi - 2 * pad_x).max(0),
             (hi - 2 * pad_y).max(0),
         );
-        if let Content::Shelf(items) = content {
-            shelf_body(cv, &th, fonts, body, items, hover, &mut regions);
-        } else {
-            expanded_body(cv, &th, fonts, body, content, extra, hover, &mut regions);
+        match content {
+            Content::Shelf(items) => {
+                shelf_body(cv, &th, fonts, body, items, hover, &mut regions);
+            }
+            Content::Clipboard {
+                items,
+                filter,
+                context_menu,
+            } => {
+                clipboard_body(
+                    cv,
+                    &th,
+                    fonts,
+                    body,
+                    items,
+                    *filter,
+                    *context_menu,
+                    hover,
+                    &mut regions,
+                );
+            }
+            Content::Droplets {
+                note,
+                pomodoro_secs,
+                pomodoro_running,
+            } => {
+                droplets_body(
+                    cv,
+                    &th,
+                    fonts,
+                    body,
+                    note,
+                    *pomodoro_secs,
+                    *pomodoro_running,
+                    extra,
+                    hover,
+                    &mut regions,
+                );
+            }
+            _ => {
+                expanded_body(cv, &th, fonts, body, content, extra, hover, &mut regions);
+            }
         }
-        // pearos-notch's tabs: what is live, and the shelf. Agents asking
-        // for a decision always own the island, so no tabs then.
+        // Droppy's detached floating mode-switcher pill directly beneath the notch
+        // (Home/Media, Shelf, Clipboard, Droplets).
         if matches!(
             content,
-            Content::Idle | Content::Media(_) | Content::Shelf(_)
+            Content::Idle
+                | Content::Media(_)
+                | Content::MediaLyrics { .. }
+                | Content::Shelf(_)
+                | Content::Clipboard { .. }
+                | Content::Droplets { .. }
         ) {
-            tabs(
-                cv,
-                xi,
-                yi,
-                wi,
-                matches!(content, Content::Shelf(_)),
-                hover,
-                &mut regions,
-            );
+            let active_tab = match content {
+                Content::Shelf(_) => 1,
+                Content::Clipboard { .. } => 2,
+                Content::Droplets { .. } => 3,
+                _ => 0,
+            };
+            mode_switcher_pill(cv, fonts, xi + wi / 2, yi + hi + 10, active_tab, hover, &mut regions);
         }
     } else {
         compact_row(cv, &th, fonts, xi, yi, wi, hi, content, style);
@@ -528,50 +609,420 @@ pub fn padlock(cv: &mut Canvas<'_>, cx: f32, cy: f32, open: bool, c: Rgba) {
     }
 }
 
-/// Two small round tabs centred at the top of the card, where no content
-/// sits (titles start at the left, the waveform sits at the right).
-fn tabs(
+/// Droppy's detached floating mode-switcher pill centered directly beneath the
+/// expanded notch (Home/Media, File Shelf, Clipboard, Droplets).
+#[allow(clippy::too_many_arguments)]
+fn mode_switcher_pill(
     cv: &mut Canvas<'_>,
-    x: i32,
-    y: i32,
-    w: i32,
-    shelf: bool,
+    fonts: &Fonts,
+    cx: i32,
+    top: i32,
+    active_tab: u8,
     hover: Option<(f64, f64)>,
     regions: &mut Vec<Region>,
 ) {
-    let d = 22;
-    let gap = 6;
-    let top = y + 8;
-    let left = x + (w - (2 * d + gap)) / 2;
-    for (i, is_shelf) in [(0, false), (1, true)] {
-        let bx = left + i * (d + gap);
-        let on = shelf == is_shelf;
-        let hot = hovered(hover, bx, top, d, d);
+    let pw = 128;
+    let ph = 30;
+    let px = cx - pw / 2;
+    let r = ph as f32 / 2.0;
+    cv.round_rect_shadow(px, top, pw, ph, r, 4.0, 14.0, 56);
+    cv.round_rect(px, top, pw, ph, r, Rgba::rgb(0, 0, 0));
+    cv.stroke_round_rect(px, top, pw, ph, r, 1.0, Rgba::rgba(255, 255, 255, 42));
+
+    let btn_w = 26;
+    let btn_h = 22;
+    let gap = 4;
+    let start_x = px + (pw - (4 * btn_w + 3 * gap)) / 2;
+    let by = top + (ph - btn_h) / 2;
+    for i in 0..4u8 {
+        let bx = start_x + i as i32 * (btn_w + gap);
+        let on = active_tab == i;
+        let hot = hovered(hover, bx, by, btn_w, btn_h);
         if on || hot {
             cv.round_rect(
                 bx,
-                top,
-                d,
-                d,
-                d as f32 / 2.0,
-                Rgba::rgba(255, 255, 255, if on { 40 } else { 22 }),
+                by,
+                btn_w,
+                btn_h,
+                btn_h as f32 / 2.0,
+                Rgba::rgba(255, 255, 255, if on { 46 } else { 22 }),
             );
         }
-        let (cx, cy) = ((bx + d / 2) as f32, (top + d / 2) as f32);
-        let ink = Rgba::rgba(255, 255, 255, if on { 255 } else { 150 });
-        if is_shelf {
-            tray_glyph(cv, cx, cy, ink);
-        } else {
-            cv.icon_note(cx, cy, ink);
+        let (icx, icy) = ((bx + btn_w / 2) as f32, (by + btn_h / 2) as f32);
+        let ink = Rgba::rgba(255, 255, 255, if on { 255 } else { 155 });
+        match i {
+            0 => {
+                // Home / Media icon
+                cv.text(fonts.semibold.as_ref(), "⌂", bx + 7, by + 16, 13.0, ink);
+            }
+            1 => {
+                // File Shelf / Tray icon
+                tray_glyph(cv, icx, icy, ink);
+            }
+            2 => {
+                // Clipboard icon
+                cv.stroke_round_rect(bx + 8, by + 5, 10, 12, 2.0, 1.3, ink);
+                cv.fill_rect(bx + 10, by + 4, 6, 2, ink);
+            }
+            _ => {
+                // Droplets / Widgets 2x2 grid icon
+                for dx in [0, 6] {
+                    for dy in [0, 6] {
+                        cv.round_rect(bx + 8 + dx, by + 6 + dy, 4, 4, 1.0, ink);
+                    }
+                }
+            }
         }
         regions.push(Region {
             x: bx,
             y: top,
-            w: d,
-            h: d,
-            action: HitAction::Shell(ShellCmd::IslandShelf(is_shelf)),
+            w: btn_w,
+            h: ph,
+            action: HitAction::Shell(ShellCmd::IslandTab(i)),
         });
     }
+}
+
+/// Droppy Rich Clipboard Manager (matches Reference 4): category filter pills,
+/// horizontal rich cards (Text, Link, Color, Video), and optional dark context menu.
+#[allow(clippy::too_many_arguments)]
+fn clipboard_body(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    fonts: &Fonts,
+    body: (i32, i32, i32, i32),
+    items: &[crate::clipboard::ClipItem],
+    filter: crate::clipboard::ClipCategory,
+    context_menu: Option<usize>,
+    hover: Option<(f64, f64)>,
+    regions: &mut Vec<Region>,
+) {
+    use crate::clipboard::{ClipCategory, ClipKind};
+    let (bx, by, bw, bh) = body;
+
+    // Top row: category filter pills ("Clipboard", orange "Work", green "Personal") + expand circle.
+    let mut px = bx;
+    let pill_h = 26;
+    for cat in ClipCategory::TABS {
+        let on = filter == cat;
+        let label = cat.label();
+        let tw = text_width(fonts.semibold.as_ref(), label, 12.0);
+        let pw = tw + 30;
+        let bg = if on {
+            Rgba::rgba(0x0a, 0x84, 0xff, 64)
+        } else {
+            Rgba::rgba(255, 255, 255, 20)
+        };
+        let fg = if on {
+            Rgba::rgb(0x40, 0x9c, 0xff)
+        } else {
+            Rgba::rgba(255, 255, 255, 210)
+        };
+        cv.round_rect(px, by, pw, pill_h, 13.0, bg);
+        if on {
+            cv.stroke_round_rect(px, by, pw, pill_h, 13.0, 1.0, Rgba::rgba(0x40, 0x9c, 0xff, 110));
+        }
+        let dot_col = match cat {
+            ClipCategory::All => Rgba::rgb(0x40, 0x9c, 0xff),
+            ClipCategory::Work => Rgba::rgb(0xff, 0x9f, 0x0a),
+            ClipCategory::Personal => Rgba::rgb(0x32, 0xd7, 0x4b),
+        };
+        cv.circle((px + 12) as f32, (by + pill_h / 2) as f32, 4.0, dot_col);
+        cv.text(fonts.semibold.as_ref(), label, px + 22, by + 17, 12.0, fg);
+        regions.push(Region {
+            x: px,
+            y: by,
+            w: pw,
+            h: pill_h,
+            action: HitAction::Shell(ShellCmd::ClipboardFilter(cat)),
+        });
+        px += pw + 8;
+    }
+    // Top-right circular expand button.
+    let ex = bx + bw - 26;
+    cv.circle((ex + 13) as f32, (by + 13) as f32, 13.0, Rgba::rgba(255, 255, 255, 24));
+    cv.text(fonts.semibold.as_ref(), "⤢", ex + 7, by + 18, 12.5, Rgba::rgba(255, 255, 255, 210));
+
+    // Horizontal rich cards row.
+    let card_y = by + pill_h + 12;
+    let card_h = (bh - pill_h - 14).max(120);
+    let visible: Vec<(usize, &crate::clipboard::ClipItem)> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, it)| filter == ClipCategory::All || it.category == filter)
+        .take(4)
+        .collect();
+    if visible.is_empty() {
+        let msg = "Copy text, links, or #hex colors — they appear here";
+        let tw = text_width(fonts.medium.as_ref(), msg, 12.5);
+        cv.text(
+            fonts.medium.as_ref(),
+            msg,
+            bx + (bw - tw).max(0) / 2,
+            card_y + card_h / 2,
+            12.5,
+            Rgba::rgba(255, 255, 255, 140),
+        );
+        return;
+    }
+    let gap = 10;
+    let card_w = ((bw - gap * 3) / 4).max(120);
+    let mut menu_anchor: Option<(i32, i32, usize)> = None;
+    for (slot, (orig_idx, item)) in visible.into_iter().enumerate() {
+        let cx = bx + slot as i32 * (card_w + gap);
+        let hot = hovered(hover, cx, card_y, card_w, card_h);
+        match item.kind {
+            ClipKind::Color(r, g, b) => {
+                cv.round_rect(cx, card_y, card_w, card_h, 16.0, Rgba::rgb(r, g, b));
+                let luma = (r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000;
+                let ink = if luma > 140 {
+                    Rgba::rgb(0x18, 0x18, 0x1a)
+                } else {
+                    Rgba::rgb(255, 255, 255)
+                };
+                // Top badge pill ("Color · now")
+                cv.round_rect(cx + 8, card_y + 8, 84, 20, 10.0, Rgba::rgba(255, 255, 255, 220));
+                cv.circle((cx + 17) as f32, (card_y + 18) as f32, 4.0, Rgba::rgb(r, g, b));
+                cv.text(
+                    fonts.semibold.as_ref(),
+                    &format!("Color · {}", item.age),
+                    cx + 25,
+                    card_y + 22,
+                    9.8,
+                    Rgba::rgb(0x18, 0x18, 0x1a),
+                );
+                // Top-right `...` circle
+                cv.circle((cx + card_w - 18) as f32, (card_y + 18) as f32, 10.0, Rgba::rgba(255, 255, 255, 220));
+                cv.text(fonts.bold.as_ref(), "···", cx + card_w - 25, card_y + 21, 10.5, Rgba::rgb(0x18, 0x18, 0x1a));
+                // Centered hex
+                let hw = text_width(fonts.bold.as_ref(), &item.text, 15.5);
+                cv.text(
+                    fonts.bold.as_ref(),
+                    &item.text,
+                    cx + (card_w - hw).max(8) / 2,
+                    card_y + card_h / 2 + 6,
+                    15.5,
+                    ink,
+                );
+                // RGB footer
+                let foot = item.footer();
+                let fw = text_width(fonts.medium.as_ref(), &foot, 10.2);
+                cv.text(
+                    fonts.medium.as_ref(),
+                    &foot,
+                    cx + (card_w - fw).max(8) / 2,
+                    card_y + card_h - 12,
+                    10.2,
+                    Rgba::rgba(ink.0, ink.1, ink.2, 195),
+                );
+            }
+            ClipKind::Video => {
+                cv.round_rect_vgrad(
+                    cx,
+                    card_y,
+                    card_w,
+                    card_h,
+                    16.0,
+                    Rgba::rgb(0x3a, 0x1c, 0x71),
+                    Rgba::rgb(0x14, 0x14, 0x1c),
+                );
+                cv.stroke_round_rect(cx, card_y, card_w, card_h, 16.0, 1.0, Rgba::rgba(255, 255, 255, 28));
+                cv.round_rect(cx + 8, card_y + 8, 78, 20, 10.0, Rgba::rgba(255, 255, 255, 220));
+                cv.text(
+                    fonts.semibold.as_ref(),
+                    "Video · clip",
+                    cx + 15,
+                    card_y + 22,
+                    9.8,
+                    Rgba::rgb(0x18, 0x18, 0x1a),
+                );
+                cv.circle((cx + card_w / 2) as f32, (card_y + card_h / 2 + 4) as f32, 16.0, Rgba::rgba(255, 255, 255, 42));
+                cv.icon_play((cx + card_w / 2 + 1) as f32, (card_y + card_h / 2 + 4) as f32, 14.0, Rgba::rgb(255, 255, 255));
+                cv.text_truncated(
+                    fonts.regular.as_ref(),
+                    &item.text,
+                    cx + 10,
+                    card_y + card_h - 12,
+                    10.2,
+                    card_w - 20,
+                    Rgba::rgba(255, 255, 255, 165),
+                );
+            }
+            _ => {
+                let bg = if hot {
+                    Rgba::rgb(0x1e, 0x1e, 0x22)
+                } else {
+                    Rgba::rgb(0x14, 0x14, 0x17)
+                };
+                cv.round_rect(cx, card_y, card_w, card_h, 16.0, bg);
+                cv.stroke_round_rect(cx, card_y, card_w, card_h, 16.0, 1.0, Rgba::rgba(255, 255, 255, 24));
+                // Top-left white pill badge (`Text · 14 min. ago` / `Link · 6 min. ago`)
+                let badge_txt = format!("{} · {}", item.kind.label(), item.age);
+                let bw_p = (text_width(fonts.semibold.as_ref(), &badge_txt, 9.6) + 22).min(card_w - 50);
+                cv.round_rect(cx + 8, card_y + 8, bw_p, 20, 10.0, Rgba::rgba(255, 255, 255, 232));
+                let dot_c = if matches!(item.kind, ClipKind::Link) {
+                    Rgba::rgb(0x0a, 0x84, 0xff)
+                } else {
+                    Rgba::rgb(0x32, 0xd7, 0x4b)
+                };
+                cv.circle((cx + 16) as f32, (card_y + 18) as f32, 4.0, dot_c);
+                cv.text_truncated(
+                    fonts.semibold.as_ref(),
+                    &badge_txt,
+                    cx + 23,
+                    card_y + 21,
+                    9.6,
+                    bw_p - 18,
+                    Rgba::rgb(0x18, 0x18, 0x1a),
+                );
+                // Top-right pin/star + `...` pill
+                cv.round_rect(cx + card_w - 40, card_y + 8, 32, 20, 10.0, Rgba::rgba(255, 255, 255, 232));
+                let mark_col = if item.pinned {
+                    Rgba::rgb(0xff, 0x45, 0x3a)
+                } else if item.favorite {
+                    Rgba::rgb(0xff, 0xb8, 0x00)
+                } else {
+                    Rgba::rgb(0x6e, 0x6e, 0x73)
+                };
+                cv.circle((cx + card_w - 31) as f32, (card_y + 18) as f32, 3.2, mark_col);
+                cv.text(fonts.bold.as_ref(), "··", cx + card_w - 23, card_y + 21, 10.0, Rgba::rgb(0x18, 0x18, 0x1a));
+
+                if matches!(item.kind, ClipKind::Link) {
+                    // Centered glossy blue link favicon circle
+                    cv.circle((cx + card_w / 2) as f32, (card_y + card_h / 2 + 2) as f32, 16.0, Rgba::rgb(0x28, 0x45, 0xd6));
+                    cv.circle((cx + card_w / 2) as f32, (card_y + card_h / 2 + 2) as f32, 9.0, Rgba::rgba(255, 255, 255, 190));
+                } else {
+                    let mut ty = card_y + 48;
+                    for line in wrap_text(fonts.regular.as_ref(), &item.text, 11.2, card_w - 20, 4) {
+                        cv.text(fonts.regular.as_ref(), &line, cx + 10, ty, 11.2, th.text);
+                        ty += 15;
+                    }
+                }
+                let foot = item.footer();
+                let fw = text_width(fonts.regular.as_ref(), &foot, 10.0).min(card_w - 16);
+                cv.text_truncated(
+                    fonts.regular.as_ref(),
+                    &foot,
+                    cx + (card_w - fw) / 2,
+                    card_y + card_h - 12,
+                    10.0,
+                    card_w - 16,
+                    Rgba::rgba(255, 255, 255, 130),
+                );
+            }
+        }
+        if context_menu == Some(slot) {
+            menu_anchor = Some((cx + card_w / 2, card_y + card_h / 2 + 6, orig_idx));
+        }
+        regions.push(Region {
+            x: cx,
+            y: card_y,
+            w: card_w,
+            h: card_h,
+            action: HitAction::Shell(ShellCmd::ClipboardCopy(orig_idx)),
+        });
+    }
+
+    // Native dark translucent context menu (matches Reference 4).
+    if let Some((mx, my, idx)) = menu_anchor {
+        let mw = 178;
+        let mh = 138;
+        let mx = mx.min(bx + bw - mw);
+        let my = my.min(by + bh + 48 - mh);
+        cv.round_rect_shadow(mx, my, mw, mh, 12.0, 8.0, 24.0, 90);
+        cv.round_rect(mx, my, mw, mh, 12.0, Rgba::rgba(36, 38, 46, 242));
+        cv.stroke_round_rect(mx, my, mw, mh, 12.0, 1.0, Rgba::rgba(255, 255, 255, 48));
+        let rows: [(&str, bool, HitAction); 5] = [
+            ("Copy", true, HitAction::Shell(ShellCmd::ClipboardCopy(idx))),
+            ("Pin", false, HitAction::Shell(ShellCmd::ClipboardPin(idx))),
+            ("Add to favorites", false, HitAction::Shell(ShellCmd::ClipboardFav(idx))),
+            ("Open Clipboard", false, HitAction::Shell(ShellCmd::IslandTab(2))),
+            ("Delete from history", false, HitAction::Shell(ShellCmd::ClipboardDelete(idx))),
+        ];
+        let mut ry = my + 6;
+        for (lbl, highlight, act) in rows {
+            if highlight {
+                cv.round_rect(mx + 6, ry, mw - 12, 24, 6.0, Rgba::rgb(0x0a, 0x84, 0xff));
+            }
+            cv.text(
+                fonts.medium.as_ref(),
+                lbl,
+                mx + 14,
+                ry + 16,
+                11.8,
+                Rgba::rgb(255, 255, 255),
+            );
+            regions.push(Region {
+                x: mx + 6,
+                y: ry,
+                w: mw - 12,
+                h: 24,
+                action: act,
+            });
+            ry += 25;
+        }
+    }
+}
+
+/// Droppy Droplets tab: Quick Notes, Pomodoro focus timer, and live Agent glance.
+#[allow(clippy::too_many_arguments)]
+fn droplets_body(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    fonts: &Fonts,
+    body: (i32, i32, i32, i32),
+    note: &str,
+    pomodoro_secs: u32,
+    pomodoro_running: bool,
+    extra: &Extra<'_>,
+    _hover: Option<(f64, f64)>,
+    regions: &mut Vec<Region>,
+) {
+    let (bx, by, bw, bh) = body;
+    cv.text(fonts.semibold.as_ref(), "Droplets", bx, by + 14, 14.0, th.text);
+    let top = by + 26;
+    let card_h = (bh - 28).max(80);
+    let gap = 10;
+    let cw = (bw - gap * 2) / 3;
+
+    // 1. Quick Notes
+    cv.round_rect(bx, top, cw, card_h, 14.0, Rgba::rgba(255, 255, 255, 18));
+    cv.text(fonts.semibold.as_ref(), "Quick Note", bx + 12, top + 20, 11.8, Rgba::rgb(0xff, 0xd6, 0x0a));
+    let mut ny = top + 40;
+    for l in wrap_text(fonts.regular.as_ref(), note, 11.2, cw - 24, 3) {
+        cv.text(fonts.regular.as_ref(), &l, bx + 12, ny, 11.2, th.text_med);
+        ny += 15;
+    }
+
+    // 2. Pomodoro Focus Timer
+    let x2 = bx + cw + gap;
+    cv.round_rect(x2, top, cw, card_h, 14.0, Rgba::rgba(255, 255, 255, 18));
+    cv.text(fonts.semibold.as_ref(), "Focus Timer", x2 + 12, top + 20, 11.8, Rgba::rgb(0x32, 0xd7, 0x4b));
+    let timer_str = format!("{:02}:{:02}", pomodoro_secs / 60, pomodoro_secs % 60);
+    cv.text(fonts.bold.as_ref(), &timer_str, x2 + 12, top + 56, 24.0, th.text);
+    cv.text(
+        fonts.regular.as_ref(),
+        if pomodoro_running { "In focus session" } else { "Ready · 25 min" },
+        x2 + 12,
+        top + card_h - 14,
+        10.8,
+        th.text_dim,
+    );
+
+    // 3. Agents / Command Center
+    let x3 = x2 + cw + gap;
+    cv.round_rect(x3, top, cw, card_h, 14.0, Rgba::rgba(255, 255, 255, 18));
+    cv.text(fonts.semibold.as_ref(), "Agents", x3 + 12, top + 20, 11.8, th.accent);
+    let ag = format!("{} active", extra.glance.agents_running);
+    cv.text(fonts.bold.as_ref(), &ag, x3 + 12, top + 54, 18.0, th.text);
+    cv.text(fonts.regular.as_ref(), "Open dashboard →", x3 + 12, top + card_h - 14, 10.8, th.text_dim);
+    regions.push(Region {
+        x: x3,
+        y: top,
+        w: cw,
+        h: card_h,
+        action: HitAction::Shell(ShellCmd::ToggleAgents),
+    });
 }
 
 /// An open tray: a shallow box with a raised lip.
@@ -733,7 +1184,10 @@ fn compact_row(
     let baseline = y + h / 2 + 4;
     let pad = if style == NotchStyle::Island { 10 } else { 14 };
     match content {
-        Content::Idle | Content::Shelf(_) => {}
+        Content::Idle
+        | Content::Shelf(_)
+        | Content::Clipboard { .. }
+        | Content::Droplets { .. } => {}
         Content::Hud(hd) => hud_row(cv, th, fonts, x, w, mid, baseline, pad, hd),
         Content::Message(t) => {
             // Snug leading icon + crisp title.
@@ -816,7 +1270,7 @@ fn compact_row(
                 th.text,
             );
         }
-        Content::Media(m) => {
+        Content::Media(m) | Content::MediaLyrics { media: m, .. } => {
             // Iconic Dynamic Island compact media: concentric album art on left,
             // clean title in center, vibrant live waveform snugly on right.
             let art = 21;
@@ -910,8 +1364,8 @@ fn expanded_body(
     let (bx, by, bw, bh) = body;
     let buttons_y = by + bh - 32;
     match content {
-        // Drawn by `shelf_body`; HUDs never open.
-        Content::Shelf(_) | Content::Hud(_) => {}
+        // Drawn by dedicated body painters; HUDs never open.
+        Content::Shelf(_) | Content::Clipboard { .. } | Content::Droplets { .. } | Content::Hud(_) => {}
         Content::Idle => {
             // Crisp Apple glance: bold tracked clock, medium date, quiet facts.
             cv.text_tracked(
@@ -1005,142 +1459,207 @@ fn expanded_body(
         }
         Content::Attention(a) => attention_body(cv, th, fonts, body, a, extra, hover, regions),
         Content::Media(m) => {
-            // Concentric Apple Dynamic Island Media Live Activity:
-            // Top row: 54x54 vibrant album art (concentric curve) + Bold title /
-            // Medium artist + colorful top-right waveform.
-            let art = 54;
-            cv.draw_album_art(bx, by, art, 15.0);
+            draw_droppy_media_body(cv, fonts, body, m, None, hover, regions);
+        }
+        Content::MediaLyrics { media, lyrics } => {
+            draw_droppy_media_body(cv, fonts, body, media, Some(lyrics), hover, regions);
+        }
+    }
+}
 
-            let wave_w = 20;
-            let wave_x = bx + bw - wave_w - 2;
-            media_waveform(cv, wave_x, by as f32 + art as f32 * 0.48, m.playing);
+/// Droppy Media Player & Live Synced Lyrics card (matches References 2 & 3).
+#[allow(clippy::too_many_arguments)]
+fn draw_droppy_media_body(
+    cv: &mut Canvas<'_>,
+    fonts: &Fonts,
+    body: (i32, i32, i32, i32),
+    m: &Media,
+    lyrics: Option<&[(isize, String)]>,
+    hover: Option<(f64, f64)>,
+    regions: &mut Vec<Region>,
+) {
+    let (bx, by, bw, bh) = body;
+    let art = 44;
+    cv.draw_album_art(bx, by, art, 10.0);
 
-            let tx = bx + art + 14;
-            let tw = (wave_x - tx - 14).max(0);
-            cv.text_truncated(
-                fonts.bold.as_ref(),
-                &m.title,
-                tx,
-                by + 23,
-                16.0,
-                tw,
-                Rgba::rgb(255, 255, 255),
-            );
-            cv.text_truncated(
-                fonts.medium.as_ref(),
-                &m.artist,
-                tx,
-                by + 43,
-                13.5,
-                tw,
-                Rgba::rgba(255, 255, 255, 152),
-            );
+    // Warm coral/orange equalizer bars (or blue-violet in lyrics view).
+    let wave_col = if lyrics.is_some() {
+        Rgba::rgb(0x4c, 0x7a, 0xff)
+    } else {
+        Rgba::rgb(0xff, 0x6b, 0x35)
+    };
+    let wave_w = 22;
+    let wave_x = bx + bw - wave_w - 2;
+    for (i, bh_bar) in [5, 11, 8, 13, 6].into_iter().enumerate() {
+        let h = if m.playing { bh_bar } else { 3 };
+        cv.round_rect(
+            wave_x + i as i32 * 4,
+            by + art / 2 - h / 2,
+            2,
+            h,
+            1.0,
+            wave_col,
+        );
+    }
 
-            // Middle row: inline Apple scrubber (`0:15  [====----]  3:23`).
-            if let Some((elapsed, total, pct)) = m.elapsed_label() {
-                let row_y = by + art + 18;
-                let time_col = Rgba::rgba(255, 255, 255, 148);
-                let ew = text_width(fonts.medium.as_ref(), &elapsed, 11.2);
-                let total_w = text_width(fonts.medium.as_ref(), &total, 11.2);
-                cv.text(
-                    fonts.medium.as_ref(),
-                    &elapsed,
-                    bx,
-                    row_y + 4,
-                    11.2,
-                    time_col,
-                );
-                cv.text(
-                    fonts.medium.as_ref(),
-                    &total,
-                    bx + bw - total_w,
-                    row_y + 4,
-                    11.2,
-                    time_col,
-                );
-                let bar_x = bx + ew + 10;
-                let bar_w = (bw - ew - total_w - 20).max(20);
-                let bar_h = 5;
-                let bar_y = row_y - 2;
-                cv.round_rect(
-                    bar_x,
-                    bar_y,
-                    bar_w,
-                    bar_h,
-                    2.5,
-                    Rgba::rgba(255, 255, 255, 42),
-                );
-                // Click anywhere on the bar to jump there (pearos-notch's
-                // seekable scrubber): one thin region per slice.
-                if let Some(len) = m.length_us.filter(|l| *l > 0) {
-                    let n = crate::media::SEEK_STEPS;
-                    for i in 0..n {
-                        let x0 = bar_x + bar_w * i / n;
-                        let x1 = bar_x + bar_w * (i + 1) / n;
-                        regions.push(Region {
-                            x: x0,
-                            y: bar_y - 7,
-                            w: (x1 - x0).max(1),
-                            h: bar_h + 14,
-                            action: HitAction::Media(Control::SeekTo(crate::media::seek_target(
-                                i, n, len,
-                            ))),
-                        });
-                    }
-                }
-                let fill = ((bar_w as f32) * pct).round() as i32;
-                if fill > 0 {
-                    cv.round_rect(
-                        bar_x,
-                        bar_y,
-                        fill.max(5),
-                        bar_h,
-                        2.5,
-                        Rgba::rgb(255, 255, 255),
-                    );
-                }
-            }
+    let tx = bx + art + 12;
+    let max_title_w = (wave_x - tx - 30).max(20);
+    let used_tw = cv.text_truncated(
+        fonts.bold.as_ref(),
+        &m.title,
+        tx,
+        by + 18,
+        14.5,
+        max_title_w,
+        Rgba::rgb(255, 255, 255),
+    );
+    // Crisp `[L]` synced-lyrics toggle badge right next to the track title.
+    let badge_x = tx + used_tw + 6;
+    let badge_y = by + 6;
+    let l_on = lyrics.is_some();
+    cv.round_rect(
+        badge_x,
+        badge_y,
+        16,
+        16,
+        4.0,
+        if l_on {
+            Rgba::rgb(255, 255, 255)
+        } else {
+            Rgba::rgba(255, 255, 255, 225)
+        },
+    );
+    cv.text(
+        fonts.bold.as_ref(),
+        "L",
+        badge_x + 5,
+        badge_y + 12,
+        10.5,
+        Rgba::rgb(0, 0, 0),
+    );
+    regions.push(Region {
+        x: badge_x - 2,
+        y: badge_y - 2,
+        w: 20,
+        h: 20,
+        action: HitAction::Shell(ShellCmd::ToggleIslandLyrics),
+    });
 
-            // Bottom row: centered SF-Symbols-grade transport controls.
-            let ctrl_h = 34;
-            let ctrl_y = by + bh - ctrl_h + 4;
-            let btn = 42;
-            let gap = 26;
-            let row_w = btn * 3 + gap * 2;
-            let start = bx + (bw - row_w) / 2;
-            let cy = ctrl_y + ctrl_h / 2;
-            let ctrls = [Control::Previous, Control::PlayPause, Control::Next];
-            for (i, c) in ctrls.into_iter().enumerate() {
-                let cx0 = start + i as i32 * (btn + gap);
-                let r = (cx0, ctrl_y, btn, ctrl_h);
-                if hovered(hover, r.0, r.1, r.2, r.3) {
-                    cv.round_rect(r.0, r.1, r.2, r.3, 17.0, Rgba::rgba(255, 255, 255, 28));
-                }
-                let cx = cx0 + btn / 2;
-                match c {
-                    Control::Previous => {
-                        cv.icon_skip(cx as f32, cy as f32, 19.0, false, Rgba::rgb(255, 255, 255))
-                    }
-                    Control::Next => {
-                        cv.icon_skip(cx as f32, cy as f32, 19.0, true, Rgba::rgb(255, 255, 255))
-                    }
-                    Control::PlayPause if m.playing => {
-                        cv.icon_pause(cx as f32, cy as f32, 22.0, Rgba::rgb(255, 255, 255))
-                    }
-                    Control::PlayPause => {
-                        cv.icon_play(cx as f32, cy as f32, 22.0, Rgba::rgb(255, 255, 255))
-                    }
-                    Control::SeekTo(_) => {}
-                }
+    cv.text_truncated(
+        fonts.regular.as_ref(),
+        &m.artist,
+        tx,
+        by + 36,
+        12.5,
+        wave_x - tx - 10,
+        Rgba::rgba(255, 255, 255, 156),
+    );
+
+    // Scrubber row with elapsed & remaining (`-2:18`) timestamps.
+    let scrub_y = by + art + 16;
+    if let Some((elapsed, _total, pct)) = m.elapsed_label() {
+        let rem_str = if let (Some(pos), Some(len)) = (m.position_us, m.length_us) {
+            let rem_s = ((len - pos).max(0) / 1_000_000) as u64;
+            format!("-{}:{:02}", rem_s / 60, rem_s % 60)
+        } else {
+            "-0:00".into()
+        };
+        let time_col = Rgba::rgba(255, 255, 255, 148);
+        let ew = text_width(fonts.medium.as_ref(), &elapsed, 10.5);
+        let rw = text_width(fonts.medium.as_ref(), &rem_str, 10.5);
+        cv.text(fonts.medium.as_ref(), &elapsed, bx, scrub_y + 4, 10.5, time_col);
+        cv.text(fonts.medium.as_ref(), &rem_str, bx + bw - rw, scrub_y + 4, 10.5, time_col);
+
+        let bar_x = bx + ew + 8;
+        let bar_w = (bw - ew - rw - 16).max(24);
+        let bar_h = 5;
+        let bar_y = scrub_y - 2;
+        cv.round_rect(bar_x, bar_y, bar_w, bar_h, 2.5, Rgba::rgba(255, 255, 255, 42));
+        if let Some(len) = m.length_us.filter(|l| *l > 0) {
+            let n = crate::media::SEEK_STEPS;
+            for i in 0..n {
+                let x0 = bar_x + bar_w * i / n;
+                let x1 = bar_x + bar_w * (i + 1) / n;
                 regions.push(Region {
-                    x: r.0,
-                    y: r.1,
-                    w: r.2,
-                    h: r.3,
-                    action: HitAction::Media(c),
+                    x: x0,
+                    y: bar_y - 7,
+                    w: (x1 - x0).max(1),
+                    h: bar_h + 14,
+                    action: HitAction::Media(Control::SeekTo(crate::media::seek_target(i, n, len))),
                 });
             }
         }
+        let fill = ((bar_w as f32) * pct).round() as i32;
+        if fill > 0 {
+            cv.round_rect(bar_x, bar_y, fill.max(5), bar_h, 2.5, Rgba::rgba(255, 255, 255, 220));
+        }
+    }
+
+    // 5-icon Droppy transport row: Queue, Prev, Play/Pause, Next, Device.
+    let ctrl_y = scrub_y + 18;
+    let ctrl_h = 34;
+    let cy = ctrl_y + ctrl_h / 2;
+    cv.text(fonts.medium.as_ref(), "≡", bx + 6, cy + 5, 16.0, Rgba::rgba(255, 255, 255, 170));
+    cv.stroke_round_rect(bx + bw - 22, cy - 6, 16, 10, 2.0, 1.4, Rgba::rgba(255, 255, 255, 175));
+    cv.fill_rect(bx + bw - 24, cy + 6, 20, 2, Rgba::rgba(255, 255, 255, 175));
+
+    let btn = 38;
+    let gap = 18;
+    let row_w = btn * 3 + gap * 2;
+    let start = bx + (bw - row_w) / 2;
+    for (i, c) in [Control::Previous, Control::PlayPause, Control::Next].into_iter().enumerate() {
+        let cx0 = start + i as i32 * (btn + gap);
+        let r = (cx0, ctrl_y, btn, ctrl_h);
+        if hovered(hover, r.0, r.1, r.2, r.3) {
+            cv.round_rect(r.0, r.1, r.2, r.3, 17.0, Rgba::rgba(255, 255, 255, 28));
+        }
+        let cx = cx0 + btn / 2;
+        match c {
+            Control::Previous => cv.icon_skip(cx as f32, cy as f32, 18.0, false, Rgba::rgb(255, 255, 255)),
+            Control::Next => cv.icon_skip(cx as f32, cy as f32, 18.0, true, Rgba::rgb(255, 255, 255)),
+            Control::PlayPause if m.playing => cv.icon_pause(cx as f32, cy as f32, 22.0, Rgba::rgb(255, 255, 255)),
+            Control::PlayPause => cv.icon_play(cx as f32, cy as f32, 22.0, Rgba::rgb(255, 255, 255)),
+            Control::SeekTo(_) => {}
+        }
+        regions.push(Region {
+            x: r.0,
+            y: r.1,
+            w: r.2,
+            h: r.3,
+            action: HitAction::Media(c),
+        });
+    }
+
+    // Live synced lyrics drawer below transport controls (matches Reference 2).
+    if let Some(lines) = lyrics {
+        let mut ly = ctrl_y + ctrl_h + 26;
+        for (offset, text) in lines.iter().take(4) {
+            let (font, col) = if *offset == 0 {
+                (fonts.bold.as_ref(), Rgba::rgb(255, 255, 255))
+            } else {
+                (fonts.medium.as_ref(), Rgba::rgba(255, 255, 255, 86))
+            };
+            for wrapped in wrap_text(font, text, 14.5, bw - 8, 2) {
+                if ly > by + bh - 24 {
+                    break;
+                }
+                cv.text(font, &wrapped, bx + 2, ly, 14.5, col);
+                ly += 21;
+            }
+            ly += 8;
+        }
+        // Bottom-right circular expand-to-fullscreen button (launches Lock/Ambient Media).
+        let ex = bx + bw - 26;
+        let ey = by + bh - 26;
+        cv.circle((ex + 13) as f32, (ey + 13) as f32, 13.0, Rgba::rgba(255, 255, 255, 26));
+        cv.text(fonts.semibold.as_ref(), "⤢", ex + 7, ey + 18, 12.5, Rgba::rgba(255, 255, 255, 220));
+        regions.push(Region {
+            x: ex,
+            y: ey,
+            w: 26,
+            h: 26,
+            action: HitAction::Shell(ShellCmd::Lock),
+        });
     }
 }
 

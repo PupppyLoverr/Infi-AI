@@ -191,6 +191,20 @@ pub enum ShellCmd {
     ToggleDockAutohide,
     /// Show the island's shelf (true) or what is live (false).
     IslandShelf(bool),
+    /// Switch Droppy notch mode pill: 0=Home/Media, 1=Shelf, 2=Clipboard, 3=Droplets.
+    IslandTab(u8),
+    /// Toggle live synced lyrics drawer inside the media notch.
+    ToggleIslandLyrics,
+    /// Filter Droppy clipboard cards by category.
+    ClipboardFilter(crate::clipboard::ClipCategory),
+    /// Copy clipboard item by index.
+    ClipboardCopy(usize),
+    /// Toggle pin on clipboard item by index.
+    ClipboardPin(usize),
+    /// Toggle favorite on clipboard item by index.
+    ClipboardFav(usize),
+    /// Delete clipboard item by index.
+    ClipboardDelete(usize),
     /// Forget shelf item `n` (the file itself is untouched).
     ShelfRemove(usize),
     /// Files dropped on the island.
