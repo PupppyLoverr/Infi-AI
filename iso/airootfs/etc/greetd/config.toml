@@ -2,10 +2,10 @@
 vt = 1
 
 [default_session]
-command = "agreety --cmd /bin/bash"
+command = "agreety --cmd Hyprland"
 user = "greeter"
 
 # The live session logs straight into the Solyra desktop.
 [initial_session]
 command = "/usr/local/bin/solyra-live-session"
-user = "root"
+user = "solyra"

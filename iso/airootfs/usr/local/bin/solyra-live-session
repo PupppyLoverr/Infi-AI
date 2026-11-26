@@ -1,5 +1,5 @@
 #!/bin/bash
-# Live ISO: create the "solyra" user on first boot and start Hyprland with
-# the Solyra shell on tty1 (greetd autologin).
-id solyra >/dev/null 2>&1 || { useradd -m -G wheel,video,input,audio -s /bin/bash solyra; passwd -d solyra >/dev/null; }
-exec su - solyra -c 'exec Hyprland > /tmp/hypr.log 2>&1'
+# Live ISO session (run by greetd as the solyra user): Hyprland with the
+# Solyra shell; its log stays in /tmp for diagnosis.
+passwd -S solyra >/dev/null 2>&1
+exec Hyprland > /tmp/hypr.log 2>&1

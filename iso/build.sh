@@ -9,6 +9,8 @@ pacman -Sy --noconfirm --needed archiso >/dev/null
 cp -r /usr/share/archiso/configs/releng "$prof"
 cat "$repo/iso/packages.solyra" | grep -v '^#' >> "$prof/packages.x86_64"
 cp -r "$repo/iso/airootfs/." "$prof/airootfs/"
+# greetd owns tty1: drop releng's root autologin there.
+rm -f "$prof/airootfs/etc/systemd/system/getty@tty1.service.d/autologin.conf"
 # Shell, Hyprland config, wallpapers, terminal.
 install -Dm755 "$term" "$prof/airootfs/usr/local/bin/solyra-term"
 mkdir -p "$prof/airootfs/etc/skel/.config/quickshell" "$prof/airootfs/etc/skel/.config/hypr" "$prof/airootfs/etc/skel/.config/solyra" "$prof/airootfs/usr/share/backgrounds/solyra"
