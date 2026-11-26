@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=Solyra Terminal
-Comment=Terminal with tabs
-Exec=solyra-term
+Name=Terminal
+Comment=Wayland terminal emulator
+Exec=foot
 Icon=utilities-terminal
 Categories=System;TerminalEmulator;
