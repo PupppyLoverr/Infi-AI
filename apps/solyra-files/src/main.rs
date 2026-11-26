@@ -69,6 +69,7 @@ struct FilesApp {
     query: Signal<String>,
     mode: Signal<usize>,
     show_hidden: Signal<bool>,
+    show_inspector: Signal<bool>,
     confirm_trash: Signal<Option<PathBuf>>,
     renaming: Signal<Option<PathBuf>>,
     rename_text: Signal<String>,
@@ -380,6 +381,13 @@ fn toolbar(app: &FilesApp, style: &solyra_ui::Style, window: zgx_desktop::Window
         let app = app.clone();
         icon_button("⟳", move || app.refresh())
     };
+    let inspector_btn = {
+        let app = app.clone();
+        icon_button("ⓘ", move || {
+            let next = !app.show_inspector.get();
+            app.show_inspector.set(next);
+        })
+    };
     let search = text_input("Search", app.query.clone())
         .w(200.)
         .h(32.)
@@ -400,8 +408,8 @@ fn toolbar(app: &FilesApp, style: &solyra_ui::Style, window: zgx_desktop::Window
         .child(drag_area(title.w(150.), window.clone()))
         .child(drag_area(row().grow(), window.clone()))
         .child(hidden)
-        .child(capsule(row().child(refresh)))
-        .child(capsule(row().child(segmented("View mode", app.mode.clone(), ["⊞", "☰"]))))
+        .child(capsule(row().gap(2.).child(refresh).child(inspector_btn)))
+        .child(capsule(row().child(segmented("View mode", app.mode.clone(), ["⊞", "☰", "⫿"]))))
         .child(search)
 }
 
@@ -548,23 +556,25 @@ fn mount_locations() -> Vec<PathBuf> {
 }
 
 fn sidebar(app: &FilesApp, style: &solyra_ui::Style) -> View {
-    let favourites = column()
+    let home = model::home_dir();
+    let mut favourites = column()
         .gap(2.)
-        .child(sidebar_button(
-            app,
-            style,
-            "◷",
-            "Recents",
-            Location::Recents,
-        ))
-        .child(sidebar_button(app, style, "⌂", "Home", Location::Home))
-        .child(sidebar_button(
-            app,
-            style,
-            "★",
-            "Starred",
-            Location::Starred,
-        ))
+        .child(sidebar_button(app, style, "◷", "Recents", Location::Recents))
+        .child(sidebar_button(app, style, "⌂", "Home", Location::Home));
+    for (icon, name) in [("▭", "Desktop"), ("▤", "Documents"), ("↓", "Downloads")] {
+        let dir = home.join(name);
+        if dir.is_dir() {
+            favourites = favourites.child(sidebar_button(
+                app,
+                style,
+                icon,
+                name,
+                Location::Folder(dir),
+            ));
+        }
+    }
+    favourites = favourites
+        .child(sidebar_button(app, style, "★", "Starred", Location::Starred))
         .child(sidebar_button(app, style, "⌫", "Trash", Location::Trash));
     let locations = mount_locations()
         .into_iter()
@@ -590,22 +600,24 @@ fn sidebar(app: &FilesApp, style: &solyra_ui::Style) -> View {
         .fold(column().gap(1.), |col, color| {
             col.child(tag_sidebar_button(app, style, color))
         });
-    // pearOS / macOS Tahoe: the sidebar is an inset rounded card floating in
-    // the window, not a strip glued to its edge.
-    let card = column()
-        .w_full()
+    // macOS 27 Golden Gate: edge-to-edge translucent sidebar with crisp 1 px right hairline.
+    column()
+        .w(218.)
         .h_full()
-        .p(8.)
-        .pt(10.)
+        .shrink_0()
+        .p(10.)
         .gap(4.)
-        .rounded(18.)
         .bg(style.sidebar_bg())
-        .border(1.)
+        .border_edges(zgx::scene::Insets {
+            top: 0.,
+            right: 1.,
+            bottom: 0.,
+            left: 0.,
+        })
         .border_color(style.hairline())
         .child(sidebar_section("Favourites", style, favourites))
         .child(sidebar_section("Locations", style, locations))
-        .child(sidebar_section("Tags", style, tags));
-    column().w(222.).h_full().shrink_0().p(8.).pr(0.).child(card)
+        .child(sidebar_section("Tags", style, tags))
 }
 
 fn folder_icon(style: &solyra_ui::Style) -> View {
@@ -898,7 +910,7 @@ fn entries_view(
             .grow()
             .w_full()
             .child(row().flex_wrap().gap(10.).p(18.).w_full().children(cards))
-    } else {
+    } else if app.mode.get() == 1 {
         let tags: HashMap<PathBuf, String> = model::tags().into_iter().collect();
         let mut rows = vec![list_header(style)];
         rows.extend(entries.into_iter().map(|entry| {
@@ -909,6 +921,64 @@ fn entries_view(
             .grow()
             .w_full()
             .child(column().gap(2.).p(12.).pt(0.).w_full().children(rows))
+    } else {
+        // Column view (macOS Finder Miller column list with folder chevrons).
+        let theme = style.theme;
+        let rows = entries
+            .into_iter()
+            .map(|entry| {
+                let selected = {
+                    let (selected, path) = (app.selected.clone(), entry.path.clone());
+                    move || selected.get().as_ref() == Some(&path)
+                };
+                let activate = {
+                    let (app, entry) = (app.clone(), entry.clone());
+                    move |cx: &mut zgx::input::EventContext| {
+                        if cx.phase == EventPhase::Capture {
+                            return;
+                        }
+                        if let InputEvent::PointerDown {
+                            button: PointerButton::Primary,
+                            ..
+                        } = &cx.event
+                        {
+                            app.tap_entry(&entry);
+                            cx.prevent_default();
+                        }
+                    }
+                };
+                let chevron = if entry.is_dir { "›" } else { "" };
+                div()
+                    .w_full()
+                    .h(30.)
+                    .px(10.)
+                    .rounded(6.)
+                    .reactive_style(move || select_background(selected(), theme))
+                    .on_event(activate)
+                    .child(
+                        row()
+                            .w_full()
+                            .h_full()
+                            .gap(8.)
+                            .items_center()
+                            .child(
+                                text(if entry.is_dir { "▰" } else { "▱" }.to_string())
+                                    .text_color(rgb(0x53a7f3))
+                                    .w(16.),
+                            )
+                            .child(text(entry.name.clone()).text_size(12.5).truncate().grow())
+                            .child(
+                                text(chevron.to_string())
+                                    .text_size(13.)
+                                    .text_color(solyra_ui::color(theme.text_dim)),
+                            ),
+                    )
+            })
+            .collect::<Vec<_>>();
+        scroll(offset)
+            .grow()
+            .w_full()
+            .child(column().gap(1.).p(10.).w_full().children(rows))
     }
 }
 
@@ -1398,6 +1468,111 @@ fn start_location() -> Location {
     }
 }
 
+fn send_to_notch_shelf(path: &Path) -> Result<(), String> {
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+        .ok_or_else(|| "HOME is not set".to_string())?;
+    let shelf = base.join("solyra/shelf.list");
+    if let Some(dir) = shelf.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let mut lines: Vec<String> = fs::read_to_string(&shelf)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let p_str = path.display().to_string();
+    lines.retain(|l| l != &p_str);
+    lines.insert(0, p_str);
+    lines.truncate(8);
+    fs::write(&shelf, format!("{}\n", lines.join("\n"))).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn inspector_pane(app: &FilesApp, style: &solyra_ui::Style) -> View {
+    let app = app.clone();
+    let style = *style;
+    switch(
+        {
+            let app = app.clone();
+            move || (app.show_inspector.get(), app.selected.get())
+        },
+        move |(open, selected), _cx| {
+            if !open {
+                return div();
+            }
+            let theme = style.theme;
+            let body = if let Some(entry) = selected.as_deref().and_then(entry_for_path) {
+                let kind = if entry.is_dir { "Folder" } else { "File" };
+                let size = if entry.is_dir {
+                    "—".to_string()
+                } else {
+                    model::format_size(entry.size)
+                };
+                let shelf_btn = {
+                    let app = app.clone();
+                    let path = entry.path.clone();
+                    small_button("Send to Notch Shelf", move || {
+                        match send_to_notch_shelf(&path) {
+                            Ok(()) => app.status.set("Parked in Notch Shelf.".into()),
+                            Err(e) => app.status.set(format!("Could not park file: {e}")),
+                        }
+                    })
+                };
+                column()
+                    .gap(10.)
+                    .items_center()
+                    .child(item_icon(&entry, &style))
+                    .child(text(entry.name.clone()).font_bold().text_size(13.).truncate())
+                    .child(
+                        text(format!("{kind} · {size}"))
+                            .text_size(11.5)
+                            .text_color(solyra_ui::color(theme.text_dim)),
+                    )
+                    .child(
+                        text(entry.path.display().to_string())
+                            .text_size(11.)
+                            .text_color(solyra_ui::color(theme.text_dim))
+                            .line_clamp(3)
+                            .truncate()
+                            .w_full(),
+                    )
+                    .child(shelf_btn)
+            } else {
+                column()
+                    .gap(6.)
+                    .items_center()
+                    .child(
+                        text("Quick Look")
+                            .font_bold()
+                            .text_size(13.)
+                            .text_color(solyra_ui::color(theme.text)),
+                    )
+                    .child(
+                        text("Select a file or folder to inspect.")
+                            .text_size(12.)
+                            .text_color(solyra_ui::color(theme.text_dim)),
+                    )
+            };
+            column()
+                .w(230.)
+                .h_full()
+                .shrink_0()
+                .p(16.)
+                .bg(style.sidebar_bg())
+                .border_edges(zgx::scene::Insets {
+                    top: 0.,
+                    right: 0.,
+                    bottom: 0.,
+                    left: 1.,
+                })
+                .border_color(style.hairline())
+                .child(body)
+        },
+    )
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let self_test = std::env::args().any(|arg| arg == "--self-test");
     let style = solyra_ui::current();
@@ -1405,8 +1580,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Application::new()
         .window(WindowOptions {
             title: "Files".into(),
-            width: 980.,
-            height: 640.,
+            width: 1020.,
+            height: 660.,
             min_size: Some((680., 420.)),
             transparent: style.glass && cfg!(target_os = "linux"),
             decorations: false,
@@ -1421,6 +1596,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 query: rt.signal(String::new()),
                 mode: rt.signal(0),
                 show_hidden: rt.signal(false),
+                show_inspector: rt.signal(false),
                 confirm_trash: rt.signal(None),
                 renaming: rt.signal(None),
                 rename_text: rt.signal(String::new()),
@@ -1435,7 +1611,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let body = column()
                 .w_full()
                 .h_full()
-                .rounded(12.)
+                .rounded(16.)
                 .overflow_hidden()
                 .text_color(solyra_ui::color(theme.text))
                 .bg(style.content_bg())
@@ -1443,15 +1619,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .child(rename_bar(&app, &style))
                 .child(confirm_bar(&app, &style))
                 .child(
-                    row().w_full().grow().child(sidebar(&app, &style)).child(
-                        column()
-                            .grow()
-                            .h_full()
-                            .bg(style.content_bg())
-                            .child(breadcrumbs(&app, &style))
-                            .child(content(&app, &style))
-                            .child(action_bar(&app, &style)),
-                    ),
+                    row()
+                        .w_full()
+                        .grow()
+                        .child(sidebar(&app, &style))
+                        .child(
+                            column()
+                                .grow()
+                                .h_full()
+                                .bg(style.content_bg())
+                                .child(breadcrumbs(&app, &style))
+                                .child(content(&app, &style))
+                                .child(action_bar(&app, &style)),
+                        )
+                        .child(inspector_pane(&app, &style)),
                 );
 
             cx.render(solyra_ui::scope(&style, body));
