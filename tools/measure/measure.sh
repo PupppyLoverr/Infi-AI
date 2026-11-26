@@ -2,14 +2,15 @@
 # Every later boot: wait for the Plasma session, 5 minutes idle, then report
 # on the serial console. Stock first, then trim and reboot, then trimmed.
 stage=$(cat /var/lib/measure/stage)
-for i in $(seq 240); do pgrep -x plasmashell >/dev/null && break; sleep 5; done
+proc=$(cat /var/lib/measure/proc 2>/dev/null || echo plasmashell)
+for i in $(seq 240); do pgrep -x "$proc" >/dev/null && break; sleep 5; done
 up=$(cut -d' ' -f1 /proc/uptime)
 sleep 300
 {
 echo "=== MEASURE $stage ==="
-echo "plasmashell_seen_at_uptime_s=$up"
-pgrep -a -x plasmashell || echo "NO PLASMASHELL"
-pgrep -a kwin_wayland || echo "NO KWIN"
+echo "${proc}_seen_at_uptime_s=$up"
+pgrep -a -x "$proc" || echo "NO $proc"
+pgrep -a -x kwin_wayland; pgrep -a -x Hyprland; tail -3 /tmp/hypr.log 2>/dev/null
 free -m
 systemd-analyze 2>&1 | head -2
 echo "packages=$(pacman -Qq | wc -l)"

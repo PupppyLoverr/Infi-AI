@@ -4,9 +4,28 @@ name: measure
 on:
   workflow_dispatch:
   push:
+    branches: [claude/charming-goodall-iuca3o]
     paths: ['tools/measure/**', '.github/workflows/measure.yml']
 jobs:
+  hyprland:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: QEMU and KVM
+        run: |
+          sudo apt-get -qq update && sudo apt-get -qq install -y qemu-system-x86 qemu-utils cloud-image-utils >/dev/null
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules >/dev/null
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: Measure
+        run: SETUP=setup-hypr OUT=$PWD/out tools/measure/plasma.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: measure-hyprland
+          path: out/*.log
   plasma:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:

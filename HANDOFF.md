@@ -1,8 +1,9 @@
 # Handoff
 
-**Now:** PLAN.md rewritten around option (c) (Hyprland + Quickshell + Rust
-services + zgx terminal). Waiting for the user's answers (PLAN.md §8). Brief
-verbatim in docs/BRIEF.md.
+**Now:** M1b. CI measures Arch + Hyprland + Quickshell (prototype bar and
+dock) with the same method (`measure` workflow, job `hyprland`). Decisions are
+in PLAN.md §8. Next: record the numbers in PLAN.md; if ≤250 MB, start M2
+(zgx blur spike on Hyprland).
 
 ## Done
 - PLAN.md: architecture, budgets, audit, decision gate.

@@ -8,11 +8,12 @@ qemu-img resize -q arch.qcow2 16G
 {
 echo '#cloud-config'
 echo 'write_files:'
-for f in setup measure trim; do
+SETUP=${SETUP:-setup}
+for f in $SETUP measure trim; do
   echo "  - path: /root/$f.sh"; echo "    permissions: '0755'"; echo "    encoding: b64"
   echo "    content: $(base64 -w0 "$here/$f.sh")"
 done
-echo 'runcmd:'; echo '  - [bash, /root/setup.sh]'
+echo 'runcmd:'; echo "  - [bash, /root/$SETUP.sh]"
 } > user-data
 printf 'instance-id: measure\nlocal-hostname: measure\n' > meta-data
 cloud-localds seed.img user-data meta-data

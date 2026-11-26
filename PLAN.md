@@ -2,8 +2,8 @@
 
 Source of truth: `docs/BRIEF.md` (the user's brief, verbatim). This file maps
 every requirement in it to work. Earlier plans: `docs/plan-2026-niri-fedora.md`.
-Status: **awaiting the user's answers (end of file)**. Nothing shell-side is
-built before then.
+Status: **decided 2026-11-26 (§8)**: Hyprland + Quickshell on Arch,
+≤250 MB idle budget. M1b (measure that stack) is next.
 
 ## 1. The problem (Milestone 1 result)
 Plasma 6 gives pearOS-level fidelity but measured **1144–1192 MB idle,
@@ -172,8 +172,7 @@ question 2.
 1. ✅ Audit and Plasma measurement (above). **1b:** measure Arch +
    Hyprland + Quickshell (bar + dock prototype) with the same script,
    before committing to it.
-2. Terminal blur spike: zgx transparent window plus compositor blur (on
-   Hyprland if chosen, else KDE as the brief says).
+2. Terminal blur spike: zgx transparent window plus Hyprland blur.
 3. Terminal core: PTY, emulator, rendering, input.
 4. Glass plugin, theme tokens, transparency slider.
 5. Menu bar (with global menu) and dock.
@@ -202,5 +201,18 @@ question 2.
   filesystem, installers, calamares config, plymouth, muternvf,
   package-repository, livecd, slimc0re-settings.
 
-## 8. Questions for the user (blocking)
-See the chat. Answers are recorded here.
+## 8. Decisions (user, 2026-11-26)
+1. **Stack:** Hyprland + Quickshell (option c). Plasma/KWin components from
+   the brief become Quickshell QML components. pearOS QML and liquid-gel
+   are reused or rewritten into our GPL glass plugin.
+2. **RAM budget:** ≤250 MB idle (`free -m` used, 5 min after login), with
+   150 MB as the stretch goal. Disk 2–3 GB and ISO < 3 GB stay as written.
+3. **Base:** Arch Linux + archiso. Rollback via btrfs + snapper. The Fedora
+   bootc base retires.
+4. **AI provider for "Search or Ask":** sign in with existing
+   subscriptions: Claude (the `claude` CLI, logged in with the user's Claude
+   account) and ChatGPT (the `codex` CLI, logged in with ChatGPT). Run them
+   headless through their documented JSON modes, as the terminal's chat view
+   already does. Pluggable, so more providers (Gemini CLI, OpenCode, API
+   keys) can be added. Only official CLIs and their own login flows; never
+   scraping web sessions.
