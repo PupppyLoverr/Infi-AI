@@ -17,6 +17,7 @@ ShellRoot {
     function control() { cc.open = !cc.open }
     function lock() { lockScreen.lock() }
     function snap() { snaps.open = !snaps.open }
+    function toggleOverview() { overviewWin.open = !overviewWin.open }
     function applyArrange() {
         // Auto-arrange on: windows tile (dwindle) as they open; off: they float
         // like macOS and are centred.
@@ -32,7 +33,7 @@ ShellRoot {
             close: "killactive", fullscreen: "fullscreen 0", maximize: "fullscreen 1", minimize: "movetoworkspacesilent special:minimized",
             float: "togglefloating", hide: "movetoworkspacesilent special:minimized"
         }
-        if (a === "overview") { overview.open = !overview.open; return }
+        if (a === "overview") { toggleOverview(); return }
         if (d[a]) Hyprland.dispatch(d[a])
         else if (a === "lock") lock()
         else if (a === "snap") snap()
@@ -75,7 +76,7 @@ ShellRoot {
     ControlCenter { id: cc; shell: shell }
     Notifications { shell: shell }
     SnapLayouts { id: snaps; shell: shell }
-    Overview { id: overview }
+    Overview { id: overviewWin }
     Lock { id: lockScreen }
 
     GlobalShortcut { appid: "solyra"; name: "spotlight"; onPressed: shell.spotlight() }
@@ -83,7 +84,7 @@ ShellRoot {
     GlobalShortcut { appid: "solyra"; name: "lock"; onPressed: shell.lock() }
     GlobalShortcut { appid: "solyra"; name: "snap"; onPressed: shell.snap() }
     GlobalShortcut { appid: "solyra"; name: "island"; onPressed: ipc.islandRequested("media") }
-    GlobalShortcut { appid: "solyra"; name: "overview"; onPressed: overview.open = !overview.open }
+    GlobalShortcut { appid: "solyra"; name: "overview"; onPressed: shell.toggleOverview() }
 
     IpcHandler {
         id: ipc
@@ -95,7 +96,7 @@ ShellRoot {
         function control(): void { shell.control() }
         function lock(): void { shell.lock() }
         function snap(): void { shell.snap() }
-        function overview(): void { overview.open = !overview.open }
+        function overview(): void { shell.toggleOverview() }
         function island(tab: string): void { islandRequested(tab) }
         function hud(kind: string, value: real): void { hudRequested(kind, value) }
         function glass(value: int): void { Theme.glass = value; Theme.save() }
