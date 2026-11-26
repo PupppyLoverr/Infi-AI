@@ -1,0 +1,37 @@
+# Solyra Files: the macOS 27-style Finder (zgx).
+pkgname=solyra-files
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Solyra Files: the Finder (zgx)"
+arch=(x86_64)
+url="https://github.com/PupppyLoverr/Infi-AI"
+license=(GPL-3.0-only)
+depends=(dbus gcc-libs glibc wayland libxkbcommon fontconfig vulkan-icd-loader)
+optdepends=("xdg-utils: open files")
+makedepends=(rust git pkgconf)
+source=()
+_repo="${SOLYRA_REPO:-$startdir/../..}"
+
+build() {
+  cd "$_repo/apps"
+  cargo build --locked --release -p solyra-files
+}
+
+check() {
+  cd "$_repo/apps"
+  cargo test --locked --release -p solyra-files
+}
+
+package() {
+  install -Dm755 "$_repo/apps/target/release/solyra-files" "$pkgdir/usr/bin/solyra-files"
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/solyra-files.desktop" <<D
+[Desktop Entry]
+Name=Files
+Comment=Solyra Terminal
+Exec=solyra-files
+Icon=system-file-manager
+Type=Application
+Categories=System;FileManager;
+D
+  install -Dm644 "$_repo/THIRD_PARTY.md" "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY.md"
+}

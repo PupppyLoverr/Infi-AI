@@ -184,7 +184,7 @@ Ground rules for every step:
   screenshot, and limits are stated plainly.
 
 ### M0. Infrastructure (prerequisite)
-- [ ] 🟡 *Status: replaced by `iso/build.sh` installing our build into the archiso profile; standalone PKGBUILDs still to do.* `pkg/` holds PKGBUILDs for every Solyra component; CI builds them in an
+- [ ] 🟡 *Status: PKGBUILDs written for solyra-term, solyra-files and solyra-shell (`pkg/`); not yet built by makepkg in CI. The ISO installs the same files through `iso/build.sh`.* `pkg/` holds PKGBUILDs for every Solyra component; CI builds them in an
   `archlinux` container into a local pacman repo artifact.
 - [x] ✅ *Status: `.github/workflows/vm.yml` + `tools/vm/` (cached Arch image, payload over HTTP, scenario, guest-display screendump, watchdog logs, shots published to `docs/shots/`). First full run pending.* `solyra-vm` workflow: install the repo into the VM, run the session,
   then a scenario script (e.g. `hyprctl dispatch exec`, `qs ipc call`) and

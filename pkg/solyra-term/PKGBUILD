@@ -1,0 +1,38 @@
+# Solyra Terminal: zgx terminal with tabs, splits, an Agents sidebar and the
+# Claude Code chat view. Built from this repository's checkout.
+pkgname=solyra-term
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Solyra Terminal (zgx): tabs, splits, agents sidebar, harness chat"
+arch=(x86_64)
+url="https://github.com/PupppyLoverr/Infi-AI"
+license=(GPL-3.0-only)
+depends=(dbus gcc-libs glibc wayland libxkbcommon fontconfig vulkan-icd-loader)
+optdepends=('claude-code: chat view and agent TUI' 'webkit2gtk-4.1: in-pane browser')
+makedepends=(rust git pkgconf)
+source=()
+_repo="${SOLYRA_REPO:-$startdir/../..}"
+
+build() {
+  cd "$_repo/apps"
+  cargo build --locked --release -p solyra-term
+}
+
+check() {
+  cd "$_repo/apps"
+  cargo test --locked --release -p solyra-term
+}
+
+package() {
+  install -Dm755 "$_repo/apps/target/release/solyra-term" "$pkgdir/usr/bin/solyra-term"
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/solyra-term.desktop" <<D
+[Desktop Entry]
+Name=Terminal
+Comment=Solyra Terminal
+Exec=solyra-term
+Icon=utilities-terminal
+Type=Application
+Categories=System;TerminalEmulator;
+D
+  install -Dm644 "$_repo/THIRD_PARTY.md" "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY.md"
+}
