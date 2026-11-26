@@ -193,13 +193,13 @@ Ground rules for every step:
   installed size > 3 GB.
 
 ### M1. Audit and measure ✅ (Plasma 1144–1192 MB). M1b: Hyprland + Quickshell 🟡
-- [ ] 🟡 *Status: measured by the solyra-vm report; awaiting the first full run.* Record the M1b numbers. If over 250 MB, trim (portals, Xwayland
+- [ ] 🟡 *Status: first VM report (Arch + Hyprland 0.57.2, llvmpipe, 2 vCPU / 4 GiB): **737 MB used**, but two terminal windows (308 MB) and the test media player (72 MB) were still open and Quickshell had failed to load; Hyprland itself 160 MB on llvmpipe. **Installed 2426 MB ✅ (≤ 3 GB). Boot 16.9 s.** A clean idle measurement follows once the shell loads.* Record the M1b numbers. If over 250 MB, trim (portals, Xwayland
   on demand, PipeWire socket activation) and re-measure before going on.
 
 ### M2. Terminal blur spike (zgx on Hyprland)
 - [x] ✅ *Status: done; transparent zgx window with frosted glass, verified live on our compositor.* `apps/solyra-term` minimal: a zgx window with a transparent clear
   colour, pinned zgx rev.
-- [ ] 🟡 *Status: rule written in `shell/hypr/hyprland.conf`; the Hyprland screenshot is pending the VM run.* Hyprland `windowrule` blur for app-id `solyra-term`. Screenshot over a
+- [x] ✅ *Status: verified in the CI VM on Hyprland 0.57.2: the zgx terminal is frosted glass over the wallpaper (docs/shots/vm/12-terminal-split.jpg).* Hyprland `windowrule` blur for app-id `solyra-term`. Screenshot over a
   busy wallpaper.
 - [x] ✅ *Status: not needed; zgx windows are transparent as-is.* If zgx can't make the surface transparent: the smallest patch
   (alpha mode, opaque-region removal), carried in `apps/patches/`, with
@@ -393,7 +393,7 @@ claimed without a VM run.
 ## 10. Status (updated 2026-11-26 21:20 UTC)
 | Milestone | State |
 |---|---|
-| M0 Test VM (`solyra-vm`) | Built. Runs were cancelling each other; now queued. Display screendump plus a watchdog that returns logs. **Awaiting the first full run** |
+| M0 Test VM (`solyra-vm`) | ✅ Full scenario runs on Hyprland 0.57.2 in CI and publishes shots to docs/shots/vm |
 | M1 Audit and measure | ✅ Plasma 1144–1192 MB; Hyprland + Quickshell numbers come from the solyra-vm report |
 | M2 Terminal blur spike | Glass verified on our compositor; Hyprland check pending the VM run |
 | M3 Terminal core | ✅ PTY, alacritty_terminal, truecolor, Unicode, scrollback, selection, copy and paste, search, resize, tabs, splits (zgx-terminal) |
