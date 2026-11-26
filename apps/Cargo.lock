@@ -3154,6 +3154,7 @@ dependencies = [
 name = "solyra-term"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "solyra-tokens",
  "solyra-ui",
  "zgx",
