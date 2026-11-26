@@ -1,7 +1,7 @@
 # Handoff
 
-**Now:** Milestone 1, measuring minimal Arch + Plasma 6 Wayland (stock and
-trimmed) in CI. See PLAN.md.
+**Now:** Milestone 1 done. Waiting for the user to choose (a) or (b) (PLAN.md,
+decision gate). Plasma measured at 1144–1192 MB used, 3.0 GB disk.
 
 ## Done
 - PLAN.md: architecture, budgets, audit, decision gate.
@@ -11,11 +11,8 @@ trimmed) in CI. See PLAN.md.
   `measure-plasma`.
 
 ## Next
-1. Read the measure run's report. If it fails, fix it from the logs
-   (setup.log, measure.log).
-2. Put the numbers in PLAN.md. If they miss the budget, show the user
-   options (a) and (b) and wait.
-3. Also measure the current niri + Rust panel image for option (b) (the
+1. Wait for the user's choice. Build nothing shell-side before it.
+2. Also measure the current niri + Rust panel image for option (b) (the
    existing disk.yml boots it; add the same `free -m` after login).
 
 ## How to run

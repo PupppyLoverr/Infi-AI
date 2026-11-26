@@ -37,6 +37,38 @@ dev container has no KVM and no Arch mirror access: Arch cloud image,
 | pearos-themesw, pearos-sounds, pafari, pearos-apps-bundle | GPL-3.0 | Reusable inside GPL components |
 | pearos-settings, macos-keyboard-shortcuts-kde, pearos-icons, artwork, filesystem, installer, calamares config | none | Reference only (pearos-icons recreate Apple icons: never use) |
 
+## Milestone 1 results (CI run 45813098984, 2026-11-26)
+Setup: Arch cloud image, `plasma-desktop` + mesa + konsole (588 packages),
+QEMU/KVM with 2 vCPU / 4 GiB, virtio-vga with llvmpipe, measured 5 min idle
+after plasmashell started.
+
+| | stock | trimmed |
+|---|---|---|
+| `free -m` used | **1192 MB** | **1144 MB** |
+| Total RSS, all processes | 2094 MiB | 1981 MiB |
+| Root fs used | 3024 MB | 3026 MB |
+| Boot to graphical.target | 10.2 s | 9.3 s |
+| plasmashell up at (uptime) | 15.3 s | 14.3 s |
+
+- **Largest processes (trimmed):** plasmashell 517 MiB, kwin_wayland 305,
+  kscreenlocker_greet 272, kded6 63, powerdevil 56, xdg-desktop-portal 54,
+  ksecretd 51, kaccess 51, polkit agent 50, kactivitymanagerd 41,
+  Xwayland 39 MiB.
+- **What the trim did:** turned off baloo (file indexing). Nothing else
+  applied: none of Discover, PackageKit, KDE Connect, browser integration,
+  drkonqi, welcome, vault and similar were installed by `plasma-desktop`,
+  and no bluetooth, cups, avahi, ModemManager or power-profiles services
+  were enabled. So stock was already near-minimal.
+- **Caveats:**
+  - Plasma's default auto-lock fired during the 5 idle minutes, so
+    kscreenlocker_greet (~0.3 GB) is in both numbers. That is real default
+    behaviour.
+  - llvmpipe inflates kwin and plasmashell compared with real GPU hardware.
+  - Even without the locker and with a GPU, Plasma idles at roughly
+    0.8–0.9 GB, about 6× the 150 MB target.
+- **Verdict:** Plasma misses the RAM budget by a wide margin and sits at
+  the top of the 3 GB disk budget before any pearOS components or apps.
+
 ## Decision gate
 If trimmed Plasma misses the 150 MB / 3 GB budget, the user picks one:
 - **(a)** Plasma + pearOS components with a realistic budget, or
