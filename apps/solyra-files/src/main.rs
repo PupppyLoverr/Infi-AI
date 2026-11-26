@@ -1514,10 +1514,11 @@ fn inspector_pane(app: &FilesApp, style: &solyra_ui::Style) -> View {
                     let app = app.clone();
                     let path = entry.path.clone();
                     small_button("Send to Notch Shelf", move || {
-                        match send_to_notch_shelf(&path) {
-                            Ok(()) => app.status.set("Parked in Notch Shelf.".into()),
-                            Err(e) => app.status.set(format!("Could not park file: {e}")),
-                        }
+                        let msg = match send_to_notch_shelf(&path) {
+                            Ok(()) => "Parked in Notch Shelf.".to_string(),
+                            Err(e) => format!("Could not park file: {e}"),
+                        };
+                        app.status.set(msg);
                     })
                 };
                 column()
