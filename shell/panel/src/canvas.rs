@@ -642,6 +642,71 @@ impl<'a> Canvas<'a> {
         }
     }
 
+    /// pearOS's dock prism (its `dock_prism.frag`): an additive RGB glow on
+    /// the rim of a rounded rectangle, fading inward over `edge` logical
+    /// pixels as (1 + d / edge)^2. Red where the edge faces down-right, blue
+    /// where it faces down-left, a little green all round. `amount` is the
+    /// peak added to each channel (0..1); pearOS uses 8 × 2 × 0.004.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prism_rim(&mut self, x: i32, y: i32, w: i32, h: i32, r: f32, edge: f32, amount: f32) {
+        let s = self.s() as f32;
+        let (x0, y0, w0, h0) = (x as f32 * s, y as f32 * s, w as f32 * s, h as f32 * s);
+        let r = (r * s).min(w0 / 2.0).min(h0 / 2.0).max(0.0);
+        let edge = (edge * s).max(1.0);
+        let (cx, cy) = (x0 + w0 / 2.0, y0 + h0 / 2.0);
+        let dist = |px: f32, py: f32| {
+            let qx = (px - cx).abs() - (w0 / 2.0 - r);
+            let qy = (py - cy).abs() - (h0 / 2.0 - r);
+            let ox = qx.max(0.0);
+            let oy = qy.max(0.0);
+            (ox * ox + oy * oy).sqrt() + qx.max(qy).min(0.0) - r
+        };
+        let px0 = (x0.floor() as i32).max(0);
+        let py0 = (y0.floor() as i32).max(0);
+        let px1 = ((x0 + w0).ceil() as i32).min(self.pw as i32);
+        let py1 = ((y0 + h0).ceil() as i32).min(self.ph as i32);
+        for py in py0..py1 {
+            for px in px0..px1 {
+                let (fx, fy) = (px as f32 + 0.5, py as f32 + 0.5);
+                let d = dist(fx, fy);
+                if d > 0.5 || d < -edge {
+                    continue;
+                }
+                let ef = (1.0 + d / edge).clamp(0.0, 1.0).powi(2);
+                let gx = dist(fx + 1.0, fy) - dist(fx - 1.0, fy);
+                let gy = dist(fx, fy + 1.0) - dist(fx, fy - 1.0);
+                let l = (gx * gx + gy * gy).sqrt().max(1e-6);
+                let (nx, ny) = (gx / l, gy / l);
+                let p = ef * amount * 255.0;
+                let cov = (0.5 - d).clamp(0.0, 1.0);
+                let add = [
+                    (nx + ny).max(0.0) * p * cov,
+                    ef * p * 0.25 * cov,
+                    (-nx + ny).max(0.0) * p * cov,
+                ];
+                let off = py as usize * self.stride + px as usize * 4;
+                if off + 3 >= self.pixels.len() {
+                    continue;
+                }
+                // BGRA: blue, green, red.
+                for (c, v) in [(2usize, add[0]), (1, add[1]), (0, add[2])] {
+                    let cur = self.pixels[off + c] as f32;
+                    self.pixels[off + c] = (cur + v).round().min(255.0) as u8;
+                }
+                let a = self.pixels[off + 3] as f32;
+                let need = add.iter().cloned().fold(0.0f32, f32::max);
+                if need > 0.0 && a < 255.0 {
+                    // Keep premultiplied colour valid: alpha at least the
+                    // brightest channel added.
+                    let m = (self.pixels[off] as f32)
+                        .max(self.pixels[off + 1] as f32)
+                        .max(self.pixels[off + 2] as f32);
+                    self.pixels[off + 3] = a.max(m).min(255.0) as u8;
+                }
+            }
+        }
+    }
+
     /// Premultiplied Porter-Duff `source-over` into BGRA (`Argb8888` LE).
     #[inline]
     pub fn blend(&mut self, x: i32, y: i32, color: Rgba, coverage: f32) {

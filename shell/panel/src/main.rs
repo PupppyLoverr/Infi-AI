@@ -1507,9 +1507,9 @@ impl App {
                     )
                 };
                 let bar_shown = self.prefs.look.bar != solyra_conf::look::BarStyle::Hidden;
-                // Glass and Acrylic bars are frosted: the compositor blurs the
-                // desktop and windows behind the whole strip.
-                let rects = if bar_shown && material::blurs(self.bar_material) {
+                // Only Acrylic blurs the bar. Glass is pearOS's bar: fully
+                // see-through, the wallpaper sharp behind it.
+                let rects = if bar_shown && self.bar_material == material::Material::Acrylic {
                     vec![(0, 0, w as i32, h as i32)]
                 } else {
                     Vec::new()

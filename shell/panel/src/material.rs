@@ -314,47 +314,39 @@ pub fn liquid_glass(
     );
 }
 
-/// pearOS's dock glass, measured from its screenshots: the body is almost
-/// clear (the compositor's blur does the work), with one even 1 px rim of
-/// about 20 % white all the way round and a whisper of light on the top
-/// inside edge. In the light theme the veil is a little milkier.
-pub fn pear_glass(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32, dark: bool) {
-    let (top, bottom) = if dark { (16, 8) } else { (70, 52) };
-    cv.round_rect_vgrad(
-        x,
-        y,
-        w,
-        h,
-        r,
-        Rgba::rgba(255, 255, 255, top),
-        Rgba::rgba(255, 255, 255, bottom),
-    );
-    cv.stroke_round_rect(
-        x,
-        y,
-        w,
-        h,
-        r,
-        1.0,
-        Rgba::rgba(255, 255, 255, if dark { 52 } else { 120 }),
-    );
-    cv.stroke_round_rect(
-        x - 1,
-        y - 1,
-        w + 2,
-        h + 2,
-        r + 1.0,
-        1.0,
-        Rgba::rgba(0, 0, 0, if dark { 40 } else { 22 }),
-    );
-    let inset = (r * 0.9).round() as i32;
-    cv.fill_rect(
-        x + inset,
-        y + 1,
-        (w - 2 * inset).max(0),
-        1,
-        Rgba::rgba(255, 255, 255, if dark { 22 } else { 90 }),
-    );
+/// pearOS's glass, from its Tahoe / Tahoe Dark dock skins and the
+/// `dock_prism` shader: the compositor's strong blur behind; a body of black
+/// at 15 % (dark) or white at 15 % (light); one 1 px rim at about 30 %
+/// (light grey in the dark skin, white in the light one); and an additive
+/// RGB prism glow fading in over a band 1.5 × the radius wide.
+/// `body` overrides the body's alpha (the notch uses a darker one so text
+/// on it always reads).
+#[allow(clippy::too_many_arguments)]
+pub fn pear_glass(
+    cv: &mut Canvas<'_>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    r: f32,
+    dark: bool,
+    body: Option<u8>,
+) {
+    let a = body.unwrap_or(38);
+    let fill = if dark {
+        Rgba::rgba(0, 0, 0, a)
+    } else {
+        Rgba::rgba(255, 255, 255, a)
+    };
+    cv.round_rect(x, y, w, h, r, fill);
+    let rim = if dark {
+        Rgba::rgba(165, 165, 165, 80)
+    } else {
+        Rgba::rgba(255, 255, 255, 80)
+    };
+    cv.stroke_round_rect(x, y, w, h, r, 1.0, rim);
+    // pearOS: refraction 8 × fringing 2 × 0.004, edge = 1.5 × radius 24.
+    cv.prism_rim(x, y, w, h, r, 36.0, 8.0 * 2.0 * 0.004);
 }
 
 /// Smoked Liquid Glass for the notch and the island: the same optics over a

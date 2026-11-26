@@ -27,11 +27,11 @@ environment {
 }
 
 // Compositor-wide backdrop blur, used by the shell's layer rules below.
-// Heavy, Apple-style frost: four passes at a wide offset so text and
-// shapes behind glass melt into colour instead of showing through.
+// pearOS-strength frost (its dock blurs at radius 24): four passes at a wide
+// offset, so shapes behind glass melt into soft colour.
 blur {
     passes 4
-    offset 4.5
+    offset 5.5
     noise 0.02
     saturation 1.0
 }
@@ -148,14 +148,8 @@ layer-rule {
 
 layer-rule {
     match namespace=r#"^solyra-dock(\..+)?$"#
-    geometry-corner-radius 20
-    shadow {
-        on
-        softness 44
-        spread 10
-        offset x=0 y=10
-        color "#00000090"
-    }
+    // pearOS's dock casts no shadow: it is a pane of glass on the desktop.
+    geometry-corner-radius 22
     background-effect {
         xray false
     }
@@ -196,7 +190,7 @@ layer-rule {
 layer-rule {
     match namespace=r#"\.glass$"#
     background-effect {
-        saturation 1.8
+        saturation 1.1
         noise 0.0
     }
 }

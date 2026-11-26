@@ -1296,7 +1296,7 @@ fn compositor_backdrop(
 ) {
     use crate::material::Material;
     let (sat, noise) = match m {
-        Material::Glass => (1.4f32, 0.0f32),
+        Material::Glass => (1.1f32, 0.0f32),
         Material::Acrylic => (1.12, 0.05),
         _ => return,
     };
@@ -1471,7 +1471,7 @@ fn scene_pixels_with(
             None,
         );
     }
-    if crate::material::blurs(bar_m) {
+    if bar_m == crate::material::Material::Acrylic {
         compositor_backdrop(
             &sharp,
             &soft,

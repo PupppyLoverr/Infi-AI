@@ -136,34 +136,12 @@ pub fn draw_bar(
     // menu bar, so it needs no scrim at all and the sky stays untouched.
     let flip = crate::material::ink_flips(bar_mat, th.bar, prefs.wall_tint);
     if bar_mat == crate::material::Material::Glass {
-        // Frosted, see-through menu bar (macOS): the compositor blurs the
-        // desktop and windows behind it; the panel adds a thin veil in the
-        // tone opposite to the text (it follows the wallpaper, as macOS's
-        // does), a soft sheen and a hairline at the bottom.
-        let light_ink = dark_theme != flip;
-        let (top, bottom, line) = if light_ink {
-            (
-                Rgba::rgba(0, 0, 0, 78),
-                Rgba::rgba(0, 0, 0, 58),
-                Rgba::rgba(255, 255, 255, 26),
-            )
-        } else {
-            (
-                Rgba::rgba(255, 255, 255, 118),
-                Rgba::rgba(255, 255, 255, 92),
-                Rgba::rgba(0, 0, 0, 20),
-            )
-        };
-        cv.fill_rect_vgrad(0, 0, w, h, top, bottom);
-        cv.fill_rect_vgrad(
-            0,
-            0,
-            w,
-            h / 2,
-            Rgba::rgba(255, 255, 255, 14),
-            Rgba::rgba(255, 255, 255, 0),
-        );
-        cv.fill_rect(0, h - 1, w, 1, line);
+        // pearOS: the menu bar has no band at all. The wallpaper runs
+        // straight behind it; only a whisper of shade at the very top keeps
+        // white text readable over a bright sky.
+        if !flip {
+            cv.fill_rect_vgrad(0, 0, w, h, Rgba::rgba(0, 0, 0, 22), Rgba::rgba(0, 0, 0, 0));
+        }
     } else {
         crate::material::paint(cv, &slab, 0, 0, w, h, 0.0);
         if matches!(

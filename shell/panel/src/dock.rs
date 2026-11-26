@@ -411,12 +411,10 @@ fn draw_floating(
     let card_x = ((w - card_w) / 2).max(1);
 
     let slab = slab_for(live, th.surface);
-    // Elevation (Liquid Glass "depth"): a soft shadow under the shelf.
     let mat = live.prefs.look.material(live.prefs.look.dock_material);
     if style == DockStyle::Macos && mat == material::Material::Glass {
-        // pearOS: a nearly clear pane of blurred glass with one even 1 px
-        // rim, and only a faint shadow.
-        cv.round_rect_shadow(card_x, card_y, card_w, CARD_H, DOCK_R, 6.0, 16.0, 34);
+        // pearOS's Tahoe skin: blurred glass, a 15 % body, a 1 px rim and the
+        // prism glow. No shadow (the skin has none).
         material::pear_glass(
             cv,
             card_x,
@@ -425,6 +423,7 @@ fn draw_floating(
             CARD_H,
             DOCK_R,
             th.surface.0 < 128,
+            None,
         );
     } else {
         cv.round_rect_shadow(card_x, card_y, card_w, CARD_H, DOCK_R, 6.0, 14.0, 54);
