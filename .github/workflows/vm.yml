@@ -44,7 +44,7 @@ jobs:
         with: { name: solyra-term, path: bin }
       - name: QEMU, KVM and virgl
         run: |
-          sudo apt-get -qq update && sudo apt-get -qq install -y qemu-system-x86 qemu-system-modules-opengl qemu-utils cloud-image-utils libgl1-mesa-dri libegl1 >/dev/null
+          sudo apt-get -qq update && sudo apt-get -qq install -y qemu-system-x86 qemu-system-modules-opengl qemu-utils cloud-image-utils libgl1-mesa-dri libegl1 socat >/dev/null
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules >/dev/null
           sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
       - uses: actions/cache@v4
@@ -59,6 +59,7 @@ jobs:
           ls out/shots >/dev/null 2>&1 || exit 0
           sudo apt-get -qq install -y imagemagick >/dev/null
           rm -rf docs/shots && mkdir -p docs/shots
+          for f in out/shots/*.ppm; do [ -f "$f" ] && convert "$f" "${f%.ppm}.png"; done
           for f in out/shots/*.png; do [ -f "$f" ] && convert "$f" -quality 82 "docs/shots/$(basename "${f%.png}").jpg"; done
           cp out/shots/*.txt out/shots/*.log docs/shots/ 2>/dev/null || true
           git config user.name "solyra-ci"; git config user.email "solyra-ci@users.noreply.github.com"

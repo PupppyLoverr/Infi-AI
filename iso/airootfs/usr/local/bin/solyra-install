@@ -1,0 +1,35 @@
+#!/bin/bash
+# Install Solyra to a disk: archinstall with Solyra's package set and a
+# btrfs layout (snapper snapshots for rollback), then copy the desktop.
+set -eu
+[ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
+pkgs=$(grep -v '^#' /usr/share/solyra/packages.solyra | grep -v -e archinstall -e '^$' | tr '\n' ' ')
+cat > /tmp/solyra-archinstall.json <<J
+{
+  "bootloader": "Systemd-boot",
+  "disk_config": { "config_type": "default_layout", "fs_type": "btrfs" },
+  "packages": [$(printf '"%s",' $pkgs | sed 's/,$//')],
+  "profile_config": { "profile": { "main": "Minimal" } },
+  "network_config": { "type": "nm" },
+  "audio_config": { "audio": "pipewire" },
+  "custom_commands": [
+    "systemctl enable greetd NetworkManager bluetooth upower",
+    "snapper --no-dbus -c root create-config / || true"
+  ]
+}
+J
+archinstall --config /tmp/solyra-archinstall.json
+# Desktop files into the new system.
+mnt=/mnt/archinstall
+cp -r /etc/skel/.config "$mnt/etc/skel/" 2>/dev/null || true
+install -Dm755 /usr/local/bin/solyra-term "$mnt/usr/local/bin/solyra-term"
+cp -r /usr/share/backgrounds/solyra "$mnt/usr/share/backgrounds/" 2>/dev/null || true
+cp /usr/share/applications/solyra-term.desktop "$mnt/usr/share/applications/"
+cat > "$mnt/etc/greetd/config.toml" <<G
+[terminal]
+vt = 1
+[default_session]
+command = "agreety --cmd Hyprland"
+user = "greeter"
+G
+echo "Solyra is installed. Reboot to start it."

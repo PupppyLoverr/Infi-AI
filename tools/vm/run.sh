@@ -35,8 +35,9 @@ cp base.qcow2 run.qcow2
 # vgem render node with Mesa's software EGL, and fall back to plain virtio.
 sudo modprobe vgem 2>/dev/null && sudo chmod 666 /dev/dri/* 2>/dev/null || true
 boot() {
+  ( sleep 120; echo "screendump shots/display-120s.ppm" | socat - UNIX-CONNECT:mon.sock >/dev/null 2>&1 ) &
   timeout 16m qemu-system-x86_64 -accel kvm -cpu host -m 4096 -smp 2 $1 \
-    -drive file=run.qcow2,if=virtio -nic user,model=virtio -serial file:boot.log -monitor none
+    -drive file=run.qcow2,if=virtio -nic user,model=virtio -serial file:boot.log -monitor unix:mon.sock,server,nowait
 }
 start=$(date +%s)
 echo "GPU: virgl (egl-headless)"
