@@ -32,6 +32,10 @@ every surface and measures idle RAM, disk and boot. Decisions are in PLAN.md
   - Droppy-style lock screen: ambient art, clock, notch lock animation,
     lrclib synced lyrics, media, PAM.
 
+## Done since
+- The terminal is one app (chat inside the glass, recording A layout), with zeron icons and shell integration.
+- New Finder; Mission Control; the Droppy extras; ISO profile and CI; CI queueing fix.
+
 ## Next
 1. Read the `solyra-vm` artifacts (shots/*.png, report.txt, log-qs.log).
    Fix QML/Hyprland errors from log-qs.log and log-hypr.log, then re-push.

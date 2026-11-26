@@ -388,3 +388,18 @@ claimed without a VM run.
    - All of it is disabled or crossfaded under Reduce Motion.
 4. **Reporting:** at every milestone, text plus screenshots from the VM. No
    stubs; anything not possible is stated with the reason.
+
+## 10. Status (updated 2026-11-26 21:20 UTC)
+| Milestone | State |
+|---|---|
+| M0 Test VM (`solyra-vm`) | Built. Runs were cancelling each other; now queued. Display screendump plus a watchdog that returns logs. **Awaiting the first full run** |
+| M1 Audit and measure | ✅ Plasma 1144–1192 MB; Hyprland + Quickshell numbers come from the solyra-vm report |
+| M2 Terminal blur spike | Glass verified on our compositor; Hyprland check pending the VM run |
+| M3 Terminal core | ✅ PTY, alacritty_terminal, truecolor, Unicode, scrollback, selection, copy and paste, search, resize, tabs, splits (zgx-terminal) |
+| M4 Glass and tokens | ✅ One glass slider (0–100), Reduce Transparency, Reduce Motion, Show Borders, one corner radius, two-layer shadows, Hyprland blur with ignore-alpha shapes. ⏳ The refraction (lensing) plugin is not built |
+| M5 Menu bar and dock | ✅ Written (QML). Global menu: standard menus wired to real actions; DBusMenu export ⏳ |
+| M6 Spotlight, notch, Control Center, notifications | ✅ Written (QML), plus Mission Control and the lock screen |
+| M7 Terminal polish | ✅ One app, exactly recording A plus the chat inside the glass; zeron icons; shell integration (OSC 7/133) |
+| M8 ISO | ✅ Profile and CI written (archiso, < 3 GB gate, boot screenshots). **Awaiting the first build** |
+| M9 Extras | ✅ Droppy set (media, shelf, clipboard, HUDs, Bluetooth, caps, battery, calendar, Notchface, High Alert, Termi-Notch, Capture Area, OCR, Tracked Folders, Hide Notch), snap layouts, auto-arrange. Not done: voice transcription (needs a local speech model, over budget) |
+| Finder | ✅ macOS 27 layout: inset glass sidebar, glass toolbar, one frosted surface (live screenshot) |
