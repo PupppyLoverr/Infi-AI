@@ -27,8 +27,8 @@ check() {
 package() {
   install -d "$pkgdir/etc/xdg/quickshell" "$pkgdir/etc/skel/.config/hypr" "$pkgdir/usr/share/backgrounds/solyra" "$pkgdir/etc/skel/.config/solyra"
   cp -r "$_repo/shell/qs/." "$pkgdir/etc/xdg/quickshell/"
-  install -Dm644 "$_repo/shell/hypr/hyprland.conf" "$pkgdir/etc/skel/.config/hypr/hyprland.conf"
-  install -Dm644 /dev/null "$pkgdir/etc/skel/.config/solyra/hypr-local.conf"
+  install -Dm644 "$_repo/shell/hypr/hyprland.lua" "$pkgdir/etc/skel/.config/hypr/hyprland.lua"
+  install -Dm644 /dev/null "$pkgdir/etc/skel/.config/solyra/hypr-local.lua"
   install -Dm644 "$_repo"/assets/wallpapers/*-1920x1080.png -t "$pkgdir/usr/share/backgrounds/solyra/"
   install -Dm644 "$_repo/assets/wallpapers/forest-1920x1080.png" "$pkgdir/etc/skel/.config/solyra/wallpaper.png"
   install -Dm644 "$_repo/THIRD_PARTY.md" "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY.md"

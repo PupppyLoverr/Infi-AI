@@ -4,12 +4,16 @@
 # the journal), then power off instead of idling to the timeout.
 H=http://10.0.2.2:8088
 up() { [ -f "$1" ] && curl -fsS -T "$1" "$H/$2" >/dev/null 2>&1; }
-# Hyprland now reads hyprland.lua; try the legacy file explicitly first.
+# Hyprland 0.57 reads ~/.config/hypr/hyprland.lua. Install ours and the
+# test scenario before autologin starts it.
 U=/home/solyra
-if Hyprland --help 2>&1 | grep -q -- "-c"; then
-  echo '[ "$(tty)" = /dev/tty1 ] && exec Hyprland -c ~/.config/hypr/hyprland.conf > /tmp/hypr.log 2>&1' > $U/.bash_profile
-  chown solyra: $U/.bash_profile
-fi
+install -Dm644 -o solyra -g solyra /opt/solyra/hypr/hyprland.lua $U/.config/hypr/hyprland.lua
+printf 'hl.on("hyprland.start", function() hl.exec_cmd("bash /opt/solyra/scenario.sh > /tmp/scenario.log 2>&1") end)\n' > $U/.config/solyra/hypr-local.lua
+chown solyra: $U/.config/solyra/hypr-local.lua
+echo '[ "$(tty)" = /dev/tty1 ] && exec Hyprland > /tmp/hypr.log 2>&1' > $U/.bash_profile
+chown solyra: $U/.bash_profile
+Hyprland --verify-config -c $U/.config/hypr/hyprland.lua > /tmp/hypr-verify.txt 2>&1
+up /tmp/hypr-verify.txt hypr-verify.txt
 {
   echo "=== Hyprland --version"; Hyprland --version 2>&1 | head -5
   echo "=== Hyprland --help"; Hyprland --help 2>&1 | head -40
