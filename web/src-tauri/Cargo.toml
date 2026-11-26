@@ -1,0 +1,26 @@
+[package]
+name = "solyra-web"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Solyra's web-rendered shell surfaces (Tauri + React) and apps"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[features]
+# Serve the built frontend (dist/) embedded in the binary, never a dev server.
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+gtk = "0.18"
+gtk-layer-shell = "0.8"
+
+[profile.release]
+strip = true
+lto = "thin"
+opt-level = "s"
