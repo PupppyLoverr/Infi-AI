@@ -191,8 +191,22 @@ pub enum ShellCmd {
     ToggleDockAutohide,
     /// Show the island's shelf (true) or what is live (false).
     IslandShelf(bool),
+    /// Switch the expanded Droppy island between pages: 0 Home/Widgets, 1 File Tray, 2 Droplets.
+    IslandPage(u8),
+    /// Toggle a Droppy shelf droplet on/off by index.
+    ToggleDroplet(u8),
     /// Forget shelf item `n` (the file itself is untouched).
     ShelfRemove(usize),
+    /// Archive all parked files in the File Tray into ~/Downloads.
+    ShelfZip,
+    /// Gather parked files into a new folder in ~/Downloads.
+    ShelfNewFolder,
+    /// Clear all parked files from the File Tray.
+    ShelfClear,
+    /// Start/pause the 25-minute Pomodoro timer in the Dynamic Island.
+    PomodoroToggle,
+    /// Toggle Dynamic Island Spotlight Ask AI mode.
+    SpotlightToggleAsk,
     /// Files dropped on the island.
     ShelfAdd(Vec<std::path::PathBuf>),
     /// A user-chosen image. The path is validated before use.
