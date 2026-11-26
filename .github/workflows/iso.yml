@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
   push:
     branches: [claude/charming-goodall-iuca3o]
-    paths: ['iso/**', '.github/workflows/iso.yml']
+    paths: ['iso/**', 'shell/**', 'apps/solyra-term/**', '.github/workflows/iso.yml']
 concurrency: { group: solyra-iso, cancel-in-progress: false }
 permissions:
   contents: write
