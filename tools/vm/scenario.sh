@@ -20,6 +20,7 @@ q island tools; shot 06-island-tools
 q island close; sleep 0.8
 q hud volume 0.62; shot 07-hud-volume 0.5
 sleep 2; touch "$HOME/Downloads/report.pdf"; q island shelf; shot 07b-tracked-downloads-on-shelf
+q island close; sleep 1
 sleep 2
 q query "te"; shot 08-spotlight 1.6
 q spotlight; sleep 0.5
@@ -39,8 +40,11 @@ shot 13-terminal-chat 5
 hyprctl dispatch 'hl.dsp.window.close()' >/dev/null; sleep 1
 q glass 90; shot 14-glass-tinted 1.0
 q glass 0; shot 15-glass-clear 1.0
+solyra-files >/tmp/files.log 2>&1 &
+shot 15b-finder 4
+hyprctl dispatch 'hl.dsp.window.close()' >/dev/null; sleep 1
 q glass 35
-q lock; shot 16-lock-screen 2.5
+q island close; q lock; shot 16-lock-screen 2.5
 # Idle until 5 minutes after login, then measure (nothing excluded).
 while [ $(( $(date +%s) - T0 + 14 )) -lt 300 ]; do sleep 5; done
 {

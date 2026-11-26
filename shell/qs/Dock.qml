@@ -10,7 +10,7 @@ import Quickshell.Widgets
 // under running apps and a hollow dot for apps running in the background
 // (a tray item but no window) with "Stop Running in Background".
 PanelWindow {
-    id: dock
+    id: dockWin
     property var screenModel
     property var shell
     screen: screenModel
@@ -64,7 +64,7 @@ PanelWindow {
         id: hit
         anchors.bottom: parent.bottom
         anchors.horizontalCenter: parent.horizontalCenter
-        width: card.width; height: dock.mx >= 0 ? 140 : 72
+        width: card.width; height: dockWin.mx >= 0 ? 140 : 72
     }
 
     Glass {
@@ -76,22 +76,22 @@ PanelWindow {
         height: 66
         width: row.width + 24
         Behavior on width { NumberAnimation { duration: Theme.ms(90) } }
-        HoverHandler { onPointChanged: dock.mx = point.position.x; onHoveredChanged: if (!hovered) dock.mx = -1 }
+        HoverHandler { onPointChanged: dockWin.mx = point.position.x; onHoveredChanged: if (!hovered) dockWin.mx = -1 }
 
         Row {
             id: row
             x: 12
             anchors.bottom: parent.bottom
             anchors.bottomMargin: 9
-            spacing: dock.gap
+            spacing: dockWin.gap
             Repeater {
-                model: dock.items
+                model: dockWin.items
                 DockItem {
                     required property var modelData
                     required property int index
                     item: modelData
-                    dock: dock
-                    centre: 12 + index * (dock.cell + dock.gap) + dock.cell / 2
+                    dock: dockWin
+                    centre: 12 + index * (dockWin.cell + dockWin.gap) + dockWin.cell / 2
                 }
             }
         }

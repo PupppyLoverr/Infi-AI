@@ -24,6 +24,7 @@ fi
 # Payload: binaries, desktop entries, the QML shell, Hyprland config, wallpaper, scenario.
 P=payload/stage; rm -rf $P; mkdir -p $P/bin $P/share/applications
 cp "${TERM_BIN:-$repo/apps/target/release/solyra-term}" $P/bin/solyra-term
+files_bin="$(dirname "${TERM_BIN:-$repo/apps/target/release/solyra-term}")/solyra-files"; [ -f "$files_bin" ] && cp "$files_bin" $P/bin/solyra-files
 printf '[Desktop Entry]\nName=Terminal\nComment=Solyra Terminal\nExec=solyra-term\nIcon=utilities-terminal\nType=Application\n' > $P/share/applications/solyra-term.desktop
 cp -r "$repo/shell/qs" $P/qs; cp -r "$repo/shell/hypr" $P/hypr
 cp "$repo/assets/wallpapers/forest-1920x1080.png" $P/wallpaper.png

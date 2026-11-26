@@ -38,7 +38,8 @@ Item {
                 const known = { "solyra-files": "files", "firefox": "browser", "solyra-term": "terminal", "org.gnome.TextEditor": "editor", "mpv": "music", "solyra-settings": "settings" }
                 if (known[it.item.id]) return Qt.resolvedUrl("apps/" + known[it.item.id] + ".png")
                 const e = it.item.entry
-                return e && e.icon ? Quickshell.iconPath(e.icon, "application-x-executable") : Qt.resolvedUrl("apps/overview.png")
+                const p = e && e.icon ? Quickshell.iconPath(e.icon, true) : ""
+                return p !== "" ? p : Qt.resolvedUrl("apps/overview.png")
             }
         }
     }

@@ -131,7 +131,12 @@ Scope {
                     color: Qt.rgba(1, 1, 1, 0.14); border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.18)
                     Row {
                         anchors.fill: parent; anchors.margins: 14; spacing: 14
-                        Rectangle { width: 68; height: 68; radius: 14; clip: true; color: "#333"
+                        Rectangle { width: 68; height: 68; radius: 14; clip: true
+                            gradient: Gradient {
+                                GradientStop { position: 0; color: "#ff9f43" }
+                                GradientStop { position: 0.55; color: "#ee5253" }
+                                GradientStop { position: 1; color: "#5f27cd" }
+                            }
                             Image { anchors.fill: parent; source: root.player ? root.player.trackArtUrl : ""; fillMode: Image.PreserveAspectCrop } }
                         Column { width: 190; anchors.verticalCenter: parent.verticalCenter; spacing: 2
                             Text { width: parent.width; elide: Text.ElideRight; text: root.player ? root.player.trackTitle : ""; color: "white"; font.family: Theme.font; font.pixelSize: 16; font.weight: Font.DemiBold }

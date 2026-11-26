@@ -44,10 +44,12 @@ PanelWindow {
 
     Glass {
         anchors.fill: parent; r: 26
-        Grid {
+        Column {
             id: grid
             x: 12; y: 12
-            columns: 2; spacing: 10
+            spacing: 10
+            Row {
+            spacing: 10
             // Connectivity
             Tile {
                 width: 169; height: 150
@@ -72,15 +74,13 @@ PanelWindow {
                     Tile { width: 79; height: 70; Icon { anchors.centerIn: parent; name: "grid"; size: 22; TapHandler { onTapped: { cc.open = false; cc.shell.snap() } } } }
                 }
             }
+            }
             Slider2 { width: 348; label: "Display"; icon: "sun"; value: cc.bright < 0 ? -1 : cc.bright / 100
                 onMoved: v => { cc.bright = v * 100; Quickshell.execDetached(["brightnessctl", "-q", "set", Math.round(v * 100) + "%"]) } }
-            Item { width: 1; height: 1; visible: false }
             Slider2 { width: 348; label: "Sound"; icon: cc.sink && cc.sink.audio.muted ? "volumeMute" : "volume"; value: cc.sink ? cc.sink.audio.volume : -1
                 onMoved: v => { if (cc.sink) cc.sink.audio.volume = v } }
-            Item { width: 1; height: 1; visible: false }
             Slider2 { width: 348; label: "Glass  ·  clear → tinted"; icon: "palette"; value: Theme.glass / 100
                 onMoved: v => { Theme.glass = Math.round(v * 100); Theme.save() } }
-            Item { width: 1; height: 1; visible: false }
             Tile {
                 width: 348; height: 64
                 Row {
@@ -96,11 +96,11 @@ PanelWindow {
                     Icon { anchors.verticalCenter: parent.verticalCenter; name: "next"; size: 18; TapHandler { onTapped: if (cc.player) cc.player.next() } }
                 }
             }
-            Item { width: 1; height: 1; visible: false }
             Tile {
-                width: 348; height: 44; clip: true
-                Row {
-                    anchors.centerIn: parent; spacing: 8
+                width: 348; height: pillFlow.height + 20
+                Flow {
+                    id: pillFlow
+                    x: 10; y: 10; width: parent.width - 20; spacing: 8
                     Pill { height: 26; text: "Reduce Motion"; on: Theme.reduceMotion; onClicked: { Theme.reduceMotion = !Theme.reduceMotion; Theme.save() } }
                     Pill { height: 26; text: "Reduce Transparency"; on: Theme.reduceTransparency; onClicked: { Theme.reduceTransparency = !Theme.reduceTransparency; Theme.save() } }
                     Pill { height: 26; text: "Borders"; on: Theme.showBorders; onClicked: { Theme.showBorders = !Theme.showBorders; Theme.save() } }

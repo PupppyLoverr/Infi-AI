@@ -200,7 +200,15 @@ PanelWindow {
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: modelData.group === "Top Hit" ? 40 : 30; height: width
                                 sourceSize: Qt.size(64, 64)
-                                source: modelData.entry && modelData.entry.icon ? Quickshell.iconPath(modelData.entry.icon, "application-x-executable") : ""
+                                // Our own app art first, then the icon theme, then a generic app.
+                                source: {
+                                    const e = modelData.entry
+                                    if (!e) return ""
+                                    const own = { "solyra-term": "terminal", "solyra-files": "files", "solyra-settings": "settings", "firefox": "browser", "mpv": "music" }
+                                    if (own[e.id]) return Qt.resolvedUrl("apps/" + own[e.id] + ".png")
+                                    const p = e.icon ? Quickshell.iconPath(e.icon, true) : ""
+                                    return p !== "" ? p : Qt.resolvedUrl("apps/overview.png")
+                                }
                             }
                             Rectangle {
                                 visible: !modelData.entry
