@@ -67,6 +67,7 @@ ShellRoot {
         Scope {
             id: perScreen
             required property var modelData
+            Wallpaper { screenModel: perScreen.modelData }
             Bar { screenModel: perScreen.modelData; shell: shell }
             Dock { screenModel: perScreen.modelData; shell: shell }
             Island { id: island; screenModel: perScreen.modelData }

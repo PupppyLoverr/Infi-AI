@@ -45,7 +45,9 @@ shot 15b-finder 4
 hyprctl dispatch 'hl.dsp.window.close()' >/dev/null; sleep 1
 q glass 35
 q island close; q lock; shot 16-lock-screen 2.5
-# Idle until 5 minutes after login, then measure (nothing excluded).
+# The test media player is part of the scenario, not the desktop: stop it,
+# then idle until 5 minutes after login and measure (nothing excluded).
+pkill -x mpv; qs ipc call shell island close
 while [ $(( $(date +%s) - T0 + 14 )) -lt 300 ]; do sleep 5; done
 {
   echo "=== solyra-vm report ==="

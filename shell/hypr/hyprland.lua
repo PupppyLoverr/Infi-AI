@@ -11,7 +11,6 @@ hl.env("HYPRCURSOR_SIZE", "24")
 hl.env("QT_QPA_PLATFORM", "wayland")
 
 hl.on("hyprland.start", function()
-    hl.exec_cmd("swaybg -i " .. home .. "/.config/solyra/wallpaper.png -m fill")
     hl.exec_cmd("quickshell > /tmp/qs.log 2>&1")
 end)
 
@@ -51,6 +50,10 @@ hl.config({
         },
     },
     animations = { enabled = true },
+    -- Budget: no Xwayland by default (about 58 MB); our apps, Firefox and
+    -- most of the desktop are native Wayland. Set true in hypr-local.lua
+    -- for X11-only apps.
+    xwayland = { enabled = false },
     dwindle = { preserve_split = true },
     misc = {
         force_default_wallpaper = 0,
