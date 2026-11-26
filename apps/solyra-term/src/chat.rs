@@ -35,6 +35,7 @@ pub struct Chat {
     stdin: Arc<Mutex<ChildStdin>>,
     #[allow(dead_code)]
     child: Arc<Mutex<Child>>,
+    convo: Arc<Mutex<Vec<Bubble>>>,
     pub bubbles: Signal<Vec<Bubble>>,
     pub input: Signal<String>,
     pub status: Signal<String>,
@@ -86,8 +87,13 @@ impl Chat {
         let input = rt.signal(String::new());
 
         let (tx, mut rx) = zgx::task::latest::<Update>();
+        // The conversation is shared: the reader appends assistant frames,
+        // send() appends the user's own messages, and every shipped snapshot
+        // carries both. A reader-owned copy would drop user bubbles.
+        let convo_shared = Arc::new(Mutex::new(Vec::<Bubble>::new()));
+        let convo_reader = convo_shared.clone();
         std::thread::spawn(move || {
-            let mut convo: Vec<Bubble> = Vec::new();
+            let convo = convo_reader;
             let mut state = "connecting".to_string();
             for line in BufReader::new(stdout).lines() {
                 let Ok(line) = line else { break };
@@ -112,22 +118,35 @@ impl Chat {
                                     }
                                 }
                             }
-                            if !text.trim().is_empty() {
-                                convo.push(Bubble {
+                            if !text.trim().is_empty()
+                                && let Ok(mut c) = convo.lock()
+                            {
+                                c.push(Bubble {
                                     role: "assistant",
                                     text,
                                 });
                             }
                         }
                     }
-                    "result" => state = "done — send another message".into(),
+"result" => {
+                        state = "done — send another message".into();
+                        // A desktop notification: the shell's notification
+                        // centre banners it even when the terminal is behind.
+                        let _ = std::process::Command::new("notify-send")
+                            .args(["solyra-term", "agent turn finished"])
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null())
+                            .spawn();
+                    }
                     _ => {}
                 }
-                if !tx.send((convo.clone(), state.clone())) {
+                let snapshot = convo.lock().map(|c| c.clone()).unwrap_or_default();
+                if !tx.send((snapshot, state.clone())) {
                     break;
                 }
             }
-            tx.send((convo, "session ended".into()));
+            let snapshot = convo.lock().map(|c| c.clone()).unwrap_or_default();
+            tx.send((snapshot, "session ended".into()));
         });
 
         {
@@ -144,6 +163,7 @@ impl Chat {
         Some(Self {
             stdin: Arc::new(Mutex::new(stdin)),
             child: Arc::new(Mutex::new(child)),
+            convo: convo_shared,
             bubbles,
             input,
             status,
@@ -167,12 +187,14 @@ impl Chat {
             .ok()
             .is_some_and(|mut w| writeln!(w, "{frame}").and_then(|_| w.flush()).is_ok());
         if ok {
-            self.bubbles.update(|b| {
-                b.push(Bubble {
-                    role: "user",
-                    text,
-                })
-            });
+            let bubble = Bubble {
+                role: "user",
+                text,
+            };
+            if let Ok(mut c) = self.convo.lock() {
+                c.push(bubble.clone());
+            }
+            self.bubbles.update(|b| b.push(bubble));
             self.input.set(String::new());
             self.status.set("working".into());
             self.rev.update(|n| *n += 1);
