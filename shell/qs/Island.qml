@@ -23,7 +23,7 @@ PanelWindow {
     anchors.top: true
     implicitWidth: 760
     implicitHeight: 320
-    exclusiveZone: 0
+    exclusionMode: ExclusionMode.Ignore
     color: "transparent"
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.namespace: "solyra-island"
@@ -142,7 +142,7 @@ PanelWindow {
         Behavior on opacity { NumberAnimation { duration: Theme.ms(220) } }
         HoverHandler { id: hoverIdle }
         anchors.horizontalCenter: parent.horizontalCenter
-        y: 6
+        y: 5
         width: win.d.w
         height: win.d.h
         radius: win.d.r
