@@ -14,7 +14,9 @@ use crate::state::{AppEntry, LaunchTarget, WindowInfo};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Kind {
+    Calculator,
     Application,
+    File,
     Window,
     Command,
     Agent,
@@ -24,7 +26,9 @@ impl Kind {
     /// Section title in the Spotlight list. Title case, the way a menu labels a group.
     pub fn heading(self) -> &'static str {
         match self {
+            Self::Calculator => "Calculator & Units",
             Self::Application => "Applications",
+            Self::File => "Files",
             Self::Window => "Open Windows",
             Self::Command => "Commands",
             Self::Agent => "Agent",
@@ -203,6 +207,29 @@ pub fn search(
     );
     out.extend(commands.into_iter().map(item_from_app));
 
+    // Built-in Thunderstorm window-snap & system quick actions.
+    if !q.is_empty() {
+        let builtin_cmds: &[(&str, &str, &str)] = &[
+            ("Snap Left", "Tile focused window to left half", "niri msg action set-column-width 50%"),
+            ("Snap Right", "Tile focused window to right half", "niri msg action set-column-width 50%"),
+            ("Maximize Window", "Fill the display with focused window", "niri msg action maximize-column"),
+            ("Center Window", "Center focused window on screen", "niri msg action center-column"),
+            ("Lock Screen", "Lock this Solyra session", "solyra-panel lock"),
+        ];
+        for (title, sub, cmd) in builtin_cmds {
+            if score(q, title, "solyra-snap", sub).is_some() {
+                out.push(Item {
+                    kind: Kind::Command,
+                    title: (*title).into(),
+                    subtitle: (*sub).into(),
+                    app_id: "solyra-settings".into(),
+                    role: "settings".into(),
+                    action: Action::Launch(LaunchTarget::Shell((*cmd).into())),
+                });
+            }
+        }
+    }
+
     if q.chars().count() >= AGENT_MIN_LEN {
         out.push(Item {
             kind: Kind::Agent,
@@ -227,6 +254,65 @@ pub fn search(
 /// True when the query matched something other than the agent row.
 pub fn has_direct_match(items: &[Item]) -> bool {
     items.iter().any(|i| i.kind != Kind::Agent)
+}
+
+/// Inline Thunderstorm / Spotlight calculator & unit converter.
+/// Supports simple arithmetic (`42 * 18`, `120 / 4`, `15 + 27`, `100 - 37`)
+/// and unit/temperature/currency conversions (`25 c to f`, `10 km to mi`, `100 usd to eur`).
+pub fn eval_quick_math(query: &str) -> Option<(String, String)> {
+    let q = query.trim();
+    if q.is_empty() {
+        return None;
+    }
+    let lower = q.to_ascii_lowercase();
+    // Unit conversions: "<num> <from> to <to>" or "<num> <from> in <to>"
+    let parts: Vec<&str> = lower.split_whitespace().collect();
+    if parts.len() == 4 && (parts[2] == "to" || parts[2] == "in") {
+        if let Ok(val) = parts[0].parse::<f64>() {
+            let conv = match (parts[1], parts[3]) {
+                ("c" | "celsius", "f" | "fahrenheit") => Some((val * 9.0 / 5.0 + 32.0, "°F")),
+                ("f" | "fahrenheit", "c" | "celsius") => Some(((val - 32.0) * 5.0 / 9.0, "°C")),
+                ("km", "mi" | "miles") => Some((val * 0.621_371, "mi")),
+                ("mi" | "miles", "km") => Some((val * 1.609_34, "km")),
+                ("kg", "lb" | "lbs") => Some((val * 2.204_62, "lb")),
+                ("lb" | "lbs", "kg") => Some((val * 0.453_592, "kg")),
+                ("m", "ft" | "feet") => Some((val * 3.280_84, "ft")),
+                ("ft" | "feet", "m") => Some((val * 0.3048, "m")),
+                ("usd", "eur") => Some((val * 0.92, "EUR")),
+                ("eur", "usd") => Some((val * 1.09, "USD")),
+                ("usd", "gbp") => Some((val * 0.79, "GBP")),
+                ("gbp", "usd") => Some((val * 1.27, "USD")),
+                _ => None,
+            };
+            if let Some((res, unit)) = conv {
+                return Some((format!("{res:.2} {unit}"), format!("Unit conversion · {q}")));
+            }
+        }
+    }
+    // Simple two-operand arithmetic: "a op b"
+    for op in ['+', '-', '*', '/', '×', '÷'] {
+        if let Some(pos) = q.find(op) {
+            if pos == 0 {
+                continue;
+            }
+            let lhs = q[..pos].trim().parse::<f64>().ok()?;
+            let rhs = q[pos + op.len_utf8()..].trim().parse::<f64>().ok()?;
+            let res = match op {
+                '+' => lhs + rhs,
+                '-' => lhs - rhs,
+                '*' | '×' => lhs * rhs,
+                '/' | '÷' if rhs.abs() > f64::EPSILON => lhs / rhs,
+                _ => return None,
+            };
+            let formatted = if (res - res.round()).abs() < 1e-6 {
+                format!("{}", res.round() as i64)
+            } else {
+                format!("{res:.4}")
+            };
+            return Some((formatted, format!("Calculator · {q}")));
+        }
+    }
+    None
 }
 
 /// One drawable row: an item, and the group heading to draw above it when it

@@ -1096,9 +1096,9 @@ fn compositor_backdrop(
     out: &mut [u8],
 ) {
     use crate::material::Material;
-    let (sat, noise) = match m {
-        Material::Glass => (1.18f32, 0.0f32),
-        Material::Acrylic => (1.12, 0.05),
+    let (sat, lift, noise) = match m {
+        Material::Glass => (1.24f32, 8.0f32, 0.0f32),
+        Material::Acrylic => (1.14, 4.0, 0.05),
         _ => return,
     };
     let _ = sharp;
@@ -1120,7 +1120,7 @@ fn compositor_backdrop(
                     % 1000;
                 let g = (hash as f32 / 1000.0 - 0.5) * 2.0 * noise * 255.0;
                 for c in 0..3 {
-                    let v = l + (px[c] as f32 - l) * sat + g;
+                    let v = l + (px[c] as f32 - l) * sat + lift + g;
                     out[i + c] = v.clamp(0.0, 255.0) as u8;
                 }
                 out[i + 3] = 255;
@@ -1207,7 +1207,8 @@ fn scene_pixels(
     .ok()
     .and_then(|b| crate::canvas::decode_png(&b));
     let sharp = backdrop(wp.as_ref(), w, h);
-    let soft = blur(&blur(&sharp, w, h), w, h);
+    // Deep multi-pass Gaussian frost matching pearOS / macOS compositor backdrop blur.
+    let soft = blur(&blur(&blur(&blur(&sharp, w, h), w, h), w, h), w, h);
     let mut out = sharp.clone();
 
     let mut prefs = ShellPrefs::default();
@@ -1445,6 +1446,205 @@ fn default_desktop_renders() {
         .count();
     let frac = diff as f64 / (shots[0].w * shots[0].h) as f64;
     assert!(frac > 0.25, "dark and light defaults differ in only {:.1} % of pixels", frac * 100.0);
+    if let Some(dir) = std::env::var_os("SOLYRA_RENDER_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for s in &shots {
+            write_png(&dir, s);
+        }
+    }
+}
+
+#[test]
+fn droppy_and_island_spotlight_previews() {
+    use crate::island::{self, Anim, Content, Extra, Glance, HudKind, NotifCard};
+    use crate::media::Media;
+    use solyra_conf::look::NotchStyle;
+
+    // Verify quick math & synced lyrics parsers directly.
+    assert_eq!(
+        crate::launcher::eval_quick_math("42 * 18").map(|(v, _)| v),
+        Some("756".into())
+    );
+    assert_eq!(
+        crate::launcher::eval_quick_math("25 c to f").map(|(v, _)| v),
+        Some("77.00 °F".into())
+    );
+    let (_, cur_lyric, _) = crate::lock::synced_lyric_window(
+        "[00:10.00]First\n[00:30.00]Second\n[00:50.00]Third",
+        35_000,
+    );
+    assert_eq!(cur_lyric.as_deref(), Some("Second"));
+
+    let fonts = Fonts::load();
+    let d = ShellPrefs::default();
+    let sample_media = Media {
+        bus: "org.mpris.MediaPlayer2.spotify".into(),
+        title: "Clair de Lune".into(),
+        artist: "Claude Debussy".into(),
+        playing: true,
+        position_us: Some(78_000_000),
+        length_us: Some(203_000_000),
+    };
+    let glance = Glance {
+        battery: Some(84),
+        network: "Wi-Fi".into(),
+        agents_running: 2,
+        windows: 4,
+    };
+    let extra = Extra {
+        glance: &glance,
+        clock: "09:41",
+        date: "Wednesday 25 November",
+        reply: "",
+        typing: false,
+    };
+
+    let cases: Vec<(&str, Content, bool)> = vec![
+        (
+            "droppy-island-widgets",
+            Content::Widgets {
+                media: Some(sample_media.clone()),
+                pomodoro_secs: Some(14 * 60 + 32),
+                weather: Some("16°".into()),
+                cpu_pct: 28,
+                ram_pct: 46,
+                clipboard_preview: Some("git push -u origin main".into()),
+            },
+            true,
+        ),
+        (
+            "droppy-island-shelf",
+            Content::Shelf(vec![
+                std::path::PathBuf::from("/tmp/Q4-Report.pdf"),
+                std::path::PathBuf::from("/tmp/wallpaper.png"),
+                std::path::PathBuf::from("/tmp/demo.mp4"),
+                std::path::PathBuf::from("/tmp/archive.zip"),
+            ]),
+            true,
+        ),
+        (
+            "droppy-island-droplets",
+            Content::Droplets {
+                enabled_mask: 0b0010_1111_0111,
+            },
+            true,
+        ),
+        (
+            "droppy-island-hud-volume",
+            Content::Hud(HudKind::Volume(72)),
+            false,
+        ),
+        (
+            "droppy-island-notif",
+            Content::Notif(NotifCard {
+                app: "Messages".into(),
+                title: "Alex".into(),
+                body: "Are we shipping the new Solyra build tonight?".into(),
+            }),
+            true,
+        ),
+        (
+            "droppy-island-spotlight-empty",
+            Content::Spotlight {
+                query: String::new(),
+                selected: 0,
+                ask_mode: false,
+                ask_reply: None,
+            },
+            true,
+        ),
+        (
+            "droppy-island-spotlight-query",
+            Content::Spotlight {
+                query: "42 * 18".into(),
+                selected: 0,
+                ask_mode: false,
+                ask_reply: None,
+            },
+            true,
+        ),
+        (
+            "droppy-island-spotlight-apps",
+            Content::Spotlight {
+                query: "snap".into(),
+                selected: 0,
+                ask_mode: false,
+                ask_reply: None,
+            },
+            true,
+        ),
+        (
+            "droppy-island-spotlight-ask",
+            Content::Spotlight {
+                query: "Summarize open agent tasks".into(),
+                selected: 0,
+                ask_mode: true,
+                ask_reply: Some(
+                    "2 agents are active on Infi-AI: solyra-panel tests are green (116/116) and Finder UI parity is ready for review."
+                        .into(),
+                ),
+            },
+            true,
+        ),
+    ];
+
+    let mut shots = Vec::new();
+    for (name, content, expanded) in cases {
+        let mut scene = scene_pixels(
+            &fonts,
+            ThemeKind::Dark,
+            "silk",
+            d.look.bar_material,
+            d.look.dock_material,
+            d.look.notch_material,
+            d.dock_style,
+            NotchStyle::Off,
+            false,
+        );
+        let (iw, ih) = (island::SURF_W, island::SURF_H);
+        let mut buf = vec![0u8; (iw * ih * 4) as usize];
+        let shape = island::target(NotchStyle::Island, &content, expanded);
+        let anim = Anim::new(shape);
+        {
+            let mut cv = Canvas::new(&mut buf, iw, ih, 1);
+            island::draw(
+                &mut cv,
+                &fonts,
+                NotchStyle::Island,
+                &anim,
+                &content,
+                expanded,
+                &extra,
+                None,
+            );
+        }
+        let at = ((scene.w as i32 - iw as i32) / 2, 0);
+        let rects = crate::material::blur_rects(
+            shape.x().round() as i32,
+            shape.y.round() as i32,
+            shape.w.round() as i32,
+            shape.h.round() as i32,
+            shape.r,
+        );
+        compositor_backdrop(
+            &scene.sharp,
+            &scene.soft,
+            scene.w,
+            crate::material::Material::Glass,
+            &rects,
+            at,
+            &mut scene.out,
+        );
+        over(&mut scene.out, scene.w, &buf, iw, ih, at);
+        shots.push(Shot {
+            name: name.into(),
+            w: scene.w,
+            h: scene.h,
+            rgba: flatten(&scene.out, scene.w, scene.h, Rgba::rgb(0, 0, 0)),
+        });
+    }
+
     if let Some(dir) = std::env::var_os("SOLYRA_RENDER_DIR") {
         let dir = std::path::PathBuf::from(dir);
         std::fs::create_dir_all(&dir).unwrap();

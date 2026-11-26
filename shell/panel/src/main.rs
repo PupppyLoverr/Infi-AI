@@ -268,6 +268,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         island_left_at: None,
         island_hover_at: None,
         island_tab_shelf: false,
+        island_page: 0,
+        droplets_mask: 0b0011_1111_1111,
+        pomodoro_ends: None,
+        spotlight_ask_mode: false,
         shelf: shelf::load(),
         island_by_hover: false,
         media: media_slot,
@@ -520,6 +524,10 @@ struct App {
     island_hover_at: Option<Instant>,
     /// The open island shows the shelf tab rather than what is live.
     island_tab_shelf: bool,
+    island_page: u8,
+    droplets_mask: u16,
+    pomodoro_ends: Option<Instant>,
+    spotlight_ask_mode: bool,
     /// Files parked on the notch.
     shelf: Vec<std::path::PathBuf>,
     /// The island was opened by hovering, so it closes as soon as the
@@ -799,6 +807,18 @@ impl App {
             }
             ShellCmd::IslandShelf(on) => {
                 self.island_tab_shelf = on;
+                self.island_page = if on { 1 } else { 0 };
+                self.retarget_island();
+            }
+            ShellCmd::IslandPage(page) => {
+                self.island_page = page.min(2);
+                self.island_tab_shelf = self.island_page == 1;
+                self.retarget_island();
+            }
+            ShellCmd::ToggleDroplet(id) => {
+                if id < 16 {
+                    self.droplets_mask ^= 1u16 << id;
+                }
                 self.retarget_island();
             }
             ShellCmd::ShelfRemove(i) => {
@@ -806,6 +826,37 @@ impl App {
                     self.shelf.remove(i);
                     shelf::save(&self.shelf);
                 }
+                self.retarget_island();
+            }
+            ShellCmd::ShelfZip => {
+                if let Some(archive) = shelf::zip_items(&self.shelf) {
+                    self.island_msg = Some(format!("Zipped {}", shelf::label(&archive)));
+                    self.island_page = 0;
+                    self.island_tab_shelf = false;
+                }
+                self.retarget_island();
+            }
+            ShellCmd::ShelfNewFolder => {
+                if let Some(dir) = shelf::gather_to_folder(&self.shelf) {
+                    self.island_msg = Some(format!("Created {}", shelf::label(&dir)));
+                }
+                self.retarget_island();
+            }
+            ShellCmd::ShelfClear => {
+                self.shelf.clear();
+                shelf::save(&self.shelf);
+                self.retarget_island();
+            }
+            ShellCmd::PomodoroToggle => {
+                if self.pomodoro_ends.is_some() {
+                    self.pomodoro_ends = None;
+                } else {
+                    self.pomodoro_ends = Some(Instant::now() + Duration::from_secs(25 * 60));
+                }
+                self.retarget_island();
+            }
+            ShellCmd::SpotlightToggleAsk => {
+                self.spotlight_ask_mode = !self.spotlight_ask_mode;
                 self.retarget_island();
             }
             ShellCmd::ShelfAdd(paths) => {
@@ -1196,8 +1247,15 @@ impl App {
                 sent: t.decision_sent.is_some(),
             });
         }
-        if self.island_expanded && self.island_tab_shelf {
-            return island::Content::Shelf(self.shelf.clone());
+        if self.island_expanded {
+            if self.island_page == 1 || self.island_tab_shelf {
+                return island::Content::Shelf(self.shelf.clone());
+            }
+            if self.island_page == 2 {
+                return island::Content::Droplets {
+                    enabled_mask: self.droplets_mask,
+                };
+            }
         }
         if let Some(msg) = &self.island_msg {
             return island::Content::Message(msg.clone());

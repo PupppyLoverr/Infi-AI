@@ -27,7 +27,7 @@ use crate::tokens::Theme;
 /// shelf).
 pub const CARD_H: i32 = 64;
 /// Corner radius of the shelf.
-const DOCK_R: f32 = 18.0;
+const DOCK_R: f32 = 22.0;
 /// Extra room above the card for magnified icons: the biggest icon is
 /// `MAX_SCALE` times a cell, plus space for its tooltip.
 pub const MAGNIFY_ROOM: i32 = 66;
@@ -225,10 +225,10 @@ pub fn spec(style: DockStyle, wins: &[WindowInfo], magnify: bool, hidden: bool) 
     }
     if magnify {
         // Room for every icon to grow: the gaussian adds (MAX_SCALE - 1) ·
-        // σ·√(2π) cells in total (≈ 3 cells), plus a margin so the shelf's
-        // rim and shadow never touch the surface edge.
+        // σ·√(2π) cells in total (≈ 3 cells), plus generous side margin so
+        // magnified outer icons (Files / Trash) and shelf rim never clip.
         let grown = (MAX_SCALE - 1.0) * SIGMA * (2.0 * std::f32::consts::PI).sqrt();
-        let extra = (grown * m.cell as f32).ceil() as i32 + 2 * m.cell;
+        let extra = (grown * m.cell as f32).ceil() as i32 + 3 * m.cell;
         Spec {
             namespace: "solyra-dock-magnify",
             full_width: false,
@@ -402,12 +402,25 @@ fn draw_floating(
         })
         .collect();
     let content: i32 = sizes.iter().sum::<i32>() + m.gap * (its.len() as i32 - 1).max(0);
-    // Never wider than the surface: with an icon magnified the shelf grows,
-    // and it stays one pixel inside the surface so its rim is never cut.
-    let card_w = (content + m.pad * 2).min(w - 2);
-    let card_x = ((w - card_w) / 2).max(1);
+    // Keep the glass shelf safely inset inside the magnify surface so outer
+    // magnified icons and the glass rim never clip at the surface border.
+    let edge_inset = if magnify { 8 } else { 1 };
+    let max_card_w = (w - edge_inset * 2).max(120);
+    let card_w = (content + m.pad * 2).min(max_card_w);
+    let card_x = ((w - card_w) / 2).max(edge_inset);
 
     let slab = slab_for(live, th.surface);
+    if magnify {
+        // Subtle Cupertino ambient elevation shadow beneath the floating shelf.
+        cv.round_rect(
+            card_x - 1,
+            card_y + 2,
+            card_w + 2,
+            CARD_H - 1,
+            DOCK_R + 1.0,
+            Rgba::rgba(0, 0, 0, 42),
+        );
+    }
     material::paint(cv, &slab, card_x, card_y, card_w, CARD_H, DOCK_R);
     let body = Body {
         x: card_x,
@@ -440,12 +453,12 @@ fn draw_floating(
         .to_string();
     for (it, size) in its.iter().zip(&sizes) {
         if let Item::Separator = it {
-            let sep_h = 28;
+            let sep_h = 38;
             let sep_y = card_y + (CARD_H - sep_h) / 2;
             let sw = *size;
             let sx = x + (sw - 1) / 2;
-            let mid = Rgba::rgba(ink.0, ink.1, ink.2, 52);
-            let end = Rgba::rgba(ink.0, ink.1, ink.2, 0);
+            let mid = Rgba::rgba(ink.0, ink.1, ink.2, 96);
+            let end = Rgba::rgba(ink.0, ink.1, ink.2, 16);
             cv.fill_rect_vgrad(sx, sep_y, 1, sep_h / 2, end, mid);
             cv.fill_rect_vgrad(sx, sep_y + sep_h / 2, 1, sep_h - sep_h / 2, mid, end);
             x += sw + m.gap;

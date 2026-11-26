@@ -108,14 +108,30 @@ def folder(d, x0, y0, x1, y1, back, front, tab=True):
 
 
 def files():
-    img = body("#6ccbff", "#1b74e8")
+    # Iconic macOS / pearOS split blue & pearl-white smiling Finder face
+    img = body("#2ea8ff", "#0062e6")
     lay = layer()
     d = ImageDraw.Draw(lay)
-    folder(d, cx(0.2), cx(0.27), cx(0.8), cx(0.73), (255, 255, 255, 150), (255, 255, 255, 245))
-    # A face of sorts: two eyes, a smile, Solyra's own friendly folder.
-    for ex in (0.41, 0.59):
-        d.ellipse((cx(ex) - K * 6, cx(0.47), cx(ex) + K * 6, cx(0.47) + K * 22), fill=hexc("#1b74e8"))
-    d.arc((cx(0.38), cx(0.48), cx(0.62), cx(0.65)), 20, 160, fill=hexc("#1b74e8"), width=K * 6)
+    # Right half pearl-white face with subtle curved nose contour
+    right_face = vgrad((B, B), hexc("#ffffff"), hexc("#dde7f5"))
+    rm = Image.new("L", (B, B), 0)
+    rd = ImageDraw.Draw(rm)
+    rd.polygon([
+        (B * 0.54, 0), (B, 0), (B, B), (B * 0.50, B),
+        (B * 0.48, B * 0.60), (B * 0.57, B * 0.56), (B * 0.50, B * 0.25),
+    ], fill=255)
+    from PIL import ImageChops
+    rm = ImageChops.multiply(rm, MASK)
+    img.paste(right_face, (O, O), rm)
+    # Subtle vertical nose shadow along the seam
+    d.line([(cx(0.54), cx(0.08)), (cx(0.50), cx(0.28)), (cx(0.57), cx(0.56)), (cx(0.48), cx(0.60))],
+           fill=(0, 48, 120, 48), width=K * 4, joint="curve")
+    # Crisp eyes
+    eye_col = hexc("#142238")
+    for ex in (0.31, 0.72):
+        d.rounded_rectangle((cx(ex) - K * 6, cx(0.32), cx(ex) + K * 6, cx(0.45)), radius=K * 6, fill=eye_col)
+    # Wide friendly Finder smile
+    d.arc((cx(0.20), cx(0.38), cx(0.80), cx(0.79)), 24, 156, fill=eye_col, width=K * 8)
     finish(over(img, lay), "files")
 
 
@@ -127,18 +143,18 @@ def downloads(name="downloads", arrow=True):
     sh = layer()
     ImageDraw.Draw(sh).rounded_rectangle((x0, y0 + K * 14, x1, y1 + K * 6), radius=K * 18, fill=(0, 0, 0, 90))
     img.alpha_composite(sh.filter(ImageFilter.GaussianBlur(K * 6)))
-    folder(d, x0, y0, x1, y1, hexc("#3d8fe8"), hexc("#6cc0ff"))
-    # front face gradient
-    face = vgrad((int(x1 - x0), int(y1 - (y0 + (y1 - y0) * 0.28))), hexc("#7fcbff"), hexc("#3f9bf0"))
+    folder(d, x0, y0, x1, y1, hexc("#1e72e8"), hexc("#4da6ff"))
+    face = vgrad((int(x1 - x0), int(y1 - (y0 + (y1 - y0) * 0.28))), hexc("#5bb5ff"), hexc("#196ce0"))
     m = Image.new("L", face.size, 0)
     ImageDraw.Draw(m).rounded_rectangle((0, 0, face.size[0] - 1, face.size[1] - 1), radius=(y1 - y0) * 0.12, fill=255)
     lay.paste(face, (int(x0), int(y0 + (y1 - y0) * 0.28)), m)
     d = ImageDraw.Draw(lay)
     if arrow:
-        c = (cx(0.5), cx(0.6))
-        d.ellipse((c[0] - K * 34, c[1] - K * 34, c[0] + K * 34, c[1] + K * 34), outline=(255, 255, 255, 200), width=K * 6)
-        d.line((c[0], c[1] - K * 18, c[0], c[1] + K * 14), fill=(255, 255, 255, 230), width=K * 7)
-        d.polygon([(c[0] - K * 14, c[1] + 2 * K), (c[0] + K * 14, c[1] + 2 * K), (c[0], c[1] + K * 18)], fill=(255, 255, 255, 230))
+        c = (cx(0.5), cx(0.61))
+        emboss = (12, 74, 178, 175)
+        d.ellipse((c[0] - K * 32, c[1] - K * 32, c[0] + K * 32, c[1] + K * 32), outline=emboss, width=K * 5)
+        d.line((c[0], c[1] - K * 16, c[0], c[1] + K * 12), fill=emboss, width=K * 6)
+        d.polygon([(c[0] - K * 13, c[1] + 2 * K), (c[0] + K * 13, c[1] + 2 * K), (c[0], c[1] + K * 16)], fill=emboss)
     finish(over(img, lay), name)
 
 
@@ -147,34 +163,38 @@ def folder_plain():
 
 
 def trash():
+    # Sleek tapered translucent frosted-glass bin matching pearOS dock far-right
     img = canvas()
     lay = layer()
-    d = ImageDraw.Draw(lay)
-    top, bot = cx(0.2), cx(0.92)
-    l0, r0, l1, r1 = cx(0.2), cx(0.8), cx(0.27), cx(0.73)
+    top, bot = cx(0.16), cx(0.90)
+    l0, r0, l1, r1 = cx(0.18), cx(0.82), cx(0.26), cx(0.74)
     sh = layer()
-    ImageDraw.Draw(sh).polygon([(l0, top + K * 18), (r0, top + K * 18), (r1, bot + K * 8), (l1, bot + K * 8)], fill=(0, 0, 0, 90))
-    img.alpha_composite(sh.filter(ImageFilter.GaussianBlur(K * 6)))
-    d.polygon([(l0, top), (r0, top), (r1, bot), (l1, bot)], fill=(214, 220, 228, 215))
-    for i in range(1, 6):
-        t = i / 6
-        xa = l0 + (r0 - l0) * t
-        xb = l1 + (r1 - l1) * t
-        d.line((xa, top + K * 10, xb, bot - K * 8), fill=(150, 158, 170, 200), width=K * 3)
-    d.rounded_rectangle((cx(0.14), cx(0.12), cx(0.86), cx(0.2)), radius=K * 8, fill=(236, 240, 245, 255), outline=(160, 168, 180, 255), width=K * 2)
+    ImageDraw.Draw(sh).polygon([(l0, top + K * 18), (r0, top + K * 18), (r1, bot + K * 10), (l1, bot + K * 10)], fill=(0, 0, 0, 96))
+    img.alpha_composite(sh.filter(ImageFilter.GaussianBlur(K * 7)))
+    # Translucent silver-glass body gradient
+    body_grad = vgrad((S, S), (188, 194, 204, 190), (235, 240, 248, 225))
+    bm = Image.new("L", (S, S), 0)
+    ImageDraw.Draw(bm).polygon([(l0, top), (r0, top), (r1, bot), (l1, bot)], fill=255)
+    lay.paste(body_grad, (0, 0), bm)
+    d = ImageDraw.Draw(lay)
+    # Soft inner specular edge + rim ellipse
+    d.polygon([(l0, top), (r0, top), (r1, bot), (l1, bot)], outline=(255, 255, 255, 220), width=K * 3)
+    d.ellipse((l0, top - K * 10, r0, top + K * 14), fill=(162, 168, 180, 195), outline=(255, 255, 255, 255), width=K * 4)
     finish(over(img, lay), "trash")
 
 
 def launchpad():
-    img = body("#ffffff", "#e4e5ec")
+    # pearOS Applications / Launchpad icon: clean white squircle with search bar + soft 2x3 pastel grid
+    img = body("#ffffff", "#eaecf2")
     lay = layer()
     d = ImageDraw.Draw(lay)
-    cols = ["#ff5f57", "#ffbd2e", "#28c840", "#34aadc", "#5e5ce6", "#ff2d55", "#ff9f0a", "#30d158", "#bf5af2"]
+    d.rounded_rectangle((cx(0.16), cx(0.16), cx(0.84), cx(0.30)), radius=K * 14, fill=(224, 226, 234, 255))
+    cols = ["#ff6961", "#ffd426", "#30d158", "#64d2ff", "#bf5af2", "#ff9f0a"]
     for i, c in enumerate(cols):
         r, q = divmod(i, 3)
-        x = cx(0.22 + q * 0.2)
-        y = cx(0.22 + r * 0.2)
-        d.rounded_rectangle((x, y, x + cx(0.16) - O, y + cx(0.16) - O), radius=K * 10, fill=hexc(c))
+        x = cx(0.18 + q * 0.22)
+        y = cx(0.39 + r * 0.22)
+        d.rounded_rectangle((x, y, x + cx(0.17) - O, y + cx(0.17) - O), radius=K * 11, fill=hexc(c))
     finish(over(img, lay), "launchpad")
 
 
@@ -236,22 +256,24 @@ def viewer():
 
 
 def calculator():
-    img = body("#3c3c40", "#18181b")
+    img = body("#2f3034", "#17171a")
     lay = layer()
     d = ImageDraw.Draw(lay)
-    d.rounded_rectangle((cx(0.18), cx(0.16), cx(0.82), cx(0.34)), radius=K * 8, fill=(120, 200, 140, 255))
+    d.rounded_rectangle((cx(0.16), cx(0.15), cx(0.84), cx(0.32)), radius=K * 9, fill=(36, 38, 42, 255), outline=(255, 255, 255, 22), width=K * 2)
+    # Clean 3x2 circular macOS Sequoia button grid
     for r in range(2):
         for q in range(3):
-            x, y = cx(0.18 + q * 0.23), cx(0.42 + r * 0.22)
-            col = hexc("#ff9f0a") if q == 2 else (90, 90, 96, 255)
-            d.rounded_rectangle((x, y, x + cx(0.18) - O, y + cx(0.17) - O), radius=K * 10, fill=col)
+            cx_b = cx(0.26 + q * 0.24)
+            cy_b = cx(0.49 + r * 0.23)
+            rad = B * 0.095
+            col = hexc("#ff9f0a") if q == 2 else ((142, 142, 148, 255) if r == 0 and q < 2 else (78, 78, 84, 255))
+            d.ellipse((cx_b - rad, cy_b - rad, cx_b + rad, cy_b + rad), fill=col)
     w = K * 5
-    x, y = cx(0.41 + 0.23) + K * 2, cx(0.42 + 0.22)
-    m = cx(0.18 + 2 * 0.23) + (cx(0.18) - O) / 2
-    d.line((m - K * 14, cx(0.505), m + K * 14, cx(0.505)), fill="white", width=w)
-    d.line((m, cx(0.505) - K * 14, m, cx(0.505) + K * 14), fill="white", width=w)
-    d.line((m - K * 14, cx(0.715) - K * 6, m + K * 14, cx(0.715) - K * 6), fill="white", width=w)
-    d.line((m - K * 14, cx(0.715) + K * 6, m + K * 14, cx(0.715) + K * 6), fill="white", width=w)
+    m = cx(0.74)
+    d.line((m - K * 11, cx(0.49), m + K * 11, cx(0.49)), fill="white", width=w)
+    d.line((m, cx(0.49) - K * 11, m, cx(0.49) + K * 11), fill="white", width=w)
+    d.line((m - K * 11, cx(0.72) - K * 5, m + K * 11, cx(0.72) - K * 5), fill="white", width=w)
+    d.line((m - K * 11, cx(0.72) + K * 5, m + K * 11, cx(0.72) + K * 5), fill="white", width=w)
     finish(over(img, lay), "calculator")
 
 
@@ -299,34 +321,34 @@ def mail():
 
 
 def notes():
-    img = body("#fff8d6", "#ffd84a")
+    img = body("#ffffff", "#f2f3f6")
     lay = layer()
     d = ImageDraw.Draw(lay)
-    d.rectangle((O, O + B * 0.0, O + B, cx(0.24)), fill=hexc("#ffcc00"))
+    d.rectangle((O, O, O + B, cx(0.27)), fill=hexc("#f5c230"))
+    d.line((O, cx(0.27), O + B, cx(0.27)), fill=(214, 168, 42, 255), width=K * 3)
     for i in range(5):
-        y = cx(0.36 + i * 0.11)
-        d.line((cx(0.2), y, cx(0.8 - (0.22 if i == 4 else 0)), y), fill=(200, 170, 80, 255), width=K * 3)
+        y = cx(0.39 + i * 0.11)
+        d.line((cx(0.16), y, cx(0.84), y), fill=(216, 218, 224, 255), width=K * 3)
     img = over(img, lay)
     m = Image.new("L", (S, S), 0)
     m.paste(MASK, (O, O))
-    clipped = canvas()
-    clipped.paste(img, (0, 0), m)
-    base = body("#fff8d6", "#ffd84a")
+    base = body("#ffffff", "#f2f3f6")
     base.paste(img, (0, 0), m)
     finish(base, "notes")
 
 
 def photos():
-    img = body("#ffffff", "#f0f0f4")
+    img = body("#ffffff", "#f4f5f8")
     lay = layer()
-    d = ImageDraw.Draw(lay)
-    cols = ["#ff9500", "#ffcc00", "#34c759", "#30b0c7", "#007aff", "#5856d6", "#af52de", "#ff2d55"]
+    cols = ["#ff9500", "#ffd60a", "#34c759", "#32ade6", "#007aff", "#5856d6", "#af52de", "#ff2d55"]
     c = cx(0.5)
     for i, col in enumerate(cols):
-        a = 2 * math.pi * i / 8 - math.pi / 2
-        px, py = c + math.cos(a) * B * 0.15, c + math.sin(a) * B * 0.15
+        a = i * 45
         petal = layer()
-        ImageDraw.Draw(petal).ellipse((px - B * 0.13, py - B * 0.13, px + B * 0.13, py + B * 0.13), fill=hexc(col, 200))
+        pd = ImageDraw.Draw(petal)
+        pw, ph = B * 0.10, B * 0.19
+        pd.rounded_rectangle((c - pw, c - B * 0.36, c + pw, c - B * 0.04), radius=pw, fill=hexc(col, 205))
+        petal = petal.rotate(-a, center=(c, c), resample=Image.BICUBIC)
         lay.alpha_composite(petal)
     finish(over(img, lay), "photos")
 
@@ -375,16 +397,28 @@ def wallpaper():
 
 
 def maps():
-    img = body("#9be15d", "#2fb36b")
+    # macOS / pearOS Maps tile with pastel blocks, green park, highway & blue navigation badge
+    img = body("#f5f3ec", "#e8e4da")
     lay = layer()
     d = ImageDraw.Draw(lay)
-    d.line((cx(0.1), cx(0.72), cx(0.9), cx(0.36)), fill=(255, 255, 255, 220), width=K * 14)
-    d.line((cx(0.1), cx(0.72), cx(0.9), cx(0.36)), fill=hexc("#ffcc00"), width=K * 4)
-    pin = (cx(0.42), cx(0.42))
-    d.ellipse((pin[0] - K * 22, pin[1] - K * 22, pin[0] + K * 22, pin[1] + K * 22), fill=hexc("#ff3b30"))
-    d.polygon([(pin[0] - K * 16, pin[1] + K * 12), (pin[0] + K * 16, pin[1] + K * 12), (pin[0], pin[1] + K * 40)], fill=hexc("#ff3b30"))
-    d.ellipse((pin[0] - K * 8, pin[1] - K * 8, pin[0] + K * 8, pin[1] + K * 8), fill="white")
-    finish(over(img, lay), "maps")
+    d.rectangle((O, O, cx(0.55), cx(0.55)), fill=hexc("#a8e090"))
+    d.rectangle((cx(0.55), cx(0.45), O + B, O + B), fill=hexc("#a4d8ff"))
+    d.line((cx(0.05), cx(0.75), cx(0.95), cx(0.25)), fill=(255, 255, 255, 255), width=K * 26)
+    d.line((cx(0.05), cx(0.75), cx(0.95), cx(0.25)), fill=hexc("#ffb84d"), width=K * 12)
+    d.line((cx(0.28), cx(0.02), cx(0.68), cx(0.98)), fill=(255, 255, 255, 255), width=K * 20)
+    d.line((cx(0.28), cx(0.02), cx(0.68), cx(0.98)), fill=hexc("#4da3ff"), width=K * 9)
+    # Clip map layers to squircle mask
+    m = Image.new("L", (S, S), 0)
+    m.paste(MASK, (O, O))
+    img.paste(lay, (0, 0), m)
+    # Crisp floating blue navigation arrow badge
+    badge = layer()
+    bd = ImageDraw.Draw(badge)
+    c = (cx(0.42), cx(0.56))
+    r = B * 0.21
+    bd.ellipse((c[0] - r, c[1] - r, c[0] + r, c[1] + r), fill=hexc("#0a84ff"), outline=(255, 255, 255, 245), width=K * 5)
+    bd.polygon([(c[0], c[1] - r * 0.56), (c[0] + r * 0.44, c[1] + r * 0.46), (c[0], c[1] + r * 0.22), (c[0] - r * 0.44, c[1] + r * 0.46)], fill="white")
+    finish(over(img, badge), "maps")
 
 
 if __name__ == "__main__":

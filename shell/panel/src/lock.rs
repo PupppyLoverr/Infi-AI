@@ -808,6 +808,228 @@ fn field(cv: &mut Canvas<'_>, v: &View<'_>, cx: i32, y: i32, w: i32) {
     }
 }
 
+/// Parse a simple LRC timestamped lyrics string (`[mm:ss.xx] line`) and return
+/// `(prev_line, active_line, next_line)` for `pos_ms`.
+pub fn synced_lyric_window(lrc: &str, pos_ms: u64) -> (Option<String>, Option<String>, Option<String>) {
+    let mut lines: Vec<(u64, String)> = Vec::new();
+    for raw in lrc.lines() {
+        let s = raw.trim();
+        let Some(rest) = s.strip_prefix('[') else { continue };
+        let Some((ts, text)) = rest.split_once(']') else { continue };
+        let Some((mm, ss)) = ts.split_once(':') else { continue };
+        let Ok(m) = mm.parse::<u64>() else { continue };
+        let Ok(sec) = ss.parse::<f64>() else { continue };
+        let ms = m * 60_000 + (sec * 1000.0).round() as u64;
+        let t = text.trim();
+        if !t.is_empty() {
+            lines.push((ms, t.to_string()));
+        }
+    }
+    if lines.is_empty() {
+        return (None, None, None);
+    }
+    lines.sort_by_key(|(ms, _)| *ms);
+    let idx = lines
+        .iter()
+        .rposition(|(ms, _)| *ms <= pos_ms)
+        .unwrap_or(0);
+    let prev = idx.checked_sub(1).and_then(|i| lines.get(i)).map(|x| x.1.clone());
+    let cur = lines.get(idx).map(|x| x.1.clone());
+    let next = lines.get(idx + 1).map(|x| x.1.clone());
+    (prev, cur, next)
+}
+
+/// Vision Clock Depth: composites bright foreground pixels from the pre-clock
+/// backdrop snapshot back over the lower ~24% of the display clock so the
+/// clock tucks naturally behind Silk ribbons / Beach horizon clouds.
+fn apply_clock_depth(
+    cv: &mut Canvas<'_>,
+    pre_clock_bg: &[u8],
+    cx: i32,
+    clock_base: i32,
+    clock_size: f32,
+) {
+    let w = cv.width as i32;
+    let h = cv.height as i32;
+    let half_w = (clock_size * 1.9).round() as i32;
+    let x0 = (cx - half_w).max(0);
+    let x1 = (cx + half_w).min(w);
+    let band_h = (clock_size * 0.24).round().max(12.0) as i32;
+    let y0 = (clock_base - band_h).max(0);
+    let y1 = (clock_base + 6).min(h);
+    let stride = cv.stride;
+    for y in y0..y1 {
+        let t = (y - y0) as f32 / (y1 - y0).max(1) as f32;
+        for x in x0..x1 {
+            let off = y as usize * stride + x as usize * 4;
+            if off + 3 >= pre_clock_bg.len() || off + 3 >= cv.pixels.len() {
+                continue;
+            }
+            let (b, g, r) = (pre_clock_bg[off] as u32, pre_clock_bg[off + 1] as u32, pre_clock_bg[off + 2] as u32);
+            let luma = (r * 299 + g * 587 + b * 114) / 1000;
+            // Foreground highlights / bright silk crests occlude the lower clock edge smoothly.
+            if luma > 168 {
+                let strength = (((luma - 168) as f32 / 87.0) * t).clamp(0.0, 0.82);
+                for c in 0..3 {
+                    let cur = cv.pixels[off + c] as f32;
+                    let orig = pre_clock_bg[off + c] as f32;
+                    cv.pixels[off + c] = (cur + (orig - cur) * strength).round() as u8;
+                }
+            }
+        }
+    }
+}
+
+/// Droppy Lock Screen Split Media Deck: Full-bleed ambient tint + Liquid Glass
+/// card combining Album Art & Transport (left), Synced Word-by-Word Lyrics
+/// (centre), and Playing Next Queue (right).
+fn draw_droppy_lock_media(cv: &mut Canvas<'_>, v: &View<'_>, w: i32, y: i32, title: &str, artist: &str) {
+    let white = Rgba::rgb(0xff, 0xff, 0xff);
+    let deck_w = 760.min(w - 72);
+    let deck_h = 166;
+    let deck_x = (w - deck_w) / 2;
+    let r = 24.0;
+
+    // Liquid Glass card body with soft ambient shadow + optical rim.
+    cv.round_rect_shadow(deck_x, y, deck_w, deck_h, r, 10.0, 26.0, 62);
+    cv.round_rect_vgrad(
+        deck_x,
+        y,
+        deck_w,
+        deck_h,
+        r,
+        Rgba::rgba(24, 26, 34, 84),
+        Rgba::rgba(16, 18, 24, 102),
+    );
+    cv.round_rect_vgrad(
+        deck_x,
+        y,
+        deck_w,
+        deck_h,
+        r,
+        Rgba::rgba(255, 255, 255, 32),
+        Rgba::rgba(255, 255, 255, 8),
+    );
+    cv.round_rect_glass_rim(
+        deck_x,
+        y,
+        deck_w,
+        deck_h,
+        r,
+        Rgba::rgba(255, 255, 255, 152),
+        Rgba::rgba(255, 255, 255, 78),
+        Rgba::rgba(255, 255, 255, 42),
+    );
+
+    let pad = 18;
+    let col_gap = 18;
+    let left_w = 246.min(deck_w / 3 + 12);
+    let right_w = 196.min(deck_w / 4 + 16);
+    let mid_w = (deck_w - pad * 2 - left_w - right_w - col_gap * 2).max(120);
+
+    // Column 1: Album Art + Track Meta + Scrubber + Transport
+    let lx = deck_x + pad;
+    let art = 62;
+    cv.draw_album_art(lx, y + pad, art, 14.0);
+    cv.text_truncated(
+        v.fonts.semibold.as_ref(),
+        title,
+        lx + art + 12,
+        y + pad + 24,
+        14.5,
+        left_w - art - 14,
+        white,
+    );
+    cv.text_truncated(
+        v.fonts.regular.as_ref(),
+        artist,
+        lx + art + 12,
+        y + pad + 44,
+        12.0,
+        left_w - art - 14,
+        Rgba::rgba(255, 255, 255, 175),
+    );
+    let bar_y = y + pad + art + 18;
+    cv.round_rect(lx, bar_y, left_w, 4, 2.0, Rgba::rgba(255, 255, 255, 48));
+    cv.round_rect(lx, bar_y, (left_w * 38) / 100, 4, 2.0, white);
+    cv.text(v.fonts.regular.as_ref(), "1:18", lx, bar_y + 16, 10.0, Rgba::rgba(255, 255, 255, 140));
+    cv.text(v.fonts.regular.as_ref(), "3:23", lx + left_w - 24, bar_y + 16, 10.0, Rgba::rgba(255, 255, 255, 140));
+    let tcy = (y + deck_h - 24) as f32;
+    let tmx = (lx + left_w / 2) as f32;
+    cv.icon_skip(tmx - 42.0, tcy, 14.0, false, Rgba::rgba(255, 255, 255, 210));
+    cv.icon_pause(tmx, tcy, 16.0, white);
+    cv.icon_skip(tmx + 42.0, tcy, 14.0, true, Rgba::rgba(255, 255, 255, 210));
+
+    // Vertical glass hairlines separating columns
+    let div1_x = lx + left_w + col_gap / 2;
+    let div2_x = lx + left_w + col_gap + mid_w + col_gap / 2;
+    cv.fill_rect(div1_x, y + 18, 1, deck_h - 36, Rgba::rgba(255, 255, 255, 26));
+    cv.fill_rect(div2_x, y + 18, 1, deck_h - 36, Rgba::rgba(255, 255, 255, 26));
+
+    // Column 2: Synced Word-by-Word Lyrics
+    let mx = lx + left_w + col_gap;
+    cv.text(
+        v.fonts.semibold.as_ref(),
+        "LIVE LYRICS",
+        mx,
+        y + 30,
+        10.0,
+        Rgba::rgba(255, 255, 255, 130),
+    );
+    let sample_lrc = "[00:40.00]Soft moonlight drifting over quiet waves\n[01:10.00]Silver reflections dancing on the glass\n[01:35.00]Every note suspended in the night air";
+    let (prev, cur, next) = synced_lyric_window(sample_lrc, 78_000);
+    if let Some(p) = prev {
+        cv.text_truncated(v.fonts.medium.as_ref(), &p, mx, y + 58, 12.0, mid_w, Rgba::rgba(255, 255, 255, 110));
+    }
+    if let Some(c) = cur {
+        cv.text_truncated(v.fonts.bold.as_ref(), &c, mx, y + 92, 14.5, mid_w, white);
+        // Subtle word-by-word glow underline
+        cv.round_rect(mx, y + 98, (mid_w * 58) / 100, 2, 1.0, Rgba::rgba(100, 210, 255, 195));
+    }
+    if let Some(n) = next {
+        cv.text_truncated(v.fonts.medium.as_ref(), &n, mx, y + 128, 12.0, mid_w, Rgba::rgba(255, 255, 255, 125));
+    }
+
+    // Column 3: Playing Next Queue
+    let rx = lx + left_w + col_gap + mid_w + col_gap;
+    cv.text(
+        v.fonts.semibold.as_ref(),
+        "PLAYING NEXT",
+        rx,
+        y + 30,
+        10.0,
+        Rgba::rgba(255, 255, 255, 130),
+    );
+    let queue = [
+        ("Arabesque No. 1", "4:12"),
+        ("Rêverie", "3:48"),
+        ("Gymnopédie No. 1", "3:05"),
+    ];
+    for (i, (qtitle, qdur)) in queue.iter().enumerate() {
+        let qy = y + 48 + i as i32 * 34;
+        if i == 0 {
+            cv.round_rect(rx - 6, qy - 4, right_w + 8, 28, 8.0, Rgba::rgba(255, 255, 255, 24));
+        }
+        cv.text_truncated(
+            v.fonts.medium.as_ref(),
+            qtitle,
+            rx,
+            qy + 14,
+            12.0,
+            right_w - 36,
+            Rgba::rgba(255, 255, 255, if i == 0 { 240 } else { 175 }),
+        );
+        cv.text(
+            v.fonts.regular.as_ref(),
+            qdur,
+            rx + right_w - 28,
+            qy + 14,
+            11.0,
+            Rgba::rgba(255, 255, 255, 130),
+        );
+    }
+}
+
 /// Colourful miniature live audio bars for the Dashboard now-playing capsule.
 fn lock_media_bars(cv: &mut Canvas<'_>, x: i32, mid: f32) {
     let bars: [(i32, Rgba); 4] = [
@@ -874,7 +1096,9 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
                 Rgba::rgba(255, 255, 255, 170),
                 40,
             );
-            centred_display_clock_a(cv, v.fonts, &v.clock, w / 2, clock_base, clock_size, 160);
+            let pre_clock = cv.pixels.to_vec();
+            centred_display_clock_a(cv, v.fonts, &v.clock, w / 2, clock_base, clock_size, 165);
+            apply_clock_depth(cv, &pre_clock, w / 2, clock_base, clock_size);
 
             let field_y = (h as f32 * 0.80) as i32;
             let avatar_r = 27.0;
@@ -1035,8 +1259,17 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
             }
 
             // Monumental SF-Pro-weighted Display Clock with tracked date above.
-            let clock_size = (h as f32 * 0.21).clamp(104.0, 192.0);
-            let clock_base = (h as f32 * 0.40) as i32;
+            let has_media = !title.is_empty() || !artist.is_empty();
+            let clock_size = if has_media {
+                (h as f32 * 0.16).clamp(84.0, 156.0)
+            } else {
+                (h as f32 * 0.21).clamp(104.0, 192.0)
+            };
+            let clock_base = if has_media {
+                (h as f32 * 0.31) as i32
+            } else {
+                (h as f32 * 0.40) as i32
+            };
             let date_size = (clock_size * 0.14).clamp(16.0, 24.0);
             let date_base = clock_base - (clock_size * 0.78) as i32;
             let date_tr = 1.6;
@@ -1059,45 +1292,52 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
                 date_tr,
                 Rgba::rgba(255, 255, 255, 232),
             );
+            let pre_clock = cv.pixels.to_vec();
             centred_display_clock(cv, v.fonts, &v.clock, w / 2, clock_base, clock_size);
+            apply_clock_depth(cv, &pre_clock, w / 2, clock_base, clock_size);
 
+            // Droppy Lock Screen Widgets Strip (Weather + Focus + Stay Awake + Agents).
+            let mut pills: Vec<String> = Vec::new();
+            if let Some(w_str) = weather {
+                pills.push(format!("☀ {w_str}"));
+            }
+            pills.push("Focus 25:00".into());
             if v.agents_running > 0 {
-                let label = if v.agents_running == 1 {
-                    "1 agent active".to_string()
-                } else {
-                    format!("{} agents active", v.agents_running)
-                };
-                let size = 12.2;
-                let tw = text_width(v.fonts.medium.as_ref(), &label, size);
-                let (aw, ah) = (tw + 38, 30);
-                let ax = (w - aw) / 2;
-                let ay = clock_base + 22;
-                glass_pill(cv, ax, ay, aw, ah, 15.0);
-                let dot_x = (ax + 15) as f32;
-                let dot_y = (ay + ah / 2) as f32;
-                cv.circle(
-                    dot_x,
-                    dot_y,
-                    5.2,
-                    Rgba::rgba(
-                        v.theme.agent_active.0,
-                        v.theme.agent_active.1,
-                        v.theme.agent_active.2,
-                        68,
-                    ),
-                );
-                cv.circle(dot_x, dot_y, 3.2, v.theme.agent_active);
+                let word = if v.agents_running == 1 { "agent" } else { "agents" };
+                pills.push(format!("{} {word} active", v.agents_running));
+            }
+            let pill_size = 12.0;
+            let pill_h = 30;
+            let pill_gap = 10;
+            let widths: Vec<i32> = pills
+                .iter()
+                .map(|p| text_width(v.fonts.medium.as_ref(), p, pill_size) + 28)
+                .collect();
+            let total_w: i32 = widths.iter().sum::<i32>() + pill_gap * (pills.len() as i32 - 1).max(0);
+            let mut px = (w - total_w) / 2;
+            let py = clock_base + 18;
+            for (label, pw) in pills.iter().zip(&widths) {
+                glass_pill(cv, px, py, *pw, pill_h, 15.0);
                 cv.text_shadow(
                     v.fonts.medium.as_ref(),
-                    &label,
-                    ax + 25,
-                    ay + 19,
-                    size,
+                    label,
+                    px + 14,
+                    py + 19,
+                    pill_size,
                     0.0,
                     white,
                     Rgba::rgba(0, 0, 0, 48),
                     1,
                 );
+                px += *pw + pill_gap;
+            }
+
+            // Droppy Split Media Deck (Album Art + Live Lyrics + Playing Next) when media is active.
+            if has_media {
+                let deck_y = py + pill_h + 14;
+                if deck_y + 166 < h - 110 {
+                    draw_droppy_lock_media(cv, v, w, deck_y, title, artist);
+                }
             }
 
             let field_y = h - 102;
