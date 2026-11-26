@@ -1599,14 +1599,16 @@ impl App {
         if let Some(m) = media {
             let badge = activity.map(|_| island::LiveBadge::Activity);
             if self.island_expanded && self.island_lyrics {
-                let lyr = lyrics::load_local(&m.artist, &m.title)
-                    .unwrap_or_else(|| lyrics::fallback_for(&m.title));
+                // Only real synced lyrics (a local .lrc); never invented.
                 let pos_ms = (m.position_us.unwrap_or(0).max(0) / 1000) as u64;
-                let lines = lyr
-                    .window(pos_ms, 1, 2)
-                    .into_iter()
-                    .map(|(off, s)| (off, s.to_string()))
-                    .collect();
+                let lines = match lyrics::load_local(&m.artist, &m.title) {
+                    Some(lyr) => lyr
+                        .window(pos_ms, 1, 2)
+                        .into_iter()
+                        .map(|(off, s)| (off, s.to_string()))
+                        .collect(),
+                    None => vec![(1, lyrics::NONE_MESSAGE.to_string())],
+                };
                 return (
                     island::Content::MediaLyrics {
                         media: m,

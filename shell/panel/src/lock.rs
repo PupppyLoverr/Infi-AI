@@ -1400,12 +1400,12 @@ fn paint_ambient_media(cv: &mut Canvas<'_>, v: &View<'_>, w: i32, h: i32) -> Vec
         .media
         .map(|m| m.title.as_str())
         .or(v.media_title)
-        .unwrap_or("Levitating");
+        .unwrap_or("Not Playing");
     let artist = v
         .media
         .map(|m| m.artist.as_str())
         .or(v.media_artist)
-        .unwrap_or("Dua Lipa");
+        .unwrap_or("");
     let playing = v.media.map_or(true, |m| m.playing);
 
     // Track title + artist + right-side star & `...`
@@ -1495,14 +1495,17 @@ fn paint_ambient_media(cv: &mut Canvas<'_>, v: &View<'_>, w: i32, h: i32) -> Vec
     cv.text(v.fonts.semibold.as_ref(), &stamp, w - pad_x - sw, 40, 15.0, Rgba::rgba(255, 255, 255, 228));
 
     // Right half: large scrolling synced live lyrics.
-    let lyr = crate::lyrics::load_local(artist, title)
-        .unwrap_or_else(|| crate::lyrics::fallback_for(title));
+    // Only real synced lyrics (a local .lrc); never invented.
+    let lyr = crate::lyrics::load_local(artist, title);
     let pos_ms = v
         .media
         .and_then(|m| m.position_us)
         .map(|u| (u.max(0) / 1000) as u64)
-        .unwrap_or(51_000);
-    let win = lyr.window(pos_ms, 1, 5);
+        .unwrap_or(0);
+    let win = match &lyr {
+        Some(l) => l.window(pos_ms, 1, 5),
+        None => vec![(1, crate::lyrics::NONE_MESSAGE)],
+    };
     let lx = half + 32;
     let lw = (half - pad_x - 40).max(240);
     let mut ly = (h as f32 * 0.12).round() as i32;

@@ -115,27 +115,21 @@ pub fn load_local(artist: &str, title: &str) -> Option<SyncedLyrics> {
     None
 }
 
-/// Fallback synced lyrics matching our reference renders for preview & demo tracks.
-pub fn fallback_for(title: &str) -> SyncedLyrics {
-    let lower = title.to_ascii_lowercase();
-    if lower.contains("moonlit") {
-        SyncedLyrics::parse_lrc(
-            "[00:00.00] Under a sky of ultramarine\n\
-             [00:05.00] The water holds the moon\n\
-             [00:12.00] Drop by drop, it finds its way to you\n\
-             [00:20.00] Silver ripples drift into the blue\n",
-        )
-    } else {
-        SyncedLyrics::parse_lrc(
-            "[00:44.00] You're my starlight\n\
-             [00:49.00] I need you all night\n\
-             [00:54.00] Come on, dance with me\n\
-             [00:59.00] I'm levitating\n\
-             [01:04.00] I believe that you're for me, I feel it in our energy\n\
-             [01:10.00] I see us written in the stars\n\
-             [01:15.00] We can go wherever, so let's do it now or never\n",
-        )
-    }
+/// Shown when a track has no synced lyrics. Solyra never invents lyrics.
+pub const NONE_MESSAGE: &str = "No synced lyrics for this track";
+
+/// Original sample lines for previews and tests only (never shown for a
+/// real track: live code uses [`load_local`] and [`NONE_MESSAGE`]).
+#[cfg(test)]
+pub fn sample() -> SyncedLyrics {
+    SyncedLyrics::parse_lrc(
+        "[00:00.00] Under a sky of ultramarine\n\
+         [00:05.00] The water holds the moon\n\
+         [00:12.00] Drop by drop, it finds its way to you\n\
+         [00:20.00] Silver ripples drift into the blue\n\
+         [00:27.00] Every light along the bay\n\
+         [00:33.00] Leans in close and hums along\n",
+    )
 }
 
 #[cfg(test)]
@@ -144,12 +138,12 @@ mod tests {
 
     #[test]
     fn parses_lrc_and_tracks_active_line() {
-        let lyr = fallback_for("Levitating");
+        let lyr = sample();
         assert!(lyr.lines.len() >= 6);
-        assert_eq!(lyr.active_index(51_000), Some(1));
-        let win = lyr.window(51_000, 1, 3);
-        assert_eq!(win[0], (-1, "You're my starlight"));
-        assert_eq!(win[1], (0, "I need you all night"));
-        assert_eq!(win[2], (1, "Come on, dance with me"));
+        assert_eq!(lyr.active_index(6_000), Some(1));
+        let win = lyr.window(6_000, 1, 3);
+        assert_eq!(win[0], (-1, "Under a sky of ultramarine"));
+        assert_eq!(win[1], (0, "The water holds the moon"));
+        assert_eq!(win[2], (1, "Drop by drop, it finds its way to you"));
     }
 }

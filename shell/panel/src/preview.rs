@@ -2105,8 +2105,8 @@ fn macos27_droppy_showcase() {
         "showcase-droppy-notch-media",
         Content::Media(crate::media::Media {
             bus: "org.mpris.MediaPlayer2.spotify".into(),
-            title: "Levitating".into(),
-            artist: "Dua Lipa".into(),
+            title: "Harbour Lights".into(),
+            artist: "Solyra Sessions".into(),
             playing: false,
             position_us: Some(66_000_000),
             length_us: Some(204_000_000),
@@ -2122,7 +2122,7 @@ fn macos27_droppy_showcase() {
         position_us: Some(6_000_000),
         length_us: Some(212_000_000),
     };
-    let moon_lyr = crate::lyrics::fallback_for(&moonlit.title)
+    let moon_lyr = crate::lyrics::sample()
         .window(6_000, 1, 2)
         .into_iter()
         .map(|(o, s)| (o, s.to_string()))
@@ -2156,8 +2156,8 @@ fn macos27_droppy_showcase() {
         let th = Theme::for_kind(ThemeKind::Dark);
         let media = crate::media::Media {
             bus: "org.mpris.MediaPlayer2.spotify".into(),
-            title: "Levitating".into(),
-            artist: "Dua Lipa".into(),
+            title: "Harbour Lights".into(),
+            artist: "Solyra Sessions".into(),
             playing: true,
             position_us: Some(51_000_000),
             length_us: Some(203_000_000),
@@ -2175,8 +2175,8 @@ fn macos27_droppy_showcase() {
             message: None,
             card: false,
             agents_running: 1,
-            media_title: Some("Levitating"),
-            media_artist: Some("Dua Lipa"),
+            media_title: Some("Harbour Lights"),
+            media_artist: Some("Solyra Sessions"),
             weather: Some("22°"),
             media: Some(&media),
             unlock: None,
