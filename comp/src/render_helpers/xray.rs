@@ -271,8 +271,8 @@ impl Xray {
 }
 
 impl XrayElement {
-    fn compute_uniforms(&self) -> [Uniform<'static>; 16] {
-        let [g0, g1, g2, g3, g4, g5, g6] = self.glass.uniforms();
+    fn compute_uniforms(&self) -> [Uniform<'static>; 17] {
+        let [g0, g1, g2, g3, g4, g5, g6, g7] = self.glass.uniforms();
         [
             Uniform::new("niri_scale", self.scale),
             Uniform::new("geo_size", <[f32; 2]>::from(self.clip_geo_size)),
@@ -290,6 +290,7 @@ impl XrayElement {
             g4,
             g5,
             g6,
+            g7,
         ]
     }
 }

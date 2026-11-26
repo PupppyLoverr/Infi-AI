@@ -1228,7 +1228,7 @@ impl App {
         let shapes: Vec<_> = lay
             .shapes()
             .iter()
-            .map(|(r, rad)| gshape(r.x, r.y, r.w, r.h, *rad, glass_proto::Preset::Regular))
+            .map(|(r, rad)| gshape(r.x, r.y, r.w, r.h, *rad, glass_proto::Preset::Popover))
             .collect();
         set_glass(self.glass_mgr.as_ref(), &self.qh, slot, &shapes);
         set_blur(
@@ -1711,7 +1711,7 @@ impl App {
                 // The dock card's exact shape (clear glass).
                 let shapes: Vec<_> = match body {
                     Some(b) if material::blurs(self.dock_material) => {
-                        vec![gshape(b.x, b.y, b.w, b.h, b.r, glass_proto::Preset::Clear)]
+                        vec![gshape(b.x, b.y, b.w, b.h, b.r, glass_proto::Preset::Dock)]
                     }
                     _ => Vec::new(),
                 };
@@ -2222,7 +2222,7 @@ impl App {
                     w,
                     h,
                     c.r,
-                    glass_proto::Preset::Regular,
+                    glass_proto::Preset::Island,
                 )]
             } else {
                 // The notch runs up past the top edge; only its lower rim shows.
@@ -2233,7 +2233,7 @@ impl App {
                     w,
                     h + lift,
                     c.r,
-                    glass_proto::Preset::Regular,
+                    glass_proto::Preset::Island,
                 )]
             }
         } else {

@@ -38,6 +38,16 @@ pub enum GlassPreset {
     Regular,
     /// Clipped, no lensing.
     Solid,
+    /// Dark-tinted glass, full lensing.
+    Dark,
+    /// Adaptive dock material.
+    Dock,
+    /// Dark adaptive island material.
+    Island,
+    /// Light popover material.
+    Popover,
+    /// Faint window material.
+    Window,
 }
 
 impl GlassPreset {
@@ -46,6 +56,11 @@ impl GlassPreset {
             0 => Self::Clear,
             1 => Self::Regular,
             2 => Self::Solid,
+            3 => Self::Dark,
+            4 => Self::Dock,
+            5 => Self::Island,
+            6 => Self::Popover,
+            7 => Self::Window,
             _ => return None,
         })
     }
@@ -56,6 +71,25 @@ impl GlassPreset {
             Self::Clear => 1.0,
             Self::Regular => 0.6,
             Self::Solid => 0.0,
+            Self::Dark => 1.0,
+            Self::Dock => 1.0,
+            Self::Island => 0.7,
+            Self::Popover => 0.6,
+            Self::Window => 0.5,
+        }
+    }
+
+    /// Stable id passed to the shader, matching the wire value.
+    pub fn id(self) -> f32 {
+        match self {
+            Self::Clear => 0.0,
+            Self::Regular => 1.0,
+            Self::Solid => 2.0,
+            Self::Dark => 3.0,
+            Self::Dock => 4.0,
+            Self::Island => 5.0,
+            Self::Popover => 6.0,
+            Self::Window => 7.0,
         }
     }
 }
@@ -349,7 +383,7 @@ mod tests {
             Err(ShapeError::Invalid)
         );
         assert_eq!(
-            validate_shape(0, 0, 0, 10, 10, 4, 3),
+            validate_shape(0, 0, 0, 10, 10, 4, 8),
             Err(ShapeError::Preset)
         );
         assert_eq!(

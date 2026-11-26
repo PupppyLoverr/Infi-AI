@@ -65,6 +65,11 @@
       <entry name="clear" value="0" summary="light frost, full lensing"/>
       <entry name="regular" value="1" summary="regular frost, softer lensing"/>
       <entry name="solid" value="2" summary="clipped, no lensing"/>
+      <entry name="dark" value="3" summary="dark-tinted glass, full lensing"/>
+      <entry name="dock" value="4" summary="adaptive dock material"/>
+      <entry name="island" value="5" summary="dark adaptive island material"/>
+      <entry name="popover" value="6" summary="light popover material"/>
+      <entry name="window" value="7" summary="faint window material"/>
     </enum>
 
     <request name="destroy" type="destructor">

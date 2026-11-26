@@ -127,6 +127,7 @@ impl Shaders {
                     UniformName::new("shape3", UniformType::_4f),
                     UniformName::new("shape_radius", UniformType::_4f),
                     UniformName::new("shape_lens", UniformType::_4f),
+                    UniformName::new("shape_preset", UniformType::_4f),
                     UniformName::new("shape_count", UniformType::_1f),
                 ],
             )
