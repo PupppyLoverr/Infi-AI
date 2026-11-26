@@ -30,8 +30,9 @@ ShellRoot {
         if (a.startsWith("key:")) { Quickshell.execDetached(["wtype", "-M", "ctrl", a.slice(-1), "-m", "ctrl"]); return }
         const d = {
             close: "killactive", fullscreen: "fullscreen 0", maximize: "fullscreen 1", minimize: "movetoworkspacesilent special:minimized",
-            float: "togglefloating", overview: "hyprexpo:expo toggle", hide: "movetoworkspacesilent special:minimized"
+            float: "togglefloating", hide: "movetoworkspacesilent special:minimized"
         }
+        if (a === "overview") { overview.open = !overview.open; return }
         if (d[a]) Hyprland.dispatch(d[a])
         else if (a === "lock") lock()
         else if (a === "snap") snap()
@@ -74,6 +75,7 @@ ShellRoot {
     ControlCenter { id: cc; shell: shell }
     Notifications { shell: shell }
     SnapLayouts { id: snaps; shell: shell }
+    Overview { id: overview }
     Lock { id: lockScreen }
 
     GlobalShortcut { appid: "solyra"; name: "spotlight"; onPressed: shell.spotlight() }
@@ -81,6 +83,7 @@ ShellRoot {
     GlobalShortcut { appid: "solyra"; name: "lock"; onPressed: shell.lock() }
     GlobalShortcut { appid: "solyra"; name: "snap"; onPressed: shell.snap() }
     GlobalShortcut { appid: "solyra"; name: "island"; onPressed: ipc.islandRequested("media") }
+    GlobalShortcut { appid: "solyra"; name: "overview"; onPressed: overview.open = !overview.open }
 
     IpcHandler {
         id: ipc
@@ -92,6 +95,7 @@ ShellRoot {
         function control(): void { shell.control() }
         function lock(): void { shell.lock() }
         function snap(): void { shell.snap() }
+        function overview(): void { overview.open = !overview.open }
         function island(tab: string): void { islandRequested(tab) }
         function hud(kind: string, value: real): void { hudRequested(kind, value) }
         function glass(value: int): void { Theme.glass = value; Theme.save() }
