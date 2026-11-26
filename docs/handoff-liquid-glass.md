@@ -145,9 +145,24 @@ wallpaper, same scene for every shot):
 **Not done in M1 (by scope):** tint/luminosity in the compositor, linear-light
 blending, padded capture, island interaction policy, settings sliders.
 
-**Next (M2 onward, see roadmap above):** M2 padded capture (outside of the
-glass bends in), M3 compositor material pass (adaptive tint + rim light in
-the shader; remove `apple_glass` rims from protocol surfaces), M4 linear
-light. Compare every step against macOS Tahoe reference images under the
-same scene; list remaining differences explicitly. Measure performance on
-real Intel hardware before claiming anything.
+## Status after M2 (padded backdrop capture)
+
+**Done and verified:**
+- `comp/src/render_helpers/framebuffer_effect.rs`: backdrop blit expands by
+  `capture_margin_logical()` (dual-Kawase reach + lens strength + rim band),
+  clamped to the output, with `texture_crop` so draw samples only the visible
+  dst while the blurred texture keeps surrounding pixels for Kawase taps and
+  rim lensing (no edge clamp halo).
+- Live compositor: `tools/live-shot.sh dock` and `widgets` on
+  `assets/wallpapers/stripes-1920x1080.png` succeed (`/tmp/solyra-live/`).
+- Tests: compositor lib **281 passed**, panel **124 passed**.
+
+**Remaining vs macOS Tahoe (explicit):** outward rim refraction still mostly
+inward in `refract_surface.frag`; compositor-side tint/rim (M3), linear-light
+blending (M4), island interaction policy (M5), accessibility sliders (M6).
+
+**Next:** M3 compositor material pass (adaptive tint + rim light in the shader;
+remove `apple_glass` CPU rims from protocol surfaces), then M4 linear light.
+Compare every step against macOS Tahoe reference images under the same scene;
+list remaining differences explicitly. Measure performance on real Intel
+hardware before claiming anything.

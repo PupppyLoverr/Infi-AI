@@ -12,7 +12,7 @@ use smithay::backend::renderer::utils::CommitCounter;
 use smithay::backend::renderer::{Frame as _, FrameContext, Offscreen, Texture as _};
 use smithay::gpu_span_location;
 use smithay::utils::user_data::UserDataMap;
-use smithay::utils::{Buffer, Logical, Physical, Rectangle, Scale, Transform};
+use smithay::utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, Transform};
 
 use crate::backend::tty::{TtyFrame, TtyRenderer, TtyRendererError};
 use crate::render_helpers::background_effect::RenderParams;
@@ -51,6 +51,9 @@ struct Inner {
     intermediate: Option<GlesTexture>,
     /// Reusable storage for subregion-filtered damage rects.
     subregion_damage: Vec<Rectangle<i32, Physical>>,
+    /// Buffer-pixel region inside `intermediate` that maps to the visible dst.
+    /// Extra margin around this crop holds backdrop for Kawase taps and rim lensing.
+    texture_crop: Rectangle<i32, Buffer>,
 }
 
 impl FramebufferEffect {
@@ -104,6 +107,25 @@ impl FramebufferEffect {
 }
 
 impl FramebufferEffectElement {
+    /// Extra logical pixels to capture around the element so dual-Kawase blur and
+    /// rim lensing never clamp at the texture edge (M2).
+    fn capture_margin_logical(&self) -> f64 {
+        let blur = self
+            .blur_options
+            .map(|o| o.offset * f64::from(o.passes.max(1)) * 2.5)
+            .unwrap_or(0.);
+        let mut lens = f64::from(self.refraction[0]);
+        let n = (self.glass.count as usize).min(4);
+        for i in 0..n {
+            lens = lens.max(f64::from(self.glass.lens[i]));
+        }
+        if lens <= 0. {
+            lens = 10.;
+        }
+        let band = f64::max(f64::from(self.refraction[1]) * 0.02, lens * 1.5).max(6.);
+        blur + lens + band
+    }
+
     fn compute_uniforms(
         &self,
         crop: Rectangle<f64, Logical>,
@@ -212,9 +234,20 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
                 Some(clamped) => clamped,
                 None => return Ok(()),
             };
-            let clamp_scale = clamped_dst.size.to_f64() / dst.size.to_f64();
+            // Pad the capture so Kawase blur and rim lensing can read outside the
+            // visible dst without clamping at the texture edge (M2).
+            let pad = (self.capture_margin_logical() * f64::from(self.scale)).ceil() as i32;
+            let pad_pt = Point::new(pad, pad);
+            let padded_phys = Rectangle::new(
+                clamped_dst.loc - pad_pt,
+                clamped_dst.size + pad_pt.to_size().upscale(2),
+            )
+            .intersection(output_rect)
+            .unwrap_or(clamped_dst);
+            let inset_phys = padded_phys.loc - (clamped_dst.loc - pad_pt);
+            let capture_scale = padded_phys.size.to_f64() / dst.size.to_f64();
 
-            let dst = transform.transform_rect_in(clamped_dst, &output_rect.size);
+            let blit_src = transform.transform_rect_in(padded_phys, &output_rect.size);
 
             // Compute size from our geometry and scale.
             //
@@ -237,11 +270,25 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
             let size = src
                 .size
                 .to_logical(1., Transform::Normal)
-                .upscale(clamp_scale)
+                .upscale(capture_scale)
                 .to_physical_precise_round(self.scale);
             let size = transform.transform_size(size);
 
             let size = size.to_logical(1).to_buffer(1, Transform::Normal);
+
+            let buf_per_phys = (
+                size.w as f64 / padded_phys.size.w.max(1) as f64,
+                size.h as f64 / padded_phys.size.h.max(1) as f64,
+            );
+            let crop_loc = Point::new(
+                (inset_phys.x as f64 * buf_per_phys.0).round() as i32,
+                (inset_phys.y as f64 * buf_per_phys.1).round() as i32,
+            );
+            let crop_size = Size::new(
+                (clamped_dst.size.w as f64 * buf_per_phys.0).round().max(1.) as i32,
+                (clamped_dst.size.h as f64 * buf_per_phys.1).round().max(1.) as i32,
+            );
+            inner.texture_crop = Rectangle::new(crop_loc, crop_size);
 
             // Recreate framebuffer if needed.
             if inner
@@ -301,10 +348,10 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
                 );
 
                 gl.BlitFramebuffer(
-                    dst.loc.x,
-                    dst.loc.y,
-                    dst.loc.x + dst.size.w,
-                    dst.loc.y + dst.size.h,
+                    blit_src.loc.x,
+                    blit_src.loc.y,
+                    blit_src.loc.x + blit_src.size.w,
+                    blit_src.loc.y + blit_src.size.h,
                     0,
                     0,
                     size.w,
@@ -423,9 +470,18 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
             .then(|| self.compute_uniforms(crop, frame.transformation()));
         let uniforms = uniforms.as_ref().map_or(&[][..], |x| &x[..]);
 
+        let tex_src = {
+            let c = inner.texture_crop;
+            if c.size.w > 0 && c.size.h > 0 {
+                c.to_f64()
+            } else {
+                Rectangle::from_size(texture.size().to_f64())
+            }
+        };
+
         frame.render_texture_from_to(
             texture,
-            Rectangle::from_size(texture.size().to_f64()),
+            tex_src,
             clamped_dst,
             damage,
             &[],
@@ -481,6 +537,7 @@ impl Inner {
             blur: Blur::new(renderer),
             intermediate: None,
             subregion_damage: Vec::new(),
+            texture_crop: Rectangle::from_size(Size::from((0, 0))),
         }
     }
 }
