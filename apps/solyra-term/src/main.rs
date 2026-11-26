@@ -1053,7 +1053,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .w_full()
                 .h_full()
                 .bg(if style.glass {
-                    zgx::scene::Color(8, 18, 20, 165)
+                    zgx::scene::Color(8, 18, 20, 100)
                 } else {
                     style.content_bg()
                 })

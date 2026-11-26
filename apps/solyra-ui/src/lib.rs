@@ -98,6 +98,16 @@ impl Style {
         };
         ThemeOverride::new()
             .with(tok::BACKGROUND, self.content_bg())
+            // Frosted terminal: the cells' default background follows the
+            // window glass instead of the opaque palette black.
+            .with(
+                tok::TERMINAL_BACKGROUND,
+                if self.glass {
+                    zgx::scene::Color(8, 18, 20, 60)
+                } else {
+                    zgx::scene::Color(22, 24, 28, 255)
+                },
+            )
             .with(tok::SURFACE_SUNKEN, color(t.field))
             .with(tok::SURFACE_BASE, self.card_bg())
             .with(
