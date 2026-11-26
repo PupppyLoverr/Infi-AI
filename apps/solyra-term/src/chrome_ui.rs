@@ -24,7 +24,6 @@ pub const CLAUDE_ORANGE: Color = Color(217, 119, 87, 255);
 const INK: Color = Color(236, 236, 236, 255);
 const INK_DIM: Color = Color(138, 138, 138, 255);
 const TAB_INK: Color = Color(169, 180, 176, 255);
-const CHAT_BG: Color = Color(22, 22, 22, 255);
 
 /// What a pane is showing.
 #[derive(Clone, Debug, PartialEq)]
@@ -192,14 +191,16 @@ impl TermApp {
                     let _ = app.revision.get();
                     let s = app.session.borrow();
                     let tabs: Vec<(String, Vec<String>, String)> =
-                        s.workspaces.iter().map(|w| (w.name.clone(), w.tree.ids().into_iter().collect(), w.focused.clone())).collect();
+                        s.workspaces.iter().map(|w| (w.name.clone(), w.tree.ordered(), w.focused.clone())).collect();
                     let active = s.active().map(|w| w.name.clone()).unwrap_or_default();
                     (tabs, active)
                 }
             },
             move |(tabs, active), _cx| {
                 let focused = tabs.iter().find(|t| t.0 == active).map(|t| t.2.clone()).unwrap_or_default();
-                let single_chat = tabs.len() == 1 && tabs[0].1.len() == 1 && app.kind(&focused) == Kind::Chat;
+                // One app: the same tab pills whether a pane is a shell or a
+                // harness chat (the chat lives inside the glass window).
+                let single_chat = false;
                 let mut bar = row().w_full().h_full().gap(4.).items_center();
                 if single_chat {
                     bar = bar
@@ -316,7 +317,7 @@ impl TermApp {
                 let s = app.session.borrow();
                 let mut rows = Vec::new();
                 for w in &s.workspaces {
-                    for id in w.tree.ids() {
+                    for id in w.tree.ordered() {
                         let kind = app.kind(&id);
                         if kind == Kind::Shell {
                             continue;
@@ -433,7 +434,7 @@ impl TermApp {
                 for b in bubbles {
                     col = col.child(match b.role {
                         "user" => row().w_full().justify_end().child(
-                            text(b.text).text_size(16.).text_color(INK).px(16.).py(10.).rounded(16.).bg(Color(38, 38, 38, 255)).max_w(520.),
+                            text(b.text).text_size(16.).text_color(INK).px(16.).py(10.).rounded(16.).bg(Color(255, 255, 255, 26)).max_w(520.),
                         ),
                         "error" => text(b.text).text_size(13.).text_color(Color(255, 143, 143, 255)),
                         _ => text(b.text).text_size(15.).line_height(1.55).text_color(Color(232, 232, 232, 255)),
@@ -470,15 +471,16 @@ impl TermApp {
         let composer = column()
             .w_full()
             .rounded(18.)
-            .bg(Color(31, 31, 31, 255))
+            .bg(Color(0, 0, 0, 70))
             .border(1.)
-            .reactive_style(|| Styles::new().border_color(Color(45, 45, 45, 255)))
+            .reactive_style(|| Styles::new().border_color(Color(255, 255, 255, 30)))
             .px(16.)
             .pt(14.)
             .pb(10.)
             .gap(6.)
-            .child(
-                text_input("Ask Claude to do something", input)
+            .child({
+                let empty = input.clone();
+                let field = text_input("", input)
                     .w_full()
                     .text_size(16.)
                     .h(28.)
@@ -502,8 +504,21 @@ impl TermApp {
                                 }
                             }
                         }
-                    }),
-            )
+                    })
+                ;
+                div()
+                    .w_full()
+                    .h(28.)
+                    .child(field)
+                    .child(
+                        text_signal(move || if empty.get().is_empty() { "Ask Claude to do something".into() } else { String::new() })
+                            .text_size(16.)
+                            .text_color(Color(150, 160, 157, 255))
+                            .absolute()
+                            .top(4.)
+                            .left(2.),
+                    )
+            })
             .child(
                 row()
                     .w_full()
@@ -552,7 +567,6 @@ impl TermApp {
         column()
             .w_full()
             .h_full()
-            .bg(CHAT_BG)
             .child(body.reactive_style({ let b = c.bubbles.clone(); move || if b.get().is_empty() { Styles::new().grow() } else { Styles::new().h(0.) } }))
             .child(scroll(offset).w_full().reactive_style({ let b = c.bubbles.clone(); move || if b.get().is_empty() { Styles::new().h(0.) } else { Styles::new().grow() } }).child(log))
             .child(row().w_full().justify_center().shrink_0().px(16.).pb(16.).child(column().w_full().max_w(736.).child(status).child(composer)))

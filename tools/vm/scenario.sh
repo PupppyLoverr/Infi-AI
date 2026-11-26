@@ -29,7 +29,7 @@ notify-send -a "Solyra" "Welcome to Solyra" "Notifications arrive in the corner 
 sleep 5
 q snap; shot 11-snap-layouts
 q snap; sleep 0.5
-SOLYRA_TERM_LAYOUT=split SOLYRA_TERM_SIDEBAR=1 solyra-term >/tmp/term1.log 2>&1 &
+SOLYRA_TERM_LAYOUT=agents solyra-term >/tmp/term1.log 2>&1 &
 shot 12-terminal-split 5
 qs ipc call shell overview; shot 12b-mission-control 1.5
 qs ipc call shell overview; sleep 0.6

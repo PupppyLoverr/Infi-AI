@@ -45,6 +45,18 @@ impl PaneTree {
         }
     }
 
+    /// Pane ids left-to-right, top-to-bottom (the order glyphs are shown).
+    pub fn ordered(&self) -> Vec<String> {
+        match self {
+            Self::Leaf { id } => vec![id.clone()],
+            Self::Split { a, b, .. } => {
+                let mut v = a.ordered();
+                v.extend(b.ordered());
+                v
+            }
+        }
+    }
+
     pub fn ids(&self) -> HashSet<String> {
         let mut out = HashSet::new();
         self.collect_ids(&mut out);

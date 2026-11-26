@@ -606,7 +606,7 @@ impl TermApp {
             .rounded(10.)
             .border(1.)
             .overflow_hidden()
-            .bg(if chat_pane { zgx::scene::Color(22, 22, 22, 255) } else { zgx::scene::Color(0, 0, 0, 40) })
+            .bg(zgx::scene::Color(0, 0, 0, if chat_pane { 52 } else { 40 }))
             .reactive_style(move || {
                 let _ = revision.get();
                 let s = session.borrow();
@@ -842,6 +842,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             // Recording reproduction for screenshots: SOLYRA_TERM_LAYOUT=split
             // opens a pane on the right with one below it, plus the sidebar.
+            if std::env::var("SOLYRA_TERM_LAYOUT").as_deref() == Ok("agents") {
+                // Recording A in one window: Claude Code (chat) left, two
+                // shells stacked right, the Agents sidebar open.
+                app.start_chat("pane-1", chat::Opts { mode: "auto".into(), effort: "medium".into(), ..Default::default() }, Vec::new());
+                app.split(SplitDir::Vertical);
+                app.split(SplitDir::Horizontal);
+                app.panel_open.set(true);
+                app.focus_only("pane-1");
+                if let Some(w) = app.session.borrow_mut().active_mut() {
+                    w.focused = "pane-1".into();
+                }
+                app.bump();
+            }
             if std::env::var("SOLYRA_TERM_LAYOUT").as_deref() == Ok("split") {
                 app.split(SplitDir::Vertical);
                 app.split(SplitDir::Horizontal);
@@ -894,11 +907,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let root = column()
                 .w_full()
                 .h_full()
-                .bg(if style.glass {
-                    zgx::scene::Color(8, 18, 20, 100)
-                } else {
-                    style.content_bg()
-                })
                 .text_color(solyra_ui::color(theme.text))
                 .keymap(keymap())
                 .on_action({
@@ -974,17 +982,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .child(app.agents_sidebar())
                         .child({
                             let (app, sel) = (app.clone(), app.selected.clone());
-                            let pad = app.clone();
-                            switch(move || sel.get(), move |id, _cx| app.panel(id))
+                                            switch(move || sel.get(), move |id, _cx| app.panel(id))
                                 .grow()
                                 .h_full()
-                                .reactive_style(move || {
-                                    let _ = pad.revision.get();
-                                    let s = pad.session.borrow();
-                                    let solo_chat = s.workspaces.len() == 1
-                                        && s.active().is_some_and(|w| w.tree.ids().len() == 1 && pad.chats.borrow().contains_key(&w.focused));
-                                    if solo_chat { Styles::new().p(0.) } else { Styles::new().px(8.).pb(8.) }
-                                })
+                                .px(8.)
+                                .pb(8.)
                         }),
                 );
 
@@ -1004,18 +1006,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     };
                     let lights = solyra_ui::chrome::traffic_lights(&cx.ui.runtime.clone(), &style, ctl);
                     let bar = app.titlebar(lights);
-                    let solo = app.clone();
+                    // One frosted surface: the compositor blurs what is behind
+                    // the window; this single tint sits under titlebar and
+                    // panes alike (recording A), so nothing reads as a band.
                     column()
                         .w_full()
                         .h_full()
                         .rounded(14.)
-                        .reactive_style(move || {
-                            let _ = solo.revision.get();
-                            let s = solo.session.borrow();
-                            let chat = s.workspaces.len() == 1
-                                && s.active().is_some_and(|w| w.tree.ids().len() == 1 && solo.chats.borrow().contains_key(&w.focused));
-                            if chat { Styles::new().bg(zgx::scene::Color(22, 22, 22, 255)) } else { Styles::new() }
-                        })
+                        .border(1.)
+                        .reactive_style(|| Styles::new().border_color(zgx::scene::Color(255, 255, 255, 34)))
+                        .bg(if style.glass { zgx::scene::Color(10, 28, 27, 150) } else { style.content_bg() })
                         .child(bar)
                         .child(root.grow())
                 },
