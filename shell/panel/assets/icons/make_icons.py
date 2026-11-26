@@ -108,14 +108,48 @@ def folder(d, x0, y0, x1, y1, back, front, tab=True):
 
 
 def files():
-    img = body("#6ccbff", "#1b74e8")
+    # Golden Gate / macOS Dock: smiling face on a blue squircle (first-party
+    # Solyra art — not Apple's Finder artwork). Soft left/right split like
+    # the classic face tile so it reads as "Finder" at dock size.
+    img = body("#5eb8ff", "#0a5bd7")
     lay = layer()
     d = ImageDraw.Draw(lay)
-    folder(d, cx(0.2), cx(0.27), cx(0.8), cx(0.73), (255, 255, 255, 150), (255, 255, 255, 245))
-    # A face of sorts: two eyes, a smile, Solyra's own friendly folder.
-    for ex in (0.41, 0.59):
-        d.ellipse((cx(ex) - K * 6, cx(0.47), cx(ex) + K * 6, cx(0.47) + K * 22), fill=hexc("#1b74e8"))
-    d.arc((cx(0.38), cx(0.48), cx(0.62), cx(0.65)), 20, 160, fill=hexc("#1b74e8"), width=K * 6)
+    # Pale face disc.
+    face = (cx(0.5), cx(0.52))
+    fr = B * 0.34
+    d.ellipse(
+        (face[0] - fr, face[1] - fr, face[0] + fr, face[1] + fr),
+        fill=(248, 250, 255, 255),
+    )
+    # Subtle left (cooler) / right (warmer) halves for depth.
+    half = layer()
+    ImageDraw.Draw(half).pieslice(
+        (face[0] - fr, face[1] - fr, face[0] + fr, face[1] + fr),
+        90,
+        270,
+        fill=(210, 225, 245, 90),
+    )
+    ImageDraw.Draw(half).pieslice(
+        (face[0] - fr, face[1] - fr, face[0] + fr, face[1] + fr),
+        -90,
+        90,
+        fill=(255, 235, 210, 70),
+    )
+    lay.alpha_composite(half)
+    # Eyes + smile in deep blue.
+    ink = hexc("#0b4fbf")
+    for ex in (0.38, 0.62):
+        d.ellipse(
+            (cx(ex) - K * 9, cx(0.42), cx(ex) + K * 9, cx(0.42) + K * 28),
+            fill=ink,
+        )
+    d.arc(
+        (cx(0.32), cx(0.48), cx(0.68), cx(0.78)),
+        25,
+        155,
+        fill=ink,
+        width=K * 8,
+    )
     finish(over(img, lay), "files")
 
 

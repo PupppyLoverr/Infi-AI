@@ -20,7 +20,7 @@ an application id:
 
 | File | Replaces |
 | --- | --- |
-| `files.png` | Files (the first dock icon) |
+| `files.png` | Finder (the first dock icon) |
 | `launchpad.png` | Launchpad |
 | `browser.png` | the web browser (or `org.mozilla.firefox.png` for Firefox only) |
 | `terminal.png`, `editor.png`, `viewer.png`, `calculator.png`, `settings.png` | those apps |

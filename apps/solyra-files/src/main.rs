@@ -547,7 +547,13 @@ fn mount_locations() -> Vec<PathBuf> {
     roots
 }
 
+fn home_subdir(name: &str) -> PathBuf {
+    model::home_dir().join(name)
+}
+
 fn sidebar(app: &FilesApp, style: &solyra_ui::Style) -> View {
+    // macOS Golden Gate Finder: Recents, then the usual home folders, then
+    // Starred and Trash under Favourites.
     let favourites = column()
         .gap(2.)
         .child(sidebar_button(
@@ -556,6 +562,27 @@ fn sidebar(app: &FilesApp, style: &solyra_ui::Style) -> View {
             "◷",
             "Recents",
             Location::Recents,
+        ))
+        .child(sidebar_button(
+            app,
+            style,
+            "▢",
+            "Desktop",
+            Location::Folder(home_subdir("Desktop")),
+        ))
+        .child(sidebar_button(
+            app,
+            style,
+            "▤",
+            "Documents",
+            Location::Folder(home_subdir("Documents")),
+        ))
+        .child(sidebar_button(
+            app,
+            style,
+            "↓",
+            "Downloads",
+            Location::Folder(home_subdir("Downloads")),
         ))
         .child(sidebar_button(app, style, "⌂", "Home", Location::Home))
         .child(sidebar_button(
@@ -1404,7 +1431,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let theme = style.theme;
     Application::new()
         .window(WindowOptions {
-            title: "Files".into(),
+            title: "Finder".into(),
             width: 980.,
             height: 640.,
             min_size: Some((680., 420.)),

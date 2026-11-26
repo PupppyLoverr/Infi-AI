@@ -436,7 +436,7 @@ fn sample_catalog() -> Vec<AppEntry> {
         .filter(|a| matches!(a.command, LaunchTarget::Internal(_) | LaunchTarget::Ipc(_)))
         .collect();
     for (title, id, sub) in [
-        ("Files", "thunar", "Browse local and mounted storage"),
+        ("Finder", "thunar", "Browse local and mounted storage"),
         ("Terminal", "foot", "Command line shell"),
         ("Firefox", "firefox", "Browse the web"),
         ("Text Editor", "gedit", "Edit text files"),
