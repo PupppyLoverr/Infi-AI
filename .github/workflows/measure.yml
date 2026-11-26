@@ -1,0 +1,28 @@
+# Milestone 1: idle RAM / disk / boot of a minimal Arch + Plasma 6 Wayland
+# VM, stock and trimmed (tools/measure). Manual, or when the scripts change.
+name: measure
+on:
+  workflow_dispatch:
+  push:
+    paths: ['tools/measure/**', '.github/workflows/measure.yml']
+jobs:
+  plasma:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: QEMU and KVM
+        run: |
+          sudo apt-get -qq update && sudo apt-get -qq install -y qemu-system-x86 qemu-utils cloud-image-utils >/dev/null
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules >/dev/null
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+      - name: Measure
+        run: OUT=$PWD/out tools/measure/plasma.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: measure-plasma
+          path: |
+            out/*.log
+            out/report.txt
