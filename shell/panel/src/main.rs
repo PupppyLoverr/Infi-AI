@@ -2127,8 +2127,11 @@ impl App {
         let want = self.prefs.look.desktop_widgets;
         match (want, self.widgets.is_some()) {
             (true, false) => {
-                // Bottom layer: over the wallpaper, under every window; the
-                // bar's exclusive zone already keeps it below the menu bar.
+                // Bottom layer: over the wallpaper, under every window.
+                // niri does not apply the bar's exclusive zone to Bottom-layer
+                // surfaces, so the margin itself clears the 30 px bar plus a
+                // small gap — otherwise the cards slide up under the
+                // transparent bar and their colour bleeds through it.
                 self.widgets = Some(make_layer_surface(
                     &self.compositor,
                     &self.layer_shell,
@@ -2137,7 +2140,7 @@ impl App {
                     "solyra-widgets",
                     Anchor::TOP | Anchor::LEFT,
                     0,
-                    (14, 0, 0, 14),
+                    (40, 0, 0, 14),
                     widgets::W as u32,
                     widgets::H as u32,
                     KeyboardInteractivity::None,

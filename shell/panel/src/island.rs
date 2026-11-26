@@ -361,10 +361,10 @@ pub fn draw(
                 crate::material::smoked_glass(cv, xi, yi, wi, hi, s.r);
             } else {
                 cv.round_rect(xi, yi, wi, hi, s.r, pure_black);
-                if expanded {
-                    cv.stroke_round_rect(xi, yi, wi, hi, s.r, 1.0, Rgba::rgba(255, 255, 255, 16));
-                }
             }
+            // Near-black, softly reflective: a rim light keeps the island
+            // perceptible over dark wallpaper without reading as a border.
+            cv.stroke_round_rect(xi, yi, wi, hi, s.r, 1.0, Rgba::rgba(255, 255, 255, 42));
         }
         (_, true) => {
             // Flush with the top edge: the glass body runs up past the
@@ -372,6 +372,7 @@ pub fn draw(
             let lift = s.r.ceil() as i32 + 2;
             cv.round_rect_shadow(xi, -lift, wi, hi + lift, s.r, 8.0, 18.0, 44);
             crate::material::smoked_glass(cv, xi, -lift, wi, hi + lift, s.r);
+            cv.stroke_round_rect(xi, -lift, wi, hi + lift, s.r, 1.0, Rgba::rgba(255, 255, 255, 42));
             let ear = Rgba::rgba(10, 10, 14, 150);
             cv.concave_corner(x - EAR, 0.0, EAR, true, ear);
             cv.concave_corner(x + w, 0.0, EAR, false, ear);
