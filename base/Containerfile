@@ -45,11 +45,17 @@ RUN dnf -y install \
       brightnessctl \
       firefox mousepad ristretto galculator wtype wl-clipboard \
       rsms-inter-fonts adwaita-icon-theme \
-      xdg-desktop-portal-gtk gvfs \
+      xdg-desktop-portal xdg-desktop-portal-gtk xdg-desktop-portal-wlr xdg-utils gvfs \
       mesa-vulkan-drivers vulkan-loader fontconfig \
       bubblewrap webkit2gtk4.1 \
+      flatpak podman distrobox fuse fuse-libs \
+      playerctl curl bluez zip unzip \
       open-vm-tools \
  && dnf -y clean all
+# Pre-configure Flathub so users can install any Linux desktop app immediately
+# via Flatpak, Distrobox (Ubuntu/Arch/Fedora packages), or AppImages.
+RUN flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
+RUN systemctl enable bluetooth.service || true
 # VMware guest services (time sync, clean shutdown, guest info). The unit only
 # starts on VMware (ConditionVirtualization), so it costs nothing elsewhere.
 RUN systemctl enable vmtoolsd.service
@@ -100,6 +106,8 @@ COPY apps/out/solyra-files /usr/bin/solyra-files
 COPY apps/out/solyra-setup /usr/bin/solyra-setup
 COPY apps/out/solyra-setup-apply /usr/bin/solyra-setup-apply
 COPY base/solyra-install /usr/bin/solyra-install
+COPY base/solyra-app /usr/bin/solyra-app
+RUN chmod 755 /usr/bin/solyra-app
 COPY base/systemd/ /usr/lib/systemd/system/
 COPY base/tmpfiles.d/solyra-setup.conf /usr/lib/tmpfiles.d/solyra-setup.conf
 RUN systemctl enable solyra-setup-apply.path

@@ -23,13 +23,15 @@ use crate::state::{
 use crate::surfaces::{HitAction, Live, Region};
 use crate::tokens::Theme;
 
-/// Height of the floating shelf (macOS 27: 48 px icons in a 72 px Liquid Glass capsule).
-pub const CARD_H: i32 = 72;
-/// Corner radius of the shelf (macOS 27 continuous rounded capsule).
-const DOCK_R: f32 = 24.0;
-/// Extra room above the card for magnified icons: the biggest icon is
-/// `MAX_SCALE` times a cell, plus space for its tooltip.
-pub const MAGNIFY_ROOM: i32 = 66;
+/// Height of the floating shelf (macOS 27: concentric 48 px icons + 10 px padding = 68 px).
+pub const CARD_H: i32 = 68;
+/// Corner radius of the shelf (concentric with 11 px squircle radius + 11 px padding = 22 px).
+const DOCK_R: f32 = 22.0;
+/// Extra room above the card for magnified icons + Liquid Glass caret tooltip.
+pub const MAGNIFY_ROOM: i32 = 72;
+/// Dimensions of the macOS 27 interactive Downloads stack Liquid Glass popover.
+pub const STACK_W: u32 = 304;
+pub const STACK_H: u32 = 264;
 /// Height of the Windows-style taskbar.
 pub const TASKBAR_H: u32 = 48;
 /// What is left of an auto-hidden dock: a strip at the screen edge that
@@ -146,12 +148,11 @@ fn metrics(style: DockStyle) -> Metrics {
             gap: 6,
             pad: 12,
         },
-        // pearOS dock, measured: 48 px icons on a 56 px pitch, 14 px in
-        // from the rim, a 72 px shelf with a 22 px radius.
+        // macOS 27 concentric dock metrics: 48 px icons, 7 px gap, 11 px outer padding.
         DockStyle::Macos => Metrics {
             cell: 48,
-            gap: 8,
-            pad: 14,
+            gap: 7,
+            pad: 11,
         },
         DockStyle::Solyra => Metrics {
             cell: 44,
@@ -275,14 +276,69 @@ pub fn spec(style: DockStyle, wins: &[WindowInfo], magnify: bool, hidden: bool) 
     }
 }
 
-/// Magnification for an icon whose centre is `dist` cells from the pointer.
-pub fn magnification(dist: f32) -> f32 {
-    if dist.abs() >= REACH {
+/// Spring-damped magnification state for buttery 60 fps macOS Dock wave motion.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MagnifySpring {
+    pub x: f32,
+    pub strength: f32,
+    pub target_x: Option<f32>,
+}
+
+impl MagnifySpring {
+    pub fn set_target(&mut self, pointer_x: Option<f32>) {
+        if let Some(tx) = pointer_x {
+            if self.strength < 0.02 {
+                self.x = tx;
+            }
+            self.target_x = Some(tx);
+        } else {
+            self.target_x = None;
+        }
+    }
+
+    /// Advance by `dt` seconds. Returns `true` while still animating.
+    pub fn step(&mut self, dt: f32, reduced_motion: bool) -> bool {
+        let target_s = if self.target_x.is_some() { 1.0 } else { 0.0 };
+        if reduced_motion {
+            self.strength = target_s;
+            if let Some(tx) = self.target_x {
+                self.x = tx;
+            }
+            return false;
+        }
+        let k = 1.0 - (-dt * 20.0).exp();
+        self.strength += (target_s - self.strength) * k;
+        if let Some(tx) = self.target_x {
+            self.x += (tx - self.x) * k;
+        }
+        let done_s = (self.strength - target_s).abs() < 0.008;
+        let done_x = self.target_x.map_or(true, |tx| (self.x - tx).abs() < 0.4);
+        if done_s && done_x {
+            self.strength = target_s;
+            if let Some(tx) = self.target_x {
+                self.x = tx;
+            }
+            false
+        } else {
+            true
+        }
+    }
+}
+
+/// Magnification for an icon whose centre is `dist` cells from the pointer,
+/// scaled by `strength` (0..=1 from [`MagnifySpring`]).
+pub fn magnification_scaled(dist: f32, strength: f32) -> f32 {
+    if dist.abs() >= REACH || strength <= 0.001 {
         return 1.0;
     }
-    // Gaussian falloff, the curve pearOS (and the real Dock) use:
-    // 1 + zoom·exp(-d²/2σ²), smooth at every distance.
-    1.0 + (MAX_SCALE - 1.0) * (-dist * dist / (2.0 * SIGMA * SIGMA)).exp()
+    1.0 + (MAX_SCALE - 1.0)
+        * strength.clamp(0.0, 1.0)
+        * (-dist * dist / (2.0 * SIGMA * SIGMA)).exp()
+}
+
+/// Magnification for an icon whose centre is `dist` cells from the pointer.
+pub fn magnification(dist: f32) -> f32 {
+    magnification_scaled(dist, 1.0)
 }
 
 /// Bounce height for a launching icon at this point in its cycle: up in
@@ -325,6 +381,27 @@ pub fn draw(
     hidden: bool,
     launching: &[(String, std::time::Instant)],
 ) -> (Vec<Region>, Option<Body>) {
+    draw_with_spring(
+        cv, th, fonts, style, wins, icons, hover, live, magnify, None, hidden, launching,
+    )
+}
+
+/// Like [`draw`], using a spring-damped [`MagnifySpring`] for live 60 fps dock motion.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_with_spring(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    fonts: &Fonts,
+    style: DockStyle,
+    wins: &[WindowInfo],
+    icons: &mut HashMap<String, Option<Icon>>,
+    hover: Option<(f64, f64)>,
+    live: &Live<'_>,
+    magnify: bool,
+    spring: Option<MagnifySpring>,
+    hidden: bool,
+    launching: &[(String, std::time::Instant)],
+) -> (Vec<Region>, Option<Body>) {
     if hidden {
         // A clear strip: the pointer touching it brings the dock back.
         return (
@@ -358,7 +435,7 @@ pub fn draw(
             )
         }
         _ => draw_floating(
-            cv, th, fonts, style, wins, icons, hover, live, magnify, launching,
+            cv, th, fonts, style, wins, icons, hover, live, magnify, spring, launching,
         ),
     }
 }
@@ -394,6 +471,7 @@ fn draw_floating(
     hover: Option<(f64, f64)>,
     live: &Live<'_>,
     magnify: bool,
+    spring: Option<MagnifySpring>,
     launching: &[(String, std::time::Instant)],
 ) -> (Vec<Region>, Option<Body>) {
     let w = cv.width as i32;
@@ -416,19 +494,26 @@ fn draw_floating(
     }
 
     // Pointer over the card (not the clear room above it) drives magnification.
-    let pointer_x = hover
-        .filter(|(_, hy)| *hy >= card_y as f64)
-        .map(|(hx, _)| hx as f32)
-        .filter(|_| magnify);
+    // When a spring is supplied, it smoothly eases strength in/out even after leave.
+    let mag_state: Option<(f32, f32)> = if !magnify {
+        None
+    } else if let Some(sp) = spring {
+        (sp.strength > 0.002).then_some((sp.x, sp.strength))
+    } else {
+        hover
+            .filter(|(_, hy)| *hy >= card_y as f64)
+            .map(|(hx, _)| (hx as f32, 1.0))
+    };
 
     let sizes: Vec<i32> = its
         .iter()
         .zip(&centres)
         .map(|(it, c)| match it {
             Item::Separator | Item::Weather | Item::Clock => item_span(it, m.cell),
-            _ => match pointer_x {
-                Some(px) => {
-                    (m.cell as f32 * magnification((px - c) / m.cell as f32)).round() as i32
+            _ => match mag_state {
+                Some((px, strength)) => {
+                    (m.cell as f32 * magnification_scaled((px - c) / m.cell as f32, strength))
+                        .round() as i32
                 }
                 None => m.cell,
             },
@@ -484,8 +569,8 @@ fn draw_floating(
     };
     let mut regions = Vec::new();
     let mut x = card_x + m.pad;
-    // Icons sit a touch above centre so the running dots have room beneath them.
-    let base_y = card_y + (CARD_H - m.cell) / 2 - 1;
+    // Concentric seating with 12 px bottom clearance so the running dot breathes cleanly.
+    let base_y = card_y + ((CARD_H - m.cell) / 2 - 2).max(6);
     let clock = chrono::Local::now()
         .format(live.prefs.look.clock_format())
         .to_string();
@@ -566,9 +651,7 @@ fn draw_floating(
                     Item::Downloads => (
                         "downloads",
                         None,
-                        HitAction::Launch(LaunchTarget::Shell(
-                            "solyra-open files \"$HOME/Downloads\"".into(),
-                        )),
+                        HitAction::Shell(ShellCmd::ToggleDownloadsStack),
                     ),
                     Item::Agent => ("agent", None, HitAction::Shell(ShellCmd::ToggleAgents)),
                     Item::Trash => (
@@ -792,11 +875,12 @@ fn draw_vertical(
 }
 
 fn running_mark(cv: &mut Canvas<'_>, ink: Rgba, x: i32, s: i32, card_y: i32, focused: bool) {
-    // One quiet dot under a running app, like macOS: the focused app's is only
-    // slightly stronger.
+    // Polished macOS 27 running indicator dot with generous bottom clearance and soft glow.
     let cx = x as f32 + s as f32 / 2.0;
-    let cy = (card_y + CARD_H - 6) as f32;
-    let (r, a) = if focused { (2.1, 235) } else { (2.0, 170) };
+    let cy = (card_y + CARD_H - 5) as f32;
+    let halo_a = if focused { 62 } else { 32 };
+    cv.circle(cx, cy, 4.0, Rgba::rgba(ink.0, ink.1, ink.2, halo_a));
+    let (r, a) = if focused { (2.1, 245) } else { (1.9, 185) };
     cv.circle(cx, cy, r, Rgba::rgba(ink.0, ink.1, ink.2, a));
 }
 
@@ -862,7 +946,7 @@ fn apply_icon_style(
     }
 }
 
-/// A macOS 27 Liquid Glass pill label above a magnified icon, kept on screen.
+/// A macOS 27 Liquid Glass pill label with downward caret above a hovered icon.
 fn tooltip(
     cv: &mut Canvas<'_>,
     th: &Theme,
@@ -872,27 +956,203 @@ fn tooltip(
     bottom: i32,
     w: i32,
 ) {
-    if bottom < 26 {
+    let caret_h = 6;
+    let bh = 24;
+    if bottom < bh + caret_h + 2 {
         return;
     }
-    let tw = text_width(fonts.medium.as_ref(), label, 11.8).min(180);
-    let bw = tw + 20;
-    let bh = 22;
+    let tw = text_width(fonts.medium.as_ref(), label, 12.0).min(180);
+    let bw = tw + 22;
     let r = bh as f32 / 2.0;
     let bx = (cx - bw / 2).clamp(2, (w - bw - 2).max(2));
-    let by = bottom - bh - 2;
+    let by = bottom - bh - caret_h;
     let dark = th.surface.0 < 128;
-    cv.round_rect_shadow(bx, by, bw, bh, r, 3.0, 10.0, 38);
+    cv.round_rect_shadow(bx, by, bw, bh, r, 4.0, 12.0, 44);
     material::apple_glass(cv, bx, by, bw, bh, r, dark);
+    // Crisp downward-pointing triangular caret seamlessly anchored to the pill bottom.
+    let tip_x = cx.clamp(bx + 12, bx + bw - 12);
+    let caret_fill = if dark {
+        Rgba::rgba(28, 30, 36, 215)
+    } else {
+        Rgba::rgba(250, 251, 255, 228)
+    };
+    let caret_rim = Rgba::rgba(255, 255, 255, if dark { 115 } else { 210 });
+    for row in 0..caret_h {
+        let half = (caret_h - 1 - row).max(0);
+        let y = by + bh + row;
+        cv.fill_rect(tip_x - half, y, half * 2 + 1, 1, caret_fill);
+        cv.fill_rect(tip_x - half, y, 1, 1, caret_rim);
+        cv.fill_rect(tip_x + half, y, 1, 1, caret_rim);
+    }
     cv.text_truncated(
         fonts.medium.as_ref(),
         label,
-        bx + 10,
-        by + 15,
-        11.8,
+        bx + 11,
+        by + 16,
+        12.0,
         180,
         th.text,
     );
+}
+
+/// Read up to 6 most-recently-modified items from `$HOME/Downloads`.
+pub fn downloads_entries() -> Vec<std::path::PathBuf> {
+    let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
+        return Vec::new();
+    };
+    let dir = home.join("Downloads");
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut items: Vec<(std::time::SystemTime, std::path::PathBuf)> = rd
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            if p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with('.')) {
+                return None;
+            }
+            let mtime = e
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            Some((mtime, p))
+        })
+        .collect();
+    items.sort_by(|a, b| b.0.cmp(&a.0));
+    items.into_iter().take(6).map(|(_, p)| p).collect()
+}
+
+/// Interactive macOS 27 Liquid Glass Downloads folder stack popover anchored
+/// above the Downloads icon on the Dock.
+pub fn draw_downloads_stack(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    fonts: &Fonts,
+    items: &[std::path::PathBuf],
+    hover: Option<(f64, f64)>,
+) -> Vec<Region> {
+    let w = cv.width as i32;
+    let h = cv.height as i32;
+    let caret_h = 8;
+    let card_h = (h - caret_h).max(80);
+    let dark = th.surface.0 < 128;
+    let mut regions = Vec::new();
+
+    cv.round_rect_shadow(0, 0, w, card_h, 20.0, 10.0, 26.0, 62);
+    material::apple_glass(cv, 0, 0, w, card_h, 20.0, dark);
+    // Downward caret pointing toward the Downloads icon in the Dock.
+    let tip_x = w - 62;
+    let caret_fill = if dark {
+        Rgba::rgba(26, 28, 34, 210)
+    } else {
+        Rgba::rgba(250, 251, 255, 224)
+    };
+    for row in 0..caret_h {
+        let half = (caret_h - 1 - row).max(0);
+        cv.fill_rect(tip_x - half, card_h + row, half * 2 + 1, 1, caret_fill);
+    }
+
+    // Header
+    cv.text(fonts.semibold.as_ref(), "Downloads", 16, 26, 13.5, th.text);
+    let count = format!("{} items", items.len());
+    let cw = text_width(fonts.regular.as_ref(), &count, 11.5);
+    cv.text(fonts.regular.as_ref(), &count, w - 16 - cw, 26, 11.5, th.text_dim);
+
+    // 3x2 grid of downloaded files
+    let grid_y = 38;
+    let footer_h = 36;
+    let avail_h = (card_h - grid_y - footer_h - 8).max(80);
+    if items.is_empty() {
+        let msg = "Downloads folder is empty";
+        let mw = text_width(fonts.regular.as_ref(), msg, 12.5);
+        cv.text(
+            fonts.regular.as_ref(),
+            msg,
+            (w - mw) / 2,
+            grid_y + avail_h / 2,
+            12.5,
+            th.text_dim,
+        );
+    } else {
+        let cols = 3;
+        let gap = 8;
+        let cell_w = (w - 32 - gap * (cols - 1)) / cols;
+        let cell_h = (avail_h - gap) / 2;
+        for (i, path) in items.iter().take(6).enumerate() {
+            let col = (i as i32) % cols;
+            let row = (i as i32) / cols;
+            let cx = 16 + col * (cell_w + gap);
+            let cy = grid_y + row * (cell_h + gap);
+            let hov = hover.is_some_and(|(hx, hy)| {
+                hx >= cx as f64 && hx < (cx + cell_w) as f64 && hy >= cy as f64 && hy < (cy + cell_h) as f64
+            });
+            cv.round_rect(
+                cx,
+                cy,
+                cell_w,
+                cell_h,
+                12.0,
+                if hov { th.tile_hover } else { th.tile },
+            );
+            // Document/folder badge icon
+            let ext = path
+                .extension()
+                .map(|e| e.to_string_lossy().to_ascii_lowercase())
+                .unwrap_or_default();
+            let badge_col = match ext.as_str() {
+                "pdf" => Rgba::rgb(0xe5, 0x48, 0x4d),
+                "png" | "jpg" | "jpeg" | "webp" => Rgba::rgb(0x34, 0xa8, 0x53),
+                "zip" | "tar" | "gz" | "appimage" => Rgba::rgb(0xf5, 0x9e, 0x0b),
+                "" if path.is_dir() => Rgba::rgb(0x3b, 0x9b, 0xf2),
+                _ => Rgba::rgb(0x5e, 0x9c, 0xff),
+            };
+            let ix = cx + (cell_w - 28) / 2;
+            let iy = cy + 10;
+            cv.round_rect(ix, iy, 28, 34, 6.0, badge_col);
+            cv.fill_rect(ix + 5, iy + 12, 18, 2, Rgba::rgba(255, 255, 255, 195));
+            cv.fill_rect(ix + 5, iy + 18, 14, 2, Rgba::rgba(255, 255, 255, 165));
+            let name = crate::shelf::label(path);
+            let nw = text_width(fonts.medium.as_ref(), &name, 10.5).min(cell_w - 10);
+            cv.text_truncated(
+                fonts.medium.as_ref(),
+                &name,
+                cx + (cell_w - nw) / 2,
+                cy + cell_h - 10,
+                10.5,
+                cell_w - 10,
+                th.text,
+            );
+            regions.push(Region {
+                x: cx,
+                y: cy,
+                w: cell_w,
+                h: cell_h,
+                action: HitAction::Launch(LaunchTarget::Shell(crate::shelf::open_command(path))),
+            });
+        }
+    }
+
+    // Footer: "Open in Finder ›"
+    let fy = card_h - footer_h;
+    cv.fill_rect(14, fy, w - 28, 1, th.separator);
+    let fhov = hover.is_some_and(|(hx, hy)| hx >= 12.0 && hx < (w - 12) as f64 && hy >= fy as f64 && hy < card_h as f64);
+    if fhov {
+        cv.round_rect(10, fy + 4, w - 20, footer_h - 8, 9.0, th.tile_hover);
+    }
+    let foot_lbl = "Open in Finder ›";
+    let fw = text_width(fonts.semibold.as_ref(), foot_lbl, 12.0);
+    cv.text(fonts.semibold.as_ref(), foot_lbl, (w - fw) / 2, fy + 22, 12.0, th.text);
+    regions.push(Region {
+        x: 10,
+        y: fy + 4,
+        w: w - 20,
+        h: footer_h - 8,
+        action: HitAction::Launch(LaunchTarget::Shell(
+            "solyra-open files \"$HOME/Downloads\"".into(),
+        )),
+    });
+    regions
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1305,5 +1565,25 @@ mod tests {
         assert!(w >= 320, "tray missing from width ({w})");
         let minimal = spec(DockStyle::Minimal, &wins, false, false).width;
         assert!(minimal < w);
+    }
+
+    #[test]
+    fn magnify_spring_smoothly_eases_in_and_out() {
+        let mut sp = MagnifySpring::default();
+        sp.set_target(Some(240.0));
+        assert!(sp.step(0.016, false));
+        assert!(sp.strength > 0.1 && sp.strength < 0.9);
+        assert!(magnification_scaled(0.0, sp.strength) > 1.0);
+        for _ in 0..40 {
+            sp.step(0.016, false);
+        }
+        assert!((sp.strength - 1.0).abs() < 0.02);
+        sp.set_target(None);
+        assert!(sp.step(0.016, false));
+        assert!(sp.strength < 0.9 && sp.strength > 0.05);
+        for _ in 0..40 {
+            sp.step(0.016, false);
+        }
+        assert_eq!(sp.strength, 0.0);
     }
 }

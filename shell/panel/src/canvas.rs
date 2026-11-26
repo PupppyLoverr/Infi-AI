@@ -642,6 +642,99 @@ impl<'a> Canvas<'a> {
         }
     }
 
+    /// Apple macOS 27 Golden Gate Liquid Glass optical edge & bevel:
+    /// replaces any flat uniform 1 px stroke with:
+    /// * an **inner luminous refraction bevel** (5..10 px caustic band that
+    ///   concentrates inside curved corners where thick glass bends light);
+    /// * **directional specular corner highlights** (razor-sharp white catch-light
+    ///   peaking at the top-left corner and a softer internal reflection at the
+    ///   bottom-right corner, fading gracefully along straight edges);
+    /// * subtle chromatic rim dispersion (whisper of cool cyan top-left, warm
+    ///   specular bounce bottom-right).
+    #[allow(clippy::too_many_arguments)]
+    pub fn liquid_glass_bevel(&mut self, x: i32, y: i32, w: i32, h: i32, r: f32, dark: bool) {
+        let s = self.s() as f32;
+        let (x0, y0, w0, h0) = (x as f32 * s, y as f32 * s, w as f32 * s, h as f32 * s);
+        let r = (r * s).min(w0 / 2.0).min(h0 / 2.0).max(0.0);
+        let bevel = (r * 0.45).clamp(5.0 * s, 11.0 * s);
+        let (cx, cy) = (x0 + w0 / 2.0, y0 + h0 / 2.0);
+        let (hx, hy) = (w0 / 2.0 - r, h0 / 2.0 - r);
+        let key = (-0.707f32, -0.707f32);
+        let bounce = (0.707f32, 0.707f32);
+        let px0 = ((x0 - 2.0).floor() as i32).max(0);
+        let py0 = ((y0 - 2.0).floor() as i32).max(0);
+        let px1 = ((x0 + w0 + 2.0).ceil() as i32).min(self.pw as i32);
+        let py1 = ((y0 + h0 + 2.0).ceil() as i32).min(self.ph as i32);
+
+        for py in py0..py1 {
+            let dy = py as f32 + 0.5 - cy;
+            for px in px0..px1 {
+                let dx = px as f32 + 0.5 - cx;
+                let qx = dx.abs() - hx;
+                let qy = dy.abs() - hy;
+                let (ox, oy) = (qx.max(0.0), qy.max(0.0));
+                let outside = (ox * ox + oy * oy).sqrt();
+                let d = outside + qx.max(qy).min(0.0) - r;
+                if d > 1.5 * s || d < -bevel {
+                    continue;
+                }
+                // Whisper-thin outer dark occlusion (only 0..1 px outside) so
+                // glass separates cleanly over bright wallpapers without looking stroked.
+                if d > 0.0 {
+                    let out_a = ((1.2 * s - d) / (1.2 * s)).clamp(0.0, 1.0);
+                    self.blend(
+                        px,
+                        py,
+                        Rgba::rgba(0, 0, 0, if dark { 46 } else { 24 }),
+                        out_a * out_a,
+                    );
+                    continue;
+                }
+                let (nx, ny) = if outside > 0.0 {
+                    (ox / outside * dx.signum(), oy / outside * dy.signum())
+                } else if qx > qy {
+                    (dx.signum(), 0.0)
+                } else {
+                    (0.0, dy.signum())
+                };
+                // Corner curvature weight: peaks at 45° corners, lower along flat sides.
+                let corner_w = ((nx * ny).abs() * 2.4).clamp(0.0, 1.0);
+                let k = (nx * key.0 + ny * key.1).max(0.0);
+                let b = (nx * bounce.0 + ny * bounce.1).max(0.0);
+                let top_edge = (-ny).max(0.0);
+                let depth = (-d).max(0.0);
+                let cov = (0.5 - d).clamp(0.0, 1.0);
+
+                // 1. Inner luminous refraction bevel (soft optical caustic band).
+                let bevel_fall = (-depth / (bevel * 0.42)).exp();
+                let bevel_i = (0.06 + 0.34 * k.powf(1.5) + 0.22 * b.powf(1.8))
+                    * (0.55 + 0.65 * corner_w)
+                    * bevel_fall;
+                let bevel_col = if dark {
+                    Rgba::rgba(226, 238, 255, 118)
+                } else {
+                    Rgba::rgba(255, 255, 255, 165)
+                };
+                self.blend(px, py, bevel_col, (bevel_i * cov).min(1.0));
+
+                // 2. Directional specular corner catch-light (1.6 px crisp optical rim).
+                if depth <= 2.2 * s {
+                    let rim_fall = (-depth / (0.85 * s)).exp();
+                    let spec_tl = k.powf(2.4) * (0.48 + 0.72 * corner_w);
+                    let spec_br = b.powf(2.8) * (0.28 + 0.60 * corner_w);
+                    let spec_top = top_edge * 0.22;
+                    let spec_total = (0.05 + spec_tl * 0.92 + spec_br * 0.52 + spec_top) * rim_fall;
+                    let spec_col = if dark {
+                        Rgba::rgba(255, 255, 255, 238)
+                    } else {
+                        Rgba::rgba(255, 255, 255, 255)
+                    };
+                    self.blend(px, py, spec_col, (spec_total * cov).min(1.0));
+                }
+            }
+        }
+    }
+
     /// pearOS's dock prism (its `dock_prism.frag`): an additive RGB glow on
     /// the rim of a rounded rectangle, fading inward over `edge` logical
     /// pixels as (1 + d / edge)^2. Red where the edge faces down-right, blue
@@ -1453,6 +1546,64 @@ impl<'a> Canvas<'a> {
         }
     }
 
+    /// Render real album artwork (when provided by MPRIS / LRCLIB cache) clipped
+    /// strictly inside a concentric rounded rect with a subtle optical glass sheen;
+    /// falls back to the procedural coastal-twilight artwork when `art` is `None`.
+    pub fn draw_album_art_opt(
+        &mut self,
+        x: i32,
+        y: i32,
+        size: i32,
+        r: f32,
+        art: Option<&Icon>,
+    ) {
+        let Some(ic) = art else {
+            self.draw_album_art(x, y, size, r);
+            return;
+        };
+        if ic.width == 0 || ic.height == 0 {
+            self.draw_album_art(x, y, size, r);
+            return;
+        }
+        let sf = self.s() as f32;
+        let x0 = (x as f32 * sf).round() as i32;
+        let y0 = (y as f32 * sf).round() as i32;
+        let sw = (size as f32 * sf).round() as i32;
+        let rr = (r * sf).min(sw as f32 / 2.0).max(0.0);
+        let cx_r = x0 as f32 + sw as f32 * 0.5;
+        let cy_r = y0 as f32 + sw as f32 * 0.5;
+        let hx = sw as f32 * 0.5 - rr;
+        let hy = sw as f32 * 0.5 - rr;
+        let px0 = x0.max(0);
+        let py0 = y0.max(0);
+        let px1 = (x0 + sw).min(self.pw as i32);
+        let py1 = (y0 + sw).min(self.ph as i32);
+        for py in py0..py1 {
+            let v = ((py - y0) as f32 / sw.max(1) as f32).clamp(0.0, 0.9999);
+            let sy = (v * ic.height as f32) as u32;
+            for px in px0..px1 {
+                let qx = (px as f32 + 0.5 - cx_r).abs() - hx;
+                let qy = (py as f32 + 0.5 - cy_r).abs() - hy;
+                let d = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - rr;
+                let cov = (0.5 - d).clamp(0.0, 1.0);
+                if cov <= 0.0 {
+                    continue;
+                }
+                let u = ((px - x0) as f32 / sw.max(1) as f32).clamp(0.0, 0.9999);
+                let sx = (u * ic.width as f32) as u32;
+                let si = ((sy * ic.width + sx) * 4) as usize;
+                let col = Rgba::rgba(
+                    ic.pixels[si],
+                    ic.pixels[si + 1],
+                    ic.pixels[si + 2],
+                    ic.pixels[si + 3],
+                );
+                self.blend(px, py, col, cov);
+            }
+        }
+        self.rim_light(x, y, size, size, r, 1.2, Rgba::rgba(255, 255, 255, 90), 0.3);
+    }
+
     /// Rich procedural coastal-twilight album artwork clipped strictly inside a
     /// concentric rounded rect (zero corner overhang, zero purple).
     pub fn draw_album_art(&mut self, x: i32, y: i32, size: i32, r: f32) {
@@ -1911,13 +2062,34 @@ impl<'a> Canvas<'a> {
             _ => {}
         }
         if let Some((ic, grow)) = crate::icons::user(role) {
+            self.squircle_shadow(
+                x,
+                y,
+                size,
+                (s * 0.05).clamp(1.5, 3.0),
+                (s * 0.13).clamp(3.0, 7.0),
+                52,
+            );
             self.draw_icon_body(x, y, size, ic, grow, 0.0);
+            self.squircle_specular_finish(x, y, size);
             return;
         }
         if let Some(name) = crate::icons::name_for(role) {
             if let Some(ic) = crate::icons::get(name) {
                 let (grow, lift) = crate::icons::fit(name);
+                // Soft per-icon drop shadow onto the Liquid Glass dock + layered specular finish.
+                self.squircle_shadow(
+                    x,
+                    y,
+                    size,
+                    (s * 0.05).clamp(1.5, 3.0),
+                    (s * 0.13).clamp(3.0, 7.0),
+                    52,
+                );
                 self.draw_icon_body(x, y, size, ic, grow, lift);
+                if name != "trash" && name != "downloads" {
+                    self.squircle_specular_finish(x, y, size);
+                }
                 return;
             }
         }
@@ -1962,6 +2134,25 @@ impl<'a> Canvas<'a> {
             Rgba::rgba(255, 255, 255, 190),
             Rgba::rgba(255, 255, 255, 60),
             Rgba::rgba(0, 0, 0, 30),
+        );
+    }
+
+    /// macOS 27 layered specular squircle lighting: delicate curved top-left
+    /// catch-light and subtle bottom rim reflection on app icon tiles.
+    fn squircle_specular_finish(&mut self, x: i32, y: i32, size: i32) {
+        if size < 24 {
+            return;
+        }
+        let r = (size as f32 * 0.225).max(4.0);
+        self.rim_light(
+            x,
+            y,
+            size,
+            size,
+            r,
+            1.3,
+            Rgba::rgba(255, 255, 255, 118),
+            0.35,
         );
     }
 

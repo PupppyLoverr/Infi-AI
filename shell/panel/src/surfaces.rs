@@ -1183,7 +1183,9 @@ pub fn draw_notifs(
                     cv.icon_pause(cx, cy, 15.0, th.text)
                 }
                 crate::media::Control::PlayPause => cv.icon_play(cx, cy, 15.0, th.text),
-                crate::media::Control::SeekTo(_) => {}
+                crate::media::Control::SeekTo(_)
+                | crate::media::Control::ToggleShuffle
+                | crate::media::Control::CycleLoop => {}
             }
             regions.push(Region {
                 x: bx0,

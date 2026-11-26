@@ -22,8 +22,10 @@ environment {
     LANG "C.UTF-8"
     GTK_THEME "Adwaita:dark"
     XDG_CURRENT_DESKTOP "Solyra"
+    XDG_DATA_DIRS "/var/lib/flatpak/exports/share:/usr/local/share:/usr/share"
     QT_QPA_PLATFORM "wayland"
     MOZ_ENABLE_WAYLAND "1"
+    ELECTRON_OZONE_PLATFORM_HINT "auto"
 }
 
 // Compositor-wide backdrop blur, used by the shell's layer rules below.
@@ -148,16 +150,15 @@ layer-rule {
 
 layer-rule {
     match namespace=r#"^solyra-dock(\..+)?$"#
-    // macOS 26 dock: Liquid Glass. The backdrop is blurred and bent at the
-    // rim (refraction, Solyra's lensing in the blur shader).
-    geometry-corner-radius 22
+    // macOS 27 Golden Gate dock: Liquid Glass with concentric radius & GPU lensing.
+    geometry-corner-radius 23
     background-effect {
         xray false
-        // Material preset: clear glass (light frost, strong lensing).
+        // Material preset: uniform refraction, subtle frost, crisp corner lensing.
         blur-passes 2
-        blur-offset 2.5
-        refraction 11
-        refraction-radius 22
+        blur-offset 2.6
+        refraction 12
+        refraction-radius 23
     }
 }
 

@@ -1275,7 +1275,8 @@ fn compact_row(
             let art = 21;
             let art_x = x + 8;
             let art_y = (mid as i32) - art / 2;
-            cv.draw_album_art(art_x, art_y, art, 6.0);
+            let art_img = m.art_url.as_deref().and_then(crate::media::load_art);
+            cv.draw_album_art_opt(art_x, art_y, art, 6.0, art_img.as_ref());
 
             let bars_w = 18;
             let trail_x = x + w - 12 - bars_w;
@@ -1479,7 +1480,8 @@ fn draw_droppy_media_body(
 ) {
     let (bx, by, bw, bh) = body;
     let art = 44;
-    cv.draw_album_art(bx, by, art, 10.0);
+    let art_img = m.art_url.as_deref().and_then(crate::media::load_art);
+    cv.draw_album_art_opt(bx, by, art, 10.0, art_img.as_ref());
 
     // Warm coral/orange equalizer bars (or blue-violet in lyrics view).
     let wave_col = if lyrics.is_some() {
@@ -1618,7 +1620,7 @@ fn draw_droppy_media_body(
             Control::Next => cv.icon_skip(cx as f32, cy as f32, 18.0, true, Rgba::rgb(255, 255, 255)),
             Control::PlayPause if m.playing => cv.icon_pause(cx as f32, cy as f32, 22.0, Rgba::rgb(255, 255, 255)),
             Control::PlayPause => cv.icon_play(cx as f32, cy as f32, 22.0, Rgba::rgb(255, 255, 255)),
-            Control::SeekTo(_) => {}
+            Control::SeekTo(_) | Control::ToggleShuffle | Control::CycleLoop => {}
         }
         regions.push(Region {
             x: r.0,
@@ -1902,6 +1904,9 @@ mod tests {
             playing: true,
             position_us: Some(15_000_000),
             length_us: Some(203_000_000),
+            art_url: None,
+            shuffle: false,
+            loop_mode: 0,
         });
         let idle = target(NotchStyle::Island, &Content::Idle, false);
         // Droppy's Dynamic Island: 210 x 37, 4 px below the top edge.
@@ -2013,6 +2018,9 @@ mod tests {
             playing: true,
             position_us: Some(15_000_000),
             length_us: Some(203_000_000),
+            art_url: None,
+            shuffle: false,
+            loop_mode: 0,
         });
         let open = target(NotchStyle::Island, &media, true);
         an = Anim::new(a);

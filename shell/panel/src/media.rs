@@ -25,6 +25,12 @@ pub struct Media {
     pub position_us: Option<i64>,
     /// `mpris:length` from Metadata, microseconds.
     pub length_us: Option<i64>,
+    /// `mpris:artUrl` (file:// or https://) when reported by the player.
+    pub art_url: Option<String>,
+    /// MPRIS Shuffle state.
+    pub shuffle: bool,
+    /// MPRIS LoopStatus: 0 = None, 1 = Playlist, 2 = Track.
+    pub loop_mode: u8,
 }
 
 impl Media {
@@ -35,6 +41,9 @@ impl Media {
             && self.artist == other.artist
             && self.playing == other.playing
             && self.length_us == other.length_us
+            && self.art_url == other.art_url
+            && self.shuffle == other.shuffle
+            && self.loop_mode == other.loop_mode
     }
 
     pub fn elapsed_label(&self) -> Option<(String, String, f32)> {
@@ -125,6 +134,16 @@ fn query(conn: &Connection) -> Option<Media> {
         let (title, artist) = parse_metadata(&meta);
         let length_us = length_us(&meta);
         let position_us: Option<i64> = p.get(PLAYER, "Position").ok();
+        let art_url = prop_cast::<String>(&meta, "mpris:artUrl")
+            .cloned()
+            .filter(|u| !u.trim().is_empty());
+        let shuffle: bool = p.get(PLAYER, "Shuffle").unwrap_or(false);
+        let loop_str: String = p.get(PLAYER, "LoopStatus").unwrap_or_default();
+        let loop_mode = match loop_str.as_str() {
+            "Playlist" => 1,
+            "Track" => 2,
+            _ => 0,
+        };
         players.push(Media {
             bus,
             title,
@@ -132,9 +151,122 @@ fn query(conn: &Connection) -> Option<Media> {
             playing: status == "Playing",
             position_us,
             length_us,
+            art_url,
+            shuffle,
+            loop_mode,
         });
     }
-    pick(players)
+    pick(players).or_else(query_playerctl)
+}
+
+/// Fallback universal player discovery via `playerctl` for any Linux media
+/// player (Spotify, Firefox, Chromium, YouTube Music, mpv, VLC, Rhythmbox, etc.)
+/// that exposes non-standard D-Bus metadata or runs in a Flatpak sandbox.
+pub fn parse_playerctl(raw: &str) -> Option<Media> {
+    let mut parts = raw.trim().split('\t');
+    let player = parts.next()?.trim();
+    let status = parts.next()?.trim();
+    if player.is_empty() || status == "Stopped" || status.is_empty() {
+        return None;
+    }
+    let title = parts.next().unwrap_or("").trim().to_string();
+    let artist = parts.next().unwrap_or("").trim().to_string();
+    if title.is_empty() && artist.is_empty() {
+        return None;
+    }
+    let pos_us = parts.next().and_then(|s| s.trim().parse::<i64>().ok());
+    let len_us = parts.next().and_then(|s| s.trim().parse::<i64>().ok());
+    let art_url = parts
+        .next()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    Some(Media {
+        bus: format!("{PREFIX}{player}"),
+        title,
+        artist,
+        playing: status == "Playing",
+        position_us: pos_us,
+        length_us: len_us,
+        art_url,
+        shuffle: false,
+        loop_mode: 0,
+    })
+}
+
+fn query_playerctl() -> Option<Media> {
+    let out = std::process::Command::new("playerctl")
+        .args([
+            "metadata",
+            "--format",
+            "{{playerName}}\t{{status}}\t{{title}}\t{{artist}}\t{{position}}\t{{mpris:length}}\t{{mpris:artUrl}}",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_playerctl(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Cache directory for decoded PNG album art (`$XDG_CACHE_HOME/solyra/art/`).
+fn art_cache_path(url: &str) -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))?;
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in url.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    Some(base.join(format!("solyra/art/{h:016x}.png")))
+}
+
+/// Load cached album artwork for `art_url` immediately (non-blocking) and kick
+/// off a background fetch for `https://` URLs if not cached yet.
+pub fn load_art(url: &str) -> Option<crate::canvas::Icon> {
+    if let Some(rest) = url.strip_prefix("file://") {
+        let path = rest.strip_prefix("localhost").unwrap_or(rest);
+        if let Ok(bytes) = std::fs::read(path) {
+            if let Some(ic) = crate::canvas::decode_png(&bytes) {
+                return Some(ic);
+            }
+        }
+    }
+    let cache = art_cache_path(url)?;
+    if let Ok(bytes) = std::fs::read(&cache) {
+        return crate::canvas::decode_png(&bytes);
+    }
+    if url.starts_with("https://") || url.starts_with("http://") {
+        let url_owned = url.to_string();
+        std::thread::spawn(move || {
+            if let Some(dir) = cache.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let tmp = cache.with_extension("download");
+            let ok = std::process::Command::new("curl")
+                .args(["-fsSL", "--max-time", "5", "-o"])
+                .arg(&tmp)
+                .arg(&url_owned)
+                .status()
+                .is_ok_and(|s| s.success());
+            if ok {
+                if let Ok(bytes) = std::fs::read(&tmp) {
+                    if crate::canvas::decode_png(&bytes).is_some() {
+                        let _ = std::fs::rename(&tmp, &cache);
+                    } else {
+                        // Convert JPEG/WebP album art to PNG if ffmpeg/python3 is available.
+                        let _ = std::process::Command::new("ffmpeg")
+                            .args(["-y", "-loglevel", "quiet", "-i"])
+                            .arg(&tmp)
+                            .arg(&cache)
+                            .status();
+                        let _ = std::fs::remove_file(&tmp);
+                    }
+                }
+            }
+        });
+    }
+    None
 }
 
 /// Poll in the background; `wake` is called when what is playing changes.
@@ -167,6 +299,8 @@ pub enum Control {
     Previous,
     /// Jump to this position (microseconds) in the current track.
     SeekTo(i64),
+    ToggleShuffle,
+    CycleLoop,
 }
 
 /// The scrubber is clickable in `SEEK_STEPS` slices; slice `i` of `n` seeks
@@ -194,11 +328,26 @@ pub fn control(bus: String, what: Control) {
             }
             return;
         }
+        if let Control::ToggleShuffle = what {
+            let cur: bool = p.get(PLAYER, "Shuffle").unwrap_or(false);
+            let _ = p.set(PLAYER, "Shuffle", !cur);
+            return;
+        }
+        if let Control::CycleLoop = what {
+            let cur: String = p.get(PLAYER, "LoopStatus").unwrap_or_default();
+            let next = match cur.as_str() {
+                "None" | "" => "Playlist",
+                "Playlist" => "Track",
+                _ => "None",
+            };
+            let _ = p.set(PLAYER, "LoopStatus", next.to_string());
+            return;
+        }
         let method = match what {
             Control::PlayPause => "PlayPause",
             Control::Next => "Next",
             Control::Previous => "Previous",
-            Control::SeekTo(_) => unreachable!(),
+            Control::SeekTo(_) | Control::ToggleShuffle | Control::CycleLoop => unreachable!(),
         };
         if let Err(e) = p.method_call::<(), _, _, _>(PLAYER, method, ()) {
             eprintln!("solyra-panel: media {method}: {e}");
@@ -219,6 +368,9 @@ mod tests {
             playing,
             position_us: None,
             length_us: None,
+            art_url: None,
+            shuffle: false,
+            loop_mode: 0,
         }
     }
 
@@ -238,6 +390,9 @@ mod tests {
             playing: true,
             position_us: Some(15_000_000),
             length_us: Some(203_000_000),
+            art_url: None,
+            shuffle: false,
+            loop_mode: 0,
         };
         let (a, b, pct) = media.elapsed_label().unwrap();
         assert_eq!(a, "0:15");
@@ -304,5 +459,16 @@ mod tests {
             parse_metadata(&PropMap::new()),
             (String::new(), String::new())
         );
+    }
+
+    #[test]
+    fn playerctl_parses_universal_player_metadata() {
+        let raw = "spotify\tPlaying\tLevitating\tDua Lipa\t51000000\t203000000\thttps://img.example/cover.png\n";
+        let m = parse_playerctl(raw).expect("valid playerctl line");
+        assert_eq!(m.title, "Levitating");
+        assert_eq!(m.artist, "Dua Lipa");
+        assert!(m.playing);
+        assert_eq!(m.art_url.as_deref(), Some("https://img.example/cover.png"));
+        assert!(parse_playerctl("vlc\tStopped\tFoo\tBar\t0\t0\t").is_none());
     }
 }

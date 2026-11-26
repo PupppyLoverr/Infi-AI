@@ -141,22 +141,25 @@ void main() {
     }
 
     vec4 color;
-    float band = max(k * 1.5, 6.0);
-    // Only inside the glass, strongest at the rim, fading inward.
-    float f = (k <= 0.0 || d > 0.0) ? 0.0 : pow(clamp(1.0 + d / band, 0.0, 1.0), 2.0);
+    float band = max(k * 1.7, 7.0);
+    // macOS 27 Liquid Glass: smooth Fresnel convex rim lensing, strongest at the
+    // curved bezel and tapering smoothly inward with calibrated RGB dispersion.
+    float edge_t = (k <= 0.0 || d > 0.0) ? 0.0 : clamp(1.0 + d / band, 0.0, 1.0);
+    float f = pow(edge_t, 2.3);
     if (f > 0.0) {
         // Pixels in clip-geo space to texture coordinates.
         vec2 per_tex = vec2(input_to_geo[0][0], input_to_geo[1][1]) * geo_size;
         vec2 off = -n * f * k / per_tex;
         vec4 cg = texture2D(tex, v_coords + off);
-        float cr = texture2D(tex, v_coords + off * 1.25).r;
-        float cb = texture2D(tex, v_coords + off * 0.75).b;
+        float cr = texture2D(tex, v_coords + off * 1.18).r;
+        float cb = texture2D(tex, v_coords + off * 0.82).b;
         color = vec4(cr, cg.g, cb, cg.a);
     } else {
         color = texture2D(tex, v_coords);
     }
     // Material pass (solyra_glass_v1 shapes only): adaptive tint, frost,
-    // rim light, specular streak and inner shade, all inside the glass.
+    // directional specular corner highlights, inner luminous refraction bevel,
+    // and macOS 27 contrast guard, all strictly inside the glass.
     if (shape_count > 0.5 && prst >= 0.0 && d < 0.0) {
         vec3 tint;
         float tint_str, rim, spec, shade, frost;
@@ -179,32 +182,39 @@ void main() {
         float luma = dot(acc / 5.0, vec3(0.2126, 0.7152, 0.0722));
 
         // Adaptive tint: over bright backdrops darken a touch, over dark
-        // ones lighten, so text on the glass stays legible either way.
+        // ones lift gently, ensuring macOS 27 uniform readability.
         float adapt = (luma - 0.5) * 2.0; // -1 dark scene .. +1 bright scene
         vec3 tint_col = tint;
         float str = tint_str;
         if (tint == vec3(1.0)) {
-            // Light materials adapt by darkening instead of going opaque.
-            tint_col = mix(vec3(1.0), vec3(0.05), clamp(adapt, 0.0, 1.0) * 0.55);
+            tint_col = mix(vec3(1.0), vec3(0.06), clamp(adapt, 0.0, 1.0) * 0.55);
         }
-        color.rgb = mix(color.rgb, tint_col * clamp(luma + 0.55, 0.4, 1.3), str);
+        color.rgb = mix(color.rgb, tint_col * clamp(luma + 0.58, 0.42, 1.28), str);
 
         // Frost: milky desaturation lifting the backdrop toward its luma.
         if (frost > 0.0) {
             float g = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
-            color.rgb = mix(color.rgb, vec3(g) * 1.06 + 0.04, frost);
+            color.rgb = mix(color.rgb, vec3(g) * 1.05 + 0.04, frost);
         }
 
-        // Rim light: a bright hairline just inside the edge, lit from
-        // top-left; inner shade darkens bottom-facing edges. d<0 inside.
-        float edge_band = smoothstep(-3.0, 0.0, d);
-        float lit = clamp(dot(n, normalize(vec2(-0.6, -0.8))) * 0.5 + 0.5, 0.0, 1.0);
-        color.rgb += rim * edge_band * lit * 0.35;
-        color.rgb -= shade * smoothstep(-6.0, 0.0, d) * clamp(n.y, 0.0, 1.0) * 0.25;
+        // Inner luminous refraction bevel (4..9 px inside the rim, peaking where
+        // curved corners concentrate bent light).
+        float corner_w = clamp(abs(n.x * n.y) * 2.4, 0.0, 1.0);
+        float inner_bevel = smoothstep(-9.0, -1.5, d) * (1.0 - smoothstep(-1.4, 0.0, d));
+        float key_dir = max(dot(n, normalize(vec2(-0.70, -0.71))), 0.0);
+        float bounce_dir = max(dot(n, normalize(vec2(0.70, 0.71))), 0.0);
+        color.rgb += rim * inner_bevel * (0.14 + 0.28 * pow(key_dir, 1.6) + 0.18 * pow(bounce_dir, 2.0)) * (0.65 + 0.55 * corner_w);
 
-        // Specular streak: thin bright line on top-facing edges only.
-        float spec_band = smoothstep(-1.5, 0.0, d) * clamp(-n.y, 0.0, 1.0);
-        color.rgb += spec * spec_band * 0.30;
+        // Directional specular corner highlights (replaces uniform flat outline):
+        // bright sharp catch-light at top-left corner, soft internal reflection at bottom-right.
+        float hairline = smoothstep(-1.8, 0.0, d);
+        float top_left_spec = pow(key_dir, 2.4) * (0.55 + 0.65 * corner_w);
+        float bot_right_spec = pow(bounce_dir, 2.8) * (0.35 + 0.55 * corner_w);
+        float top_edge_sheen = clamp(-n.y, 0.0, 1.0) * 0.24;
+        color.rgb += spec * hairline * (top_left_spec * 0.62 + bot_right_spec * 0.34 + top_edge_sheen);
+
+        // Subtle inner depth shade along the bottom edge.
+        color.rgb -= shade * smoothstep(-6.0, 0.0, d) * clamp(n.y, 0.0, 1.0) * 0.18;
         color.rgb = clamp(color.rgb, 0.0, 1.0);
     }
 
