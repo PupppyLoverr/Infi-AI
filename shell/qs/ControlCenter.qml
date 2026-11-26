@@ -98,12 +98,13 @@ PanelWindow {
             }
             Item { width: 1; height: 1; visible: false }
             Tile {
-                width: 348; height: 44
+                width: 348; height: 44; clip: true
                 Row {
                     anchors.centerIn: parent; spacing: 8
                     Pill { height: 26; text: "Reduce Motion"; on: Theme.reduceMotion; onClicked: { Theme.reduceMotion = !Theme.reduceMotion; Theme.save() } }
                     Pill { height: 26; text: "Reduce Transparency"; on: Theme.reduceTransparency; onClicked: { Theme.reduceTransparency = !Theme.reduceTransparency; Theme.save() } }
                     Pill { height: 26; text: "Borders"; on: Theme.showBorders; onClicked: { Theme.showBorders = !Theme.showBorders; Theme.save() } }
+                    Pill { height: 26; text: "Hide Notch"; on: Theme.hideNotch; onClicked: { Theme.hideNotch = !Theme.hideNotch; Theme.save() } }
                 }
             }
         }

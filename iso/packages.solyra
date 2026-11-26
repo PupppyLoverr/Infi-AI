@@ -36,3 +36,9 @@ btrfs-progs
 snapper
 archinstall
 greetd
+qt6-multimedia
+qt6-multimedia-ffmpeg
+slurp
+tesseract
+tesseract-data-eng
+inotify-tools

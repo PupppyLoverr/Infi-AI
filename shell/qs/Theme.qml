@@ -15,6 +15,7 @@ Singleton {
     property bool showBorders: false
     property bool dark: true
     property bool autoArrange: false
+    property bool hideNotch: false
 
     // Tint alpha over the compositor's blur. Even at "ultra clear" the
     // floor keeps text readable (tested in tools/contrast).
@@ -57,6 +58,7 @@ Singleton {
                 if (j.showBorders !== undefined) root.showBorders = j.showBorders
                 if (j.dark !== undefined) root.dark = j.dark
                 if (j.autoArrange !== undefined) root.autoArrange = j.autoArrange
+                if (j.hideNotch !== undefined) root.hideNotch = j.hideNotch
             } catch (e) {}
         }
     }
@@ -64,7 +66,7 @@ Singleton {
     function save() {
         file.setText(JSON.stringify({
             glass: glass, reduceMotion: reduceMotion, reduceTransparency: reduceTransparency,
-            showBorders: showBorders, dark: dark, autoArrange: autoArrange
+            showBorders: showBorders, dark: dark, autoArrange: autoArrange, hideNotch: hideNotch
         }, null, 2))
     }
 }

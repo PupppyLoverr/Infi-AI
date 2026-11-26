@@ -14,9 +14,12 @@ q island media; shot 03-island-media
 for t in "https://github.com/PupppyLoverr/Infi-AI" "#0a84ff" "cargo build --release -p solyra-term"; do printf '%s' "$t" | wl-copy; sleep 1.6; done
 q island clip; shot 04-island-clipboard
 q island shelf; shot 05-island-shelf
+q island cal; shot 06a-island-calendar
+q island face; shot 06b-island-notchface 2
 q island tools; shot 06-island-tools
 q island close; sleep 0.8
 q hud volume 0.62; shot 07-hud-volume 0.5
+sleep 2; touch "$HOME/Downloads/report.pdf"; q island shelf; shot 07b-tracked-downloads-on-shelf
 sleep 2
 q query "te"; shot 08-spotlight 1.6
 q spotlight; sleep 0.5

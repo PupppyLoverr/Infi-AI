@@ -6,7 +6,7 @@ pacman -Su --noconfirm
 pacman -S --noconfirm --needed hyprland quickshell qt6-declarative qt6-svg qt6-5compat \
   mesa vulkan-swrast swaybg grim wl-clipboard wtype brightnessctl networkmanager bluez-utils \
   pipewire wireplumber pipewire-pulse playerctl mpv mpv-mpris libnotify upower \
-  inter-font ttf-jetbrains-mono noto-fonts curl xdg-utils dbus foot
+  inter-font ttf-jetbrains-mono noto-fonts curl xdg-utils dbus foot qt6-multimedia qt6-multimedia-ffmpeg slurp tesseract tesseract-data-eng inotify-tools
 useradd -m -G wheel,video,input -s /bin/bash solyra
 echo 'solyra:solyra' | chpasswd
 mkdir -p /etc/systemd/system/getty@tty1.service.d

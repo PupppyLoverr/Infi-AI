@@ -36,6 +36,7 @@ PanelWindow {
     property string mode: "idle"         // idle | compact | hud | expanded
     property string tab: "media"
     property string hudKind: ""
+    property string hudText: ""
     property real hudValue: 0
     property bool hovering: false
     readonly property MprisPlayer player: {
@@ -51,8 +52,8 @@ PanelWindow {
         if (hudTimer.running) { mode = "hud"; return }
         mode = playing ? "compact" : "idle"
     }
-    function hud(kind, value) {
-        hudKind = kind; hudValue = value
+    function hud(kind, value, label) {
+        hudKind = kind; hudValue = value; hudText = label || ""
         if (mode !== "expanded") { mode = "hud" }
         hudTimer.restart()
     }
@@ -103,6 +104,23 @@ PanelWindow {
     }
     Timer { interval: 400; running: win.capsPath !== ""; repeat: true; onTriggered: capsFile.reload() }
 
+    // Bluetooth headphones: BlueZ "Connected" changes on the system bus.
+    Process {
+        running: true
+        command: ["sh", "-c", "dbus-monitor --system \"type='signal',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged',arg0='org.bluez.Device1'\" 2>/dev/null | awk '/path=/{p=$0} /Connected/{getline; if ($0 ~ /true/) {match(p, /path=[^;]*/); print substr(p, RSTART+5, RLENGTH-5); fflush()}}'"]
+        stdout: SplitParser {
+            onRead: path => { btName.command = ["sh", "-c", "bluetoothctl info $(echo \"$1\" | sed 's|.*dev_||; s|_|:|g') | sed -n 's/^\\s*Alias: //p'", "sh", path.trim()]; btName.running = true }
+        }
+    }
+    Process { id: btName; stdout: StdioCollector { onStreamFinished: win.hud("bluetooth", 1, text.trim() || "Headphones") } }
+
+    // Tracked Folders: new files in Downloads land on the shelf.
+    Process {
+        running: true
+        command: ["sh", "-c", "command -v inotifywait >/dev/null || exit 0; inotifywait -m -q -e close_write -e moved_to --format '%w%f' \"$HOME/Downloads\""]
+        stdout: SplitParser { onRead: f => { if (f && !/\.(part|crdownload|tmp)$/.test(f)) shelf.add("file://" + f) } }
+    }
+
     // ------------------------------------------------------------ geometry
     readonly property var dims: ({
         idle:     { w: 126, h: 37, r: 18.5 },
@@ -115,6 +133,9 @@ PanelWindow {
     Rectangle {
         id: shape
         color: "black"
+        opacity: Theme.hideNotch && win.mode === "idle" && !hoverIdle.hovered ? 0 : 1
+        Behavior on opacity { NumberAnimation { duration: Theme.ms(220) } }
+        HoverHandler { id: hoverIdle }
         anchors.horizontalCenter: parent.horizontalCenter
         y: 6
         width: win.d.w
@@ -161,8 +182,14 @@ PanelWindow {
             Icon {
                 anchors.verticalCenter: parent.verticalCenter
                 size: 18
-                name: ({ volume: "volume", mute: "volumeMute", brightness: "sun", battery: "battery", charging: "charging", capsOn: "up", capsOff: "up" })[win.hudKind] || "info"
+                name: ({ volume: "volume", mute: "volumeMute", brightness: "sun", battery: "battery", charging: "charging", capsOn: "up", capsOff: "up", bluetooth: "bluetooth", focus: "moon" })[win.hudKind] || "info"
                 color: win.hudKind === "charging" ? "#30d158" : "white"
+            }
+            Text {
+                visible: win.hudText !== ""
+                anchors.verticalCenter: parent.verticalCenter
+                text: win.hudText + (win.hudKind === "bluetooth" ? "  · Connected" : "")
+                color: "white"; font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Medium
             }
             Text {
                 visible: win.hudKind.startsWith("caps")
@@ -171,7 +198,7 @@ PanelWindow {
                 color: "white"; font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Medium
             }
             Rectangle {
-                visible: !win.hudKind.startsWith("caps")
+                visible: !win.hudKind.startsWith("caps") && win.hudText === ""
                 anchors.verticalCenter: parent.verticalCenter
                 width: 200; height: 6; radius: 3; color: Qt.rgba(1, 1, 1, 0.22)
                 Rectangle {
@@ -197,6 +224,15 @@ PanelWindow {
             MediaView { anchors.fill: parent; visible: win.tab === "media"; player: win.player }
             ShelfView { id: shelfView; anchors.fill: parent; visible: win.tab === "shelf"; model: shelf; dropping: win.dropping }
             ClipView { anchors.fill: parent; visible: win.tab === "clip"; history: clip }
+            CalendarGlance { anchors.fill: parent; visible: win.tab === "cal" }
+            Loader {
+                anchors.fill: parent
+                active: win.tab === "face"
+                source: "NotchFace.qml"
+                onLoaded: item.active = Qt.binding(() => win.tab === "face" && win.mode === "expanded")
+                onStatusChanged: if (status === Loader.Error) faceError.visible = true
+            }
+            Text { id: faceError; visible: false; anchors.centerIn: parent; text: "Notchface needs QtMultimedia"; color: Qt.rgba(1, 1, 1, 0.5); font.family: Theme.font; font.pixelSize: 13 }
             Item {
                 anchors.fill: parent
                 visible: win.tab === "tools"
@@ -212,6 +248,8 @@ PanelWindow {
                         }
                         Pill { text: "Lock"; onClicked: Quickshell.execDetached(["qs", "ipc", "call", "shell", "lock"]) }
                         Pill { text: "Screenshot"; onClicked: Quickshell.execDetached(["sh", "-c", "grim \"$HOME/Pictures/Screenshot-$(date +%F-%H%M%S).png\""]) }
+                        Pill { text: "Capture Area"; onClicked: { win.collapse(); Quickshell.execDetached(["sh", "-c", "sleep 0.3; grim -g \"$(slurp)\" - | wl-copy --type image/png && notify-send -a Solyra 'Area copied' 'The capture is on the clipboard.'"]) } }
+                        Pill { text: "Text from Screen"; onClicked: { win.collapse(); Quickshell.execDetached(["sh", "-c", "sleep 0.3; t=$(grim -g \"$(slurp)\" - | tesseract stdin stdout 2>/dev/null); [ -n \"$t\" ] && printf '%s' \"$t\" | wl-copy && notify-send -a Solyra 'Text copied' \"$t\""]) } }
                     }
                     // Termi-Notch: run a command without leaving your flow.
                     Rectangle {
@@ -263,7 +301,7 @@ PanelWindow {
             anchors.centerIn: parent
             spacing: 2
             Repeater {
-                model: [["media", "music"], ["shelf", "tray"], ["clip", "clipboard"], ["tools", "terminal"]]
+                model: [["media", "music"], ["shelf", "tray"], ["clip", "clipboard"], ["cal", "clock"], ["face", "eye"], ["tools", "terminal"]]
                 Rectangle {
                     required property var modelData
                     width: 38; height: 26; radius: 13
