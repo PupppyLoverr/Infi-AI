@@ -31,11 +31,21 @@ cp "$here/scenario.sh" "$here/hook.sh" $P/
 tar -C $P -cf payload/payload.tar .
 python3 "$here/serve.py" payload shots & SRV=$!
 cp base.qcow2 run.qcow2
-GPU="-device virtio-vga -display none"
-if qemu-system-x86_64 -device help 2>/dev/null | grep -q virtio-vga-gl; then GPU="-device virtio-vga-gl -display egl-headless,rendernode=/dev/dri/renderD128"; [ -e /dev/dri/renderD128 ] || GPU="-device virtio-vga-gl -display egl-headless"; fi
-echo "GPU: $GPU"
-timeout 16m qemu-system-x86_64 -accel kvm -cpu host -m 4096 -smp 2 $GPU \
-  -drive file=run.qcow2,if=virtio -nic user,model=virtio -serial file:boot.log -monitor none || echo "VM ended ($?)"
+# Prefer a virgl GPU (Hyprland's happy path); the runner has no GPU, so try a
+# vgem render node with Mesa's software EGL, and fall back to plain virtio.
+sudo modprobe vgem 2>/dev/null && sudo chmod 666 /dev/dri/* 2>/dev/null || true
+boot() {
+  timeout 16m qemu-system-x86_64 -accel kvm -cpu host -m 4096 -smp 2 $1 \
+    -drive file=run.qcow2,if=virtio -nic user,model=virtio -serial file:boot.log -monitor none
+}
+start=$(date +%s)
+echo "GPU: virgl (egl-headless)"
+boot "-device virtio-vga-gl -display egl-headless" || true
+if [ $(( $(date +%s) - start )) -lt 30 ]; then
+  echo "GPU: virgl unavailable here, using plain virtio-vga"
+  cp base.qcow2 run.qcow2
+  boot "-device virtio-vga -display none" || echo "VM ended ($?)"
+fi
 kill $SRV || true
 rm -f run.qcow2
 ls shots; cat shots/report.txt 2>/dev/null || { grep -a -A80 "solyra hook" boot.log | head -120; tail -5 boot.log; }
