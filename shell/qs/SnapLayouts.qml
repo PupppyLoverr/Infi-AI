@@ -38,9 +38,9 @@ PanelWindow {
         const y = Math.round(top + z[1] * H + (z[1] > 0 ? gap / 2 : 0))
         const w = Math.round(z[2] * W - (z[0] > 0 ? gap / 2 : 0) - (z[0] + z[2] < 0.999 ? gap / 2 : 0))
         const h = Math.round(z[3] * H - (z[1] > 0 ? gap / 2 : 0) - (z[1] + z[3] < 0.999 ? gap / 2 : 0))
-        Hyprland.dispatch("setfloating active")
-        Hyprland.dispatch("resizeactive exact " + w + " " + h)
-        Hyprland.dispatch("moveactive exact " + x + " " + y)
+        Hyprland.dispatch("hl.dsp.window.float({ action = 'enable' })")
+        Hyprland.dispatch("hl.dsp.window.resize({ x = " + w + ", y = " + h + " })")
+        Hyprland.dispatch("hl.dsp.window.move({ x = " + x + ", y = " + y + " })")
         open = false
     }
 

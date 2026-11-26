@@ -21,10 +21,14 @@ Item {
             width: parent.width
             ClippingRectangle {
                 width: 64; height: 64; radius: 14
-                gradient: Gradient {
-                    GradientStop { position: 0; color: "#ff9f43" }
-                    GradientStop { position: 0.55; color: "#ee5253" }
-                    GradientStop { position: 1; color: "#5f27cd" }
+                color: "#ee5253"
+                Rectangle {
+                    anchors.fill: parent
+                    gradient: Gradient {
+                        GradientStop { position: 0; color: "#ff9f43" }
+                        GradientStop { position: 0.55; color: "#ee5253" }
+                        GradientStop { position: 1; color: "#5f27cd" }
+                    }
                 }
                 Image { anchors.fill: parent; source: m.player ? m.player.trackArtUrl : ""; fillMode: Image.PreserveAspectCrop; asynchronous: true }
             }

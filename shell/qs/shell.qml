@@ -23,15 +23,20 @@ ShellRoot {
         // like macOS and are centred.
         for (const t of Hyprland.toplevels.values) {
             const addr = "address:0x" + t.address
-            Hyprland.dispatch((Theme.autoArrange ? "settiled " : "setfloating ") + addr)
-            if (!Theme.autoArrange) Hyprland.dispatch("centerwindow")
+            Hyprland.dispatch("hl.dsp.window.float({ action = '" + (Theme.autoArrange ? "disable" : "enable") + "', window = '" + addr + "' })")
+            if (!Theme.autoArrange) Hyprland.dispatch("hl.dsp.window.center({ window = '" + addr + "' })")
         }
     }
     function menuAction(a) {
         if (a.startsWith("key:")) { Quickshell.execDetached(["wtype", "-M", "ctrl", a.slice(-1), "-m", "ctrl"]); return }
+        // Hyprland 0.57 dispatchers are Lua expressions.
         const d = {
-            close: "killactive", fullscreen: "fullscreen 0", maximize: "fullscreen 1", minimize: "movetoworkspacesilent special:minimized",
-            float: "togglefloating", hide: "movetoworkspacesilent special:minimized"
+            close: "hl.dsp.window.close()",
+            fullscreen: "hl.dsp.window.fullscreen()",
+            maximize: "hl.dsp.window.fullscreen({ mode = 'maximized' })",
+            minimize: "hl.dsp.window.move({ workspace = 'special:minimized', follow = false })",
+            float: "hl.dsp.window.float({ action = 'toggle' })",
+            hide: "hl.dsp.window.move({ workspace = 'special:minimized', follow = false })"
         }
         if (a === "overview") { toggleOverview(); return }
         if (d[a]) Hyprland.dispatch(d[a])
@@ -40,7 +45,7 @@ ShellRoot {
         else if (a === "arrange") { Theme.autoArrange = !Theme.autoArrange; Theme.save(); applyArrange() }
         else if (a === "settings") Quickshell.execDetached(["solyra-settings"])
         else if (a === "new") Quickshell.execDetached(["solyra-term"])
-        else if (a === "logout") Hyprland.dispatch("exit")
+        else if (a === "logout") Hyprland.dispatch("hl.dsp.exit()")
         else if (a === "about") Quickshell.execDetached(["notify-send", "Solyra", "A macOS-style desktop on Hyprland"])
         else if (a === "help") Quickshell.execDetached(["notify-send", "Shortcuts", "Super+Space Spotlight · Super+Z Snap · Super+L Lock · Super+C Control Center"])
     }
@@ -50,9 +55,9 @@ ShellRoot {
         target: Hyprland
         function onRawEvent(ev) {
             if (ev.name === "openwindow" && !Theme.autoArrange) {
-                const addr = ev.data.split(",")[0]
-                Hyprland.dispatch("setfloating address:0x" + addr)
-                Hyprland.dispatch("centerwindow")
+                const addr = "address:0x" + ev.data.split(",")[0]
+                Hyprland.dispatch("hl.dsp.window.float({ action = 'enable', window = '" + addr + "' })")
+                Hyprland.dispatch("hl.dsp.window.center({ window = '" + addr + "' })")
             }
         }
     }

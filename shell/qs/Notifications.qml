@@ -16,16 +16,19 @@ PanelWindow {
     color: "transparent"
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.namespace: "solyra-notifications"
-    visible: popups.count > 0
+    visible: popups.length > 0
 
-    ListModel { id: popups }
+    // Live notification objects (a ListModel cannot hold QObjects).
+    property var popups: []
+    function drop(note) { popups = popups.filter(x => x !== note) }
     NotificationServer {
         keepOnReload: false
         bodySupported: true; actionsSupported: true; imageSupported: true; persistenceSupported: true
         onNotification: note => {
             note.tracked = true
             if (n.shell && n.shell.dnd && note.urgency !== NotificationUrgency.Critical) return
-            popups.insert(0, { note: note })
+            n.popups = [note].concat(n.popups)
+            note.closed.connect(() => n.drop(note))
         }
     }
     Column {
@@ -33,13 +36,13 @@ PanelWindow {
         width: parent.width
         spacing: 8
         Repeater {
-            model: popups
+            model: n.popups
             Glass {
-                required property var note
-                required property int index
+                required property var modelData
+                readonly property var note: modelData
                 width: stack.width; height: col.height + 24; r: 20
                 x: Theme.reduceMotion ? 0 : 0
-                Timer { interval: note.expireTimeout > 0 ? note.expireTimeout : 5000; running: true; onTriggered: popups.remove(index) }
+                Timer { interval: note.expireTimeout > 0 ? note.expireTimeout : 5000; running: true; onTriggered: n.drop(note) }
                 Column {
                     id: col
                     x: 14; y: 12; width: parent.width - 28; spacing: 3
@@ -51,7 +54,7 @@ PanelWindow {
                     Row { spacing: 6; visible: note.actions.length > 0
                         Repeater { model: note.actions; Pill { required property var modelData; height: 26; text: modelData.text; onClicked: modelData.invoke() } } }
                 }
-                TapHandler { onTapped: { note.dismiss(); popups.remove(index) } }
+                TapHandler { onTapped: { n.drop(note); note.dismiss() } }
             }
         }
     }

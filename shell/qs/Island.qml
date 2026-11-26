@@ -142,8 +142,8 @@ PanelWindow {
         height: win.d.h
         radius: win.d.r
         clip: true
-        Behavior on width { SpringAnimation { spring: win.mode === "expanded" ? Theme.springOpen : Theme.springClose; damping: win.mode === "expanded" ? Theme.dampOpen : Theme.dampClose; epsilon: 0.3; duration: Theme.reduceMotion ? 0 : -1 } }
-        Behavior on height { SpringAnimation { spring: win.mode === "expanded" ? Theme.springOpen : Theme.springClose; damping: win.mode === "expanded" ? Theme.dampOpen : Theme.dampClose; epsilon: 0.3; duration: Theme.reduceMotion ? 0 : -1 } }
+        Behavior on width { enabled: !Theme.reduceMotion; SpringAnimation { spring: win.mode === "expanded" ? Theme.springOpen : Theme.springClose; damping: win.mode === "expanded" ? Theme.dampOpen : Theme.dampClose; epsilon: 0.3 } }
+        Behavior on height { enabled: !Theme.reduceMotion; SpringAnimation { spring: win.mode === "expanded" ? Theme.springOpen : Theme.springClose; damping: win.mode === "expanded" ? Theme.dampOpen : Theme.dampClose; epsilon: 0.3 } }
         Behavior on radius { NumberAnimation { duration: Theme.ms(260); easing.type: Easing.OutCubic } }
 
         HoverHandler {

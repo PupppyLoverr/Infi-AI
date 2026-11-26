@@ -53,8 +53,8 @@ PanelWindow {
             width: cw - 24; height: ch - 40
             scale: ov.open ? 1 : 0.6
             opacity: ov.open ? 1 : 0
-            Behavior on x { SpringAnimation { spring: Theme.springOpen; damping: Theme.dampOpen; duration: Theme.reduceMotion ? 0 : -1 } }
-            Behavior on y { SpringAnimation { spring: Theme.springOpen; damping: Theme.dampOpen; duration: Theme.reduceMotion ? 0 : -1 } }
+            Behavior on x { enabled: !Theme.reduceMotion; SpringAnimation { spring: Theme.springOpen; damping: Theme.dampOpen } }
+            Behavior on y { enabled: !Theme.reduceMotion; SpringAnimation { spring: Theme.springOpen; damping: Theme.dampOpen } }
             Behavior on scale { NumberAnimation { duration: Theme.ms(280); easing.type: Easing.OutCubic } }
             Behavior on opacity { NumberAnimation { duration: Theme.ms(200) } }
             Rectangle {

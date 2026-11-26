@@ -95,7 +95,7 @@ Scope {
                     anchors.horizontalCenter: parent.horizontalCenter
                     y: 6; color: "black"
                     width: root.unlocking ? 180 : 126; height: 37; radius: 18.5
-                    Behavior on width { SpringAnimation { spring: Theme.springOpen; damping: Theme.dampOpen; duration: Theme.reduceMotion ? 0 : -1 } }
+                    Behavior on width { enabled: !Theme.reduceMotion; SpringAnimation { spring: Theme.springOpen; damping: Theme.dampOpen } }
                     Icon { anchors.centerIn: parent; name: "lock"; size: 16; color: root.unlocking ? "#30d158" : "white"; rotation: root.unlocking ? -18 : 0
                         Behavior on rotation { NumberAnimation { duration: Theme.ms(260); easing.type: Easing.OutBack } } }
                 }

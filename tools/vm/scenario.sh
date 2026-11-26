@@ -33,10 +33,10 @@ SOLYRA_TERM_LAYOUT=agents solyra-term >/tmp/term1.log 2>&1 &
 shot 12-terminal-split 5
 qs ipc call shell overview; shot 12b-mission-control 1.5
 qs ipc call shell overview; sleep 0.6
-hyprctl dispatch killactive >/dev/null; sleep 1
+hyprctl dispatch 'hl.dsp.window.close()' >/dev/null; sleep 1
 SOLYRA_TERM_CHAT=1 solyra-term >/tmp/term2.log 2>&1 &
 shot 13-terminal-chat 5
-hyprctl dispatch killactive >/dev/null; sleep 1
+hyprctl dispatch 'hl.dsp.window.close()' >/dev/null; sleep 1
 q glass 90; shot 14-glass-tinted 1.0
 q glass 0; shot 15-glass-clear 1.0
 q glass 35
