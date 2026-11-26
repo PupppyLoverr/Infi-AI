@@ -189,7 +189,7 @@ Ground rules for every step:
 - [x] ✅ *Status: `.github/workflows/vm.yml` + `tools/vm/` (cached Arch image, payload over HTTP, scenario, guest-display screendump, watchdog logs, shots published to `docs/shots/`). First full run pending.* `solyra-vm` workflow: install the repo into the VM, run the session,
   then a scenario script (e.g. `hyprctl dispatch exec`, `qs ipc call`) and
   `grim` shots at 1280×800; upload shots and `report.txt`.
-- [ ] 🟡 *Status: the report records `free -m`, disk and boot; the failing gate is not wired yet.* A budget gate: fail CI if idle RAM > 250 MB (llvmpipe noted) or
+- [x] ✅ *Status: the `Budget gate` step in vm.yml fails the run above 250 MB idle RAM or 3 GB installed; shots still publish.* A budget gate: fail CI if idle RAM > 250 MB (llvmpipe noted) or
   installed size > 3 GB.
 
 ### M1. Audit and measure ✅ (Plasma 1144–1192 MB). M1b: Hyprland + Quickshell 🟡

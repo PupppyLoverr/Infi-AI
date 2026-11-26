@@ -53,6 +53,14 @@ jobs:
           key: solyra-vm-base-${{ hashFiles('tools/vm/setup.sh', 'tools/vm/sync.sh') }}
       - name: Boot, scenario, measure
         run: chmod +x bin/solyra-term && TERM_BIN=$PWD/bin/solyra-term OUT=$PWD/out tools/vm/run.sh
+      - name: Budget gate (idle RAM <= 250 MB, installed <= 3 GB)
+        run: |
+          r=out/shots/report.txt
+          [ -f "$r" ] || { echo "no report (session did not reach the measurement)"; exit 1; }
+          used=$(awk '/^Mem:/{print $3}' "$r"); disk=$(sed -n 's/^root_used_mb=//p' "$r")
+          echo "idle RAM used: ${used} MB (llvmpipe in this VM inflates it) · installed: ${disk} MB"
+          echo "budget_ram_mb=${used} budget_disk_mb=${disk}" >> out/shots/report.txt
+          [ "${used:-99999}" -le 250 ] && [ "${disk:-99999}" -le 3072 ]
       - name: Publish shots to docs/shots (JPEG) on this branch
         if: always()
         run: |
