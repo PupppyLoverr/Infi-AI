@@ -28,7 +28,9 @@ use zgx::{
 use zgx_components::{Tab, TabsOptions, tabs};
 use zgx_desktop::{Application, WindowOptions};
 
+mod chat;
 mod panes;
+mod sidepanel;
 mod tabs_model;
 
 #[cfg(test)]
@@ -59,6 +61,10 @@ struct SplitDown;
 struct ClosePane;
 #[derive(Clone, Copy)]
 struct NewWorkspace;
+#[derive(Clone, Copy)]
+struct ToggleSidePanel;
+#[derive(Clone, Copy)]
+struct ToggleChat;
 #[derive(Clone, Copy)]
 struct NextWorkspace;
 #[derive(Clone, Copy)]
@@ -100,6 +106,8 @@ fn keymap() -> Keymap {
     let map = bind_char(map, 'E', CTRL_SHIFT, SplitDown);
     let map = bind_char(map, 'W', CTRL_SHIFT, ClosePane);
     let map = bind_char(map, 'T', CTRL_SHIFT, NewWorkspace);
+    let map = bind_char(map, 'P', CTRL_SHIFT, ToggleSidePanel);
+    let map = bind_char(map, 'M', CTRL_SHIFT, ToggleChat);
     let map = bind_tab(map, CTRL, NextWorkspace);
     bind_tab(map, CTRL_SHIFT, PrevWorkspace)
 }
@@ -128,6 +136,12 @@ struct TermApp {
     next_id: Rc<Cell<u32>>,
     accent: zgx::scene::Color,
     hairline: zgx::scene::Color,
+    /// ADE side panel open; agents_rev bumps to rescan the runtime dir.
+    panel_open: zgx::reactive::Signal<bool>,
+    agents_rev: zgx::reactive::Signal<u32>,
+    /// Panes in harness-chat mode: pane id -> live claude stream-json session.
+    chats: Rc<RefCell<HashMap<String, Rc<chat::Chat>>>>,
+    tasks: zgx_desktop::TaskSpawner,
 }
 
 impl TermApp {
@@ -243,6 +257,36 @@ impl TermApp {
             self.drop_panes([pane]);
             self.refuse();
         }
+    }
+
+    /// Switch the focused pane between raw terminal and harness chat.
+    /// Entering chat spawns claude in the terminal's working directory;
+    /// leaving it keeps the shell alive underneath.
+    fn toggle_chat(&self) {
+        let Some(id) = self.session.borrow().active().map(|w| w.focused.clone()) else {
+            return;
+        };
+        if self.chats.borrow_mut().remove(&id).is_some() {
+            self.status.set("terminal".into());
+        } else {
+            let cwd = self
+                .terms
+                .borrow()
+                .get(&id)
+                .map(|t| t.pwd())
+                .filter(|p| !p.is_empty())
+                .map(std::path::PathBuf::from);
+            match chat::Chat::spawn(&self.rt, &self.tasks, cwd) {
+                Some(c) => {
+                    self.chats.borrow_mut().insert(id, Rc::new(c));
+                    self.status.set("chat — Ctrl+Shift+M switches back".into());
+                }
+                None => {
+                    self.status.set("no claude binary on PATH".into());
+                }
+            }
+        }
+        self.bump();
     }
 
     fn close_focused(&self) {
@@ -440,10 +484,96 @@ impl TermApp {
         }
     }
 
+    /// Video-1 chat surface: bubbles over the glass, input pill at the
+    /// bottom. Rebuilt when the session's rev bumps (new frame or send).
+    fn chat_view(&self, c: Rc<chat::Chat>) -> View {
+        let (bubbles_sig, rev, input, status_sig) =
+            (c.bubbles.clone(), c.rev.clone(), c.input.clone(), c.status.clone());
+        let scroll = switch(
+            move || {
+                let _ = rev.get();
+                bubbles_sig.get()
+            },
+            move |bubbles, _cx| {
+                let mut col = column().w_full().gap(8.).p(12.);
+                if bubbles.is_empty() {
+                    col = col.child(
+                        text("What should the agent do?")
+                            .text_size(18.)
+                            .text_color(solyra_ui::color(solyra_ui::current().theme.text_dim)),
+                    );
+                }
+                for b in bubbles {
+                    let mine = b.role == "user";
+                    let card = text(b.text)
+                        .text_size(13.)
+                        .p(10.)
+                        .rounded(12.)
+                        .bg(if mine {
+                            zgx::scene::Color(255, 255, 255, 26)
+                        } else {
+                            zgx::scene::Color(255, 255, 255, 12)
+                        });
+                    col = col.child(if mine {
+                        row().w_full().justify_end().child(card.max_w(420.))
+                    } else {
+                        row().w_full().justify_start().child(card.max_w(520.))
+                    });
+                }
+                col
+            },
+        );
+        let send_chat = c.clone();
+        let input_row = row()
+            .w_full()
+            .shrink_0()
+            .gap(8.)
+            .p(10.)
+            .items_center()
+            .child(
+                text_input("Message the agent", input)
+                    .grow()
+                    .rounded(18.)
+                    .on_event(move |cx| {
+                        if cx.phase == EventPhase::Capture {
+                            return;
+                        }
+                        if let InputEvent::KeyDown {
+                            key: Key::Enter, ..
+                        } = &cx.event
+                        {
+                            send_chat.send();
+                            cx.prevent_default();
+                        }
+                    }),
+            )
+            .child(tool_button("Send", {
+                let c = c.clone();
+                move || {
+                    c.send();
+                }
+            }));
+        let st = text_signal(move || status_sig.get()).text_size(11.).text_color(
+            solyra_ui::color(solyra_ui::current().theme.text_dim),
+        );
+        column()
+            .grow()
+            .w_full()
+            .h_full()
+            .child(div().grow().w_full().child(scroll))
+            .child(row().w_full().shrink_0().px(10.).child(st))
+            .child(input_row)
+    }
+
     fn pane(&self, id: &str, workspace: &str) -> View {
-        let body = match self.terms.borrow().get(id).cloned() {
-            Some(term) => terminal(&term).grow().rounded(4.),
-            None => text("closed"),
+        let in_chat = self.chats.borrow().get(id).cloned();
+        let body = if let Some(c) = in_chat {
+            self.chat_view(c)
+        } else {
+            match self.terms.borrow().get(id).cloned() {
+                Some(term) => terminal(&term).grow().rounded(4.),
+                None => text("closed"),
+            }
         };
         let (session, revision, accent, hairline) = (
             self.session.clone(),
@@ -502,6 +632,84 @@ impl TermApp {
                 }
             })
             .child(body)
+    }
+
+    /// ADE side panel: live agent tasks with approve/deny for pending
+    /// approvals (the claude/codex IDE-style surface), or the empty state.
+    fn side_panel_view(&self) -> View {
+        let (open_sig, rev_sig) = (self.panel_open.clone(), self.agents_rev.clone());
+        let theme = solyra_ui::current().theme;
+        switch(
+            move || {
+                let open = open_sig.get();
+                let _ = rev_sig.get();
+                if open { Some(sidepanel::scan()) } else { None }
+            },
+            move |rows, _cx| {
+                let Some(rows) = rows else {
+                    return column().w(0.).h_full();
+                };
+                let mut col = column()
+                    .w(280.)
+                    .h_full()
+                    .shrink_0()
+                    .gap(6.)
+                    .p(8.)
+                    .bg(solyra_ui::current().sidebar_bg())
+                    .child(
+                        text("Agents")
+                            .text_size(14.)
+                            .text_color(solyra_ui::color(theme.text)),
+                    );
+                if rows.is_empty() {
+                    col = col.child(
+                        text("No agent runtime is connected")
+                            .text_size(12.)
+                            .text_color(solyra_ui::color(theme.text_dim)),
+                    );
+                }
+                for task in rows {
+                    let mut card = column()
+                        .w_full()
+                        .gap(2.)
+                        .p(8.)
+                        .rounded(8.)
+                        .bg(zgx::scene::Color(255, 255, 255, 14))
+                        .child(
+                            text(format!("{} — {}", task.name, task.status))
+                                .text_size(12.)
+                                .text_color(solyra_ui::color(theme.text)),
+                        );
+                    if !task.last_text.is_empty() {
+                        card = card.child(
+                            text(task.last_text.clone())
+                                .text_size(11.)
+                                .text_color(solyra_ui::color(theme.text_dim)),
+                        );
+                    }
+                    if let Some((action, resource)) = &task.pending {
+                        card = card.child(
+                            text(format!("wants to: {action} {resource}"))
+                                .text_size(11.)
+                                .text_color(solyra_ui::color(theme.warning)),
+                        );
+                        let (id_a, id_d) = (task.id.clone(), task.id.clone());
+                        card = card.child(
+                            row()
+                                .gap(6.)
+                                .child(tool_button("Allow", move || {
+                                    sidepanel::decide(&id_a, "approve");
+                                }))
+                                .child(tool_button("Deny", move || {
+                                    sidepanel::decide(&id_d, "deny");
+                                })),
+                        );
+                    }
+                    col = col.child(card);
+                }
+                col
+            },
+        )
     }
 
     fn panel(&self, id: String) -> View {
@@ -583,9 +791,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 next_id: Rc::new(Cell::new(1)),
                 accent: solyra_ui::color(theme.accent),
                 hairline: style.hairline(),
+                panel_open: rt.signal(true),
+                agents_rev: rt.signal(0),
+                chats: Rc::default(),
+                tasks: cx.tasks.clone(),
             };
             app.focus_only("pane-1");
+            // Verification hooks: 1 enters chat mode, 2 also sends a test
+            // message once the harness is up (screenshot tests).
+            if let Ok(mode) = std::env::var("SOLYRA_TERM_CHAT") {
+                app.toggle_chat();
+                if mode == "2" {
+                    let app2 = app.clone();
+                    cx.tasks.spawn(async move {
+                        zgx::timer::sleep(Duration::from_millis(800)).await;
+                        if let Some(c) = app2.chats.borrow().values().next().cloned() {
+                            c.input.set("hello from the harness test".into());
+                            c.send();
+                        }
+                    });
+                }
+            }
 
+            // The agent panel rescans the runtime directory every two seconds.
+            {
+                let rev = app.agents_rev.clone();
+                cx.tasks.spawn(async move {
+                    loop {
+                        zgx::timer::sleep(Duration::from_secs(2)).await;
+                        rev.update(|n| *n += 1);
+                    }
+                });
+            }
             let watching = app.clone();
             let effect = rt.effect(move || watching.sync_tabs());
             cx.on_closed(move || drop(effect));
@@ -599,6 +836,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let panel_app = app.clone();
+            let panel_app2 = app.clone();
             let strip = tabs(
                 "Terminal tabs",
                 app.items.clone(),
@@ -731,6 +969,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         app.cycle(-1);
                     }
                 })
+                .on_action({
+                    let app = app.clone();
+                    move |_: &ToggleChat, cx| {
+                        cx.prevent_default();
+                        app.toggle_chat();
+                    }
+                })
+                .on_action({
+                    let app = app.clone();
+                    move |_: &ToggleSidePanel, cx| {
+                        cx.prevent_default();
+                        let open = !app.panel_open.get();
+                        app.panel_open.set(open);
+                        app.bump();
+                    }
+                })
                 .child(toolbar)
                 .child(
                     row()
@@ -739,7 +993,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .items_start()
                         .bg(style.sidebar_bg())
                         .child(strip.grow().h_full())
-                        .child(add),
+                        .child(add)
+                        .child(panel_app2.side_panel_view()),
                 );
 
             cx.render(solyra_ui::scope(
