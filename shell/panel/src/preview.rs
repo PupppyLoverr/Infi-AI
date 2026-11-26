@@ -1951,3 +1951,254 @@ fn side_docks_render() {
         }
     }
 }
+
+
+/// Full visual showcase of all macOS 27 Golden Gate + Droppy surfaces for
+/// side-by-side verification against our reference images.
+#[test]
+fn macos27_droppy_showcase() {
+    use crate::island::{self, Anim, Content, Extra, Glance};
+    use crate::material::Material;
+    use solyra_conf::look::{LockStyle, NotchStyle};
+
+    let fonts = Fonts::load();
+    let mut shots = Vec::new();
+    let extra = Extra {
+        glance: &Glance {
+            battery: Some(86),
+            network: "Wi-Fi".into(),
+            agents_running: 2,
+            windows: 4,
+        },
+        clock: "08:21",
+        date: "Sun, 22 Nov",
+        reply: "",
+        typing: false,
+        glass: false,
+        badge: None,
+    };
+
+    // 1. macOS 27 Desktop + Menu Bar + Dock + Control Center
+    {
+        let mut scene = scene_pixels(
+            &fonts,
+            ThemeKind::Dark,
+            "silk",
+            Material::Glass,
+            Material::Glass,
+            Material::Solid,
+            DockStyle::Macos,
+            NotchStyle::Notch,
+            false,
+        );
+        let mut prefs = ShellPrefs::default();
+        prefs.theme = ThemeKind::Dark;
+        prefs.dock_style = DockStyle::Macos;
+        prefs.look.glass_tint = 35;
+        prefs.brightness = 78;
+        prefs.volume = 64;
+        let th = Theme::for_kind(ThemeKind::Dark);
+        let t = telem(Some(86), NetworkState::Wireless, true);
+        let mut cbuf = vec![0u8; (CONTROL_W * CONTROL_H * 4) as usize];
+        {
+            let mut cv = Canvas::new(&mut cbuf, CONTROL_W, CONTROL_H, 1);
+            draw_control(&mut cv, &th, &fonts, &prefs, &t, Summary::of(true, &fixtures()), None);
+        }
+        let at = (scene.w as i32 - CONTROL_W as i32 - 14, BAR_HEIGHT as i32 + 8);
+        compositor_lens(
+            &scene.soft,
+            scene.w,
+            scene.h,
+            (at.0, at.1, CONTROL_W as i32, CONTROL_H as i32),
+            crate::tokens::R_CARD,
+            10.0,
+            1.35,
+            &mut scene.out,
+        );
+        over(&mut scene.out, scene.w, &cbuf, CONTROL_W, CONTROL_H, at);
+        shots.push(Shot {
+            name: "showcase-macos27-desktop-control".into(),
+            w: scene.w,
+            h: scene.h,
+            rgba: flatten(&scene.out, scene.w, scene.h, Rgba::rgb(0, 0, 0)),
+        });
+    }
+
+    // 2. macOS 27 Spotlight Search (Liquid Glass + Calculator Top Hit)
+    {
+        let mut scene = scene_pixels(
+            &fonts,
+            ThemeKind::Dark,
+            "silk",
+            Material::Glass,
+            Material::Glass,
+            Material::Solid,
+            DockStyle::Macos,
+            NotchStyle::Notch,
+            false,
+        );
+        let th = Theme::for_kind(ThemeKind::Dark);
+        let cat = catalog_apps(&[]);
+        let q = "24 * 18";
+        let items = launcher::search(q, &cat, &[], true);
+        let lay = spot_layout(q, &items);
+        let mut sbuf = vec![0u8; (lay.w * lay.h * 4) as usize];
+        let mut icons = HashMap::new();
+        {
+            let mut cv = Canvas::new(&mut sbuf, lay.w, lay.h, 1);
+            draw_launcher(&mut cv, &th, &fonts, q, &items, 0, &mut icons, None);
+        }
+        let at = ((scene.w as i32 - lay.w as i32) / 2, 130);
+        for (r, rad) in lay.shapes() {
+            compositor_lens(
+                &scene.soft,
+                scene.w,
+                scene.h,
+                (at.0 + r.x, at.1 + r.y, r.w, r.h),
+                rad,
+                10.0,
+                1.35,
+                &mut scene.out,
+            );
+        }
+        over(&mut scene.out, scene.w, &sbuf, lay.w, lay.h, at);
+        shots.push(Shot {
+            name: "showcase-macos27-spotlight".into(),
+            w: scene.w,
+            h: scene.h,
+            rgba: flatten(&scene.out, scene.w, scene.h, Rgba::rgb(0, 0, 0)),
+        });
+    }
+
+    // Helper to composite an expanded Droppy Notch onto a crisp desktop top banner
+    let mut render_notch_shot = |name: &str, content: Content| {
+        let mut scene = scene_pixels(
+            &fonts,
+            ThemeKind::Dark,
+            "ocean",
+            Material::Glass,
+            Material::Glass,
+            Material::Solid,
+            DockStyle::Macos,
+            NotchStyle::Notch,
+            false,
+        );
+        let shape = island::target(NotchStyle::Notch, &content, true);
+        let anim = Anim::new(shape);
+        let mut nbuf = vec![0u8; (island::SURF_W * island::SURF_H * 4) as usize];
+        {
+            let mut cv = Canvas::new(&mut nbuf, island::SURF_W, island::SURF_H, 1);
+            island::draw(&mut cv, &fonts, NotchStyle::Notch, &anim, &content, true, &extra, None);
+        }
+        let at = ((scene.w as i32 - island::SURF_W as i32) / 2, 0);
+        over(&mut scene.out, scene.w, &nbuf, island::SURF_W, island::SURF_H, at);
+        shots.push(Shot {
+            name: name.into(),
+            w: scene.w,
+            h: scene.h,
+            rgba: flatten(&scene.out, scene.w, scene.h, Rgba::rgb(0, 0, 0)),
+        });
+    };
+
+    // 3. Droppy Compact Expanded Media Notch (Reference 3)
+    render_notch_shot(
+        "showcase-droppy-notch-media",
+        Content::Media(crate::media::Media {
+            bus: "org.mpris.MediaPlayer2.spotify".into(),
+            title: "Levitating".into(),
+            artist: "Dua Lipa".into(),
+            playing: false,
+            position_us: Some(66_000_000),
+            length_us: Some(204_000_000),
+        }),
+    );
+
+    // 4. Droppy Expanded Notch with Live Synced Lyrics (Reference 2)
+    let moonlit = crate::media::Media {
+        bus: "org.mpris.MediaPlayer2.spotify".into(),
+        title: "Moonlit Water".into(),
+        artist: "Clear Sky".into(),
+        playing: true,
+        position_us: Some(6_000_000),
+        length_us: Some(212_000_000),
+    };
+    let moon_lyr = crate::lyrics::fallback_for(&moonlit.title)
+        .window(6_000, 1, 2)
+        .into_iter()
+        .map(|(o, s)| (o, s.to_string()))
+        .collect();
+    render_notch_shot(
+        "showcase-droppy-notch-lyrics",
+        Content::MediaLyrics {
+            media: moonlit,
+            lyrics: moon_lyr,
+        },
+    );
+
+    // 5. Droppy Notch Clipboard Manager + Context Menu (Reference 4)
+    render_notch_shot(
+        "showcase-droppy-notch-clipboard",
+        Content::Clipboard {
+            items: crate::clipboard::demo_items(),
+            filter: crate::clipboard::ClipCategory::All,
+            context_menu: Some(2),
+        },
+    );
+
+    // 6. Droppy Fullscreen Ambient Lyrics Lock Screen (Reference 1)
+    {
+        let (w, h) = (1280u32, 800u32);
+        let wp = std::fs::read("assets/wallpapers/sunset-1920x1080.png")
+            .ok()
+            .and_then(|b| crate::canvas::decode_png(&b));
+        let sharp = crate::lock::backdrop(wp.as_ref(), w, h);
+        let mut bg = crate::lock::blur(&sharp, w, h);
+        let th = Theme::for_kind(ThemeKind::Dark);
+        let media = crate::media::Media {
+            bus: "org.mpris.MediaPlayer2.spotify".into(),
+            title: "Levitating".into(),
+            artist: "Dua Lipa".into(),
+            playing: true,
+            position_us: Some(51_000_000),
+            length_us: Some(203_000_000),
+        };
+        let view = crate::lock::View {
+            theme: &th,
+            fonts: &fonts,
+            style: LockStyle::Media,
+            clock: "08:21".into(),
+            date: "Sun, 22 Nov".into(),
+            name: "Solyra",
+            dots: 0,
+            caps: false,
+            checking: false,
+            message: None,
+            card: false,
+            agents_running: 1,
+            media_title: Some("Levitating"),
+            media_artist: Some("Dua Lipa"),
+            weather: Some("22°"),
+            media: Some(&media),
+            unlock: None,
+            phase: 1.4,
+        };
+        {
+            let mut cv = Canvas::new_keep(&mut bg, w, h, 1);
+            crate::lock::paint(&mut cv, &view);
+        }
+        shots.push(Shot {
+            name: "showcase-droppy-lock-ambient".into(),
+            w,
+            h,
+            rgba: flatten(&bg, w, h, Rgba::rgb(0, 0, 0)),
+        });
+    }
+
+    if let Some(dir) = std::env::var_os("SOLYRA_RENDER_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for s in &shots {
+            write_png(&dir, s);
+        }
+    }
+}
