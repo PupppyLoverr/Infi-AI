@@ -1472,11 +1472,16 @@ impl App {
         if self.island.is_none() {
             return;
         }
-        let to = island::target(
+        let mut to = island::target(
             self.prefs.look.notch,
             &self.island_content(),
             self.island_expanded,
         );
+        // Hover response (Apple): the pill widens slightly while the pointer
+        // rests on it, before the dwell expansion kicks in. No glow.
+        if !self.island_expanded && self.island_hover_at.is_some() {
+            to.w += 6.0;
+        }
         if to != self.island_anim.to {
             self.island_anim.to = to;
             self.island_last_frame = Instant::now();
@@ -1570,6 +1575,7 @@ impl App {
                 .is_some_and(|s| self.pointer_surface.as_ref() == Some(&s.surface));
             if !still_over {
                 self.island_hover_at = None;
+                self.retarget_island();
             } else if t.elapsed() >= Duration::from_millis(300) && !self.island_expanded {
                 self.island_hover_at = None;
                 self.island_expanded = true;
@@ -3154,6 +3160,7 @@ impl PointerHandler for App {
                         self.island_left_at = None;
                         if self.prefs.look.notch_hover && !self.island_expanded {
                             self.island_hover_at = Some(Instant::now());
+                            self.retarget_island();
                             let wake = self.waker.clone();
                             std::thread::spawn(move || {
                                 std::thread::sleep(Duration::from_millis(320));
