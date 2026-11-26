@@ -109,3 +109,45 @@ and light ribbon wallpapers.
   `origin/main` kept in step with the dev branch (fast-forward).
 - No Apple or pearOS artwork/code in the repo; credits go in
   `THIRD_PARTY_NOTICES.md`.
+
+---
+
+## Status after M1 (solyra_glass_v1), for the next agent
+
+**Done and verified on the live compositor** (`tools/live-shot.sh`, stripes
+wallpaper, same scene for every shot):
+
+- Protocol `comp/resources/solyra-glass-v1.xml`: manager + per-surface
+  object; `reset`, `add_shape(x,y,w,h,radius,preset)`; double-buffered via
+  Smithay `Cacheable` (`GlassCachedState`), applied with `wl_surface.commit`.
+  Limits: 4 shapes, sizes 1..=16384, coords ±16384, radius clamped to half
+  the short side, presets clear/regular/solid. Protocol errors:
+  `already_constructed`, `too_many_shapes`, `invalid_shape`, `invalid_preset`.
+- Server: `comp/src/protocols/solyra_glass.rs` (+ `raw.rs`, `niri.rs`,
+  `handlers/mod.rs`). Renderer: `RenderParams.shapes` filled in
+  `render_for_tile`, `GlassUniforms` → `shape0..3, shape_radius, shape_lens,
+  shape_count` in `shaders/refract_surface.frag`: union clip with 1 px AA,
+  lens from the nearest shape's edge (ties: first added), fallback to the old
+  single-box lens when a surface has no shapes. Overlap = union body.
+- Panel: `shell/panel/src/glass_proto.rs` (client code from the same XML),
+  `set_glass` in `main.rs`, called before each commit for the dock (clear),
+  widgets (2 regular shapes), Spotlight (capsule + card / island card) and
+  the island when its material is glass (shape sent every animation frame).
+  `SOLYRA_GLASS=0` disables it at runtime.
+- Evidence: fallback (`SOLYRA_GLASS=0`) is pixel-identical to before (mean
+  diff 0.00 on dock and widgets); with shapes each widget card clips to its
+  own rounded rect (diff only on the two outlines, 0.00 in the gap and the
+  centres); controlled test (widget rule refraction 14): inner edges facing
+  the gap now lens (mean diff 2.09 / 0.85), impossible with the fallback box.
+- Tests: compositor lib 281 pass (6 protocol, 3 renderer added), niri-config
+  38, panel 124 (2 added).
+
+**Not done in M1 (by scope):** tint/luminosity in the compositor, linear-light
+blending, padded capture, island interaction policy, settings sliders.
+
+**Next (M2 onward, see roadmap above):** M2 padded capture (outside of the
+glass bends in), M3 compositor material pass (adaptive tint + rim light in
+the shader; remove `apple_glass` rims from protocol surfaces), M4 linear
+light. Compare every step against macOS Tahoe reference images under the
+same scene; list remaining differences explicitly. Measure performance on
+real Intel hardware before claiming anything.

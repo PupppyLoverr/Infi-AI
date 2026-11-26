@@ -121,6 +121,13 @@ impl Shaders {
                     UniformName::new("bg_color", UniformType::_4f),
                     UniformName::new("lens", UniformType::_4f),
                     UniformName::new("refraction", UniformType::_2f),
+                    UniformName::new("shape0", UniformType::_4f),
+                    UniformName::new("shape1", UniformType::_4f),
+                    UniformName::new("shape2", UniformType::_4f),
+                    UniformName::new("shape3", UniformType::_4f),
+                    UniformName::new("shape_radius", UniformType::_4f),
+                    UniformName::new("shape_lens", UniformType::_4f),
+                    UniformName::new("shape_count", UniformType::_1f),
                 ],
             )
             .map_err(|err| {

@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="solyra_glass_v1">
+  <copyright>
+    Copyright 2026 Solyra contributors. GPL-3.0-or-later.
+  </copyright>
+
+  <description summary="analytic glass shapes for shell surfaces">
+    Lets a shell client describe the exact shape of the glass on one of its
+    surfaces as a small set of rounded rectangles, so the compositor can clip
+    its background effect to them and bend (lens) the backdrop at their
+    edges. It complements ext-background-effect-v1: the blur region still
+    says where the compositor blurs; these shapes say what the glass is.
+
+    Surfaces without a solyra_glass_surface_v1, or with no shapes, keep the
+    compositor's previous behaviour.
+  </description>
+
+  <interface name="solyra_glass_manager_v1" version="1">
+    <description summary="glass shape manager"/>
+
+    <enum name="error">
+      <entry name="already_constructed" value="0"
+        summary="the surface already has a glass object"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        Existing glass objects are not affected.
+      </description>
+    </request>
+
+    <request name="get_glass_surface">
+      <description summary="get the glass object for a surface">
+        A surface may have at most one glass object at a time; asking again
+        raises already_constructed.
+      </description>
+      <arg name="id" type="new_id" interface="solyra_glass_surface_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+  </interface>
+
+  <interface name="solyra_glass_surface_v1" version="1">
+    <description summary="glass shapes of one surface">
+      Double-buffered: reset and add_shape change pending state, which is
+      applied atomically with the next wl_surface.commit, so the glass shape
+      and the surface contents always change in the same frame.
+
+      Overlapping shapes form one union body (clipping is their union); at a
+      point near several edges, lensing follows the shape whose edge is
+      nearest, ties going to the shape added first.
+    </description>
+
+    <enum name="error">
+      <entry name="too_many_shapes" value="0"
+        summary="more than 4 shapes are pending"/>
+      <entry name="invalid_shape" value="1"
+        summary="a size is not positive or a coordinate is out of range"/>
+      <entry name="invalid_preset" value="2" summary="unknown preset"/>
+    </enum>
+
+    <enum name="preset">
+      <description summary="material preset">
+        How the compositor treats the backdrop under a shape.
+      </description>
+      <entry name="clear" value="0" summary="light frost, full lensing"/>
+      <entry name="regular" value="1" summary="regular frost, softer lensing"/>
+      <entry name="solid" value="2" summary="clipped, no lensing"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="remove the glass object">
+        The surface's shapes are cleared on its next commit; it falls back
+        to the default background effect.
+      </description>
+    </request>
+
+    <request name="reset">
+      <description summary="clear the pending shapes"/>
+    </request>
+
+    <request name="add_shape">
+      <description summary="add a rounded rectangle to the pending shapes">
+        In surface-local logical coordinates. Width and height must be in
+        1..=16384 and x, y in -16384..=16384, or invalid_shape is raised. The
+        radius is clamped to half the shorter side. At most 4 shapes may be
+        pending.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+      <arg name="radius" type="uint"/>
+      <arg name="preset" type="uint" enum="preset"/>
+    </request>
+  </interface>
+</protocol>

@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use niri_config::CornerRadius;
 use smithay::backend::renderer::gles::GlesRenderer;
-use smithay::utils::{Logical, Point, Rectangle, Scale};
+use smithay::utils::{Logical, Point, Rectangle, Scale, Size};
 use smithay::wayland::compositor::{with_states, SurfaceData};
 use wayland_server::protocol::wl_surface::WlSurface;
 
@@ -52,6 +52,30 @@ impl Options {
     }
 }
 
+/// Analytic glass shapes as shader uniforms.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct GlassUniforms {
+    pub boxes: [[f32; 4]; 4],
+    pub radius: [f32; 4],
+    pub lens: [f32; 4],
+    pub count: f32,
+}
+
+impl GlassUniforms {
+    pub fn uniforms(&self) -> [smithay::backend::renderer::gles::Uniform<'static>; 7] {
+        use smithay::backend::renderer::gles::Uniform;
+        [
+            Uniform::new("shape0", self.boxes[0]),
+            Uniform::new("shape1", self.boxes[1]),
+            Uniform::new("shape2", self.boxes[2]),
+            Uniform::new("shape3", self.boxes[3]),
+            Uniform::new("shape_radius", self.radius),
+            Uniform::new("shape_lens", self.lens),
+            Uniform::new("shape_count", self.count),
+        ]
+    }
+}
+
 /// Render-time parameters.
 #[derive(Debug)]
 pub struct RenderParams {
@@ -65,6 +89,9 @@ pub struct RenderParams {
     pub clip: Option<(Rectangle<f64, Logical>, CornerRadius)>,
     /// Liquid-glass lensing (strength, radius), filled in by `render()`.
     pub refraction: [f32; 2],
+    /// solyra_glass_v1 shapes in the same absolute space as `geometry`:
+    /// (rect, corner radius, preset lens scale). Empty: fall back to `lens()`.
+    pub shapes: Vec<(Rectangle<f64, Logical>, f32, f32)>,
     /// Scale to use for rounding to physical pixels.
     pub scale: f64,
 }
@@ -78,7 +105,8 @@ impl RenderParams {
         // space as `geometry` and `clip`.
         let clip = self.clip.map_or(self.geometry, |c| c.0);
         let g = self.geometry;
-        let (mut x0, mut y0, mut x1, mut y1) = (g.loc.x, g.loc.y, g.loc.x + g.size.w, g.loc.y + g.size.h);
+        let (mut x0, mut y0, mut x1, mut y1) =
+            (g.loc.x, g.loc.y, g.loc.x + g.size.w, g.loc.y + g.size.h);
         if let Some(sub) = &self.subregion {
             let mut first = true;
             for (tl, br) in sub.iter() {
@@ -100,6 +128,33 @@ impl RenderParams {
             ((x1 - x0) / cw) as f32,
             ((y1 - y0) / ch) as f32,
         ]
+    }
+
+    /// Shader uniforms for the analytic shapes: boxes normalised to the clip
+    /// geometry, radii (px), lens strengths (px) and the count.
+    pub fn glass_uniforms(&self) -> GlassUniforms {
+        let mut u = GlassUniforms::default();
+        let clip = self.clip.map_or(self.geometry, |c| c.0);
+        let (cw, ch) = (clip.size.w.max(1.), clip.size.h.max(1.));
+        // Without a refraction rule, analytic glass still lenses at this
+        // default strength (a clear preset's).
+        let strength = if self.refraction[0] > 0. {
+            self.refraction[0]
+        } else {
+            10.
+        };
+        for (i, (r, radius, scale)) in self.shapes.iter().take(4).enumerate() {
+            u.boxes[i] = [
+                ((r.loc.x - clip.loc.x) / cw) as f32,
+                ((r.loc.y - clip.loc.y) / ch) as f32,
+                (r.size.w / cw) as f32,
+                (r.size.h / ch) as f32,
+            ];
+            u.radius[i] = *radius;
+            u.lens[i] = strength * scale;
+            u.count += 1.;
+        }
+        u
     }
 
     fn fit_clip_radius(&mut self) {
@@ -316,6 +371,7 @@ fn render_params_for_tile(
         clip,
         scale,
         refraction: [0., 0.],
+        shapes: Vec::new(),
     })
 }
 
@@ -372,7 +428,7 @@ pub fn render_for_tile(
         let mut surface_geo = surface_geo(states).unwrap_or_default().to_f64();
         surface_geo.loc += surface_off;
 
-        let Some(params) = render_params_for_tile(
+        let Some(mut params) = render_params_for_tile(
             geometry,
             scale,
             clip_to_geometry,
@@ -383,8 +439,76 @@ pub fn render_for_tile(
         ) else {
             return;
         };
+        // solyra_glass_v1: the committed shapes, in the same absolute space
+        // as the blur sub-region (surface origin + shape * anim scale).
+        if !should_block_out {
+            if let Some(shapes) = crate::protocols::solyra_glass::committed_shapes(states) {
+                let origin = surface_geo.upscale(surface_anim_scale).loc + geometry.loc;
+                params.shapes = shapes
+                    .iter()
+                    .map(|s| {
+                        let loc = Point::from((s.x as f64, s.y as f64)).upscale(surface_anim_scale);
+                        let size = Size::from((s.w as f64, s.h as f64)).upscale(surface_anim_scale);
+                        (
+                            Rectangle::new(origin + loc, size),
+                            s.radius,
+                            s.preset.lens_scale(),
+                        )
+                    })
+                    .collect();
+            }
+        }
 
         let xray_pos = xray_pos.offset(params.geometry.loc - geometry.loc);
         background_effect.render(ctx, ns, params, xray_pos, push);
     });
+}
+
+#[cfg(test)]
+mod glass_tests {
+    use super::*;
+
+    fn params(shapes: Vec<(Rectangle<f64, Logical>, f32, f32)>) -> RenderParams {
+        RenderParams {
+            geometry: Rectangle::new(Point::from((100., 600.)), Size::from((400., 72.))),
+            subregion: None,
+            clip: None,
+            scale: 1.,
+            refraction: [0., 0.],
+            shapes,
+        }
+    }
+
+    #[test]
+    fn no_shapes_means_fallback() {
+        let p = params(Vec::new());
+        assert_eq!(p.glass_uniforms().count, 0.);
+        // The fallback lens is the whole geometry.
+        assert_eq!(p.lens(), [0., 0., 1., 1.]);
+    }
+
+    #[test]
+    fn shapes_are_normalised_to_the_clip_geometry() {
+        // Two cards side by side inside the surface.
+        let a = Rectangle::new(Point::from((100., 600.)), Size::from((196., 72.)));
+        let b = Rectangle::new(Point::from((310., 600.)), Size::from((190., 72.)));
+        let u = params(vec![(a, 22., 1.), (b, 22., 0.6)]).glass_uniforms();
+        assert_eq!(u.count, 2.);
+        assert_eq!(u.boxes[0], [0., 0., 0.49, 1.]);
+        assert!((u.boxes[1][0] - 0.525).abs() < 1e-6 && (u.boxes[1][2] - 0.475).abs() < 1e-6);
+        assert_eq!(u.radius[..2], [22., 22.]);
+        // No refraction rule: the default strength, scaled by preset.
+        assert_eq!(u.lens[0], 10.);
+        assert!((u.lens[1] - 6.).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_rule_strength_wins_and_the_count_is_bounded() {
+        let r = Rectangle::new(Point::from((100., 600.)), Size::from((10., 10.)));
+        let mut p = params(vec![(r, 2., 1.); 6]);
+        p.refraction = [11., 22.];
+        let u = p.glass_uniforms();
+        assert_eq!(u.count, 4., "at most four shapes reach the shader");
+        assert_eq!(u.lens[0], 11.);
+    }
 }

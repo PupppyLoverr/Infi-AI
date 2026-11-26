@@ -82,6 +82,7 @@ pub struct XrayElement {
     bg_color: Color32F,
     lens: [f32; 4],
     refraction: [f32; 2],
+    glass: super::background_effect::GlassUniforms,
     program: Option<GlesTexProgram>,
 }
 
@@ -109,6 +110,7 @@ impl Xray {
         let program = Shaders::get(ctx.renderer).postprocess_and_clip.clone();
         let lens = params.lens();
         let refraction = params.refraction;
+        let glass = params.glass_uniforms();
 
         let zoom = xray_pos.zoom;
         let pos_in_backdrop = xray_pos.pos_in_backdrop.upscale(zoom);
@@ -207,6 +209,7 @@ impl Xray {
                     bg_color: *bg_color,
                     lens,
                     refraction,
+                    glass,
                     program: program.clone(),
                 };
                 push(elem);
@@ -259,6 +262,7 @@ impl Xray {
                 bg_color: self.backdrop_color,
                 lens,
                 refraction,
+                glass,
                 program: program.clone(),
             };
             push(elem);
@@ -267,7 +271,8 @@ impl Xray {
 }
 
 impl XrayElement {
-    fn compute_uniforms(&self) -> [Uniform<'static>; 9] {
+    fn compute_uniforms(&self) -> [Uniform<'static>; 16] {
+        let [g0, g1, g2, g3, g4, g5, g6] = self.glass.uniforms();
         [
             Uniform::new("niri_scale", self.scale),
             Uniform::new("geo_size", <[f32; 2]>::from(self.clip_geo_size)),
@@ -278,6 +283,13 @@ impl XrayElement {
             Uniform::new("bg_color", self.bg_color.components()),
             Uniform::new("lens", self.lens),
             Uniform::new("refraction", self.refraction),
+            g0,
+            g1,
+            g2,
+            g3,
+            g4,
+            g5,
+            g6,
         ]
     }
 }

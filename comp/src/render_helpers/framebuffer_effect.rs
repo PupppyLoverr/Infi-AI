@@ -41,6 +41,7 @@ pub struct FramebufferEffectElement {
     saturation: f32,
     lens: [f32; 4],
     refraction: [f32; 2],
+    glass: super::background_effect::GlassUniforms,
 }
 
 #[derive(Debug)]
@@ -78,6 +79,7 @@ impl FramebufferEffect {
 
         let lens = params.lens();
         let refraction = params.refraction;
+        let glass = params.glass_uniforms();
         let mut id = self.id.clone();
         if let Some(ns) = ns {
             id = id.namespaced(ns);
@@ -96,6 +98,7 @@ impl FramebufferEffect {
             saturation,
             lens,
             refraction,
+            glass,
         }
     }
 }
@@ -105,7 +108,7 @@ impl FramebufferEffectElement {
         &self,
         crop: Rectangle<f64, Logical>,
         transform: Transform,
-    ) -> [Uniform<'static>; 9] {
+    ) -> [Uniform<'static>; 16] {
         let offset = crop.loc - (self.clip_geo.loc - self.geometry.loc);
         let offset = Vec2::new(offset.x as f32, offset.y as f32);
         let crop_size = Vec2::new(crop.size.w as f32, crop.size.h as f32);
@@ -120,6 +123,7 @@ impl FramebufferEffectElement {
             * transform.matrix()
             * Mat3::from_translation(Vec2::new(-0.5, -0.5));
         let input_to_clip_geo = input_to_clip_geo * transform_mat;
+        let [g0, g1, g2, g3, g4, g5, g6] = self.glass.uniforms();
 
         let clip_geo_size = (self.clip_geo.size.w as f32, self.clip_geo.size.h as f32);
 
@@ -133,6 +137,13 @@ impl FramebufferEffectElement {
             Uniform::new("bg_color", [0f32, 0., 0., 0.]),
             Uniform::new("lens", self.lens),
             Uniform::new("refraction", self.refraction),
+            g0,
+            g1,
+            g2,
+            g3,
+            g4,
+            g5,
+            g6,
         ]
     }
 }

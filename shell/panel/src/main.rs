@@ -17,6 +17,7 @@ mod agent;
 mod canvas;
 mod desk;
 mod dock;
+mod glass_proto;
 mod glyphs;
 mod hud;
 mod icons;
@@ -152,6 +153,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let blur_mgr = globals
         .bind::<ExtBackgroundEffectManagerV1, _, _>(&qh, 1..=1, ())
         .ok();
+    // solyra_glass_v1 is Solyra's own: absent on other compositors, where the
+    // panel keeps the blur-region path.
+    // SOLYRA_GLASS=0 turns it off (fallback testing, or a quick rollback).
+    let glass_mgr = (std::env::var("SOLYRA_GLASS").as_deref() != Ok("0"))
+        .then(|| {
+            globals
+                .bind::<glass_proto::SolyraGlassManagerV1, _, _>(&qh, 1..=1, ())
+                .ok()
+        })
+        .flatten();
     let bar_material = prefs.look.material(prefs.look.bar_material);
     let dock_material = prefs.look.material(prefs.look.dock_material);
     let bar = make_layer_surface(
@@ -232,6 +243,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         data_devices,
         data_device: None,
         blur_mgr,
+        glass_mgr,
         bar_material,
         dock_material,
         notch_material: material::Material::Solid,
@@ -353,12 +365,19 @@ struct SurfaceSlot {
     effect: Option<ExtBackgroundEffectSurfaceV1>,
     /// The blur region last sent, to skip resending an unchanged one.
     blur: Vec<(i32, i32, i32, i32)>,
+    /// solyra_glass_v1 object for this surface, made on first use.
+    glass: Option<glass_proto::SolyraGlassSurfaceV1>,
+    /// The glass shapes last sent.
+    glass_shapes: Vec<glass_proto::Shape>,
 }
 
 impl Drop for SurfaceSlot {
     fn drop(&mut self) {
         if let Some(e) = self.effect.take() {
             e.destroy();
+        }
+        if let Some(g) = self.glass.take() {
+            g.destroy();
         }
     }
 }
@@ -393,6 +412,51 @@ fn set_blur(
     slot.blur = rects;
 }
 
+/// Describe the glass on `slot` (solyra_glass_v1). Takes effect with the
+/// surface's next commit, so call it before presenting the frame it belongs
+/// to. Unchanged shapes are not resent; without the protocol it does nothing.
+fn set_glass(
+    mgr: Option<&glass_proto::SolyraGlassManagerV1>,
+    qh: &QueueHandle<App>,
+    slot: &mut SurfaceSlot,
+    shapes: &[glass_proto::Shape],
+) {
+    let Some(mgr) = mgr else {
+        return;
+    };
+    let shapes = glass_proto::sanitize(shapes);
+    if shapes == slot.glass_shapes && slot.glass.is_some() {
+        return;
+    }
+    let glass = slot
+        .glass
+        .get_or_insert_with(|| mgr.get_glass_surface(&slot.surface, qh, ()));
+    glass.reset();
+    for g in &shapes {
+        glass.add_shape(g.x, g.y, g.w, g.h, g.r.round() as u32, g.preset);
+    }
+    slot.glass_shapes = shapes;
+}
+
+/// A glass shape for `set_glass`.
+fn gshape(
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    r: f32,
+    preset: glass_proto::Preset,
+) -> glass_proto::Shape {
+    glass_proto::Shape {
+        x,
+        y,
+        w,
+        h,
+        r,
+        preset,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn make_layer_surface(
     compositor: &CompositorState,
@@ -424,6 +488,8 @@ fn make_layer_surface(
         regions: Vec::new(),
         effect: None,
         blur: Vec::new(),
+        glass: None,
+        glass_shapes: Vec::new(),
     }
 }
 
@@ -484,6 +550,7 @@ fn set_dock_input_region(compositor: &CompositorState, surface: &WlSurface, spec
 
 struct App {
     blur_mgr: Option<ExtBackgroundEffectManagerV1>,
+    glass_mgr: Option<glass_proto::SolyraGlassManagerV1>,
     /// Materials the current bar/dock/notch surfaces were made with (their
     /// namespaces carry it, so a change recreates the surface).
     bar_material: material::Material,
@@ -1115,6 +1182,21 @@ impl App {
                 .card
                 .map(|c| material::blur_rects(c.x, c.y, c.w, c.h, surfaces::SPOT_CARD_R))
                 .unwrap_or_default();
+            let shapes: Vec<_> = lay
+                .card
+                .map(|c| {
+                    gshape(
+                        c.x,
+                        c.y,
+                        c.w,
+                        c.h,
+                        surfaces::SPOT_CARD_R,
+                        glass_proto::Preset::Regular,
+                    )
+                })
+                .into_iter()
+                .collect();
+            set_glass(self.glass_mgr.as_ref(), &self.qh, slot, &shapes);
             set_blur(
                 self.blur_mgr.as_ref(),
                 &self.compositor,
@@ -1143,6 +1225,12 @@ impl App {
             }
             slot.surface.set_input_region(Some(region.wl_region()));
         }
+        let shapes: Vec<_> = lay
+            .shapes()
+            .iter()
+            .map(|(r, rad)| gshape(r.x, r.y, r.w, r.h, *rad, glass_proto::Preset::Regular))
+            .collect();
+        set_glass(self.glass_mgr.as_ref(), &self.qh, slot, &shapes);
         set_blur(
             self.blur_mgr.as_ref(),
             &self.compositor,
@@ -1620,6 +1708,14 @@ impl App {
                     }
                     _ => Vec::new(),
                 };
+                // The dock card's exact shape (clear glass).
+                let shapes: Vec<_> = match body {
+                    Some(b) if material::blurs(self.dock_material) => {
+                        vec![gshape(b.x, b.y, b.w, b.h, b.r, glass_proto::Preset::Clear)]
+                    }
+                    _ => Vec::new(),
+                };
+                set_glass(self.glass_mgr.as_ref(), &self.qh, &mut self.dock, &shapes);
                 set_blur(
                     self.blur_mgr.as_ref(),
                     &self.compositor,
@@ -1971,6 +2067,21 @@ impl App {
                 material::blur_rects(x, y, widgets::CARD, widgets::CARD, widgets::RADIUS)
             })
             .collect();
+        // Two cards, two shapes: each lenses its own backdrop.
+        let shapes: Vec<_> = [0, widgets::CARD + widgets::GAP]
+            .iter()
+            .map(|&x| {
+                gshape(
+                    x,
+                    0,
+                    widgets::CARD,
+                    widgets::CARD,
+                    widgets::RADIUS,
+                    glass_proto::Preset::Regular,
+                )
+            })
+            .collect();
+        set_glass(self.glass_mgr.as_ref(), &self.qh, slot, &shapes);
         set_blur(
             self.blur_mgr.as_ref(),
             &self.compositor,
@@ -2099,6 +2210,36 @@ impl App {
         } else {
             Vec::new()
         };
+        // The island's current (animated) shape, sent with this frame's
+        // commit so glass and content morph together. Solid: none.
+        let shapes: Vec<_> = if material::blurs(self.notch_material) {
+            let c = &self.island_anim.cur;
+            let (x, w, h) = (c.x().round() as i32, c.w.round() as i32, c.h.round() as i32);
+            if self.prefs.look.notch == NotchStyle::Island {
+                vec![gshape(
+                    x,
+                    c.y.round() as i32,
+                    w,
+                    h,
+                    c.r,
+                    glass_proto::Preset::Regular,
+                )]
+            } else {
+                // The notch runs up past the top edge; only its lower rim shows.
+                let lift = c.r.ceil() as i32 + 2;
+                vec![gshape(
+                    x,
+                    -lift,
+                    w,
+                    h + lift,
+                    c.r,
+                    glass_proto::Preset::Regular,
+                )]
+            }
+        } else {
+            Vec::new()
+        };
+        set_glass(self.glass_mgr.as_ref(), &self.qh, slot, &shapes);
         set_blur(
             self.blur_mgr.as_ref(),
             &self.compositor,
@@ -3111,6 +3252,9 @@ impl Dispatch<WlKeyboard, ()> for App {
         }
     }
 }
+
+wayland_client::delegate_noop!(App: ignore glass_proto::SolyraGlassManagerV1);
+wayland_client::delegate_noop!(App: ignore glass_proto::SolyraGlassSurfaceV1);
 
 impl Dispatch<ExtBackgroundEffectManagerV1, ()> for App {
     fn event(
