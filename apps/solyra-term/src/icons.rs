@@ -21,6 +21,7 @@ fn source(name: &str) -> &'static [u8] {
         "openai" => include_bytes!("../assets/icons/openai-mark.svg"),
         "opencode" => include_bytes!("../assets/icons/opencode-mark.svg"),
         "arrow-up" => include_bytes!("../assets/icons/arrow-up.svg"),
+        "tuning" => include_bytes!("../assets/icons/tuning.svg"),
         _ => include_bytes!("../assets/icons/stop.svg"),
     }
 }

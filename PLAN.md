@@ -268,7 +268,7 @@ Ground rules for every step:
 - [x] ✅ *Status: done; one app, recording A, chat inside the glass, zeron icons.* Tabs with per-pane glyphs, splits with drag ratios, Agents sidebar,
   chat view for Claude Code / Codex (JSON streams), and a `>_` toggle to
   the TUI on the same session id.
-- [ ] 🟡 *Status: the glass tint follows the theme; the in-app theme and font picker are still to do.* Themes, a transparency slider (the shared glass value), font
+- [x] ✅ *Status: done; a tuning popover with Glass, Graphite and Midnight themes, a glass clear-to-tinted control seeded from the system value, and font size, saved to term.json and applied live.* Themes, a transparency slider (the shared glass value), font
   settings.
 
 ### M8. ISO and VM boot

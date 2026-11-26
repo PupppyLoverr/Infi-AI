@@ -124,7 +124,8 @@ impl TermApp {
         if let Some(old) = self.terms.borrow_mut().remove(id) {
             old.close();
         }
-        let term = Terminal::new(&self.rt, TerminalOptions { command: Some(command), working_directory: cwd, ..Default::default() });
+        let term = Terminal::new(&self.rt, TerminalOptions { command: Some(command), working_directory: cwd, font_size: Some(self.prefs.get().font), ..Default::default() });
+        self.prefs.get().apply(&term);
         self.terms.borrow_mut().insert(id.to_string(), term);
         self.tui.borrow_mut().insert(id.to_string(), harness.to_string());
         self.focus_only(id);
@@ -222,6 +223,7 @@ impl TermApp {
                     let (a, id) = (app.clone(), focused.clone());
                     bar = bar.child(icon_button(if kind == Kind::Chat { ">_" } else { "◐" }, move || a.toggle_tui(&id)));
                 }
+                bar = bar.child(app.prefs_button());
                 if !single_chat {
                     let (r, d) = (app.clone(), app.clone());
                     bar = bar
@@ -288,6 +290,98 @@ impl TermApp {
                 app.show_active();
             }
         })
+    }
+
+    /// Change prefs, save them and apply them to every pane.
+    fn set_prefs(&self, f: impl FnOnce(&mut crate::prefs::Prefs)) {
+        let mut p = self.prefs.get();
+        let old_font = p.font;
+        f(&mut p);
+        self.prefs.set(p);
+        p.save();
+        for term in self.terms.borrow().values() {
+            term.set_colors(p.colors());
+            if p.font > old_font {
+                term.binding("increase_font_size:1");
+            } else if p.font < old_font {
+                term.binding("decrease_font_size:1");
+            }
+        }
+        self.prefs_rev.update(|n| *n += 1);
+    }
+
+    /// The tuning popover: theme, glass (clear -> tinted) and font size.
+    fn prefs_button(&self) -> View {
+        let open = self.prefs_open.clone();
+        let anchor = {
+            let open = open.clone();
+            icon_button("tuning", move || { open.set(!open.get()); })
+        };
+        let (app, rev) = (self.clone(), self.prefs_rev.clone());
+        let body = switch(
+            move || rev.get(),
+            move |_, _cx| {
+                let p = app.prefs.get();
+                let mut themes = row().gap(4.);
+                for (i, name) in crate::prefs::THEMES.iter().enumerate() {
+                    let a = app.clone();
+                    themes = themes.child(
+                        button()
+                            .px(10.)
+                            .py(4.)
+                            .rounded(12.)
+                            .border(0.)
+                            .bg(if p.theme == i { Color(10, 132, 255, 255) } else { Color(255, 255, 255, 22) })
+                            .child(text(*name).text_size(12.).text_color(Color(236, 236, 236, 255)))
+                            .on_click(move || a.set_prefs(|p| p.theme = i)),
+                    );
+                }
+                let step = |label: &str, a: TermApp, f: fn(&mut crate::prefs::Prefs)| {
+                    button()
+                        .w(28.)
+                        .h(24.)
+                        .rounded(8.)
+                        .border(0.)
+                        .bg(Color(255, 255, 255, 22))
+                        .items_center()
+                        .justify_center()
+                        .child(text(label.to_string()).text_size(14.).text_color(Color(236, 236, 236, 255)))
+                        .on_click(move || a.set_prefs(f))
+                };
+                let line = |label: &str, value: String, minus: View, plus: View| {
+                    row()
+                        .w_full()
+                        .gap(8.)
+                        .items_center()
+                        .child(text(label.to_string()).text_size(12.).text_color(Color(168, 176, 173, 255)).w(62.))
+                        .child(minus)
+                        .child(text(value).text_size(12.).text_color(Color(236, 236, 236, 255)).w(70.))
+                        .child(plus)
+                };
+                column()
+                    .w(260.)
+                    .gap(10.)
+                    .child(text("Terminal").text_size(13.).font_weight(600).text_color(Color(236, 236, 236, 255)))
+                    .child(themes)
+                    .child(line(
+                        "Glass",
+                        match p.glass { 0..=15 => "Clear".into(), 86..=100 => "Tinted".into(), g => format!("{g}%") },
+                        step("−", app.clone(), |p| p.glass = p.glass.saturating_sub(10)),
+                        step("+", app.clone(), |p| p.glass = (p.glass + 10).min(100)),
+                    ))
+                    .child(line(
+                        "Font",
+                        format!("{:.0} pt", p.font),
+                        step("−", app.clone(), |p| p.font = (p.font - 1.).max(9.)),
+                        step("+", app.clone(), |p| p.font = (p.font + 1.).min(24.)),
+                    ))
+            },
+        );
+        popover("Terminal settings", open, anchor)
+            .placement(Placement { side: PlacementSide::Bottom, align: PlacementEdge::End, offset: 6. })
+            .p(14.)
+            .rounded(14.)
+            .child(body)
     }
 
     fn new_tab_button(&self) -> View {
@@ -656,7 +750,7 @@ fn icon_button(label: &str, on: impl FnMut() + 'static) -> View {
     // Icons by name; ">_" and "◐" stay text (the recordings draw them so).
     let ink = Color(182, 193, 189, 255);
     let content = match label {
-        "sidebar" | "plus" | "split-columns" | "split-rows" => icons::icon(label, 16., ink),
+        "sidebar" | "plus" | "split-columns" | "split-rows" | "tuning" => icons::icon(label, 16., ink),
         _ => text(label).text_size(13.).font_family("JetBrains Mono").text_color(ink),
     };
     button()

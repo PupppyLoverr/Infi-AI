@@ -32,6 +32,7 @@ use zgx_desktop::{Application, Titlebar, WindowOptions};
 mod chat;
 mod chrome_ui;
 mod icons;
+mod prefs;
 mod shell_integration;
 mod panes;
 mod sidepanel;
@@ -159,6 +160,10 @@ struct TermApp {
     tick: zgx::reactive::Signal<u32>,
     /// Agent panes that finished a turn while you were elsewhere.
     attention: Rc<RefCell<std::collections::HashSet<String>>>,
+    /// Theme, glass and font size (term.json); prefs_rev re-tints the window.
+    prefs: Rc<Cell<prefs::Prefs>>,
+    prefs_rev: zgx::reactive::Signal<u32>,
+    prefs_open: zgx::reactive::Signal<bool>,
     busy_before: Rc<RefCell<HashMap<String, bool>>>,
 }
 
@@ -179,15 +184,18 @@ impl TermApp {
             .filter(|path| !path.is_empty())
             .map(std::path::PathBuf::from);
         let (command, env) = shell_integration::launch();
-        Terminal::new(
+        let term = Terminal::new(
             &self.rt,
             TerminalOptions {
                 command,
                 env,
                 working_directory: cwd,
+                font_size: Some(self.prefs.get().font),
                 ..Default::default()
             },
-        )
+        );
+        self.prefs.get().apply(&term);
+        term
     }
 
     fn insert_pane(&self, id: &str, cwd_from: Option<&str>) {
@@ -810,7 +818,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let terms: Rc<RefCell<HashMap<String, Terminal>>> = Rc::default();
             terms.borrow_mut().insert("pane-1".into(), {
                 let (command, env) = shell_integration::launch();
-                Terminal::new(&rt, TerminalOptions { command, env, ..Default::default() })
+                let p = prefs::Prefs::load();
+                let t = Terminal::new(&rt, TerminalOptions { command, env, font_size: Some(p.font), ..Default::default() });
+                p.apply(&t);
+                t
             });
             let app = TermApp {
                 rt: rt.clone(),
@@ -834,6 +845,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 menu_open: rt.signal(false),
                 tick: rt.signal(0),
                 attention: Rc::default(),
+                prefs: Rc::new(Cell::new(prefs::Prefs::load())),
+                prefs_rev: rt.signal(0),
+                prefs_open: rt.signal(false),
                 busy_before: Rc::default(),
             };
             {
@@ -877,6 +891,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     w.focused = "pane-1".into();
                 }
                 app.bump();
+            }
+            if std::env::var("SOLYRA_TERM_PREFS").is_ok() {
+                app.prefs_open.set(true);
             }
             if std::env::var("SOLYRA_TERM_TABS").is_ok() {
                 // Screenshot aid: a second tab, then back to the first.
@@ -1046,8 +1063,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .h_full()
                         .rounded(14.)
                         .border(1.)
-                        .reactive_style(|| Styles::new().border_color(zgx::scene::Color(255, 255, 255, 34)))
-                        .bg(if style.glass { zgx::scene::Color(10, 28, 27, 150) } else { style.content_bg() })
+                        .reactive_style({
+                            let (p, rev, glass, solid) = (app.prefs.clone(), app.prefs_rev.clone(), style.glass, style.content_bg());
+                            move || {
+                                let _ = rev.get();
+                                Styles::new()
+                                    .border_color(zgx::scene::Color(255, 255, 255, 34))
+                                    .bg(if glass { p.get().tint() } else { solid })
+                            }
+                        })
                         .child(bar)
                         .child(root.grow())
                 },
