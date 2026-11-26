@@ -55,6 +55,28 @@ pub struct Spec {
     pub bottom_margin: i32,
     pub width: u32,
     pub height: u32,
+    /// The screen edge the dock is on.
+    pub side: solyra_conf::look::DockPosition,
+}
+
+/// Turn a bottom dock's surface into a side dock's: the card stands on its
+/// end along the left or right edge (no magnification there). The taskbar
+/// always stays at the bottom.
+pub fn orient(mut spec: Spec, side: solyra_conf::look::DockPosition) -> Spec {
+    use solyra_conf::look::DockPosition;
+    if side == DockPosition::Bottom || spec.full_width {
+        return spec;
+    }
+    // Callers ask for the unmagnified spec: a side dock does not magnify.
+    let hidden = spec.namespace == "solyra-dock-hidden";
+    let length = spec.width;
+    spec.width = if hidden { HIDDEN_H } else { CARD_H as u32 };
+    spec.height = length;
+    if !hidden {
+        spec.namespace = "solyra-dock";
+    }
+    spec.side = side;
+    spec
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -210,6 +232,7 @@ pub fn spec(style: DockStyle, wins: &[WindowInfo], magnify: bool, hidden: bool) 
             bottom_margin: 0,
             width: 0,
             height: if hidden { HIDDEN_H } else { TASKBAR_H },
+            side: solyra_conf::look::DockPosition::Bottom,
         };
     }
     let m = metrics(style);
@@ -222,6 +245,7 @@ pub fn spec(style: DockStyle, wins: &[WindowInfo], magnify: bool, hidden: bool) 
             bottom_margin: 0,
             width: w as u32,
             height: HIDDEN_H,
+            side: solyra_conf::look::DockPosition::Bottom,
         };
     }
     if magnify {
@@ -237,6 +261,7 @@ pub fn spec(style: DockStyle, wins: &[WindowInfo], magnify: bool, hidden: bool) 
             bottom_margin: 12,
             width: (w + extra) as u32,
             height: (CARD_H + MAGNIFY_ROOM) as u32,
+            side: solyra_conf::look::DockPosition::Bottom,
         }
     } else {
         Spec {
@@ -246,6 +271,7 @@ pub fn spec(style: DockStyle, wins: &[WindowInfo], magnify: bool, hidden: bool) 
             bottom_margin: 12,
             width: w as u32,
             height: CARD_H as u32,
+            side: solyra_conf::look::DockPosition::Bottom,
         }
     }
 }
@@ -312,6 +338,11 @@ pub fn draw(
             }],
             None,
         );
+    }
+    if style != DockStyle::Windows
+        && live.prefs.look.dock_position != solyra_conf::look::DockPosition::Bottom
+    {
+        return draw_vertical(cv, th, fonts, style, wins, icons, hover, live, launching);
     }
     match style {
         DockStyle::Windows => {
@@ -413,9 +444,9 @@ fn draw_floating(
     let slab = slab_for(live, th.surface);
     let mat = live.prefs.look.material(live.prefs.look.dock_material);
     if style == DockStyle::Macos && mat == material::Material::Glass {
-        // pearOS's Tahoe skin: blurred glass, a 15 % body, a 1 px rim and the
-        // prism glow. No shadow (the skin has none).
-        material::pear_glass(
+        // macOS 26 dock: Liquid Glass (the compositor blurs and bends the
+        // desktop behind it; see material::apple_glass).
+        material::apple_glass(
             cv,
             card_x,
             card_y,
@@ -423,7 +454,6 @@ fn draw_floating(
             CARD_H,
             DOCK_R,
             th.surface.0 < 128,
-            None,
         );
     } else {
         cv.round_rect_shadow(card_x, card_y, card_w, CARD_H, DOCK_R, 6.0, 14.0, 54);
@@ -607,6 +637,154 @@ fn draw_floating(
             }
         }
         x += s + m.gap;
+    }
+    (regions, Some(body))
+}
+
+/// The dock stood on its end along the left or right edge, as macOS does
+/// it: the same items top to bottom, separators across, the running dot on
+/// the side facing the screen edge, labels opening toward the desktop.
+#[allow(clippy::too_many_arguments)]
+fn draw_vertical(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    fonts: &Fonts,
+    style: DockStyle,
+    wins: &[WindowInfo],
+    icons: &mut HashMap<String, Option<Icon>>,
+    hover: Option<(f64, f64)>,
+    live: &Live<'_>,
+    launching: &[(String, std::time::Instant)],
+) -> (Vec<Region>, Option<Body>) {
+    use solyra_conf::look::DockPosition;
+    let w = cv.width as i32;
+    let h = cv.height as i32;
+    let left = live.prefs.look.dock_position == DockPosition::Left;
+    let m = metrics(style);
+    let entries = entries_for(style, wins);
+    let its = items(style, &entries, false);
+    let its: Vec<_> = its
+        .into_iter()
+        .filter(|i| !matches!(i, Item::Weather | Item::Clock))
+        .collect();
+    let content: i32 = its.iter().map(|i| item_span(i, m.cell)).sum::<i32>()
+        + m.gap * (its.len() as i32 - 1).max(0);
+    let card_h = (content + m.pad * 2).min(h - 2);
+    let (card_x, card_y, card_w) = (0, ((h - card_h) / 2).max(1), w.min(CARD_H));
+    let dark = th.surface.0 < 128;
+    let mat = live.prefs.look.material(live.prefs.look.dock_material);
+    if mat == material::Material::Glass {
+        material::apple_glass(cv, card_x, card_y, card_w, card_h, DOCK_R, dark);
+    } else {
+        let slab = slab_for(live, th.surface);
+        material::paint(cv, &slab, card_x, card_y, card_w, card_h, DOCK_R);
+    }
+    let body = Body {
+        x: card_x,
+        y: card_y,
+        w: card_w,
+        h: card_h,
+        r: DOCK_R,
+    };
+    let ink = th.text;
+    let mut regions = Vec::new();
+    let mut y = card_y + m.pad;
+    let x = card_x + (card_w - m.cell) / 2;
+    for it in &its {
+        if let Item::Separator = it {
+            let span = item_span(it, m.cell);
+            let sy = y + (span - 1) / 2;
+            let mid = Rgba::rgba(ink.0, ink.1, ink.2, 52);
+            let end = Rgba::rgba(ink.0, ink.1, ink.2, 0);
+            let sep_w = 28;
+            let sx = card_x + (card_w - sep_w) / 2;
+            cv.fill_rect(sx + 4, sy, sep_w - 8, 1, mid);
+            let _ = end;
+            y += span + m.gap;
+            continue;
+        }
+        let s = m.cell;
+        let hov = hover.is_some_and(|(hx, hy)| {
+            hx >= card_x as f64
+                && hx < (card_x + card_w) as f64
+                && hy >= y as f64
+                && hy < (y + s) as f64
+        });
+        let (role, app_id, action) = match it {
+            Item::Start => (
+                "launchpad",
+                None,
+                HitAction::Shell(ShellCmd::ToggleLauncher),
+            ),
+            Item::Downloads => (
+                "downloads",
+                None,
+                HitAction::Launch(LaunchTarget::Shell(
+                    "solyra-open files \"$HOME/Downloads\"".into(),
+                )),
+            ),
+            Item::Agent => ("agent", None, HitAction::Shell(ShellCmd::ToggleAgents)),
+            Item::Trash => (
+                "trash",
+                None,
+                HitAction::Launch(LaunchTarget::Shell("solyra-open files trash:///".into())),
+            ),
+            Item::App(e) => (
+                e.role.as_str(),
+                Some(e.app_id.as_str()),
+                match e.window {
+                    Some(id) => HitAction::FocusWindow(id),
+                    None => HitAction::Launch(e.command.clone()),
+                },
+            ),
+            _ => {
+                y += s + m.gap;
+                continue;
+            }
+        };
+        let icon = app_id.and_then(|id| load_app_icon(icons, id));
+        let bounce = match it {
+            Item::App(e) if e.window.is_none() => launching
+                .iter()
+                .find(|(k, _)| *k == launch_key(&e.command))
+                .map(|(_, t0)| bounce_offset(t0.elapsed(), s as f32).round() as i32)
+                .unwrap_or(0),
+            _ => 0,
+        };
+        let key = app_id
+            .filter(|id| crate::icons::user(id).is_some() || crate::icons::name_for(id).is_some())
+            .unwrap_or(role);
+        // A hovered icon leans toward the desktop; a launch bounces inward.
+        let nudge = (if hov { 3 } else { 0 }) + bounce;
+        let ix = if left { x + nudge } else { x - nudge };
+        cv.draw_app_squircle(ix, y, s, key, icon, fonts);
+        if let Item::App(e) = it {
+            if e.window_count > 0 {
+                let dx = if left {
+                    card_x + 6
+                } else {
+                    card_x + card_w - 6
+                };
+                let (r, a) = if e.is_focused { (2.1, 235) } else { (2.0, 170) };
+                cv.circle(
+                    dx as f32,
+                    (y + s / 2) as f32,
+                    r,
+                    Rgba::rgba(ink.0, ink.1, ink.2, a),
+                );
+            }
+        }
+        if let Item::Agent = it {
+            agent_badge(cv, th, fonts, live, ix, y, s);
+        }
+        regions.push(Region {
+            x: card_x,
+            y,
+            w: card_w,
+            h: s,
+            action,
+        });
+        y += s + m.gap;
     }
     (regions, Some(body))
 }

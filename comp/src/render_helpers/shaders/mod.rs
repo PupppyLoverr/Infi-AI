@@ -107,7 +107,7 @@ impl Shaders {
         let postprocess_and_clip = renderer
             .compile_custom_texture_shader(
                 concat!(
-                    include_str!("clipped_surface.frag"),
+                    include_str!("refract_surface.frag"),
                     include_str!("rounding_alpha.frag"),
                     include_str!("postprocess.frag"),
                 ),
@@ -119,6 +119,8 @@ impl Shaders {
                     UniformName::new("noise", UniformType::_1f),
                     UniformName::new("saturation", UniformType::_1f),
                     UniformName::new("bg_color", UniformType::_4f),
+                    UniformName::new("lens", UniformType::_4f),
+                    UniformName::new("refraction", UniformType::_2f),
                 ],
             )
             .map_err(|err| {

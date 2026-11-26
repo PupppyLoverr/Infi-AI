@@ -53,6 +53,15 @@ choice! {
 }
 
 choice! {
+    /// Which screen edge the dock sits on.
+    DockPosition {
+        Bottom = "bottom" / "Bottom",
+        Left = "left" / "Left",
+        Right = "right" / "Right",
+    } default Bottom
+}
+
+choice! {
     /// The lock screen's layout (Dashboard = large clock, avatars, media glance).
     LockStyle {
         Solyra = "solyra" / "Solyra",
@@ -92,6 +101,7 @@ pub struct Look {
     pub dock: DockKind,
     pub dock_autohide: bool,
     pub dock_magnify: bool,
+    pub dock_position: DockPosition,
     /// The notch opens when the pointer rests on it (pearOS), not only on click.
     pub notch_hover: bool,
     /// Spotlight opens inside the notch / Dynamic Island (MacBook Pro style)
@@ -121,7 +131,8 @@ impl Default for Look {
             notch: NotchStyle::default(),
             dock: DockKind::default(),
             dock_autohide: false,
-            dock_magnify: true,
+            dock_magnify: false,
+            dock_position: DockPosition::Bottom,
             notch_hover: true,
             spotlight_in_notch: true,
             desktop_widgets: true,
@@ -135,7 +146,7 @@ impl Default for Look {
             desktop: DesktopMode::default(),
             bar_material: Material::Glass,
             dock_material: Material::Glass,
-            notch_material: Material::Glass,
+            notch_material: Material::Solid,
             accent: "blue".into(),
         }
     }
@@ -169,6 +180,9 @@ impl Look {
                 .unwrap_or(d.dock),
             dock_autohide: flag(text, "dock_autohide", d.dock_autohide),
             dock_magnify: flag(text, "dock_magnify", d.dock_magnify),
+            dock_position: get(text, "dock_position")
+                .and_then(DockPosition::parse)
+                .unwrap_or(d.dock_position),
             notch_hover: flag(text, "notch_hover", d.notch_hover),
             spotlight_in_notch: flag(text, "spotlight_in_notch", d.spotlight_in_notch),
             desktop_widgets: flag(text, "desktop_widgets", d.desktop_widgets),
@@ -206,6 +220,7 @@ impl Look {
             ("dock_style", Some(self.dock.as_str().into())),
             ("dock_autohide", b(self.dock_autohide)),
             ("dock_magnify", b(self.dock_magnify)),
+            ("dock_position", Some(self.dock_position.as_str().into())),
             ("notch_hover", b(self.notch_hover)),
             ("spotlight_in_notch", b(self.spotlight_in_notch)),
             ("desktop_widgets", b(self.desktop_widgets)),

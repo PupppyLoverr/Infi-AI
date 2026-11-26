@@ -80,6 +80,8 @@ pub struct XrayElement {
     noise: f32,
     saturation: f32,
     bg_color: Color32F,
+    lens: [f32; 4],
+    refraction: [f32; 2],
     program: Option<GlesTexProgram>,
 }
 
@@ -105,6 +107,8 @@ impl Xray {
         push: &mut dyn FnMut(XrayElement),
     ) {
         let program = Shaders::get(ctx.renderer).postprocess_and_clip.clone();
+        let lens = params.lens();
+        let refraction = params.refraction;
 
         let zoom = xray_pos.zoom;
         let pos_in_backdrop = xray_pos.pos_in_backdrop.upscale(zoom);
@@ -201,6 +205,8 @@ impl Xray {
                     noise,
                     saturation,
                     bg_color: *bg_color,
+                    lens,
+                    refraction,
                     program: program.clone(),
                 };
                 push(elem);
@@ -251,6 +257,8 @@ impl Xray {
                 noise,
                 saturation,
                 bg_color: self.backdrop_color,
+                lens,
+                refraction,
                 program: program.clone(),
             };
             push(elem);
@@ -259,7 +267,7 @@ impl Xray {
 }
 
 impl XrayElement {
-    fn compute_uniforms(&self) -> [Uniform<'static>; 7] {
+    fn compute_uniforms(&self) -> [Uniform<'static>; 9] {
         [
             Uniform::new("niri_scale", self.scale),
             Uniform::new("geo_size", <[f32; 2]>::from(self.clip_geo_size)),
@@ -268,6 +276,8 @@ impl XrayElement {
             Uniform::new("noise", self.noise),
             Uniform::new("saturation", self.saturation),
             Uniform::new("bg_color", self.bg_color.components()),
+            Uniform::new("lens", self.lens),
+            Uniform::new("refraction", self.refraction),
         ]
     }
 }

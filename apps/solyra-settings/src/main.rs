@@ -237,7 +237,15 @@ fn desktop_page(status: Signal<String>) -> View {
                 &[("solyra", "Solyra"), ("macos", "Floating"), ("windows", "Taskbar"), ("minimal", "Minimal")],
                 look.dock.as_str(),
             ))
-            .child(conf_toggle(cx, &status, "dock_magnify", "Magnify icons under the pointer (floating docks)", look.dock_magnify))
+            .child(conf_choice(
+                cx,
+                &status,
+                "dock_position",
+                "Position on screen",
+                &[("bottom", "Bottom"), ("left", "Left"), ("right", "Right")],
+                look.dock_position.as_str(),
+            ))
+            .child(conf_toggle(cx, &status, "dock_magnify", "Magnify icons under the pointer (bottom dock)", look.dock_magnify))
             .child(conf_toggle(cx, &status, "dock_autohide", "Hide the dock until the pointer reaches the bottom edge", look.dock_autohide));
         scrolling(cx, body)
     })

@@ -36,6 +36,8 @@ pub struct Options {
     pub xray: bool,
     pub noise: Option<f64>,
     pub saturation: Option<f64>,
+    /// Liquid-glass lensing: (strength, corner radius) in logical pixels.
+    pub refraction: Option<(f64, f64)>,
 }
 
 impl Options {
@@ -58,11 +60,45 @@ pub struct RenderParams {
     pub subregion: Option<TransformedRegion>,
     /// Geometry and radius for clipping in the same coordinate space as `geometry`.
     pub clip: Option<(Rectangle<f64, Logical>, CornerRadius)>,
+    /// Liquid-glass lensing (strength, radius), filled in by `render()`.
+    pub refraction: [f32; 2],
     /// Scale to use for rounding to physical pixels.
     pub scale: f64,
 }
 
 impl RenderParams {
+    /// The glass shape for lensing: the bounding box of the effect subregion
+    /// (or the whole geometry), normalised to the clip geometry.
+    pub fn lens(&self) -> [f32; 4] {
+        let clip = self.clip.map_or(self.geometry, |c| c.0);
+        let (mut x0, mut y0, mut x1, mut y1) = (0., 0., self.geometry.size.w, self.geometry.size.h);
+        if let Some(sub) = &self.subregion {
+            let mut first = true;
+            for (tl, br) in sub.iter() {
+                if first {
+                    (x0, y0, x1, y1) = (tl.x, tl.y, br.x, br.y);
+                    first = false;
+                } else {
+                    x0 = f64::min(x0, tl.x);
+                    y0 = f64::min(y0, tl.y);
+                    x1 = f64::max(x1, br.x);
+                    y1 = f64::max(y1, br.y);
+                }
+            }
+        }
+        let (ox, oy) = (
+            self.geometry.loc.x - clip.loc.x,
+            self.geometry.loc.y - clip.loc.y,
+        );
+        let (cw, ch) = (clip.size.w.max(1.), clip.size.h.max(1.));
+        [
+            ((x0 + ox) / cw) as f32,
+            ((y0 + oy) / ch) as f32,
+            ((x1 - x0) / cw) as f32,
+            ((y1 - y0) / ch) as f32,
+        ]
+    }
+
     fn fit_clip_radius(&mut self) {
         if let Some((geo, radius)) = &mut self.clip {
             // HACK: increase radius to avoid slight bleed on rounded corners.
@@ -126,6 +162,10 @@ impl BackgroundEffect {
             xray: effect.xray == Some(true),
             noise: effect.noise,
             saturation: effect.saturation,
+            refraction: effect
+                .refraction
+                .filter(|x| *x > 0.)
+                .map(|x| (x, effect.refraction_radius.unwrap_or(1000.))),
         };
 
         // If we have some background effect but xray wasn't explicitly set, default it to true
@@ -164,6 +204,9 @@ impl BackgroundEffect {
             clip.1 = self.corner_radius;
         }
         params.fit_clip_radius();
+        if let Some((strength, radius)) = self.options.refraction {
+            params.refraction = [strength as f32, radius as f32];
+        }
 
         let damage = self.damage.render(params.geometry);
 
@@ -258,6 +301,7 @@ fn render_params_for_tile(
         subregion,
         clip,
         scale,
+        refraction: [0., 0.],
     })
 }
 

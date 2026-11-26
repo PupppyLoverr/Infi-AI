@@ -27,11 +27,11 @@ environment {
 }
 
 // Compositor-wide backdrop blur, used by the shell's layer rules below.
-// pearOS-strength frost (its dock blurs at radius 24): four passes at a wide
-// offset, so shapes behind glass melt into soft colour.
+// macOS 26 Liquid Glass frost: shapes behind glass soften into colour but
+// stay legible as shapes (the lensing at the rim is what reads as glass).
 blur {
     passes 4
-    offset 5.5
+    offset 4.0
     noise 0.02
     saturation 1.0
 }
@@ -148,10 +148,13 @@ layer-rule {
 
 layer-rule {
     match namespace=r#"^solyra-dock(\..+)?$"#
-    // pearOS's dock casts no shadow: it is a pane of glass on the desktop.
+    // macOS 26 dock: Liquid Glass. The backdrop is blurred and bent at the
+    // rim (refraction, Solyra's lensing in the blur shader).
     geometry-corner-radius 22
     background-effect {
         xray false
+        refraction 10
+        refraction-radius 22
     }
 }
 
@@ -190,7 +193,7 @@ layer-rule {
 layer-rule {
     match namespace=r#"\.glass$"#
     background-effect {
-        saturation 1.1
+        saturation 1.35
         noise 0.0
     }
 }
@@ -211,6 +214,8 @@ layer-rule {
     match namespace="^solyra-launcher-island$"
     background-effect {
         xray false
+        refraction 12
+        refraction-radius 26
         saturation 1.8
     }
 }
@@ -219,6 +224,8 @@ layer-rule {
     match namespace="^solyra-launcher$"
     background-effect {
         xray false
+        refraction 10
+        refraction-radius 28
         saturation 1.2
     }
 }
@@ -236,6 +243,8 @@ layer-rule {
     background-effect {
         blur true
         xray false
+        refraction 10
+        refraction-radius 20
     }
 }
 

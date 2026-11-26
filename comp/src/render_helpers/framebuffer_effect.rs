@@ -39,6 +39,8 @@ pub struct FramebufferEffectElement {
     blur_options: Option<BlurOptions>,
     noise: f32,
     saturation: f32,
+    lens: [f32; 4],
+    refraction: [f32; 2],
 }
 
 #[derive(Debug)]
@@ -74,6 +76,8 @@ impl FramebufferEffect {
             .clip
             .unwrap_or((params.geometry, CornerRadius::default()));
 
+        let lens = params.lens();
+        let refraction = params.refraction;
         let mut id = self.id.clone();
         if let Some(ns) = ns {
             id = id.namespaced(ns);
@@ -90,6 +94,8 @@ impl FramebufferEffect {
             blur_options,
             noise,
             saturation,
+            lens,
+            refraction,
         }
     }
 }
@@ -99,7 +105,7 @@ impl FramebufferEffectElement {
         &self,
         crop: Rectangle<f64, Logical>,
         transform: Transform,
-    ) -> [Uniform<'static>; 7] {
+    ) -> [Uniform<'static>; 9] {
         let offset = crop.loc - (self.clip_geo.loc - self.geometry.loc);
         let offset = Vec2::new(offset.x as f32, offset.y as f32);
         let crop_size = Vec2::new(crop.size.w as f32, crop.size.h as f32);
@@ -125,6 +131,8 @@ impl FramebufferEffectElement {
             Uniform::new("noise", self.noise),
             Uniform::new("saturation", self.saturation),
             Uniform::new("bg_color", [0f32, 0., 0., 0.]),
+            Uniform::new("lens", self.lens),
+            Uniform::new("refraction", self.refraction),
         ]
     }
 }

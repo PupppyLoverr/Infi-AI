@@ -1080,6 +1080,12 @@ pub struct BackgroundEffectRule {
     pub noise: Option<FloatOrInt<0, 1000>>,
     #[knuffel(child, unwrap(argument))]
     pub saturation: Option<FloatOrInt<0, 1000>>,
+    /// Liquid-glass lensing at the edge of the effect, in logical pixels.
+    #[knuffel(child, unwrap(argument))]
+    pub refraction: Option<FloatOrInt<0, 1000>>,
+    /// Corner radius of the lens shape (defaults to a capsule).
+    #[knuffel(child, unwrap(argument))]
+    pub refraction_radius: Option<FloatOrInt<0, 1000>>,
 }
 
 /// Resolved background effect rule.
@@ -1102,6 +1108,8 @@ pub struct BackgroundEffect {
 
     pub noise: Option<f64>,
     pub saturation: Option<f64>,
+    pub refraction: Option<f64>,
+    pub refraction_radius: Option<f64>,
 }
 
 impl MergeWith<BackgroundEffectRule> for BackgroundEffect {
@@ -1114,6 +1122,14 @@ impl MergeWith<BackgroundEffectRule> for BackgroundEffect {
 
         if let Some(x) = part.saturation {
             self.saturation = Some(x.0);
+        }
+
+        if let Some(x) = part.refraction {
+            self.refraction = Some(x.0);
+        }
+
+        if let Some(x) = part.refraction_radius {
+            self.refraction_radius = Some(x.0);
         }
     }
 }

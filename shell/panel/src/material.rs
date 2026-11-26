@@ -349,6 +349,50 @@ pub fn pear_glass(
     cv.prism_rim(x, y, w, h, r, 36.0, 8.0 * 2.0 * 0.004);
 }
 
+/// macOS 26 Liquid Glass, read off Apple's own screenshots: a thin tint
+/// (smoke in dark, milk in light) over the compositor's blur, which also
+/// bends the backdrop at the edge (the `refraction` layer rule); a sharp
+/// specular line lit from the top-left with a softer catch on the
+/// bottom-right; a soft lensed band inside the edge; a hairline outside.
+pub fn apple_glass(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32, dark: bool) {
+    let fill = if dark {
+        Rgba::rgba(18, 18, 22, 92)
+    } else {
+        Rgba::rgba(255, 255, 255, 86)
+    };
+    cv.round_rect(x, y, w, h, r, fill);
+    let band = (r * 0.6).clamp(5.0, 12.0);
+    cv.rim_light(
+        x,
+        y,
+        w,
+        h,
+        r,
+        band,
+        Rgba::rgba(255, 255, 255, if dark { 46 } else { 96 }),
+        0.6,
+    );
+    cv.rim_light(
+        x,
+        y,
+        w,
+        h,
+        r,
+        1.6,
+        Rgba::rgba(255, 255, 255, if dark { 210 } else { 250 }),
+        0.75,
+    );
+    cv.stroke_round_rect(
+        x - 1,
+        y - 1,
+        w + 2,
+        h + 2,
+        r + 1.0,
+        1.0,
+        Rgba::rgba(0, 0, 0, if dark { 54 } else { 26 }),
+    );
+}
+
 /// Smoked Liquid Glass for the notch and the island: the same optics over a
 /// dark tint, so white text and art stay readable on any wallpaper while the
 /// desktop still shows through, blurred.

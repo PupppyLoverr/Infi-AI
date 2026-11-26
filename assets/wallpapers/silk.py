@@ -15,11 +15,13 @@ if dark:
         ((1.02, 0.10, 0.70, 4.2, -0.30), col([26, 26, 70]), col([8, 8, 20]), 0.5),
     ]
 else:
-    sky_top, sky_bot = col([226, 214, 252]), col([196, 206, 250])
+    # Cream, taupe and lavender ribbons with bright white edges (the macOS
+    # Tahoe-light genre): strong, thin highlights that show glass bending.
+    sky_top, sky_bot = col([236, 228, 216]), col([206, 198, 204])
     sheets = [
-        ((0.70, 0.22, 0.85, 0.4, -0.55), col([190, 176, 250]), col([120, 130, 230]), 1.0),
-        ((0.88, 0.16, 1.10, 2.0, -0.40), col([168, 196, 252]), col([96, 120, 220]), 0.8),
-        ((1.02, 0.10, 0.70, 4.2, -0.30), col([200, 186, 246]), col([130, 140, 226]), 0.6),
+        ((0.62, 0.24, 0.80, 0.4, -0.60), col([214, 198, 176]), col([150, 132, 120]), 1.0),
+        ((0.82, 0.18, 1.05, 2.0, -0.45), col([196, 194, 218]), col([112, 110, 146]), 0.9),
+        ((1.00, 0.12, 0.70, 4.2, -0.30), col([226, 214, 200]), col([168, 152, 140]), 0.8),
     ]
 t = np.clip(v, 0, 1)[..., None]
 img = sky_top + (sky_bot - sky_top) * t
@@ -38,7 +40,7 @@ for (cy, amp, fr, ph, tilt), ctop, cbot, rim in sheets:
     crease = np.exp(-((below * H) / 3.5) ** 2) * rim
     halo = np.exp(-((below * H + 6) / 40.0) ** 2) * 0.35 * rim * (below < 0)
     img = img * (1 - a[..., None]) + body * a[..., None]
-    img += (crease + halo)[..., None] * (col([200, 196, 250]) if dark else col([120, 120, 130]))
+    img += (crease + halo)[..., None] * (col([200, 196, 250]) if dark else col([255, 255, 255]))
 rng = np.random.default_rng(11)
 img += rng.normal(0, 1.0, img.shape)
 im = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))

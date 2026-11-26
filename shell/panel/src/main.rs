@@ -17,6 +17,7 @@ mod agent;
 mod canvas;
 mod desk;
 mod dock;
+mod glyphs;
 mod hud;
 mod icons;
 mod island;
@@ -167,7 +168,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         KeyboardInteractivity::None,
     );
     let dock_hidden = prefs.look.dock_autohide;
-    let dock_spec = dock::spec(prefs.dock_style, &[], prefs.look.dock_magnify, dock_hidden);
+    let dock_side = prefs.look.dock_position;
+    let dock_spec = dock::orient(
+        dock::spec(
+            prefs.dock_style,
+            &[],
+            prefs.look.dock_magnify && dock_side == solyra_conf::look::DockPosition::Bottom,
+            dock_hidden,
+        ),
+        dock_side,
+    );
     let dock = make_dock_surface(&compositor, &layer_shell, &qh, &dock_spec, dock_material);
 
     let waker: Arc<dyn Fn() + Send + Sync> = {
@@ -424,10 +434,22 @@ fn make_dock_surface(
     spec: &dock::Spec,
     mat: material::Material,
 ) -> SurfaceSlot {
+    use solyra_conf::look::DockPosition;
     let anchor = if spec.full_width {
         Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT
     } else {
-        Anchor::BOTTOM
+        match spec.side {
+            DockPosition::Bottom => Anchor::BOTTOM,
+            DockPosition::Left => Anchor::LEFT,
+            DockPosition::Right => Anchor::RIGHT,
+        }
+    };
+    let gap = spec.bottom_margin.max(12);
+    let margin = match spec.side {
+        _ if spec.full_width => (0, 0, spec.bottom_margin, 0),
+        DockPosition::Bottom => (0, 0, spec.bottom_margin, 0),
+        DockPosition::Left => (0, 0, 0, gap),
+        DockPosition::Right => (0, gap, 0, 0),
     };
     let slot = make_layer_surface(
         compositor,
@@ -437,7 +459,7 @@ fn make_dock_surface(
         &material::namespace(spec.namespace, mat),
         anchor,
         spec.exclusive,
-        (0, 0, spec.bottom_margin, 0),
+        margin,
         spec.width,
         spec.height,
         KeyboardInteractivity::None,
@@ -974,11 +996,15 @@ impl App {
         if !autohide {
             self.dock_hidden = false;
         }
-        let spec = dock::spec(
-            self.prefs.dock_style,
-            &self.wins,
-            self.prefs.look.dock_magnify,
-            self.dock_hidden && autohide,
+        let side = self.prefs.look.dock_position;
+        let spec = dock::orient(
+            dock::spec(
+                self.prefs.dock_style,
+                &self.wins,
+                self.prefs.look.dock_magnify && side == solyra_conf::look::DockPosition::Bottom,
+                self.dock_hidden && autohide,
+            ),
+            side,
         );
         let mat = self.prefs.look.material(self.prefs.look.dock_material);
         if spec == self.dock_spec && mat == self.dock_material {
@@ -988,7 +1014,8 @@ impl App {
             && spec.namespace == self.dock_spec.namespace
             && spec.full_width == self.dock_spec.full_width
             && spec.exclusive == self.dock_spec.exclusive
-            && spec.bottom_margin == self.dock_spec.bottom_margin;
+            && spec.bottom_margin == self.dock_spec.bottom_margin
+            && spec.side == self.dock_spec.side;
         if same_kind {
             self.dock.layer.set_size(spec.width, spec.height);
             self.dock.width = if spec.full_width {
@@ -1060,34 +1087,23 @@ impl App {
             let (r, _) = surfaces::island_spot_shape(&lay);
             if let Ok(region) = smithay_client_toolkit::compositor::Region::new(&self.compositor) {
                 region.add(r.x, r.y, r.w, r.h);
+                if let Some(c) = lay.card {
+                    region.add(c.x, c.y, c.w, c.h);
+                }
                 slot.surface.set_input_region(Some(region.wl_region()));
             }
-            if material::blurs(self.notch_material) {
-                let notch = self.prefs.look.notch == NotchStyle::Notch;
-                let t = self.spot_in_island.map_or(1.0, |o| {
-                    if self.prefs.look.reduced_motion {
-                        1.0
-                    } else {
-                        (o.elapsed().as_secs_f32() / 0.30).min(1.0)
-                    }
-                });
-                let (x, y, w, h, rr) = surfaces::island_spot_morph(&lay, notch, t);
-                let lift = if notch { rr.ceil() as i32 + 2 } else { 0 };
-                let rects: Vec<_> = material::blur_rects(x, y - lift, w, h + lift, rr)
-                    .into_iter()
-                    .filter_map(|(rx, ry, rw, rh)| {
-                        let top = ry.max(0);
-                        (ry + rh > top).then_some((rx, top, rw, ry + rh - top))
-                    })
-                    .collect();
-                set_blur(
-                    self.blur_mgr.as_ref(),
-                    &self.compositor,
-                    &self.qh,
-                    slot,
-                    rects,
-                );
-            }
+            // Blur (and refraction) only behind the results card.
+            let rects = lay
+                .card
+                .map(|c| material::blur_rects(c.x, c.y, c.w, c.h, surfaces::SPOT_CARD_R))
+                .unwrap_or_default();
+            set_blur(
+                self.blur_mgr.as_ref(),
+                &self.compositor,
+                &self.qh,
+                slot,
+                rects,
+            );
             return;
         }
         if (slot.width, slot.height) != (lay.w, lay.h) {

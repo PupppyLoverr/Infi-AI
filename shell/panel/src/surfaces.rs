@@ -704,7 +704,8 @@ pub fn island_spot_layout(query: &str, items: &[LauncherItem], notch: bool) -> S
     let top = if notch { 0 } else { 4 };
     lay.capsule.y = top;
     if let Some(c) = lay.card.as_mut() {
-        c.y = top + CAPSULE_H;
+        // A separate glass card under the black field (macOS 26 Spotlight).
+        c.y = top + CAPSULE_H + 10;
     }
     let bottom = lay.card.map_or(top + CAPSULE_H, |c| c.y + c.h);
     lay.h = (bottom + 24) as u32;
@@ -713,24 +714,11 @@ pub fn island_spot_layout(query: &str, items: &[LauncherItem], notch: bool) -> S
 
 /// The single black shape the island Spotlight occupies at the end of the morph.
 pub fn island_spot_shape(lay: &SpotLayout) -> (Rect, f32) {
-    let bottom = lay
-        .card
-        .map_or(lay.capsule.y + lay.capsule.h, |c| c.y + c.h);
-    let r = Rect {
-        x: lay.capsule.x,
-        y: lay.capsule.y,
-        w: lay.capsule.w,
-        h: bottom - lay.capsule.y,
-    };
-    (
-        r,
-        if lay.card.is_some() {
-            28.0
-        } else {
-            CAPSULE_H as f32 / 2.0
-        },
-    )
+    (lay.capsule, CAPSULE_H as f32 / 2.0)
 }
+
+/// The results card under the field, the only part made of glass.
+pub const SPOT_CARD_R: f32 = 26.0;
 
 /// The shape at morph progress `t`: ease out (cubic) from the idle pill to
 /// the full shape. `(x, y, w, h, radius)`.
@@ -769,51 +757,29 @@ pub fn draw_island_spotlight(
     let lay = island_spot_layout(query, items, notch);
     let (x, y, wi, hi, r) = island_spot_morph(&lay, notch, t);
     let e = 1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3);
-    if glass {
-        let lift = if notch { r.ceil() as i32 + 2 } else { 0 };
-        cv.round_rect_shadow(
-            x,
-            y - lift,
-            wi,
-            hi + lift,
-            r,
-            10.0,
-            30.0,
-            (40.0 + 30.0 * e) as u8,
-        );
-        crate::material::smoked_glass(cv, x, y - lift, wi, hi + lift, r);
-        if notch {
-            let ear = Rgba::rgba(10, 10, 14, 150);
-            cv.concave_corner(x as f32 - 10.0, 0.0, 10.0, true, ear);
-            cv.concave_corner((x + wi) as f32, 0.0, 10.0, false, ear);
-        }
-    } else {
-        let black = Rgba::rgb(0, 0, 0);
-        if e > 0.3 {
-            cv.round_rect_shadow(x, y, wi, hi, r, 10.0, 30.0, (60.0 * e) as u8);
-        }
-        cv.round_rect(x, y, wi, hi, r, black);
-        if notch {
-            // Flush with the top edge, with the notch's little ears.
-            cv.fill_rect(x, 0, wi, (r as i32).min(hi), black);
-            cv.concave_corner(x as f32 - 10.0, 0.0, 10.0, true, black);
-            cv.concave_corner((x + wi) as f32, 0.0, 10.0, false, black);
-        }
+    // The field is the island grown wide: hardware black (macOS 26).
+    let _ = glass;
+    let black = Rgba::rgb(0, 0, 0);
+    if e > 0.3 {
+        cv.round_rect_shadow(x, y, wi, hi, r, 8.0, 24.0, (50.0 * e) as u8);
+    }
+    cv.round_rect(x, y, wi, hi, r, black);
+    if notch {
+        // Flush with the top edge, with the notch's little ears.
+        cv.fill_rect(x, 0, wi, (r as i32).min(hi), black);
+        cv.concave_corner(x as f32 - 10.0, 0.0, 10.0, true, black);
+        cv.concave_corner((x + wi) as f32, 0.0, 10.0, false, black);
     }
     if t < 0.62 {
         return Vec::new();
     }
-    // The results sit on the black with a hairline under the field.
-    let th = Theme::with(crate::tokens::ThemeKind::Dark, accent);
-    if lay.card.is_some() {
-        cv.fill_rect(
-            lay.capsule.x + 18,
-            lay.capsule.y + CAPSULE_H - 1,
-            lay.capsule.w - 36,
-            1,
-            Rgba::rgba(255, 255, 255, 30),
-        );
+    // Results: a separate card of dark Liquid Glass under the field.
+    if let Some(c) = lay.card {
+        cv.round_rect_shadow(c.x, c.y, c.w, c.h, SPOT_CARD_R, 10.0, 28.0, 60);
+        crate::material::apple_glass(cv, c.x, c.y, c.w, c.h, SPOT_CARD_R, true);
+        cv.round_rect(c.x, c.y, c.w, c.h, SPOT_CARD_R, Rgba::rgba(0, 0, 0, 40));
     }
+    let th = Theme::with(crate::tokens::ThemeKind::Dark, accent);
     launcher_content(cv, &th, fonts, query, items, selected, icons, hover, &lay)
 }
 
@@ -1294,7 +1260,20 @@ pub fn draw_control(
     let h = cv.height as i32;
     let mut regions = Vec::new();
 
-    card(cv, th, 0, 0, w, h, R_CARD);
+    // macOS 26: the whole Control Centre is Liquid Glass (the compositor
+    // blurs and bends what is behind); tiles are lighter glass on it.
+    let dark = th.surface.0 < 128;
+    crate::material::apple_glass(cv, 0, 0, w, h, R_CARD, dark);
+    let tile_fill = if dark {
+        Rgba::rgba(255, 255, 255, 24)
+    } else {
+        Rgba::rgba(255, 255, 255, 120)
+    };
+    let tile_hov = if dark {
+        Rgba::rgba(255, 255, 255, 40)
+    } else {
+        Rgba::rgba(255, 255, 255, 170)
+    };
 
     // 1. Status tiles. Network is read-only: Solyra reads link state, it does
     //    not manage connections yet, so the tile is not a button.
@@ -1360,7 +1339,7 @@ pub fn draw_control(
                 tile_w,
                 tile_h,
                 R_TILE,
-                if is_hov { th.tile_hover } else { th.tile },
+                if is_hov { tile_hov } else { tile_fill },
             );
         }
         let fg = if active { th.on_accent } else { th.text };
@@ -1396,7 +1375,7 @@ pub fn draw_control(
     // 2. Sliders. A slider that cannot do anything on this machine says so
     //    instead of moving.
     let sy = 148;
-    cv.round_rect(16, sy, w - 32, 96, R_TILE, th.tile);
+    cv.round_rect(16, sy, w - 32, 96, R_TILE, tile_fill);
     draw_slider_row(
         cv,
         th,
@@ -1527,7 +1506,7 @@ pub fn draw_control(
     );
     let bar_w = 96;
     let bx = w - 20 - bar_w;
-    cv.round_rect(bx, my + 15, bar_w, 8, 4.0, th.tile_hover);
+    cv.round_rect(bx, my + 15, bar_w, 8, 4.0, tile_hov);
     let ratio = (telem.mem_used_mib as f32 / telem.mem_total_mib as f32).clamp(0.02, 1.0);
     cv.round_rect(
         bx,

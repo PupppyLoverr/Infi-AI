@@ -707,6 +707,44 @@ impl<'a> Canvas<'a> {
         }
     }
 
+    /// Draw the Solar glyph `name`, tinted `color`, `size` logical pixels
+    /// square, centred on (cx, cy). False when there is no such glyph.
+    pub fn glyph(&mut self, name: &str, cx: f32, cy: f32, size: f32, color: Rgba) -> bool {
+        let Some(mask) = crate::glyphs::get(name) else {
+            return false;
+        };
+        let s = self.s() as f32;
+        let side = (size * s).round().max(1.0);
+        let (x0, y0) = (
+            (cx * s - side / 2.0).round() as i32,
+            (cy * s - side / 2.0).round() as i32,
+        );
+        let (mw, mh) = (mask.width as f32, mask.height as f32);
+        let at = |x: i32, y: i32| -> f32 {
+            let x = x.clamp(0, mask.width as i32 - 1) as u32;
+            let y = y.clamp(0, mask.height as i32 - 1) as u32;
+            mask.pixels[((y * mask.width + x) * 4 + 3) as usize] as f32 / 255.0
+        };
+        let n = side as i32;
+        for py in 0..n {
+            for px in 0..n {
+                // Bilinear sample of the mask.
+                let u = (px as f32 + 0.5) / side * mw - 0.5;
+                let v = (py as f32 + 0.5) / side * mh - 0.5;
+                let (ui, vi) = (u.floor() as i32, v.floor() as i32);
+                let (fu, fv) = (u - ui as f32, v - vi as f32);
+                let a = at(ui, vi) * (1.0 - fu) * (1.0 - fv)
+                    + at(ui + 1, vi) * fu * (1.0 - fv)
+                    + at(ui, vi + 1) * (1.0 - fu) * fv
+                    + at(ui + 1, vi + 1) * fu * fv;
+                if a > 0.003 {
+                    self.blend(x0 + px, y0 + py, color, a);
+                }
+            }
+        }
+        true
+    }
+
     /// Premultiplied Porter-Duff `source-over` into BGRA (`Argb8888` LE).
     #[inline]
     pub fn blend(&mut self, x: i32, y: i32, color: Rgba, coverage: f32) {
@@ -1369,6 +1407,9 @@ impl<'a> Canvas<'a> {
     }
 
     pub fn icon_note(&mut self, cx: f32, cy: f32, color: Rgba) {
+        if self.glyph("note", cx, cy, 15.0, color) {
+            return;
+        }
         self.circle(cx - 2.8, cy + 3.6, 2.3, color);
         self.circle(cx + 3.8, cy + 2.2, 2.3, color);
         self.line(cx - 0.8, cy + 3.4, cx - 0.8, cy - 4.4, 1.4, color);
@@ -1520,6 +1561,9 @@ impl<'a> Canvas<'a> {
     }
 
     pub fn icon_bell(&mut self, cx: f32, cy: f32, color: Rgba) {
+        if self.glyph("bell", cx, cy, 16.0, color) {
+            return;
+        }
         self.arc(cx, cy, 5.0, 1.5, 180.0, 360.0, color);
         self.line(cx - 5.0, cy, cx - 5.5, cy + 4.0, 1.5, color);
         self.line(cx + 5.0, cy, cx + 5.5, cy + 4.0, 1.5, color);
@@ -1533,6 +1577,9 @@ impl<'a> Canvas<'a> {
     }
 
     pub fn icon_cloud(&mut self, cx: f32, cy: f32, size: f32, color: Rgba) {
+        if self.glyph("cloud", cx, cy, size * 1.1, color) {
+            return;
+        }
         let u = size * 0.28;
         self.circle(cx - u * 0.65, cy + u * 0.15, u * 0.72, color);
         self.circle(cx + u * 0.15, cy - u * 0.32, u * 0.92, color);
@@ -1548,6 +1595,9 @@ impl<'a> Canvas<'a> {
     }
 
     pub fn icon_laptop(&mut self, cx: f32, cy: f32, size: f32, color: Rgba) {
+        if self.glyph("laptop", cx, cy, size * 1.05, color) {
+            return;
+        }
         let w = (size * 0.78).round() as i32;
         let h = (size * 0.52).round() as i32;
         let x = (cx - w as f32 * 0.5).round() as i32;
@@ -1600,6 +1650,9 @@ impl<'a> Canvas<'a> {
     }
 
     pub fn icon_search(&mut self, cx: f32, cy: f32, size: f32, color: Rgba) {
+        if self.glyph("search", cx, cy, size * 1.05, color) {
+            return;
+        }
         let r = size * 0.33;
         self.ring(cx - size * 0.08, cy - size * 0.08, r, 1.5, color);
         self.line(
@@ -1613,6 +1666,9 @@ impl<'a> Canvas<'a> {
     }
 
     pub fn icon_wifi(&mut self, cx: f32, cy: f32, size: f32, color: Rgba) {
+        if self.glyph("wifi-full", cx, cy, size * 1.05, color) {
+            return;
+        }
         let base_y = cy + size * 0.28;
         self.circle(cx, base_y, 1.4, color);
         self.arc(cx, base_y, size * 0.28, 1.45, -135.0, -45.0, color);
@@ -1660,6 +1716,14 @@ impl<'a> Canvas<'a> {
     }
 
     pub fn icon_volume(&mut self, cx: f32, cy: f32, size: f32, level: u8, color: Rgba) {
+        let v = match level {
+            0 => "volume-mute",
+            1 => "volume-low",
+            _ => "volume",
+        };
+        if self.glyph(v, cx, cy, size * 1.05, color) {
+            return;
+        }
         let lx = cx - size * 0.30;
         self.line(lx, cy - 2.2, lx, cy + 2.2, 2.2, color);
         self.line(lx, cy - 1.5, lx + 3.4, cy - 4.2, 1.7, color);
@@ -1707,6 +1771,9 @@ impl<'a> Canvas<'a> {
 
     /// macOS Control Centre twin pill-switches icon.
     pub fn icon_control_centre(&mut self, cx: f32, cy: f32, color: Rgba) {
+        if self.glyph("control", cx, cy, 17.0, color) {
+            return;
+        }
         let x = cx.round() as i32 - 7;
         let y = cy.round() as i32 - 6;
         self.stroke_round_rect(x, y, 14, 5, 2.5, 1.2, color);
@@ -1716,10 +1783,16 @@ impl<'a> Canvas<'a> {
     }
 
     pub fn icon_moon(&mut self, cx: f32, cy: f32, color: Rgba) {
+        if self.glyph("moon", cx, cy, 16.0, color) {
+            return;
+        }
         self.arc(cx + 0.5, cy, 4.8, 1.6, 55.0, 305.0, color);
     }
 
     pub fn icon_sun(&mut self, cx: f32, cy: f32, color: Rgba) {
+        if self.glyph("sun", cx, cy, 17.0, color) {
+            return;
+        }
         self.ring(cx, cy, 3.2, 1.4, color);
         for i in 0..8 {
             let a = (i as f32) * std::f32::consts::FRAC_PI_4;
@@ -1736,6 +1809,9 @@ impl<'a> Canvas<'a> {
 
     #[allow(dead_code)]
     pub fn icon_lock(&mut self, cx: f32, cy: f32, color: Rgba) {
+        if self.glyph("lock", cx, cy, 16.0, color) {
+            return;
+        }
         let x = cx.round() as i32 - 5;
         let y = cy.round() as i32 - 1;
         self.stroke_round_rect(x, y, 10, 7, 2.0, 1.3, color);
@@ -1744,6 +1820,9 @@ impl<'a> Canvas<'a> {
 
     #[allow(dead_code)]
     pub fn icon_power(&mut self, cx: f32, cy: f32, color: Rgba) {
+        if self.glyph("power", cx, cy, 16.0, color) {
+            return;
+        }
         self.arc(cx, cy + 0.5, 5.0, 1.5, -55.0, 235.0, color);
         self.line(cx, cy - 5.5, cx, cy - 0.5, 1.5, color);
     }

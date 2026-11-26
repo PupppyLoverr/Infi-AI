@@ -329,6 +329,17 @@ fn toolbar(app: &FilesApp, style: &solyra_ui::Style, window: zgx_desktop::Window
         };
         icon_button("›", move || app.go_forward()).disabled_when(move || !enabled())
     };
+    // macOS 26: toolbar controls sit in glass capsules on a clear toolbar.
+    let capsule = |v: View| {
+        v.h(32.)
+            .px(4.)
+            .rounded(16.)
+            .items_center()
+            .bg(style.card_bg())
+            .border(1.)
+            .border_color(style.hairline())
+    };
+    let nav = capsule(row().gap(2.).child(back).child(forward));
     let title = text_signal({
         let location = app.location.clone();
         move || location.get().title()
@@ -351,12 +362,14 @@ fn toolbar(app: &FilesApp, style: &solyra_ui::Style, window: zgx_desktop::Window
             }
         };
         button()
-            .h(28.)
-            .px(10.)
-            .rounded(7.)
+            .h(32.)
+            .px(14.)
+            .rounded(16.)
             .items_center()
             .justify_center()
-            .border(0.)
+            .bg(style.card_bg())
+            .border(1.)
+            .border_color(style.hairline())
             .child(text_signal(label).text_size(12.))
             .on_click(move || {
                 let next = !app.show_hidden.get();
@@ -367,12 +380,14 @@ fn toolbar(app: &FilesApp, style: &solyra_ui::Style, window: zgx_desktop::Window
         let app = app.clone();
         icon_button("⟳", move || app.refresh())
     };
-    let search = text_input("Search this folder", app.query.clone())
-        .w(190.)
-        .h(30.)
-        .px(10.)
-        .rounded(8.)
-        .bg(solyra_ui::color(style.theme.field));
+    let search = text_input("Search", app.query.clone())
+        .w(200.)
+        .h(32.)
+        .px(14.)
+        .rounded(16.)
+        .bg(style.card_bg())
+        .border(1.)
+        .border_color(style.hairline());
 
     row()
         .w_full()
@@ -380,22 +395,13 @@ fn toolbar(app: &FilesApp, style: &solyra_ui::Style, window: zgx_desktop::Window
         .px(14.)
         .gap(10.)
         .items_center()
-        .bg(style.sidebar_bg())
-        .border_edges(zgx::scene::Insets {
-            top: 0.,
-            right: 0.,
-            bottom: 1.,
-            left: 0.,
-        })
-        .border_color(style.hairline())
         .child(traffic)
-        .child(back)
-        .child(forward)
+        .child(nav)
         .child(drag_area(title.w(150.), window.clone()))
         .child(drag_area(row().grow(), window.clone()))
         .child(hidden)
-        .child(refresh)
-        .child(segmented("View mode", app.mode.clone(), ["⊞", "☰"]))
+        .child(capsule(row().child(refresh)))
+        .child(capsule(row().child(segmented("View mode", app.mode.clone(), ["⊞", "☰"]))))
         .child(search)
 }
 
@@ -592,7 +598,7 @@ fn sidebar(app: &FilesApp, style: &solyra_ui::Style) -> View {
         .p(8.)
         .pt(10.)
         .gap(4.)
-        .rounded(12.)
+        .rounded(18.)
         .bg(style.sidebar_bg())
         .border(1.)
         .border_color(style.hairline())

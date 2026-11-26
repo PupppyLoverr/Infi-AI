@@ -78,6 +78,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let again = rt.signal(String::new());
             let host = rt.signal("solyra".to_string());
             let theme_sel = rt.signal(0usize);
+            // The look: top bar, notch, dock style and dock edge.
+            let bar_sel = rt.signal(0usize);
+            let notch_sel = rt.signal(1usize);
+            let dock_sel = rt.signal(0usize);
+            let pos_sel = rt.signal(0usize);
             let message = rt.signal(String::new());
             let done = rt.signal(false);
 
@@ -108,12 +113,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let look = {
-                let theme_sel = theme_sel.clone();
+                let (theme_sel, bar_sel, notch_sel, dock_sel, pos_sel) =
+                    (theme_sel.clone(), bar_sel.clone(), notch_sel.clone(), dock_sel.clone(), pos_sel.clone());
                 move || column()
-                .gap(12.)
-                .child(text("Appearance").text_size(20.).font_bold())
+                .gap(10.)
+                .child(text("Your desktop").text_size(20.).font_bold())
+                .child(text("Theme"))
                 .child(segmented("Theme", theme_sel.clone(), ["Dark", "Light"]))
-                .child(text("Pick a background in Settings after you sign in."))
+                .child(text("Top bar"))
+                .child(segmented("Top bar", bar_sel.clone(), ["Menu bar", "Compact", "Hidden"]))
+                .child(text("Notch"))
+                .child(segmented("Notch", notch_sel.clone(), ["Notch", "Dynamic Island", "Off"]))
+                .child(text("Dock"))
+                .child(segmented("Dock", dock_sel.clone(), ["Floating", "Solyra", "Taskbar", "Minimal"]))
+                .child(text("Dock position"))
+                .child(segmented("Dock position", pos_sel.clone(), ["Bottom", "Left", "Right"]))
+                .child(text("Everything here, and the background, can be changed later in Settings."))
             };
 
             let finish = {
@@ -157,6 +172,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     step.clone(), message.clone(), username.clone(), full.clone(), password.clone(),
                     again.clone(), host.clone(), theme_sel.clone(), done.clone(),
                 );
+                let (bar_sel, notch_sel, dock_sel, pos_sel) =
+                    (bar_sel.clone(), notch_sel.clone(), dock_sel.clone(), pos_sel.clone());
                 nav("Continue", Rc::new(move || {
                     let s = step.get();
                     if s == 1 {
@@ -173,8 +190,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let path = std::env::var("SOLYRA_SETUP_REQUEST").unwrap_or_else(|_| solyra_setup_core::REQUEST_PATH.into());
                         match write_request(&req, &path) {
                             Ok(()) => {
-                                let _ = solyra_conf::config_path("shell.conf")
-                                    .map(|p| solyra_conf::update(&p, &[("theme", Some(if theme_sel.get() == 1 { "light" } else { "dark" }.into()))]));
+                                let pick = |opts: &[&str], i: usize| Some(opts[i.min(opts.len() - 1)].to_string());
+                                let _ = solyra_conf::config_path("shell.conf").map(|p| {
+                                    solyra_conf::update(
+                                        &p,
+                                        &[
+                                            ("theme", Some(if theme_sel.get() == 1 { "light" } else { "dark" }.into())),
+                                            ("bar_style", pick(&["menubar", "compact", "hidden"], bar_sel.get())),
+                                            ("notch_style", pick(&["notch", "island", "off"], notch_sel.get())),
+                                            ("dock_style", pick(&["macos", "solyra", "windows", "minimal"], dock_sel.get())),
+                                            ("dock_position", pick(&["bottom", "left", "right"], pos_sel.get())),
+                                        ],
+                                    )
+                                });
                                 done.put(true);
                             }
                             Err(e) => message.put(format!("Could not save your answers: {e}")),

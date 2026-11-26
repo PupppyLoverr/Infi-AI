@@ -282,8 +282,8 @@ fn island_spot_shot(
     let items = launcher::search(query, cat, &wins, true);
     let mut scene = scene_pixels(
         fonts,
-        ThemeKind::Dark,
-        "silk",
+        ThemeKind::Light,
+        "silk-light",
         Material::Glass,
         Material::Glass,
         Material::Solid,
@@ -297,20 +297,15 @@ fn island_spot_shot(
     );
     let lay = crate::surfaces::island_spot_layout(query, &items, notch);
     let at = ((scene.w as i32 - lay.w as i32) / 2, 0);
-    {
-        let (x, y, w, h, r) = crate::surfaces::island_spot_morph(&lay, notch, t);
-        let lift = if notch { r.ceil() as i32 + 2 } else { 0 };
-        let rects: Vec<_> = crate::material::blur_rects(x, y - lift, w, h + lift, r)
-            .into_iter()
-            .filter(|rc| rc.1 >= 0)
-            .collect();
-        compositor_backdrop(
-            &scene.sharp,
+    if let (Some(c), true) = (lay.card, t >= 0.62) {
+        compositor_lens(
             &scene.soft,
             scene.w,
-            Material::Glass,
-            &rects,
-            at,
+            scene.h,
+            (c.x + at.0, c.y + at.1, c.w, c.h),
+            crate::surfaces::SPOT_CARD_R,
+            12.0,
+            1.35,
             &mut scene.out,
         );
     }
@@ -1285,6 +1280,61 @@ fn preview_matrix_renders_without_panicking() {
 /// What the compositor does behind a blurring material, approximated for
 /// previews: blurred backdrop, a saturation lift, and (Acrylic) fine grain.
 /// Values mirror the `.glass` / `.acrylic` layer rules in solyra-config.kdl.
+/// The compositor's Liquid Glass for previews: the blurred backdrop, bent at
+/// the rim exactly as `refract_surface.frag` does (sample pulled from beyond
+/// the edge over a band 2.6 x the strength, falloff (1 + d/band)^2, red
+/// 1.25x and blue 0.75x for the fringe), with the glass saturation.
+#[allow(clippy::too_many_arguments)]
+fn compositor_lens(
+    soft: &[u8],
+    w: u32,
+    h: u32,
+    (gx, gy, gw, gh): (i32, i32, i32, i32),
+    r: f32,
+    strength: f32,
+    sat: f32,
+    out: &mut [u8],
+) {
+    let (hw, hh) = (gw as f32 / 2.0, gh as f32 / 2.0);
+    let r = r.min(hw).min(hh);
+    let (cx, cy) = (gx as f32 + hw, gy as f32 + hh);
+    let sdf = |qx: f32, qy: f32| {
+        let ax = qx.abs() - hw + r;
+        let ay = qy.abs() - hh + r;
+        ax.max(ay).min(0.0) + (ax.max(0.0).powi(2) + ay.max(0.0).powi(2)).sqrt() - r
+    };
+    let band = (strength * 2.6).max(6.0);
+    let sample = |x: f32, y: f32, c: usize| -> f32 {
+        let xi = (x.round() as i32).clamp(0, w as i32 - 1) as u32;
+        let yi = (y.round() as i32).clamp(0, h as i32 - 1) as u32;
+        soft[((yi * w + xi) * 4) as usize + c] as f32
+    };
+    for py in gy.max(0)..(gy + gh).min(h as i32) {
+        for px in gx.max(0)..(gx + gw).min(w as i32) {
+            let (fx, fy) = (px as f32 + 0.5, py as f32 + 0.5);
+            let (qx, qy) = (fx - cx, fy - cy);
+            let d = sdf(qx, qy);
+            if d > 0.5 {
+                continue;
+            }
+            let f = (1.0 + d / band).clamp(0.0, 1.0).powi(2);
+            let gxv = sdf(qx + 1.0, qy) - sdf(qx - 1.0, qy);
+            let gyv = sdf(qx, qy + 1.0) - sdf(qx, qy - 1.0);
+            let l = (gxv * gxv + gyv * gyv).sqrt().max(1e-5);
+            let (ox, oy) = (gxv / l * f * strength, gyv / l * f * strength);
+            let rr = sample(fx + ox * 1.25, fy + oy * 1.25, 0);
+            let gg = sample(fx + ox, fy + oy, 1);
+            let bb = sample(fx + ox * 0.75, fy + oy * 0.75, 2);
+            let lum = 0.299 * rr + 0.587 * gg + 0.114 * bb;
+            let i = ((py as u32 * w + px as u32) * 4) as usize;
+            for (c, v) in [(0usize, rr), (1, gg), (2, bb)] {
+                out[i + c] = (lum + (v - lum) * sat).clamp(0.0, 255.0) as u8;
+            }
+            out[i + 3] = 255;
+        }
+    }
+}
+
 fn compositor_backdrop(
     sharp: &[u8],
     soft: &[u8],
@@ -1524,7 +1574,18 @@ fn scene_pixels_with(
     );
     if let Some(b) = body {
         // The dock draws its own elevation shadow (dock.rs); none is added here.
-        if crate::material::blurs(dock_m) {
+        if dock_m == crate::material::Material::Glass {
+            compositor_lens(
+                &soft,
+                w,
+                h,
+                (b.x + at.0, b.y + at.1, b.w, b.h),
+                b.r,
+                10.0,
+                1.35,
+                &mut out,
+            );
+        } else if crate::material::blurs(dock_m) {
             let rects = crate::material::blur_rects(b.x, b.y, b.w, b.h, b.r);
             compositor_backdrop(&sharp, &soft, w, dock_m, &rects, at, &mut out);
         }
@@ -1778,6 +1839,103 @@ fn dock_glass_over_a_window_renders() {
         );
         shots.push(Shot {
             name: format!("dock-glass-{}", kind.as_str()),
+            w: scene.w,
+            h: scene.h,
+            rgba: flatten(&scene.out, scene.w, scene.h, Rgba::rgb(0, 0, 0)),
+        });
+    }
+    if let Some(dir) = std::env::var_os("SOLYRA_RENDER_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for s in &shots {
+            write_png(&dir, s);
+        }
+    }
+}
+
+#[test]
+fn side_docks_render() {
+    use crate::material::Material;
+    use solyra_conf::look::{DockPosition, NotchStyle};
+    let fonts = Fonts::load();
+    let mut shots = Vec::new();
+    for (name, side) in [
+        ("dock-left", DockPosition::Left),
+        ("dock-right", DockPosition::Right),
+    ] {
+        let mut scene = scene_pixels(
+            &fonts,
+            ThemeKind::Light,
+            "silk-light",
+            Material::Glass,
+            Material::Glass,
+            Material::Solid,
+            DockStyle::Macos,
+            NotchStyle::Island,
+            false,
+        );
+        let wins = [win(1, "foot", "Terminal", true)];
+        let spec = crate::dock::orient(
+            crate::dock::spec(DockStyle::Macos, &wins, false, false),
+            side,
+        );
+        assert_eq!(
+            spec.width,
+            crate::dock::CARD_H as u32,
+            "a side dock is one card wide"
+        );
+        assert!(spec.height > spec.width, "and stands on its end");
+        let mut prefs = ShellPrefs::default();
+        prefs.theme = ThemeKind::Light;
+        prefs.dock_style = DockStyle::Macos;
+        prefs.look.dock_position = side;
+        let th = Theme::for_kind(ThemeKind::Light);
+        let mut buf = vec![0u8; (spec.width * spec.height * 4) as usize];
+        let body;
+        {
+            let mut cv = Canvas::new(&mut buf, spec.width, spec.height, 1);
+            let t = telem(Some(64), NetworkState::Wireless, false);
+            let live = Live {
+                agents: Summary::of(true, &[]),
+                telem: &t,
+                prefs: &prefs,
+            };
+            let mut icons = HashMap::new();
+            body = crate::dock::draw(
+                &mut cv,
+                &th,
+                &fonts,
+                DockStyle::Macos,
+                &wins,
+                &mut icons,
+                None,
+                &live,
+                false,
+                false,
+                &[],
+            )
+            .1
+            .expect("a side dock has a body");
+        }
+        let x = if side == DockPosition::Left {
+            12
+        } else {
+            scene.w as i32 - 12 - spec.width as i32
+        };
+        let at = (x, (scene.h as i32 - spec.height as i32) / 2);
+        compositor_lens(
+            &scene.soft,
+            scene.w,
+            scene.h,
+            (body.x + at.0, body.y + at.1, body.w, body.h),
+            body.r,
+            10.0,
+            1.35,
+            &mut scene.out,
+        );
+        over(&mut scene.out, scene.w, &buf, spec.width, spec.height, at);
+        shots.push(Shot {
+            name: name.into(),
             w: scene.w,
             h: scene.h,
             rgba: flatten(&scene.out, scene.w, scene.h, Rgba::rgb(0, 0, 0)),
