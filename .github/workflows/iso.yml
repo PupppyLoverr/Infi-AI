@@ -6,7 +6,7 @@ on:
   push:
     branches: [claude/charming-goodall-iuca3o]
     paths: ['iso/**', '.github/workflows/iso.yml']
-concurrency: { group: solyra-iso, cancel-in-progress: true }
+concurrency: { group: solyra-iso, cancel-in-progress: false }
 permissions:
   contents: write
 jobs:

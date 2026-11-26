@@ -8,9 +8,8 @@ name: disk
 # graphical desktop: niri needs a GL-capable virtual GPU, which a headless CI
 # runner does not have. Run the disk with scripts/run-vm.sh to see the desktop.
 on:
+  # The Fedora/niri image is retired (PLAN.md §8): manual runs only.
   workflow_dispatch:
-  push:
-    branches: ['claude/**']
 
 # Only the newest push builds; older runs on the same branch are cancelled.
 concurrency:

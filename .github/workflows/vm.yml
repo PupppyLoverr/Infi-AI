@@ -7,7 +7,7 @@ on:
   push:
     branches: [claude/charming-goodall-iuca3o]
     paths: ['shell/qs/**', 'shell/hypr/**', 'tools/vm/**', 'apps/solyra-term/**', 'apps/solyra-ui/**', '.github/workflows/vm.yml']
-concurrency: { group: solyra-vm, cancel-in-progress: true }
+concurrency: { group: solyra-vm, cancel-in-progress: false }
 permissions:
   contents: write
 jobs:
