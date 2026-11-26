@@ -282,6 +282,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         menu_open: None,
         menu_armed: None,
         island: None,
+        island_made_at: None,
         island_anim: island::Anim::new(island::target(
             solyra_conf::look::NotchStyle::Notch,
             &island::Content::Idle,
@@ -638,6 +639,7 @@ struct App {
     /// An item waiting for its confirming second click.
     menu_armed: Option<usize>,
     island: Option<SurfaceSlot>,
+    island_made_at: Option<Instant>,
     island_anim: island::Anim,
     island_expanded: bool,
     island_last_frame: Instant,
@@ -1399,6 +1401,17 @@ impl App {
             self.island = None;
             self.notch_material = mat;
         }
+        if matches!(&self.island, Some(slot) if !slot.configured)
+            && self
+                .island_made_at
+                .is_some_and(|t| t.elapsed() > Duration::from_secs(2))
+        {
+            // Born before the compositor had an output: the configure never
+            // arrives for a surface that pre-dates it, so the island would
+            // stay invisible forever. Remake it now that outputs live.
+            self.island = None;
+            self.island_made_at = None;
+        }
         match (want, self.island.is_some()) {
             (true, false) => {
                 // Exclusive zone -1: sit at the very top, over the bar, ignoring
@@ -1417,6 +1430,7 @@ impl App {
                     KeyboardInteractivity::OnDemand,
                 );
                 self.island = Some(slot);
+                self.island_made_at = Some(Instant::now());
                 self.island_anim = island::Anim::new(island::target(
                     self.prefs.look.notch,
                     &self.island_content().0,
@@ -1426,6 +1440,7 @@ impl App {
             }
             (false, true) => {
                 self.island = None;
+                self.island_made_at = None;
                 self.island_expanded = false;
             }
             _ => {}
@@ -1595,6 +1610,7 @@ impl App {
         self.ws_list = workspaces();
         self.reload_prefs_if_changed();
         self.load_agents();
+        self.ensure_island();
 
         if let Some((t, ref msg)) = self.island_override {
             if t.elapsed() <= Duration::from_secs(state::ISLAND_TTL_SECS) {
