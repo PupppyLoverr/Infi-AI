@@ -6,7 +6,7 @@ R=$(cd "$(dirname "$0")/.." && pwd)
 L=${LIVE_DIR:-/tmp/solyra-live}; mkdir -p $L; grep -v "spawn-at-startup\|spawn-sh-at-startup" $R/base/solyra-config.kdl > $L/niri.kdl; name=$1; wp=$2; conf=$3; wait=${4:-8}; extra=$5
 mkdir -p /tmp/sxr && chmod 700 /tmp/sxr; export XDG_RUNTIME_DIR=/tmp/sxr
 H=$L/home-$name; rm -rf $H; mkdir -p $H/.config/solyra; printf "$conf" > $H/.config/solyra/shell.conf
-weston --backend=headless --renderer=pixman --socket=wl-$name --width=1280 --height=800 >$L/weston-$name.log 2>&1 &
+weston --backend=${WESTON_BACKEND:-headless-backend.so} --socket=wl-$name --width=1280 --height=800 >$L/weston-$name.log 2>&1 &
 WP=$!; sleep 2
 export HOME=$H LIBGL_ALWAYS_SOFTWARE=1 WAYLAND_DISPLAY=wl-$name
 $R/comp/target/debug/niri -c $L/niri.kdl >$L/niri-$name.log 2>&1 &
