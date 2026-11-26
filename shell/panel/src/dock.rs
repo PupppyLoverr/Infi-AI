@@ -326,7 +326,9 @@ pub fn draw(
                 Some(body),
             )
         }
-        _ => draw_floating(cv, th, fonts, style, wins, icons, hover, live, magnify, launching),
+        _ => draw_floating(
+            cv, th, fonts, style, wins, icons, hover, live, magnify, launching,
+        ),
     }
 }
 
@@ -506,7 +508,11 @@ fn draw_floating(
             _ => {
                 let (role, app_id, action) = match it {
                     Item::Start => (
-                        if style == DockStyle::Macos { "launchpad" } else { "start" },
+                        if style == DockStyle::Macos {
+                            "launchpad"
+                        } else {
+                            "start"
+                        },
                         None,
                         HitAction::Shell(ShellCmd::ToggleLauncher),
                     ),
@@ -915,7 +921,13 @@ fn draw_taskbar(
     cv.icon_network(net_cx, 24.0, 13.0, telem.network, th.text, th.text_dim);
     cv.icon_volume(vol_cx, 24.0, 13.0, prefs.volume, th.text);
     if let Some((cx, pct)) = bat {
-        cv.icon_battery(cx, 24.0, pct, th.text, if pct <= 15 { th.danger } else { th.text });
+        cv.icon_battery(
+            cx,
+            24.0,
+            pct,
+            th.text,
+            if pct <= 15 { th.danger } else { th.text },
+        );
     }
     regions.push(Region {
         x: tray_left,
@@ -1022,18 +1034,34 @@ mod tests {
             volume_controllable: false,
         };
         let prefs = crate::state::ShellPrefs::default();
-        let live = Live { agents: Default::default(), telem: &t, prefs: &prefs };
+        let live = Live {
+            agents: Default::default(),
+            telem: &t,
+            prefs: &prefs,
+        };
         let mut x = 0.0;
         while x < w as f64 {
             let mut buf = vec![0u8; (w * h * 4) as usize];
             let mut cv = Canvas::new(&mut buf, w, h, 1);
             let mut icons = HashMap::new();
             let (_, body) = draw(
-                &mut cv, &th, &fonts, DockStyle::Macos, &wins, &mut icons,
-                Some((x, h as f64 - 10.0)), &live, true, false, &[],
+                &mut cv,
+                &th,
+                &fonts,
+                DockStyle::Macos,
+                &wins,
+                &mut icons,
+                Some((x, h as f64 - 10.0)),
+                &live,
+                true,
+                false,
+                &[],
             );
             let b = body.unwrap();
-            assert!(b.x >= 4 && b.x + b.w <= w as i32 - 4, "pointer at {x}: shelf {b:?} in {w}");
+            assert!(
+                b.x >= 4 && b.x + b.w <= w as i32 - 4,
+                "pointer at {x}: shelf {b:?} in {w}"
+            );
             x += 23.0;
         }
     }

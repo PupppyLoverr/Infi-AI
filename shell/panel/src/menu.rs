@@ -304,7 +304,14 @@ pub fn draw_ctx(
             cv.round_rect(rx, y, rw, ROW_H, 6.0, th.accent);
         }
         let fg = if hov { th.on_accent } else { th.text };
-        cv.text(fonts.regular.as_ref(), &e.label, rx + 12, y + 19, T_LABEL + 0.5, fg);
+        cv.text(
+            fonts.regular.as_ref(),
+            &e.label,
+            rx + 12,
+            y + 19,
+            T_LABEL + 0.5,
+            fg,
+        );
         regions.push(Region {
             x: rx,
             y,
@@ -495,13 +502,18 @@ mod tests {
     fn titles_follow_the_mac_order_and_edit_sends_real_keys() {
         let t: Vec<&str> = MenuId::TITLES.iter().map(|m| m.title()).collect();
         assert_eq!(t, ["File", "Edit", "View", "Go", "Window", "Help"]);
-        assert_eq!(keystroke(&["ctrl"], "c"), "sleep 0.12; wtype -M ctrl c -m ctrl");
+        assert_eq!(
+            keystroke(&["ctrl"], "c"),
+            "sleep 0.12; wtype -M ctrl c -m ctrl"
+        );
         assert_eq!(
             keystroke(&["ctrl", "shift"], "z"),
             "sleep 0.12; wtype -M ctrl -M shift z -m shift -m ctrl"
         );
         let edit = entries(MenuId::Edit, &app(), true);
         let copy = edit.iter().find(|e| e.label == "Copy").unwrap();
-        assert!(matches!(&copy.action, Some(HitAction::Launch(LaunchTarget::Shell(s))) if s.contains("wtype -M ctrl c")));
+        assert!(
+            matches!(&copy.action, Some(HitAction::Launch(LaunchTarget::Shell(s))) if s.contains("wtype -M ctrl c"))
+        );
     }
 }

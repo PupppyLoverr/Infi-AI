@@ -142,7 +142,14 @@ pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f
         if s.kind == Material::Glass && is_dark(s.fill) {
             // Dark menu bar: a thin smoke that fades out, so white text reads
             // over any wallpaper while the bar still looks clear.
-            cv.fill_rect_vgrad(x, y, w, h, Rgba::rgba(18, 18, 20, 110), Rgba::rgba(18, 18, 20, 60));
+            cv.fill_rect_vgrad(
+                x,
+                y,
+                w,
+                h,
+                Rgba::rgba(18, 18, 20, 110),
+                Rgba::rgba(18, 18, 20, 60),
+            );
         } else if s.kind == Material::Glass {
             // A glass bar is only a veil that fades into the wallpaper.
             let top = Rgba::rgba(255, 255, 255, s.fill.3 / 2);
@@ -210,7 +217,12 @@ pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f
                 r,
                 hl,
                 Rgba::rgba(255, 255, 255, if dark { 52 } else { 96 }),
-                Rgba::rgba(if dark { 255 } else { 0 }, if dark { 255 } else { 0 }, if dark { 255 } else { 0 }, if dark { 28 } else { 26 }),
+                Rgba::rgba(
+                    if dark { 255 } else { 0 },
+                    if dark { 255 } else { 0 },
+                    if dark { 255 } else { 0 },
+                    if dark { 28 } else { 26 },
+                ),
             );
         }
         _ => {
@@ -222,7 +234,16 @@ pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f
 
 /// The Liquid Glass body: veil + specular rim (top 70 % white, middle 10 %,
 /// bottom occluded) + a hairline that separates it from bright wallpapers.
-pub fn liquid_glass(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32, veil: u8, depth: f32) {
+pub fn liquid_glass(
+    cv: &mut Canvas<'_>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    r: f32,
+    veil: u8,
+    depth: f32,
+) {
     // Veil: brighter toward the top, like light falling on a droplet.
     cv.round_rect_vgrad(
         x,
@@ -234,7 +255,15 @@ pub fn liquid_glass(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32,
         Rgba::rgba(255, 255, 255, veil / 2),
     );
     // Outer hairline (occlusion) so the glass edge reads on any wallpaper.
-    cv.stroke_round_rect(x - 1, y - 1, w + 2, h + 2, r + 1.0, 1.0, Rgba::rgba(0, 0, 0, 46));
+    cv.stroke_round_rect(
+        x - 1,
+        y - 1,
+        w + 2,
+        h + 2,
+        r + 1.0,
+        1.0,
+        Rgba::rgba(0, 0, 0, 46),
+    );
     // Specular rim: sharp at the top, clear at the sides, dark at the bottom.
     let top = (255.0 * 0.7 * depth).round() as u8;
     cv.round_rect_glass_rim(
@@ -249,7 +278,14 @@ pub fn liquid_glass(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32,
     );
     // A second, softer inner highlight one pixel in, for thickness.
     let inset = (r * 0.8).round() as i32;
-    cv.fill_rect_vgrad(x + inset, y + 1, (w - 2 * inset).max(0), 2, Rgba::rgba(255, 255, 255, top / 2), Rgba::rgba(255, 255, 255, 0));
+    cv.fill_rect_vgrad(
+        x + inset,
+        y + 1,
+        (w - 2 * inset).max(0),
+        2,
+        Rgba::rgba(255, 255, 255, top / 2),
+        Rgba::rgba(255, 255, 255, 0),
+    );
 }
 
 /// A rounded rectangle as row strips, for a `wl_region`: corners are
@@ -337,27 +373,45 @@ mod tests {
     #[test]
     fn clear_gets_denser_over_a_wallpaper_that_fights_the_text() {
         let dark_bar = Theme::dark().bar;
-        let calm = slab(Material::Clear, dark_bar, Some(Rgba::rgb(20, 40, 90))).fill.3;
-        let bright = slab(Material::Clear, dark_bar, Some(Rgba::rgb(240, 230, 220))).fill.3;
+        let calm = slab(Material::Clear, dark_bar, Some(Rgba::rgb(20, 40, 90)))
+            .fill
+            .3;
+        let bright = slab(Material::Clear, dark_bar, Some(Rgba::rgb(240, 230, 220)))
+            .fill
+            .3;
         assert!(bright > calm + 20, "{calm} -> {bright}");
         let light_bar = Theme::light().bar;
-        let dark_wall = slab(Material::Clear, light_bar, Some(Rgba::rgb(15, 15, 30))).fill.3;
-        let light_wall = slab(Material::Clear, light_bar, Some(Rgba::rgb(230, 220, 240))).fill.3;
+        let dark_wall = slab(Material::Clear, light_bar, Some(Rgba::rgb(15, 15, 30)))
+            .fill
+            .3;
+        let light_wall = slab(Material::Clear, light_bar, Some(Rgba::rgb(230, 220, 240)))
+            .fill
+            .3;
         assert!(dark_wall > light_wall + 20);
         assert_eq!(
-            slab(Material::Solid, dark_bar, Some(Rgba::rgb(255, 255, 255))).fill.3,
+            slab(Material::Solid, dark_bar, Some(Rgba::rgb(255, 255, 255)))
+                .fill
+                .3,
             255
         );
     }
 
     #[test]
     fn glass_is_see_through_with_a_lit_edge_in_both_themes() {
-        for tint in [None, Some(Rgba::rgb(240, 200, 170)), Some(Rgba::rgb(10, 30, 60))] {
+        for tint in [
+            None,
+            Some(Rgba::rgb(240, 200, 170)),
+            Some(Rgba::rgb(10, 30, 60)),
+        ] {
             let f = slab(Material::Glass, Theme::light().bar, tint).fill;
             assert_eq!((f.0, f.1, f.2), (255, 255, 255), "{tint:?}");
             assert!(f.3 > 0 && f.3 < 120, "{}", f.3);
             let d = slab(Material::Glass, Theme::dark().bar, tint);
-            assert!(d.fill.3 <= 124, "dark glass stays see-through: {:?}", d.fill);
+            assert!(
+                d.fill.3 <= 124,
+                "dark glass stays see-through: {:?}",
+                d.fill
+            );
             assert!(d.highlight.is_some(), "and has a lit edge");
         }
     }
@@ -368,7 +422,10 @@ mod tests {
         let light_bar = Theme::light().bar;
         let sand = Some(Rgba::rgb(235, 205, 175));
         let night = Some(Rgba::rgb(14, 30, 60));
-        assert!(!ink_flips(Material::Glass, dark_bar, sand), "smoked glass keeps white ink");
+        assert!(
+            !ink_flips(Material::Glass, dark_bar, sand),
+            "smoked glass keeps white ink"
+        );
         assert!(!ink_flips(Material::Glass, dark_bar, night));
         assert!(!ink_flips(Material::Glass, dark_bar, None));
         assert!(ink_flips(Material::Glass, light_bar, night));

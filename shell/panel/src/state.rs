@@ -195,6 +195,10 @@ pub enum ShellCmd {
     ShelfRemove(usize),
     /// Files dropped on the island.
     ShelfAdd(Vec<std::path::PathBuf>),
+    /// Show a HUD in the notch (volume, brightness, charging, Focus, unlock).
+    Hud(crate::hud::HudKind),
+    /// A media key: play/pause, next, previous on what is playing.
+    MediaKey(crate::media::Control),
     /// A user-chosen image. The path is validated before use.
     SetWallpaperFile {
         mode: WallpaperMode,
@@ -504,6 +508,17 @@ fn parse_cmd_line(raw: &str) -> Option<ShellCmd> {
     }
     if let Some(rest) = s.strip_prefix("dock ") {
         return DockStyle::parse(rest).map(ShellCmd::SetDock);
+    }
+    if let Some(rest) = s.strip_prefix("hud ") {
+        return crate::hud::HudKind::parse(rest).map(ShellCmd::Hud);
+    }
+    if let Some(rest) = s.strip_prefix("media ") {
+        return Some(ShellCmd::MediaKey(match rest.trim() {
+            "play-pause" | "play" | "pause" => crate::media::Control::PlayPause,
+            "next" => crate::media::Control::Next,
+            "previous" | "prev" => crate::media::Control::Previous,
+            _ => return None,
+        }));
     }
     if let Some(rest) = s.strip_prefix("wallpaper-file ") {
         // `wallpaper-file <mode> <path>`; the path may contain spaces.
@@ -850,13 +865,76 @@ pub fn floating_dock_entries(wins: &[WindowInfo]) -> Vec<AppEntry> {
         command: LaunchTarget::Shell(open.into()),
     };
     let candidates = vec![
-        (role_binary("files", "solyra-files"), pin("files", role_binary("files", "solyra-files"), "Files", "Browse folders and drives", "solyra-open files")),
-        (role_binary("browser", "firefox"), pin("browser", role_binary("browser", "firefox"), "Browser", "Browse the web", "solyra-open browser")),
-        (role_binary("terminal", "foot"), pin("terminal", role_binary("terminal", "foot"), "Terminal", "Command line shell", "solyra-open terminal")),
-        (role_binary("editor", "mousepad"), pin("editor", role_binary("editor", "mousepad"), "Text Editor", "Edit text files", "solyra-open editor")),
-        (role_binary("viewer", "ristretto"), pin("viewer", role_binary("viewer", "ristretto"), "Image Viewer", "Look at photos and pictures", "solyra-open viewer")),
-        (role_binary("calculator", "galculator"), pin("calculator", role_binary("calculator", "galculator"), "Calculator", "Do the maths", "solyra-open calculator")),
-        ("solyra-settings".to_string(), pin("settings", "solyra-settings".into(), "System Settings", "Appearance, dock, network and more", "solyra-settings")),
+        (
+            role_binary("files", "solyra-files"),
+            pin(
+                "files",
+                role_binary("files", "solyra-files"),
+                "Files",
+                "Browse folders and drives",
+                "solyra-open files",
+            ),
+        ),
+        (
+            role_binary("browser", "firefox"),
+            pin(
+                "browser",
+                role_binary("browser", "firefox"),
+                "Browser",
+                "Browse the web",
+                "solyra-open browser",
+            ),
+        ),
+        (
+            role_binary("terminal", "foot"),
+            pin(
+                "terminal",
+                role_binary("terminal", "foot"),
+                "Terminal",
+                "Command line shell",
+                "solyra-open terminal",
+            ),
+        ),
+        (
+            role_binary("editor", "mousepad"),
+            pin(
+                "editor",
+                role_binary("editor", "mousepad"),
+                "Text Editor",
+                "Edit text files",
+                "solyra-open editor",
+            ),
+        ),
+        (
+            role_binary("viewer", "ristretto"),
+            pin(
+                "viewer",
+                role_binary("viewer", "ristretto"),
+                "Image Viewer",
+                "Look at photos and pictures",
+                "solyra-open viewer",
+            ),
+        ),
+        (
+            role_binary("calculator", "galculator"),
+            pin(
+                "calculator",
+                role_binary("calculator", "galculator"),
+                "Calculator",
+                "Do the maths",
+                "solyra-open calculator",
+            ),
+        ),
+        (
+            "solyra-settings".to_string(),
+            pin(
+                "settings",
+                "solyra-settings".into(),
+                "System Settings",
+                "Appearance, dock, network and more",
+                "solyra-settings",
+            ),
+        ),
     ];
     let items: Vec<AppEntry> = candidates
         .into_iter()

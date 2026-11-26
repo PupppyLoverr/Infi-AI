@@ -23,9 +23,25 @@ macro_rules! bundle {
 }
 
 const SET: &[(&str, &[u8])] = bundle![
-    "files", "terminal", "browser", "settings", "overview", "editor",
-    "trash", "wallpaper", "calculator", "music", "photos", "mail", "appstore", "monitor",
-    "notes", "maps", "launchpad", "downloads", "viewer",
+    "files",
+    "terminal",
+    "browser",
+    "settings",
+    "overview",
+    "editor",
+    "trash",
+    "wallpaper",
+    "calculator",
+    "music",
+    "photos",
+    "mail",
+    "appstore",
+    "monitor",
+    "notes",
+    "maps",
+    "launchpad",
+    "downloads",
+    "viewer",
 ];
 
 static DECODED: OnceLock<Vec<(&'static str, Icon)>> = OnceLock::new();
@@ -67,7 +83,17 @@ pub fn name_for(key: &str) -> Option<&'static str> {
         _ if has(&["term", "konsole", "alacritty", "kitty", "wezterm"]) => "terminal",
         _ if has(&["solyra-browse", "epiphany", "web-browser", "falkon"]) => "browser",
         _ if has(&["settings", "control-center", "controlcenter"]) => "settings",
-        _ if has(&["mousepad", "texteditor", "text-editor", "kate", "emacs", "gedit"]) => "editor",
+        _ if has(&[
+            "mousepad",
+            "texteditor",
+            "text-editor",
+            "kate",
+            "emacs",
+            "gedit",
+        ]) =>
+        {
+            "editor"
+        }
         _ if has(&["calc"]) => "calculator",
         _ if has(&["music", "rhythmbox", "lollypop"]) => "music",
         _ if has(&["photo", "shotwell", "eog", "loupe", "gwenview"]) => "photos",
@@ -125,9 +151,24 @@ mod tests {
     #[test]
     fn every_mapped_name_is_bundled() {
         for key in [
-            "files", "terminal", "browser", "settings", "overview", "editor", "trash",
-            "wallpaper", "firefox", "chrome", "calc", "rhythmbox", "shotwell", "thunderbird",
-            "flatpak", "htop", "notes", "maps",
+            "files",
+            "terminal",
+            "browser",
+            "settings",
+            "overview",
+            "editor",
+            "trash",
+            "wallpaper",
+            "firefox",
+            "chrome",
+            "calc",
+            "rhythmbox",
+            "shotwell",
+            "thunderbird",
+            "flatpak",
+            "htop",
+            "notes",
+            "maps",
         ] {
             let n = name_for(key).unwrap_or_else(|| panic!("{key} unmapped"));
             assert!(get(n).is_some(), "{key} -> {n} not bundled");

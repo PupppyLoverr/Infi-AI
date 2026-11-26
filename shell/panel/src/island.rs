@@ -24,18 +24,24 @@ use solyra_conf::look::NotchStyle;
 pub const SURF_W: u32 = 480;
 pub const SURF_H: u32 = 214;
 /// Concave fillet radius joining a notch to the top edge.
-const EAR: f32 = 9.0;
+/// Droppy's notch wings: the top corners curve outward 10 px.
+const EAR: f32 = 10.0;
 
 /// What the island is showing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Content {
     Idle,
     Message(String),
-    Activity { who: String, text: String },
+    Activity {
+        who: String,
+        text: String,
+    },
     Attention(Ask),
     Media(Media),
     /// The shelf tab: files parked on the notch (newest first).
     Shelf(Vec<std::path::PathBuf>),
+    /// A system HUD (volume, brightness, charging, Focus, unlock) for a moment.
+    Hud(crate::hud::Hud),
 }
 
 /// An approval or question waiting on the human.
@@ -82,7 +88,8 @@ impl Shape {
 fn expanded_shape(style: NotchStyle, content: &Content) -> Shape {
     let island = style == NotchStyle::Island;
     let (w, h) = match content {
-        Content::Media(_) | Content::Shelf(_) => (440.0, 156.0),
+        Content::Media(_) | Content::Shelf(_) => (450.0, 156.0),
+        Content::Hud(_) => (300.0, 37.0),
         Content::Idle => (if island { 348.0 } else { 392.0 }, 132.0),
         _ => (if island { 440.0 } else { 448.0 }, 196.0),
     };
@@ -100,8 +107,15 @@ const MEDIA_CHROME: f32 = 78.0;
 /// A compact media capsule hugs its title: art, title, waveform and nothing
 /// else. Glyph widths are estimated because the fonts are not at hand here.
 fn compact_media_width(m: &crate::media::Media, min: f32, max: f32) -> f32 {
-    let line = if m.title.is_empty() { &m.artist } else { &m.title };
-    let text = line.chars().map(|c| if c.is_uppercase() { 7.8 } else { 6.3 }).sum::<f32>();
+    let line = if m.title.is_empty() {
+        &m.artist
+    } else {
+        &m.title
+    };
+    let text = line
+        .chars()
+        .map(|c| if c.is_uppercase() { 7.8 } else { 6.3 })
+        .sum::<f32>();
     (MEDIA_CHROME + text).clamp(min, max).round()
 }
 
@@ -113,31 +127,37 @@ pub fn target(style: NotchStyle, content: &Content, expanded: bool) -> Shape {
                 expanded_shape(style, content)
             } else {
                 match content {
-                    // pearOS island: a 170 x 30 black pill 5 px below the
-                    // top edge; live activities keep that height and widen.
+                    // Droppy's Dynamic Island: a 210 x 37 pill floating 4 px
+                    // below the top edge; live activities keep that height.
                     Content::Idle | Content::Shelf(_) => Shape {
-                        w: 170.0,
-                        h: 30.0,
-                        y: 5.0,
-                        r: 15.0,
+                        w: 210.0,
+                        h: 37.0,
+                        y: 4.0,
+                        r: 18.5,
+                    },
+                    Content::Hud(_) => Shape {
+                        w: 300.0,
+                        h: 37.0,
+                        y: 4.0,
+                        r: 18.5,
                     },
                     Content::Media(m) => Shape {
-                        w: compact_media_width(m, 200.0, 280.0),
-                        h: 30.0,
-                        y: 5.0,
-                        r: 15.0,
+                        w: compact_media_width(m, 240.0, 320.0),
+                        h: 37.0,
+                        y: 4.0,
+                        r: 18.5,
                     },
                     Content::Activity { .. } | Content::Message(_) => Shape {
-                        w: 280.0,
-                        h: 30.0,
-                        y: 5.0,
-                        r: 15.0,
+                        w: 320.0,
+                        h: 37.0,
+                        y: 4.0,
+                        r: 18.5,
                     },
                     Content::Attention(_) => Shape {
-                        w: 310.0,
-                        h: 30.0,
-                        y: 5.0,
-                        r: 15.0,
+                        w: 340.0,
+                        h: 37.0,
+                        y: 4.0,
+                        r: 18.5,
                     },
                 }
             }
@@ -148,11 +168,18 @@ pub fn target(style: NotchStyle, content: &Content, expanded: bool) -> Shape {
                 expanded_shape(style, content)
             } else {
                 match content {
+                    // Droppy notch: 180 px, rounded 16 px at the bottom.
                     Content::Idle | Content::Shelf(_) => Shape {
-                        w: 188.0,
+                        w: 180.0,
                         h: 32.0,
                         y: 0.0,
-                        r: 14.0,
+                        r: 16.0,
+                    },
+                    Content::Hud(_) => Shape {
+                        w: 320.0,
+                        h: 32.0,
+                        y: 0.0,
+                        r: 16.0,
                     },
                     Content::Media(m) => Shape {
                         w: compact_media_width(m, 212.0, 300.0),
@@ -319,13 +346,104 @@ pub fn draw(
         }
         // pearos-notch's tabs: what is live, and the shelf. Agents asking
         // for a decision always own the island, so no tabs then.
-        if matches!(content, Content::Idle | Content::Media(_) | Content::Shelf(_)) {
-            tabs(cv, xi, yi, wi, matches!(content, Content::Shelf(_)), hover, &mut regions);
+        if matches!(
+            content,
+            Content::Idle | Content::Media(_) | Content::Shelf(_)
+        ) {
+            tabs(
+                cv,
+                xi,
+                yi,
+                wi,
+                matches!(content, Content::Shelf(_)),
+                hover,
+                &mut regions,
+            );
         }
     } else {
         compact_row(cv, &th, fonts, xi, yi, wi, hi, content, style);
     }
     regions
+}
+
+/// A HUD inside the island: glyph on the left, a level bar, the value on
+/// the right (Droppy's notch HUDs).
+#[allow(clippy::too_many_arguments)]
+fn hud_row(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    fonts: &Fonts,
+    x: i32,
+    w: i32,
+    mid: f32,
+    baseline: i32,
+    pad: i32,
+    hd: &crate::hud::Hud,
+) {
+    use crate::hud::HudKind;
+    let white = Rgba::rgb(255, 255, 255);
+    let gx = (x + pad + 12) as f32;
+    match hd.kind {
+        HudKind::Volume => cv.icon_volume(
+            gx,
+            mid,
+            14.0,
+            if hd.on { 0 } else { hd.level.unwrap_or(50) },
+            white,
+        ),
+        HudKind::Brightness => cv.icon_sun(gx, mid, white),
+        HudKind::Charging => cv.icon_battery(
+            gx - 2.0,
+            mid,
+            hd.level.unwrap_or(0),
+            white,
+            if hd.on { th.success } else { white },
+        ),
+        HudKind::Focus => cv.icon_moon(
+            gx,
+            mid,
+            if hd.on {
+                Rgba::rgb(0xbf, 0x5a, 0xf2)
+            } else {
+                white
+            },
+        ),
+        HudKind::Unlocked => padlock(cv, gx, mid, true, white),
+    }
+    let label = crate::hud::label(hd);
+    let lw = text_width(fonts.semibold.as_ref(), &label, 12.5);
+    let lx = x + w - pad - 6 - lw;
+    cv.text(fonts.semibold.as_ref(), &label, lx, baseline, 12.5, white);
+    if crate::hud::has_bar(hd) {
+        let bx = x + pad + 32;
+        let bw = (lx - 12 - bx).max(20);
+        let by = mid as i32 - 2;
+        cv.round_rect(bx, by, bw, 4, 2.0, Rgba::rgba(255, 255, 255, 54));
+        let f = (bw as f32 * hd.level.unwrap_or(0) as f32 / 100.0).round() as i32;
+        if f > 0 {
+            cv.round_rect(bx, by, f.max(4), 4, 2.0, white);
+        }
+    }
+}
+
+/// A padlock, closed or with its shackle swung open (the iPhone unlock).
+pub fn padlock(cv: &mut Canvas<'_>, cx: f32, cy: f32, open: bool, c: Rgba) {
+    let (bw, bh) = (12, 9);
+    let (bx, by) = (cx as i32 - bw / 2, cy as i32 - 1);
+    cv.round_rect(bx, by, bw, bh, 2.0, c);
+    // Shackle: an arch over the body; open lifts and shifts it right.
+    let (sx, sy) = if open {
+        (cx + 4.0, cy - 7.0)
+    } else {
+        (cx, cy - 4.0)
+    };
+    cv.ring(sx, sy, 4.0, 1.8, c);
+    if !open {
+        cv.fill_rect(bx + 2, by - 4, 2, 4, c);
+        cv.fill_rect(bx + bw - 4, by - 4, 2, 4, c);
+    } else {
+        cv.fill_rect(bx + bw - 4, by - 4, 2, 4, c);
+    }
 }
 
 /// Two small round tabs centred at the top of the card, where no content
@@ -348,7 +466,14 @@ fn tabs(
         let on = shelf == is_shelf;
         let hot = hovered(hover, bx, top, d, d);
         if on || hot {
-            cv.round_rect(bx, top, d, d, d as f32 / 2.0, Rgba::rgba(255, 255, 255, if on { 40 } else { 22 }));
+            cv.round_rect(
+                bx,
+                top,
+                d,
+                d,
+                d as f32 / 2.0,
+                Rgba::rgba(255, 255, 255, if on { 40 } else { 22 }),
+            );
         }
         let (cx, cy) = ((bx + d / 2) as f32, (top + d / 2) as f32);
         let ink = Rgba::rgba(255, 255, 255, if on { 255 } else { 150 });
@@ -393,7 +518,14 @@ fn shelf_body(
         cv.stroke_round_rect(dx, dy, dw, dh, 14.0, 1.2, Rgba::rgba(255, 255, 255, 60));
         let msg = "Drop files here to keep them close";
         let tw = text_width(fonts.medium.as_ref(), msg, 12.5);
-        cv.text(fonts.medium.as_ref(), msg, dx + (dw - tw) / 2, dy + dh / 2 + 4, 12.5, Rgba::rgba(255, 255, 255, 150));
+        cv.text(
+            fonts.medium.as_ref(),
+            msg,
+            dx + (dw - tw) / 2,
+            dy + dh / 2 + 4,
+            12.5,
+            Rgba::rgba(255, 255, 255, 150),
+        );
         return;
     }
     let cols = 4;
@@ -404,12 +536,31 @@ fn shelf_body(
         let (c, r) = ((i as i32) % cols, (i as i32) / cols);
         let (tx, ty) = (bx + c * (tw + gap), top + r * (th_ + gap));
         let hot = hovered(hover, tx, ty, tw, th_);
-        cv.round_rect(tx, ty, tw, th_, 10.0, Rgba::rgba(255, 255, 255, if hot { 34 } else { 20 }));
+        cv.round_rect(
+            tx,
+            ty,
+            tw,
+            th_,
+            10.0,
+            Rgba::rgba(255, 255, 255, if hot { 34 } else { 20 }),
+        );
         // A document glyph tinted by kind, then the name.
         let col = file_tint(p);
         cv.round_rect(tx + 8, ty + (th_ - 22) / 2, 17, 22, 3.0, col);
-        cv.fill_rect(tx + 11, ty + (th_ - 22) / 2 + 8, 10, 1, Rgba::rgba(255, 255, 255, 160));
-        cv.fill_rect(tx + 11, ty + (th_ - 22) / 2 + 12, 8, 1, Rgba::rgba(255, 255, 255, 160));
+        cv.fill_rect(
+            tx + 11,
+            ty + (th_ - 22) / 2 + 8,
+            10,
+            1,
+            Rgba::rgba(255, 255, 255, 160),
+        );
+        cv.fill_rect(
+            tx + 11,
+            ty + (th_ - 22) / 2 + 12,
+            8,
+            1,
+            Rgba::rgba(255, 255, 255, 160),
+        );
         cv.text_truncated(
             fonts.medium.as_ref(),
             &crate::shelf::label(p),
@@ -428,7 +579,12 @@ fn shelf_body(
         });
         if hot {
             let (xx, xy) = (tx + tw - 16, ty + 3);
-            cv.circle((xx + 6) as f32, (xy + 6) as f32, 6.5, Rgba::rgba(255, 255, 255, 60));
+            cv.circle(
+                (xx + 6) as f32,
+                (xy + 6) as f32,
+                6.5,
+                Rgba::rgba(255, 255, 255, 60),
+            );
             cv.text(fonts.semibold.as_ref(), "×", xx + 2, xy + 10, 11.0, th.text);
             regions.push(Region {
                 x: xx - 2,
@@ -462,7 +618,14 @@ fn media_waveform(cv: &mut Canvas<'_>, x: i32, mid: f32, active: bool) {
     for (i, bh) in [7, 13, 9, 14, 6].into_iter().enumerate() {
         let h = if active { bh } else { 4 };
         let a = if active { 236 } else { 96 };
-        cv.round_rect(x + i as i32 * 4, (mid as i32) - h / 2, 2, h, 1.0, Rgba::rgba(255, 255, 255, a));
+        cv.round_rect(
+            x + i as i32 * 4,
+            (mid as i32) - h / 2,
+            2,
+            h,
+            1.0,
+            Rgba::rgba(255, 255, 255, a),
+        );
     }
 }
 
@@ -489,6 +652,7 @@ fn compact_row(
     let pad = if style == NotchStyle::Island { 10 } else { 14 };
     match content {
         Content::Idle | Content::Shelf(_) => {}
+        Content::Hud(hd) => hud_row(cv, th, fonts, x, w, mid, baseline, pad, hd),
         Content::Message(t) => {
             // Snug leading icon + crisp title.
             cv.icon_bell((x + pad + 8) as f32, mid, th.text);
@@ -583,7 +747,12 @@ fn compact_row(
             if m.playing {
                 media_waveform(cv, trail_x, mid, true);
             } else {
-                cv.icon_pause((trail_x + 9) as f32, mid, 10.0, Rgba::rgba(255, 255, 255, 160));
+                cv.icon_pause(
+                    (trail_x + 9) as f32,
+                    mid,
+                    10.0,
+                    Rgba::rgba(255, 255, 255, 160),
+                );
             }
 
             let line = if m.title.is_empty() {
@@ -659,8 +828,8 @@ fn expanded_body(
     let (bx, by, bw, bh) = body;
     let buttons_y = by + bh - 32;
     match content {
-        // Drawn by `shelf_body`.
-        Content::Shelf(_) => {}
+        // Drawn by `shelf_body`; HUDs never open.
+        Content::Shelf(_) | Content::Hud(_) => {}
         Content::Idle => {
             // Crisp Apple glance: bold tracked clock, medium date, quiet facts.
             cv.text_tracked(
@@ -791,7 +960,14 @@ fn expanded_body(
                 let time_col = Rgba::rgba(255, 255, 255, 148);
                 let ew = text_width(fonts.medium.as_ref(), &elapsed, 11.2);
                 let total_w = text_width(fonts.medium.as_ref(), &total, 11.2);
-                cv.text(fonts.medium.as_ref(), &elapsed, bx, row_y + 4, 11.2, time_col);
+                cv.text(
+                    fonts.medium.as_ref(),
+                    &elapsed,
+                    bx,
+                    row_y + 4,
+                    11.2,
+                    time_col,
+                );
                 cv.text(
                     fonts.medium.as_ref(),
                     &total,
@@ -824,7 +1000,9 @@ fn expanded_body(
                             y: bar_y - 7,
                             w: (x1 - x0).max(1),
                             h: bar_h + 14,
-                            action: HitAction::Media(Control::SeekTo(crate::media::seek_target(i, n, len))),
+                            action: HitAction::Media(Control::SeekTo(crate::media::seek_target(
+                                i, n, len,
+                            ))),
                         });
                     }
                 }
@@ -1111,8 +1289,8 @@ mod tests {
             length_us: Some(203_000_000),
         });
         let idle = target(NotchStyle::Island, &Content::Idle, false);
-        // pearOS idle island: 170 x 30, 5 px below the top edge.
-        assert_eq!((idle.w, idle.h, idle.y), (170.0, 30.0, 5.0));
+        // Droppy's Dynamic Island: 210 x 37, 4 px below the top edge.
+        assert_eq!((idle.w, idle.h, idle.y), (210.0, 37.0, 4.0));
         assert!(
             (idle.r - idle.h / 2.0).abs() < 0.6,
             "idle island is a capsule"
@@ -1121,7 +1299,7 @@ mod tests {
         assert_eq!(busy.h, idle.h, "a live activity keeps the pill's height");
         assert!(busy.w > idle.w, "and widens");
         let open = target(NotchStyle::Island, &media, true);
-        assert_eq!(open.w, 440.0);
+        assert_eq!(open.w, 450.0, "Droppy expanded shelf / media width");
         assert!(
             (130.0..=160.0).contains(&open.h),
             "expanded media height {}",

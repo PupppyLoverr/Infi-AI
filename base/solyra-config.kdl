@@ -378,8 +378,15 @@ binds {
     Alt+Print { screenshot-window; }
 
     // Media and volume keys.
-    XF86AudioRaiseVolume allow-when-locked=true { spawn-sh "wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.1+ -l 1.0"; }
-    XF86AudioLowerVolume allow-when-locked=true { spawn-sh "wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.1-"; }
-    XF86AudioMute        allow-when-locked=true { spawn-sh "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"; }
+    // Volume, brightness and media keys show a HUD in the notch (Droppy-style).
+    XF86AudioRaiseVolume allow-when-locked=true { spawn-sh "wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.05+ -l 1.0; solyra-panel hud volume"; }
+    XF86AudioLowerVolume allow-when-locked=true { spawn-sh "wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.05-; solyra-panel hud volume"; }
+    XF86AudioMute        allow-when-locked=true { spawn-sh "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle; solyra-panel hud volume"; }
     XF86AudioMicMute     allow-when-locked=true { spawn-sh "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle"; }
+    XF86MonBrightnessUp   allow-when-locked=true { spawn-sh "brightnessctl -q set 5%+; solyra-panel hud brightness"; }
+    XF86MonBrightnessDown allow-when-locked=true { spawn-sh "brightnessctl -q set 5%-; solyra-panel hud brightness"; }
+    XF86AudioPlay        allow-when-locked=true { spawn "solyra-panel" "media" "play-pause"; }
+    XF86AudioPause       allow-when-locked=true { spawn "solyra-panel" "media" "play-pause"; }
+    XF86AudioNext        allow-when-locked=true { spawn "solyra-panel" "media" "next"; }
+    XF86AudioPrev        allow-when-locked=true { spawn "solyra-panel" "media" "previous"; }
 }

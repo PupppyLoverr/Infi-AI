@@ -223,6 +223,7 @@ fn desktop_page(status: Signal<String>) -> View {
             ))
             .child(caption("Shows approvals, agent progress, notifications and what is playing, and a shelf you can drop files on."))
             .child(conf_toggle(cx, &status, "notch_hover", "Open the notch when the pointer rests on it", look.notch_hover))
+            .child(conf_toggle(cx, &status, "spotlight_in_notch", "Spotlight opens inside the notch", look.spotlight_in_notch))
             .child(text("Widgets").font_bold())
             .child(conf_toggle(cx, &status, "desktop_widgets", "Calendar and weather on the desktop", look.desktop_widgets))
             .child(weather_city_row(cx, &status))

@@ -118,14 +118,22 @@ pub fn decode_png(bytes: &[u8]) -> Option<Icon> {
 #[inline]
 pub fn lerp_rgba(a: Rgba, b: Rgba, t: f32) -> Rgba {
     let t = t.clamp(0.0, 1.0);
-    let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round().clamp(0.0, 255.0) as u8;
+    let m = |x: u8, y: u8| {
+        (x as f32 + (y as f32 - x as f32) * t)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
     Rgba::rgba(m(a.0, b.0), m(a.1, b.1), m(a.2, b.2), m(a.3, b.3))
 }
 
 #[inline]
 fn add_light(c: Rgba, boost: f32) -> Rgba {
     let b = boost.clamp(0.0, 1.0);
-    let lift = |ch: u8| (ch as f32 + (255.0 - ch as f32) * b).round().clamp(0.0, 255.0) as u8;
+    let lift = |ch: u8| {
+        (ch as f32 + (255.0 - ch as f32) * b)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
     Rgba::rgba(lift(c.0), lift(c.1), lift(c.2), c.3)
 }
 
@@ -503,8 +511,15 @@ impl<'a> Canvas<'a> {
         color: Rgba,
     ) -> i32 {
         let (s, sf) = (self.s(), self.s() as f32);
-        let adv =
-            self.text_tracked_raw(font, value, x * s, baseline * s, size * sf, tracking * sf, color);
+        let adv = self.text_tracked_raw(
+            font,
+            value,
+            x * s,
+            baseline * s,
+            size * sf,
+            tracking * sf,
+            color,
+        );
         (adv as f32 / sf).round() as i32
     }
 
@@ -549,8 +564,15 @@ impl<'a> Canvas<'a> {
                 );
             }
         }
-        let adv =
-            self.text_tracked_raw(font, value, x * s, baseline * s, size * sf, tracking * sf, color);
+        let adv = self.text_tracked_raw(
+            font,
+            value,
+            x * s,
+            baseline * s,
+            size * sf,
+            tracking * sf,
+            color,
+        );
         (adv as f32 / sf).round() as i32
     }
 
@@ -1301,11 +1323,8 @@ impl<'a> Canvas<'a> {
                 // over turquoise twilight sea below horizon (ny > 0.68).
                 let mut col = if ny < 0.68 {
                     let t = ny / 0.68;
-                    let sky = lerp_rgba(
-                        Rgba::rgb(0x0f, 0x3b, 0x5c),
-                        Rgba::rgb(0x28, 0x76, 0x8a),
-                        t,
-                    );
+                    let sky =
+                        lerp_rgba(Rgba::rgb(0x0f, 0x3b, 0x5c), Rgba::rgb(0x28, 0x76, 0x8a), t);
                     // Warm golden sunset bloom near horizon.
                     let dx = nx - 0.54;
                     let dy = (ny - 0.64) * 1.15;
@@ -1316,11 +1335,8 @@ impl<'a> Canvas<'a> {
                     lerp_rgba(c1, Rgba::rgb(0xff, 0xdf, 0xa8), sun * sun * 0.82)
                 } else {
                     let t = (ny - 0.68) / 0.32;
-                    let sea = lerp_rgba(
-                        Rgba::rgb(0x1f, 0x7a, 0x7a),
-                        Rgba::rgb(0x0a, 0x2c, 0x3d),
-                        t,
-                    );
+                    let sea =
+                        lerp_rgba(Rgba::rgb(0x1f, 0x7a, 0x7a), Rgba::rgb(0x0a, 0x2c, 0x3d), t);
                     let ref_dx = (nx - 0.54).abs();
                     let shimmer = (1.0 - ref_dx * 3.6).clamp(0.0, 1.0) * (1.0 - t * 0.65);
                     lerp_rgba(sea, Rgba::rgb(0xff, 0xc8, 0x82), shimmer * shimmer * 0.55)
@@ -1424,7 +1440,14 @@ impl<'a> Canvas<'a> {
     pub fn icon_branch(&mut self, cx: f32, cy: f32, size: f32, color: Rgba) {
         let u = size * 0.30;
         self.line(cx - u * 0.55, cy - u, cx - u * 0.55, cy + u, 1.4, color);
-        self.line(cx - u * 0.55, cy + u * 0.15, cx + u * 0.65, cy - u * 0.45, 1.4, color);
+        self.line(
+            cx - u * 0.55,
+            cy + u * 0.15,
+            cx + u * 0.65,
+            cy - u * 0.45,
+            1.4,
+            color,
+        );
         self.circle(cx - u * 0.55, cy - u, 1.8, color);
         self.circle(cx - u * 0.55, cy + u, 1.8, color);
         self.circle(cx + u * 0.65, cy - u * 0.55, 1.8, color);
@@ -1533,8 +1556,23 @@ impl<'a> Canvas<'a> {
         let x = cx.round() as i32 - w / 2 - 1;
         let y = cy.round() as i32 - h / 2;
         self.round_rect(x, y, w, h, 3.0, Rgba::rgba(color.0, color.1, color.2, 26));
-        self.stroke_round_rect(x, y, w, h, 3.0, 1.15, Rgba::rgba(color.0, color.1, color.2, 200));
-        self.round_rect(x + w + 1, y + 3, 2, 4, 1.0, Rgba::rgba(color.0, color.1, color.2, 180));
+        self.stroke_round_rect(
+            x,
+            y,
+            w,
+            h,
+            3.0,
+            1.15,
+            Rgba::rgba(color.0, color.1, color.2, 200),
+        );
+        self.round_rect(
+            x + w + 1,
+            y + 3,
+            2,
+            4,
+            1.0,
+            Rgba::rgba(color.0, color.1, color.2, 180),
+        );
         let fill_w = (((w - 4) as f32) * (pct.min(100) as f32 / 100.0)).round() as i32;
         if fill_w > 0 {
             self.round_rect(x + 2, y + 2, fill_w, h - 4, 1.5, fill_col);
@@ -1623,7 +1661,8 @@ impl<'a> Canvas<'a> {
                 if cov <= 0.0 {
                     continue;
                 }
-                let t = ((px as f32 + 0.5 - fx).hypot(py as f32 + 0.5 - fy) / reach).clamp(0.0, 1.0);
+                let t =
+                    ((px as f32 + 0.5 - fx).hypot(py as f32 + 0.5 - fy) / reach).clamp(0.0, 1.0);
                 self.blend(px, py, lerp_rgba(inner, outer, t.sqrt()), cov);
             }
         }
@@ -1633,15 +1672,7 @@ impl<'a> Canvas<'a> {
     /// *body* covers `size` logical pixels at (`x`, `y`). `grow` scales it
     /// further and `lift` moves it up by that fraction of its size.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw_icon_body(
-        &mut self,
-        x: i32,
-        y: i32,
-        size: i32,
-        icon: &Icon,
-        grow: f32,
-        lift: f32,
-    ) {
+    pub fn draw_icon_body(&mut self, x: i32, y: i32, size: i32, icon: &Icon, grow: f32, lift: f32) {
         let s = self.s() as f32;
         let body = size as f32 * s;
         let box_px = (body * grow / crate::icons::BODY).round() as i32;
@@ -1682,7 +1713,14 @@ impl<'a> Canvas<'a> {
             }
         }
 
-        self.squircle_shadow(x, y, size, (s * 0.04).clamp(1.0, 2.0), (s * 0.10).clamp(2.5, 5.0), 40);
+        self.squircle_shadow(
+            x,
+            y,
+            size,
+            (s * 0.04).clamp(1.0, 2.0),
+            (s * 0.10).clamp(2.5, 5.0),
+            40,
+        );
         self.squircle_vgrad(
             x,
             y,
@@ -1721,7 +1759,14 @@ impl<'a> Canvas<'a> {
     /// The product mark: white `nL` on a black squircle.
     fn brand_tile(&mut self, x: i32, y: i32, size: i32, fonts: &Fonts) {
         let s = size as f32;
-        self.squircle_shadow(x, y, size, (s * 0.04).clamp(1.0, 2.0), (s * 0.10).clamp(2.5, 5.0), 56);
+        self.squircle_shadow(
+            x,
+            y,
+            size,
+            (s * 0.04).clamp(1.0, 2.0),
+            (s * 0.10).clamp(2.5, 5.0),
+            56,
+        );
         self.squircle_vgrad(
             x,
             y,
@@ -1754,7 +1799,14 @@ impl<'a> Canvas<'a> {
     fn agent_tile(&mut self, x: i32, y: i32, size: i32) {
         let s = size as f32;
         let (cx, cy) = (x as f32 + s * 0.5, y as f32 + s * 0.5);
-        self.squircle_shadow(x, y, size, (s * 0.04).clamp(1.0, 2.0), (s * 0.10).clamp(2.5, 5.0), 56);
+        self.squircle_shadow(
+            x,
+            y,
+            size,
+            (s * 0.04).clamp(1.0, 2.0),
+            (s * 0.10).clamp(2.5, 5.0),
+            56,
+        );
         self.squircle_vgrad(
             x,
             y,
@@ -1763,7 +1815,14 @@ impl<'a> Canvas<'a> {
             Rgba::rgb(0x0a, 0x0c, 0x10),
             0.0,
         );
-        self.circle_radial(cx, cy, s * 0.46, (0.0, 0.0), Rgba::rgba(0x2f, 0x9b, 0xff, 70), Rgba::rgba(0x2f, 0x9b, 0xff, 0));
+        self.circle_radial(
+            cx,
+            cy,
+            s * 0.46,
+            (0.0, 0.0),
+            Rgba::rgba(0x2f, 0x9b, 0xff, 70),
+            Rgba::rgba(0x2f, 0x9b, 0xff, 0),
+        );
         let r = s * 0.27;
         self.circle_radial(
             cx,
@@ -1773,8 +1832,19 @@ impl<'a> Canvas<'a> {
             Rgba::rgb(0xd6, 0xf0, 0xff),
             Rgba::rgb(0x06, 0x56, 0xdc),
         );
-        self.ring(cx, cy, r - 0.4, (s * 0.03).clamp(0.8, 1.4), Rgba::rgba(255, 255, 255, 70));
-        self.circle(cx - r * 0.34, cy - r * 0.40, r * 0.20, Rgba::rgba(255, 255, 255, 120));
+        self.ring(
+            cx,
+            cy,
+            r - 0.4,
+            (s * 0.03).clamp(0.8, 1.4),
+            Rgba::rgba(255, 255, 255, 70),
+        );
+        self.circle(
+            cx - r * 0.34,
+            cy - r * 0.40,
+            r * 0.20,
+            Rgba::rgba(255, 255, 255, 120),
+        );
         self.squircle_glass_rim(
             x,
             y,

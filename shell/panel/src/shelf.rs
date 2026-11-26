@@ -113,7 +113,10 @@ mod tests {
         );
         assert_eq!(
             v,
-            vec![PathBuf::from("/home/me/My Report.pdf"), PathBuf::from("/tmp/a.txt")]
+            vec![
+                PathBuf::from("/home/me/My Report.pdf"),
+                PathBuf::from("/tmp/a.txt")
+            ]
         );
         assert_eq!(parse_uri_list("file:///a%2"), vec![PathBuf::from("/a%2")]);
     }
@@ -136,7 +139,11 @@ mod tests {
         let real = dir.join("it's here.txt");
         std::fs::write(&real, "x").unwrap();
         let list = dir.join("shelf.list");
-        std::fs::write(&list, format!("{}\n/definitely/not/here\nrelative\n", real.display())).unwrap();
+        std::fs::write(
+            &list,
+            format!("{}\n/definitely/not/here\nrelative\n", real.display()),
+        )
+        .unwrap();
         assert_eq!(load_from(Some(&list)), vec![real.clone()]);
         assert_eq!(label(&real), "it's here.txt");
         assert!(open_command(&real).ends_with("it'\\''s here.txt'"));

@@ -17,6 +17,7 @@ mod agent;
 mod canvas;
 mod desk;
 mod dock;
+mod hud;
 mod icons;
 mod island;
 mod launcher;
@@ -27,9 +28,10 @@ mod menu;
 mod notify;
 mod pam;
 mod shelf;
-mod widgets;
 mod state;
 mod surfaces;
+mod widgets;
+use solyra_conf::look::NotchStyle;
 mod tokens;
 
 #[cfg(test)]
@@ -47,12 +49,10 @@ use smithay_client_toolkit::data_device_manager::{
     data_source::DataSourceHandler,
     DataDeviceManagerState, WritePipe,
 };
-use smithay_client_toolkit::reexports::client::protocol::{
-    wl_data_device::WlDataDevice,
-    wl_data_device_manager::DndAction,
-    wl_data_source::WlDataSource,
-};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
+use smithay_client_toolkit::reexports::client::protocol::{
+    wl_data_device::WlDataDevice, wl_data_device_manager::DndAction, wl_data_source::WlDataSource,
+};
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
 use smithay_client_toolkit::registry_handlers;
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind, PointerHandler};
@@ -70,10 +70,9 @@ use state::{
     WindowInfo,
 };
 use surfaces::{
-    draw_about, draw_agents, draw_bar, draw_control, draw_island_card, draw_launcher,
-    draw_notifs, spot_layout, AgentsView,
-    HitAction, Live, Region, AGENTS_H, AGENTS_W, BAR_HEIGHT, CONTROL_H, CONTROL_W, ISLAND_CARD_H,
-    ISLAND_CARD_W,
+    draw_about, draw_agents, draw_bar, draw_control, draw_island_card, draw_launcher, draw_notifs,
+    spot_layout, AgentsView, HitAction, Live, Region, AGENTS_H, AGENTS_W, BAR_HEIGHT, CONTROL_H,
+    CONTROL_W, ISLAND_CARD_H, ISLAND_CARD_W,
 };
 use tokens::Theme;
 use wayland_client::globals::registry_queue_init;
@@ -111,6 +110,8 @@ fn main() {
             "toggle-agents" | "agents" => Some("toggle-agents".into()),
             "close" => Some("close".into()),
             "dock" => args.get(2).map(|v| format!("dock {v}")),
+            "hud" => args.get(2).map(|v| format!("hud {v}")),
+            "media" => args.get(2).map(|v| format!("media {v}")),
             "wallpaper" => args.get(2).map(|v| format!("wallpaper {v}")),
             "wallpaper-file" => args
                 .get(3)
@@ -268,6 +269,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         island_left_at: None,
         island_hover_at: None,
         island_tab_shelf: false,
+        hud: None,
+        last_charging: hud::charging(),
         shelf: shelf::load(),
         island_by_hover: false,
         media: media_slot,
@@ -284,6 +287,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         launcher_items: Vec::new(),
         launcher_query: String::new(),
         launcher_selected: 0,
+        spot_in_island: None,
         shift_held: false,
         pointer: None,
         keyboard: None,
@@ -307,8 +311,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     app.ensure_desk();
 
     // Re-apply the saved wallpaper: the session config only starts a default.
-    if app.prefs.wallpaper_file.is_some() || app.prefs.wallpaper != state::WallpaperPreset::Silk
-    {
+    if app.prefs.wallpaper_file.is_some() || app.prefs.wallpaper != state::WallpaperPreset::Silk {
         app.apply_saved_wallpaper();
     }
 
@@ -522,6 +525,10 @@ struct App {
     island_tab_shelf: bool,
     /// Files parked on the notch.
     shelf: Vec<std::path::PathBuf>,
+    /// A HUD showing in the notch, and since when.
+    hud: Option<(hud::Hud, Instant)>,
+    /// The charging state last seen, to show a HUD when it changes.
+    last_charging: Option<bool>,
     /// The island was opened by hovering, so it closes as soon as the
     /// pointer leaves (a clicked-open island lingers).
     island_by_hover: bool,
@@ -547,6 +554,9 @@ struct App {
     launcher_items: Vec<launcher::Item>,
     launcher_query: String,
     launcher_selected: usize,
+    /// Spotlight is open inside the notch / island, and when it opened
+    /// (for the morph).
+    spot_in_island: Option<Instant>,
     shift_held: bool,
 
     pointer: Option<WlPointer>,
@@ -574,8 +584,7 @@ struct App {
 
 impl App {
     fn theme(&self) -> Theme {
-        let accent =
-            tokens::Accent::parse(&self.prefs.look.accent).unwrap_or(tokens::Accent::Blue);
+        let accent = tokens::Accent::parse(&self.prefs.look.accent).unwrap_or(tokens::Accent::Blue);
         let t = Theme::with(self.prefs.theme, accent);
         if self.prefs.look.opaque {
             t.opaque()
@@ -715,14 +724,44 @@ impl App {
                     self.launcher_query.clear();
                     self.launcher_selected = 0;
                     self.refresh_launcher_items();
-                    let lay = spot_layout(&self.launcher_query, &self.launcher_items);
+                    let in_island = self.prefs.look.spotlight_in_notch
+                        && self.prefs.look.notch != NotchStyle::Off;
+                    let notch = self.prefs.look.notch == NotchStyle::Notch;
+                    let (lay, top, ns) = if in_island {
+                        (
+                            surfaces::island_spot_layout(
+                                &self.launcher_query,
+                                &self.launcher_items,
+                                notch,
+                            ),
+                            0,
+                            "solyra-launcher-island",
+                        )
+                    } else {
+                        (
+                            spot_layout(&self.launcher_query, &self.launcher_items),
+                            self.spotlight_top(),
+                            "solyra-launcher",
+                        )
+                    };
+                    self.spot_in_island = in_island.then(Instant::now);
                     self.launcher = Some(self.open_overlay(
-                        "solyra-launcher",
+                        ns,
                         Anchor::TOP,
-                        (self.spotlight_top(), 0, 0, 0),
+                        (top, 0, 0, 0),
                         (lay.w, lay.h),
                         KeyboardInteractivity::Exclusive,
                     ));
+                    if in_island {
+                        // Frames for the morph out of the island.
+                        let wake = self.waker.clone();
+                        std::thread::spawn(move || {
+                            for _ in 0..20 {
+                                std::thread::sleep(Duration::from_millis(16));
+                                wake();
+                            }
+                        });
+                    }
                 }
             }
             ShellCmd::ToggleControl => {
@@ -795,7 +834,13 @@ impl App {
             }
             ShellCmd::Lock => {
                 self.close_overlays();
-                spawn_lock();
+                spawn_lock(self.cmd_queue.clone(), self.waker.clone());
+            }
+            ShellCmd::Hud(kind) => self.show_hud(kind),
+            ShellCmd::MediaKey(control) => {
+                if let Some(m) = self.media.lock().ok().and_then(|m| m.clone()) {
+                    media::control(m.bus, control);
+                }
             }
             ShellCmd::IslandShelf(on) => {
                 self.island_tab_shelf = on;
@@ -992,10 +1037,33 @@ impl App {
     /// Fit the Spotlight surface to the capsule and card it is showing, and
     /// limit input and blur to those two shapes.
     fn sync_launcher(&mut self) {
-        let lay = spot_layout(&self.launcher_query, &self.launcher_items);
+        let in_island = self.spot_in_island.is_some();
+        let lay = if in_island {
+            surfaces::island_spot_layout(
+                &self.launcher_query,
+                &self.launcher_items,
+                self.prefs.look.notch == NotchStyle::Notch,
+            )
+        } else {
+            spot_layout(&self.launcher_query, &self.launcher_items)
+        };
         let Some(slot) = self.launcher.as_mut() else {
             return;
         };
+        if in_island {
+            // Solid black: no blur, input only on the shape.
+            if (slot.width, slot.height) != (lay.w, lay.h) {
+                slot.layer.set_size(lay.w, lay.h);
+                slot.width = lay.w;
+                slot.height = lay.h;
+            }
+            let (r, _) = surfaces::island_spot_shape(&lay);
+            if let Ok(region) = smithay_client_toolkit::compositor::Region::new(&self.compositor) {
+                region.add(r.x, r.y, r.w, r.h);
+                slot.surface.set_input_region(Some(region.wl_region()));
+            }
+            return;
+        }
         if (slot.width, slot.height) != (lay.w, lay.h) {
             slot.layer.set_size(lay.w, lay.h);
             slot.width = lay.w;
@@ -1015,7 +1083,13 @@ impl App {
             }
             slot.surface.set_input_region(Some(region.wl_region()));
         }
-        set_blur(self.blur_mgr.as_ref(), &self.compositor, &self.qh, slot, rects);
+        set_blur(
+            self.blur_mgr.as_ref(),
+            &self.compositor,
+            &self.qh,
+            slot,
+            rects,
+        );
     }
 
     fn refresh_launcher_items(&mut self) {
@@ -1174,6 +1248,19 @@ impl App {
         self.retarget_island();
     }
 
+    /// Show a HUD in the notch for a moment, reading the level now.
+    fn show_hud(&mut self, kind: hud::HudKind) {
+        let battery = read_telemetry().battery_pct;
+        self.hud = Some((hud::read(kind, self.prefs.dnd_on, battery), Instant::now()));
+        self.needs_redraw = true;
+        self.retarget_island();
+        let wake = self.waker.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(hud::SHOW_FOR + Duration::from_millis(60));
+            wake();
+        });
+    }
+
     /// What the island shows, most important first: something waiting on
     /// the human, a fresh message, what is playing, an agent at work.
     fn island_content(&self) -> island::Content {
@@ -1195,6 +1282,11 @@ impl App {
                 choices: p.choices.clone(),
                 sent: t.decision_sent.is_some(),
             });
+        }
+        if let Some((h, at)) = &self.hud {
+            if at.elapsed() < hud::SHOW_FOR {
+                return island::Content::Hud(h.clone());
+            }
         }
         if self.island_expanded && self.island_tab_shelf {
             return island::Content::Shelf(self.shelf.clone());
@@ -1302,15 +1394,29 @@ impl App {
             self.island_msg = None;
         }
 
+        if self
+            .hud
+            .as_ref()
+            .is_some_and(|(_, at)| at.elapsed() >= hud::SHOW_FOR)
+        {
+            self.hud = None;
+        }
+        let charging = hud::charging();
+        if charging.is_some() && self.last_charging.is_some() && charging != self.last_charging {
+            self.show_hud(hud::HudKind::Charging);
+        }
+        self.last_charging = charging;
+
         self.update_dock_autohide();
         self.ensure_dock();
         self.ensure_desk();
         self.ensure_widgets();
         // pearos-notch: rest the pointer on the island for 300 ms and it opens.
         if let Some(t) = self.island_hover_at {
-            let still_over = self.island.as_ref().is_some_and(|s| {
-                self.pointer_surface.as_ref() == Some(&s.surface)
-            });
+            let still_over = self
+                .island
+                .as_ref()
+                .is_some_and(|s| self.pointer_surface.as_ref() == Some(&s.surface));
             if !still_over {
                 self.island_hover_at = None;
             } else if t.elapsed() >= Duration::from_millis(300) && !self.island_expanded {
@@ -1382,7 +1488,13 @@ impl App {
                 } else {
                     Vec::new()
                 };
-                set_blur(self.blur_mgr.as_ref(), &self.compositor, &self.qh, &mut self.bar, rects);
+                set_blur(
+                    self.blur_mgr.as_ref(),
+                    &self.compositor,
+                    &self.qh,
+                    &mut self.bar,
+                    rects,
+                );
                 present(
                     buffer,
                     &self.bar.surface,
@@ -1448,7 +1560,13 @@ impl App {
                     }
                     _ => Vec::new(),
                 };
-                set_blur(self.blur_mgr.as_ref(), &self.compositor, &self.qh, &mut self.dock, rects);
+                set_blur(
+                    self.blur_mgr.as_ref(),
+                    &self.compositor,
+                    &self.qh,
+                    &mut self.dock,
+                    rects,
+                );
                 present(
                     buffer,
                     &self.dock.surface,
@@ -1459,9 +1577,7 @@ impl App {
                 if animating && !self.prefs.look.reduced_motion {
                     // Keep drawing frames while icons bounce or the smoothed
                     // pointer is still catching up.
-                    self.dock
-                        .surface
-                        .frame(&self.qh, self.dock.surface.clone());
+                    self.dock.surface.frame(&self.qh, self.dock.surface.clone());
                 }
             }
         }
@@ -1493,16 +1609,42 @@ impl App {
         }
 
         self.sync_launcher();
-        overlay!(self.launcher, |cv, hover| draw_launcher(
-            &mut cv,
-            &th,
-            &self.fonts,
-            &self.launcher_query,
-            &self.launcher_items,
-            self.launcher_selected,
-            &mut self.icons,
-            hover,
-        ));
+        if self.launcher.is_none() {
+            self.spot_in_island = None;
+        }
+        if let Some(opened) = self.spot_in_island {
+            let t = if self.prefs.look.reduced_motion {
+                1.0
+            } else {
+                (opened.elapsed().as_secs_f32() / 0.30).min(1.0)
+            };
+            let notch = self.prefs.look.notch == NotchStyle::Notch;
+            let accent =
+                tokens::Accent::parse(&self.prefs.look.accent).unwrap_or(tokens::Accent::Blue);
+            overlay!(self.launcher, |cv, hover| surfaces::draw_island_spotlight(
+                &mut cv,
+                &self.fonts,
+                accent,
+                &self.launcher_query,
+                &self.launcher_items,
+                self.launcher_selected,
+                &mut self.icons,
+                hover,
+                notch,
+                t,
+            ));
+        } else {
+            overlay!(self.launcher, |cv, hover| draw_launcher(
+                &mut cv,
+                &th,
+                &self.fonts,
+                &self.launcher_query,
+                &self.launcher_items,
+                self.launcher_selected,
+                &mut self.icons,
+                hover,
+            ));
+        }
         overlay!(self.control, |cv, hover| draw_control(
             &mut cv,
             &th,
@@ -1551,7 +1693,10 @@ impl App {
         let clock = chrono::Local::now()
             .format(self.prefs.look.clock_format())
             .to_string();
-        let date = chrono::Local::now().format("%a %-d %b").to_string().to_uppercase();
+        let date = chrono::Local::now()
+            .format("%a %-d %b")
+            .to_string()
+            .to_uppercase();
         let project_lines = desk::project_lines();
         let project_refs: Vec<&str> = project_lines.iter().map(String::as_str).collect();
         let view = AgentsView {
@@ -1743,7 +1888,14 @@ impl App {
         };
         let mut cv = Canvas::new(bytes, w, h, scale as i32);
         let today = chrono::Local::now().date_naive();
-        widgets::paint(&mut cv, &self.fonts, dark, today, weather.as_ref(), city_set);
+        widgets::paint(
+            &mut cv,
+            &self.fonts,
+            dark,
+            today,
+            weather.as_ref(),
+            city_set,
+        );
         // The weather card opens Settings › Desktop (where the city is set).
         slot.regions = vec![Region {
             x: widgets::CARD + widgets::GAP,
@@ -1754,9 +1906,17 @@ impl App {
         }];
         let rects: Vec<_> = [(0, 0), (widgets::CARD + widgets::GAP, 0)]
             .iter()
-            .flat_map(|&(x, y)| material::blur_rects(x, y, widgets::CARD, widgets::CARD, widgets::RADIUS))
+            .flat_map(|&(x, y)| {
+                material::blur_rects(x, y, widgets::CARD, widgets::CARD, widgets::RADIUS)
+            })
             .collect();
-        set_blur(self.blur_mgr.as_ref(), &self.compositor, &self.qh, slot, rects);
+        set_blur(
+            self.blur_mgr.as_ref(),
+            &self.compositor,
+            &self.qh,
+            slot,
+            rects,
+        );
         present(buffer, &slot.surface, w * scale, h * scale, scale as i32);
     }
 
@@ -1857,7 +2017,13 @@ impl App {
             slot.surface.set_input_region(Some(region.wl_region()));
         }
         // The island is opaque black: there is nothing to blur behind it.
-        set_blur(self.blur_mgr.as_ref(), &self.compositor, &self.qh, slot, Vec::new());
+        set_blur(
+            self.blur_mgr.as_ref(),
+            &self.compositor,
+            &self.qh,
+            slot,
+            Vec::new(),
+        );
         if moving {
             // Ask for the next frame; `CompositorHandler::frame` redraws.
             slot.surface.frame(&self.qh, slot.surface.clone());
@@ -1956,6 +2122,7 @@ impl App {
             HitAction::ToggleDnd => {
                 self.prefs.dnd_on = !self.prefs.dnd_on;
                 self.save_prefs();
+                self.show_hud(hud::HudKind::Focus);
             }
             HitAction::ToggleTheme => {
                 self.prefs.theme = match self.prefs.theme {
@@ -2068,13 +2235,11 @@ impl App {
         let os = std::fs::read_to_string("/etc/os-release")
             .ok()
             .and_then(|s| {
-                s.lines()
-                    .find(|l| l.starts_with("PRETTY_NAME="))
-                    .map(|l| {
-                        l.trim_start_matches("PRETTY_NAME=")
-                            .trim_matches('"')
-                            .to_string()
-                    })
+                s.lines().find(|l| l.starts_with("PRETTY_NAME=")).map(|l| {
+                    l.trim_start_matches("PRETTY_NAME=")
+                        .trim_matches('"')
+                        .to_string()
+                })
             })
             .unwrap_or_else(|| "Solyra Linux".into());
         let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease")
@@ -2476,15 +2641,27 @@ impl App {
 /// Start the lock screen in its own process (a crash there must never take
 /// the shell down, and the compositor keeps the session locked if it dies).
 /// Falls back to swaylock if Solyra's lock screen cannot start.
-fn spawn_lock() {
+/// When the person unlocks, the notch shows the open padlock for a moment.
+fn spawn_lock(queue: Arc<Mutex<Vec<ShellCmd>>>, wake: Arc<dyn Fn() + Send + Sync>) {
     let exe = std::env::current_exe().unwrap_or_else(|_| "solyra-panel".into());
-    let ok = std::process::Command::new(&exe)
+    match std::process::Command::new(&exe)
         .arg("lock")
         .stdin(std::process::Stdio::null())
         .spawn()
-        .is_ok();
-    if !ok {
-        let _ = std::process::Command::new("swaylock").spawn();
+    {
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                if child.wait().is_ok_and(|s| s.success()) {
+                    if let Ok(mut q) = queue.lock() {
+                        q.push(ShellCmd::Hud(hud::HudKind::Unlocked));
+                    }
+                    wake();
+                }
+            });
+        }
+        Err(_) => {
+            let _ = std::process::Command::new("swaylock").spawn();
+        }
     }
 }
 
@@ -2931,8 +3108,21 @@ impl App {
 /// Files dragged onto the notch open the shelf; dropping parks them there
 /// (`shelf.rs`). Only `text/uri-list` is taken, and only local files.
 impl DataDeviceHandler for App {
-    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, dd: &WlDataDevice, _: f64, _: f64, surface: &WlSurface) {
-        let Some(offer) = self.data_device.as_ref().filter(|d| d.inner() == dd).and_then(|d| d.data().drag_offer()) else {
+    fn enter(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        dd: &WlDataDevice,
+        _: f64,
+        _: f64,
+        surface: &WlSurface,
+    ) {
+        let Some(offer) = self
+            .data_device
+            .as_ref()
+            .filter(|d| d.inner() == dd)
+            .and_then(|d| d.data().drag_offer())
+        else {
             return;
         };
         let files = offer.with_mime_types(|m| m.iter().any(|t| t == URI_LIST));
@@ -2956,7 +3146,12 @@ impl DataDeviceHandler for App {
     fn selection(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice) {}
 
     fn drop_performed(&mut self, conn: &Connection, _: &QueueHandle<Self>, dd: &WlDataDevice) {
-        let Some(offer) = self.data_device.as_ref().filter(|d| d.inner() == dd).and_then(|d| d.data().drag_offer()) else {
+        let Some(offer) = self
+            .data_device
+            .as_ref()
+            .filter(|d| d.inner() == dd)
+            .and_then(|d| d.data().drag_offer())
+        else {
             return;
         };
         if !self.on_island(&offer.surface) {
@@ -2991,16 +3186,44 @@ fn finish_offer(offer: DragOffer) {
 }
 
 impl DataOfferHandler for App {
-    fn source_actions(&mut self, _: &Connection, _: &QueueHandle<Self>, offer: &mut DragOffer, _: DndAction) {
+    fn source_actions(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        offer: &mut DragOffer,
+        _: DndAction,
+    ) {
         offer.set_actions(DndAction::Copy, DndAction::Copy);
     }
-    fn selected_action(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &mut DragOffer, _: DndAction) {}
+    fn selected_action(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &mut DragOffer,
+        _: DndAction,
+    ) {
+    }
 }
 
 /// The shell never offers data of its own; these are required by the trait.
 impl DataSourceHandler for App {
-    fn accept_mime(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource, _: Option<String>) {}
-    fn send_request(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource, _: String, _: WritePipe) {}
+    fn accept_mime(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &WlDataSource,
+        _: Option<String>,
+    ) {
+    }
+    fn send_request(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &WlDataSource,
+        _: String,
+        _: WritePipe,
+    ) {
+    }
     fn cancelled(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {}
     fn dnd_dropped(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {}
     fn dnd_finished(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {}

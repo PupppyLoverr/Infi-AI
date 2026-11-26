@@ -238,7 +238,9 @@ fn launcher_shot(
         let th = Theme::for_kind(kind);
         let mut cv = Canvas::new(&mut buf, lay.w, lay.h, 1);
         let mut icons = HashMap::new();
-        draw_launcher(&mut cv, &th, fonts, query, &items, selected, &mut icons, None);
+        draw_launcher(
+            &mut cv, &th, fonts, query, &items, selected, &mut icons, None,
+        );
     }
     let rects: Vec<_> = lay
         .shapes()
@@ -260,6 +262,101 @@ fn launcher_shot(
         w: scene.w,
         h: scene.h,
         rgba: flatten(&scene.out, scene.w, scene.h, Rgba::rgb(0, 0, 0)),
+    }
+}
+
+/// Spotlight grown out of the island / notch, at morph progress `t`.
+#[allow(clippy::too_many_arguments)]
+fn island_spot_shot(
+    name: &str,
+    query: &str,
+    selected: usize,
+    notch: bool,
+    t: f32,
+    fonts: &Fonts,
+    cat: &[AppEntry],
+) -> Shot {
+    use crate::material::Material;
+    use solyra_conf::look::NotchStyle;
+    let wins = [win(1, "foot", "foot — terminal notes", true)];
+    let items = launcher::search(query, cat, &wins, true);
+    let mut scene = scene_pixels(
+        fonts,
+        ThemeKind::Dark,
+        "silk",
+        Material::Glass,
+        Material::Glass,
+        Material::Solid,
+        DockStyle::Macos,
+        if notch {
+            NotchStyle::Notch
+        } else {
+            NotchStyle::Island
+        },
+        false,
+    );
+    let lay = crate::surfaces::island_spot_layout(query, &items, notch);
+    let at = ((scene.w as i32 - lay.w as i32) / 2, 0);
+    let mut buf = vec![0u8; (lay.w * lay.h * 4) as usize];
+    {
+        let mut cv = Canvas::new(&mut buf, lay.w, lay.h, 1);
+        let mut icons = HashMap::new();
+        crate::surfaces::draw_island_spotlight(
+            &mut cv,
+            fonts,
+            crate::tokens::Accent::Blue,
+            query,
+            &items,
+            selected,
+            &mut icons,
+            None,
+            notch,
+            t,
+        );
+    }
+    over(&mut scene.out, scene.w, &buf, lay.w, lay.h, at);
+    Shot {
+        name: name.into(),
+        w: scene.w,
+        h: scene.h,
+        rgba: flatten(&scene.out, scene.w, scene.h, Rgba::rgb(0, 0, 0)),
+    }
+}
+
+#[test]
+fn island_spotlight_renders() {
+    let fonts = Fonts::load();
+    let cat = sample_catalog();
+    let shots = [
+        island_spot_shot("spot-island-morph", "", 0, false, 0.45, &fonts, &cat),
+        island_spot_shot("spot-island-empty", "", 0, false, 1.0, &fonts, &cat),
+        island_spot_shot("spot-island-query", "te", 1, false, 1.0, &fonts, &cat),
+        island_spot_shot("spot-notch-query", "te", 0, true, 1.0, &fonts, &cat),
+        island_spot_shot(
+            "spot-notch-agent",
+            "sort my downloads",
+            0,
+            true,
+            1.0,
+            &fonts,
+            &cat,
+        ),
+    ];
+    // The finished shape is black at the top centre where the island was.
+    for s in &shots[1..] {
+        let i = ((10 * s.w + s.w / 2) * 4) as usize;
+        assert!(
+            s.rgba[i] < 12 && s.rgba[i + 1] < 12,
+            "{}: not black at the island",
+            s.name
+        );
+    }
+    if let Some(dir) = std::env::var_os("SOLYRA_RENDER_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for s in &shots {
+            write_png(&dir, s);
+        }
     }
 }
 
@@ -443,13 +540,13 @@ fn render_all() -> Vec<Shot> {
                     error: None,
                     reply: "",
                     typing: false,
-                desk: true,
-                clock: "09:41",
-                date: "TUE 17 NOV",
-                project_lines: &[],
-                environment: 1,
-                agents_running: None,
-            };
+                    desk: true,
+                    clock: "09:41",
+                    date: "TUE 17 NOV",
+                    project_lines: &[],
+                    environment: 1,
+                    agents_running: None,
+                };
                 draw_agents(cv, th, &fonts, &v, None);
             },
         ));
@@ -487,13 +584,13 @@ fn render_all() -> Vec<Shot> {
                     error: None,
                     reply: "",
                     typing: false,
-                desk: false,
-                clock: "09:41",
-                date: "TUE 17 NOV",
-                project_lines: &[],
-                environment: 1,
-                agents_running: None,
-            };
+                    desk: false,
+                    clock: "09:41",
+                    date: "TUE 17 NOV",
+                    project_lines: &[],
+                    environment: 1,
+                    agents_running: None,
+                };
                 draw_agents(cv, th, &fonts, &v, None);
             },
         ));
@@ -512,13 +609,13 @@ fn render_all() -> Vec<Shot> {
                     error: Some("Decision not recorded: permission denied"),
                     reply: "",
                     typing: false,
-                desk: false,
-                clock: "09:41",
-                date: "TUE 17 NOV",
-                project_lines: &[],
-                environment: 1,
-                agents_running: None,
-            };
+                    desk: false,
+                    clock: "09:41",
+                    date: "TUE 17 NOV",
+                    project_lines: &[],
+                    environment: 1,
+                    agents_running: None,
+                };
                 draw_agents(cv, th, &fonts, &v, None);
             },
         ));
@@ -545,13 +642,13 @@ fn render_all() -> Vec<Shot> {
                     error: None,
                     reply: "",
                     typing: false,
-                desk: false,
-                clock: "09:41",
-                date: "TUE 17 NOV",
-                project_lines: &[],
-                environment: 1,
-                agents_running: None,
-            };
+                    desk: false,
+                    clock: "09:41",
+                    date: "TUE 17 NOV",
+                    project_lines: &[],
+                    environment: 1,
+                    agents_running: None,
+                };
                 draw_agents(cv, th, &fonts, &v, None);
             },
         ));
@@ -571,13 +668,13 @@ fn render_all() -> Vec<Shot> {
                     error: None,
                     reply: "",
                     typing: false,
-                desk: false,
-                clock: "09:41",
-                date: "TUE 17 NOV",
-                project_lines: &[],
-                environment: 1,
-                agents_running: None,
-            };
+                    desk: false,
+                    clock: "09:41",
+                    date: "TUE 17 NOV",
+                    project_lines: &[],
+                    environment: 1,
+                    agents_running: None,
+                };
                 draw_agents(cv, th, &fonts, &v, None);
             }));
         }
@@ -603,13 +700,13 @@ fn render_all() -> Vec<Shot> {
                     error: None,
                     reply,
                     typing,
-                desk: false,
-                clock: "09:41",
-                date: "TUE 17 NOV",
-                project_lines: &[],
-                environment: 1,
-                agents_running: None,
-            };
+                    desk: false,
+                    clock: "09:41",
+                    date: "TUE 17 NOV",
+                    project_lines: &[],
+                    environment: 1,
+                    agents_running: None,
+                };
                 draw_agents(cv, th, &fonts, &v, None);
             }));
         }
@@ -701,7 +798,17 @@ fn render_all() -> Vec<Shot> {
                 let mut icons = HashMap::new();
                 let hover = hover.map(|f| (w as f64 * f, spec.height as f64 - 20.0));
                 crate::dock::draw(
-                    cv, th, &fonts, style, &dock_wins, &mut icons, hover, &live, magnify, false, &[],
+                    cv,
+                    th,
+                    &fonts,
+                    style,
+                    &dock_wins,
+                    &mut icons,
+                    hover,
+                    &live,
+                    magnify,
+                    false,
+                    &[],
                 );
             }));
         }
@@ -833,11 +940,44 @@ fn island_shots(fonts: &Fonts) -> Vec<Shot> {
         ),
         ("shelf-empty", Content::Shelf(vec![]), true),
         (
+            "hud-volume",
+            Content::Hud(crate::hud::Hud {
+                kind: crate::hud::HudKind::Volume,
+                level: Some(62),
+                on: false,
+            }),
+            false,
+        ),
+        (
+            "hud-charging",
+            Content::Hud(crate::hud::Hud {
+                kind: crate::hud::HudKind::Charging,
+                level: Some(84),
+                on: true,
+            }),
+            false,
+        ),
+        (
+            "hud-unlocked",
+            Content::Hud(crate::hud::Hud {
+                kind: crate::hud::HudKind::Unlocked,
+                level: None,
+                on: true,
+            }),
+            false,
+        ),
+        (
             "shelf",
             Content::Shelf(
-                ["/home/me/Q3 report.pdf", "/home/me/Pictures/beach.jpg", "/home/me/notes.md", "/home/me/song.flac", "/home/me/build.tar.zst"]
-                    .map(std::path::PathBuf::from)
-                    .to_vec(),
+                [
+                    "/home/me/Q3 report.pdf",
+                    "/home/me/Pictures/beach.jpg",
+                    "/home/me/notes.md",
+                    "/home/me/song.flac",
+                    "/home/me/build.tar.zst",
+                ]
+                .map(std::path::PathBuf::from)
+                .to_vec(),
             ),
             true,
         ),
@@ -865,7 +1005,9 @@ fn island_shots(fonts: &Fonts) -> Vec<Shot> {
             let mut buf = beach.clone();
             {
                 let mut cv = crate::canvas::Canvas::new_keep(&mut buf, w, h, 1);
-                island::draw(&mut cv, fonts, style, &anim, content, *expanded, &extra, None);
+                island::draw(
+                    &mut cv, fonts, style, &anim, content, *expanded, &extra, None,
+                );
             }
             out.push(Shot {
                 name: tag,
@@ -1005,7 +1147,15 @@ fn lock_screens_render() {
             Some("Wrong password"),
         ),
         ("lock-dashboard", LockStyle::Dashboard, false, 0, None),
-        ("lock-dashboard-glance", LockStyle::Dashboard, false, 4, None),
+        (
+            "lock-dashboard-glance",
+            LockStyle::Dashboard,
+            false,
+            4,
+            None,
+        ),
+        ("lock-centred-media", LockStyle::Classic, false, 0, None),
+        ("lock-centred-unlocking", LockStyle::Classic, false, 0, None),
     ] {
         let mut buf = if crate::lock::sharp_backdrop(style, card) {
             sharp.clone()
@@ -1016,11 +1166,24 @@ fn lock_screens_render() {
             let mut cv = crate::canvas::Canvas::new_keep(&mut buf, w, h, 1);
             let dashboard = style == LockStyle::Dashboard;
             let glance = name == "lock-dashboard-glance";
+            let with_media = glance || name == "lock-centred-media";
+            let track = crate::media::Media {
+                bus: "org.mpris.MediaPlayer2.preview".into(),
+                title: "Clair de Lune".into(),
+                artist: "Claude Debussy".into(),
+                playing: true,
+                position_us: Some(83_000_000),
+                length_us: Some(301_000_000),
+            };
             let v = View {
                 theme: &th,
                 fonts: &fonts,
                 style,
-                clock: if dashboard { "20:46".into() } else { "09:41".into() },
+                clock: if dashboard {
+                    "20:46".into()
+                } else {
+                    "09:41".into()
+                },
                 date: if dashboard {
                     "SAT 17 NOV".into()
                 } else {
@@ -1036,8 +1199,16 @@ fn lock_screens_render() {
                 media_title: if glance { Some("Clair de Lune") } else { None },
                 media_artist: if glance { Some("Debussy") } else { None },
                 weather: if dashboard { Some("25°") } else { None },
+                media: with_media.then_some(&track),
+                unlock: (name == "lock-centred-unlocking").then_some(0.8),
+                phase: 1.3,
             };
-            paint(&mut cv, &v);
+            let hits = paint(&mut cv, &v);
+            assert_eq!(
+                hits.is_empty(),
+                !with_media,
+                "{name}: controls only with media"
+            );
         }
         shots.push(Shot {
             name: name.into(),
@@ -1059,7 +1230,7 @@ fn lock_screens_render() {
 fn island_previews_render() {
     let fonts = Fonts::load();
     let shots = island_shots(&fonts);
-    assert_eq!(shots.len(), 22, "11 states x 2 styles");
+    assert_eq!(shots.len(), 28, "14 states x 2 styles");
     if let Some(dir) = std::env::var_os("SOLYRA_RENDER_DIR") {
         let dir = std::path::PathBuf::from(dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -1116,7 +1287,8 @@ fn compositor_backdrop(
                 let px = &soft[i..i + 3];
                 let l = 0.114 * px[0] as f32 + 0.587 * px[1] as f32 + 0.299 * px[2] as f32;
                 // Deterministic grain: a hash of the position.
-                let hash = ((gx as u32).wrapping_mul(73_856_093) ^ (gy as u32).wrapping_mul(19_349_663))
+                let hash = ((gx as u32).wrapping_mul(73_856_093)
+                    ^ (gy as u32).wrapping_mul(19_349_663))
                     % 1000;
                 let g = (hash as f32 / 1000.0 - 0.5) * 2.0 * noise * 255.0;
                 for c in 0..3 {
@@ -1144,8 +1316,9 @@ fn over(out: &mut [u8], w: u32, surface: &[u8], sw: u32, sh: u32, at: (i32, i32)
             }
             let a = surface[si + 3] as f32 / 255.0;
             for c in 0..3 {
-                out[di + c] =
-                    (surface[si + c] as f32 + out[di + c] as f32 * (1.0 - a)).round().min(255.0) as u8;
+                out[di + c] = (surface[si + c] as f32 + out[di + c] as f32 * (1.0 - a))
+                    .round()
+                    .min(255.0) as u8;
             }
         }
     }
@@ -1197,7 +1370,18 @@ fn scene_pixels(
     notch: solyra_conf::look::NotchStyle,
     media: bool,
 ) -> Scene {
-    scene_pixels_with(fonts, kind, wallpaper, bar_m, dock_m, notch_m, dock_style, notch, media, |_, _, _| {})
+    scene_pixels_with(
+        fonts,
+        kind,
+        wallpaper,
+        bar_m,
+        dock_m,
+        notch_m,
+        dock_style,
+        notch,
+        media,
+        |_, _, _| {},
+    )
 }
 
 /// [`scene_pixels`], with `under` painting onto the desktop before the shell
@@ -1292,7 +1476,17 @@ fn scene_pixels_with(
         };
         let mut icons = HashMap::new();
         body = crate::dock::draw(
-            &mut cv, &th, fonts, dock_style, &wins, &mut icons, None, &live, false, false, &[],
+            &mut cv,
+            &th,
+            fonts,
+            dock_style,
+            &wins,
+            &mut icons,
+            None,
+            &live,
+            false,
+            false,
+            &[],
         )
         .1;
     }
@@ -1311,14 +1505,18 @@ fn scene_pixels_with(
 
     // Notch / island, showing what is playing.
     if notch != solyra_conf::look::NotchStyle::Off {
-        let content = if !media { Content::Idle } else { Content::Media(crate::media::Media {
-            bus: "x".into(),
-            title: "Clair de Lune".into(),
-            artist: "Claude Debussy".into(),
-            playing: true,
-            position_us: Some(15_000_000),
-            length_us: Some(203_000_000),
-        }) };
+        let content = if !media {
+            Content::Idle
+        } else {
+            Content::Media(crate::media::Media {
+                bus: "x".into(),
+                title: "Clair de Lune".into(),
+                artist: "Claude Debussy".into(),
+                playing: true,
+                position_us: Some(15_000_000),
+                length_us: Some(203_000_000),
+            })
+        };
         let anim = Anim::new(island::target(notch, &content, false));
         let glance = Glance {
             battery: Some(64),
@@ -1360,7 +1558,11 @@ fn material_scenes_render() {
     let mut shots = Vec::new();
     for kind in [ThemeKind::Dark, ThemeKind::Light] {
         // Dark scenes over a dark wallpaper, so a light-tinted "dark" theme shows up.
-        let wp = if kind == ThemeKind::Dark { "silk" } else { "beach" };
+        let wp = if kind == ThemeKind::Dark {
+            "silk"
+        } else {
+            "beach"
+        };
         for m in Material::ALL {
             shots.push(material_scene(
                 &fonts,
@@ -1433,16 +1635,32 @@ fn default_desktop_renders() {
             {
                 let mut cv = Canvas::new(&mut buf, ww, wh, 1);
                 let today = chrono::NaiveDate::from_ymd_opt(2026, 11, 25).unwrap();
-                let sample = widgets::Weather { city: "Phoenix".into(), temp: 16.0, code: 2, hi: 21.0, lo: 9.0 };
+                let sample = widgets::Weather {
+                    city: "Phoenix".into(),
+                    temp: 16.0,
+                    code: 2,
+                    hi: 21.0,
+                    lo: 9.0,
+                };
                 let dark = kind == ThemeKind::Dark;
                 widgets::paint(&mut cv, &fonts, dark, today, dark.then_some(&sample), false);
             }
             let at = (14, BAR_HEIGHT as i32 + 14);
             let rects: Vec<_> = [(0, 0), (widgets::CARD + widgets::GAP, 0)]
                 .iter()
-                .flat_map(|&(x, y)| crate::material::blur_rects(x, y, widgets::CARD, widgets::CARD, widgets::RADIUS))
+                .flat_map(|&(x, y)| {
+                    crate::material::blur_rects(x, y, widgets::CARD, widgets::CARD, widgets::RADIUS)
+                })
                 .collect();
-            compositor_backdrop(&scene.sharp, &scene.soft, scene.w, crate::material::Material::Glass, &rects, at, &mut scene.out);
+            compositor_backdrop(
+                &scene.sharp,
+                &scene.soft,
+                scene.w,
+                crate::material::Material::Glass,
+                &rects,
+                at,
+                &mut scene.out,
+            );
             over(&mut scene.out, scene.w, &buf, ww, wh, at);
         }
         shots.push(Shot {
@@ -1460,7 +1678,11 @@ fn default_desktop_renders() {
         .filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > 24))
         .count();
     let frac = diff as f64 / (shots[0].w * shots[0].h) as f64;
-    assert!(frac > 0.25, "dark and light defaults differ in only {:.1} % of pixels", frac * 100.0);
+    assert!(
+        frac > 0.25,
+        "dark and light defaults differ in only {:.1} % of pixels",
+        frac * 100.0
+    );
     if let Some(dir) = std::env::var_os("SOLYRA_RENDER_DIR") {
         let dir = std::path::PathBuf::from(dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -1479,21 +1701,46 @@ fn dock_glass_over_a_window_renders() {
     let mut shots = Vec::new();
     for (kind, wp) in [(ThemeKind::Dark, "silk"), (ThemeKind::Light, "silk-light")] {
         let scene = scene_pixels_with(
-            &fonts, kind, wp, d.look.bar_material, d.look.dock_material, d.look.notch_material,
-            d.dock_style, d.look.notch, false,
+            &fonts,
+            kind,
+            wp,
+            d.look.bar_material,
+            d.look.dock_material,
+            d.look.notch_material,
+            d.dock_style,
+            d.look.notch,
+            false,
             |px, w, h| {
                 let mut cv = Canvas::new_keep(px, w, h, 1);
                 // A photo-viewer-like window reaching under the dock.
                 cv.round_rect(250, 420, 780, 420, 16.0, Rgba::rgb(250, 250, 252));
                 let cols = [
-                    Rgba::rgb(0xff, 0x6b, 0x6b), Rgba::rgb(0xff, 0xc1, 0x45), Rgba::rgb(0x4c, 0xd9, 0x7b),
-                    Rgba::rgb(0x3b, 0x9b, 0xf2), Rgba::rgb(0xa8, 0x6b, 0xf7), Rgba::rgb(0xff, 0x8a, 0xc6),
+                    Rgba::rgb(0xff, 0x6b, 0x6b),
+                    Rgba::rgb(0xff, 0xc1, 0x45),
+                    Rgba::rgb(0x4c, 0xd9, 0x7b),
+                    Rgba::rgb(0x3b, 0x9b, 0xf2),
+                    Rgba::rgb(0xa8, 0x6b, 0xf7),
+                    Rgba::rgb(0xff, 0x8a, 0xc6),
                 ];
                 for i in 0..12 {
                     let (c, r) = (i % 6, i / 6);
-                    cv.round_rect(274 + c * 124, 470 + r * 150, 112, 136, 10.0, cols[(i as usize + r as usize) % 6]);
+                    cv.round_rect(
+                        274 + c * 124,
+                        470 + r * 150,
+                        112,
+                        136,
+                        10.0,
+                        cols[(i as usize + r as usize) % 6],
+                    );
                 }
-                cv.text(fonts.semibold.as_ref(), "Pictures", 274, 450, 15.0, Rgba::rgb(30, 30, 34));
+                cv.text(
+                    fonts.semibold.as_ref(),
+                    "Pictures",
+                    274,
+                    450,
+                    15.0,
+                    Rgba::rgb(30, 30, 34),
+                );
             },
         );
         shots.push(Shot {

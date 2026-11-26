@@ -637,7 +637,11 @@ pub fn spot_layout(query: &str, items: &[LauncherItem]) -> SpotLayout {
             .iter()
             .map(|r| launcher::ROW_H + r.heading.map_or(0, |_| launcher::HEADING_H))
             .sum();
-        rows + if only_agent_row(items) { AGENT_NOTE_H } else { 0 }
+        rows + if only_agent_row(items) {
+            AGENT_NOTE_H
+        } else {
+            0
+        }
     };
     let card = (list_h > 0).then(|| Rect {
         x: SPOT_PAD_X,
@@ -676,9 +680,7 @@ pub fn draw_launcher(
     hover: Option<(f64, f64)>,
 ) -> Vec<Region> {
     let lay = spot_layout(query, items);
-    let mut regions = Vec::new();
     let (glass, edge) = spot_glass(th);
-
     for (r, radius) in lay.shapes() {
         cv.round_rect_shadow(r.x, r.y, r.w, r.h, radius, 10.0, 28.0, 42);
     }
@@ -686,6 +688,119 @@ pub fn draw_launcher(
         cv.round_rect(r.x, r.y, r.w, r.h, radius, glass);
         cv.stroke_round_rect(r.x, r.y, r.w, r.h, radius, 1.0, edge);
     }
+    launcher_content(cv, th, fonts, query, items, selected, icons, hover, &lay)
+}
+
+/// Spotlight inside the notch / Dynamic Island, the way a MacBook Pro's
+/// notch would grow into it: one black shape that starts as the idle pill
+/// and widens and drops into a search field with the results underneath,
+/// all inside the same black. `notch` keeps the top edge flush with the
+/// screen (with the small ears of a notch); otherwise it floats 4 px down
+/// like the island. `t` (0..=1) is the morph: content shows once the shape
+/// has nearly arrived.
+pub fn island_spot_layout(query: &str, items: &[LauncherItem], notch: bool) -> SpotLayout {
+    let mut lay = spot_layout(query, items);
+    let top = if notch { 0 } else { 4 };
+    lay.capsule.y = top;
+    if let Some(c) = lay.card.as_mut() {
+        c.y = top + CAPSULE_H;
+    }
+    let bottom = lay.card.map_or(top + CAPSULE_H, |c| c.y + c.h);
+    lay.h = (bottom + 24) as u32;
+    lay
+}
+
+/// The single black shape the island Spotlight occupies at the end of the morph.
+pub fn island_spot_shape(lay: &SpotLayout) -> (Rect, f32) {
+    let bottom = lay
+        .card
+        .map_or(lay.capsule.y + lay.capsule.h, |c| c.y + c.h);
+    let r = Rect {
+        x: lay.capsule.x,
+        y: lay.capsule.y,
+        w: lay.capsule.w,
+        h: bottom - lay.capsule.y,
+    };
+    (
+        r,
+        if lay.card.is_some() {
+            28.0
+        } else {
+            CAPSULE_H as f32 / 2.0
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn draw_island_spotlight(
+    cv: &mut Canvas<'_>,
+    fonts: &Fonts,
+    accent: crate::tokens::Accent,
+    query: &str,
+    items: &[LauncherItem],
+    selected: usize,
+    icons: &mut HashMap<String, Option<Icon>>,
+    hover: Option<(f64, f64)>,
+    notch: bool,
+    t: f32,
+) -> Vec<Region> {
+    let lay = island_spot_layout(query, items, notch);
+    let (target, r_end) = island_spot_shape(&lay);
+    // Ease out (cubic) from the idle pill (210×37) to the full shape.
+    let e = 1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3);
+    let lerp = |a: f32, b: f32| a + (b - a) * e;
+    let cx = target.x as f32 + target.w as f32 / 2.0;
+    let (pw, ph) = (
+        if notch { 180.0 } else { 210.0 },
+        if notch { 32.0 } else { 37.0 },
+    );
+    let w = lerp(pw, target.w as f32);
+    let h = lerp(ph, target.h as f32);
+    let r = lerp(ph / 2.0, r_end).min(h / 2.0);
+    let (x, y) = ((cx - w / 2.0).round() as i32, target.y);
+    let (wi, hi) = (w.round() as i32, h.round() as i32);
+    let black = Rgba::rgb(0, 0, 0);
+    if e > 0.3 {
+        cv.round_rect_shadow(x, y, wi, hi, r, 10.0, 30.0, (60.0 * e) as u8);
+    }
+    cv.round_rect(x, y, wi, hi, r, black);
+    if notch {
+        // Flush with the top edge, with the notch's little ears.
+        cv.fill_rect(x, 0, wi, (r as i32).min(hi), black);
+        cv.concave_corner(x as f32 - 10.0, 0.0, 10.0, true, black);
+        cv.concave_corner((x + wi) as f32, 0.0, 10.0, false, black);
+    }
+    if t < 0.62 {
+        return Vec::new();
+    }
+    // The results sit on the black with a hairline under the field.
+    let th = Theme::with(crate::tokens::ThemeKind::Dark, accent);
+    if lay.card.is_some() {
+        cv.fill_rect(
+            lay.capsule.x + 18,
+            lay.capsule.y + CAPSULE_H - 1,
+            lay.capsule.w - 36,
+            1,
+            Rgba::rgba(255, 255, 255, 30),
+        );
+    }
+    launcher_content(cv, &th, fonts, query, items, selected, icons, hover, &lay)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn launcher_content(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    fonts: &Fonts,
+    query: &str,
+    items: &[LauncherItem],
+    selected: usize,
+    icons: &mut HashMap<String, Option<Icon>>,
+    hover: Option<(f64, f64)>,
+    lay: &SpotLayout,
+) -> Vec<Region> {
+    let lay = *lay;
+    let mut regions = Vec::new();
 
     let cap = lay.capsule;
     let cy = cap.y as f32 + cap.h as f32 / 2.0;
@@ -752,7 +867,12 @@ pub fn draw_launcher(
     }
 
     let sel = selected.min(items.len() - 1);
-    let rows_h = lay.list_h - if only_agent_row(items) { AGENT_NOTE_H } else { 0 };
+    let rows_h = lay.list_h
+        - if only_agent_row(items) {
+            AGENT_NOTE_H
+        } else {
+            0
+        };
     let first = launcher::spotlight_first(items, sel, rows_h);
     let mut y = top;
     for row in launcher::spotlight_rows(items, first, rows_h) {
@@ -818,7 +938,14 @@ fn draw_launcher_row(
 
     let icon = 28;
     let sys_ic = load_app_icon(icons, &item.app_id);
-    cv.draw_app_squircle(rx + 10, y + (rh - icon) / 2, icon, &item.role, sys_ic, fonts);
+    cv.draw_app_squircle(
+        rx + 10,
+        y + (rh - icon) / 2,
+        icon,
+        &item.role,
+        sys_ic,
+        fonts,
+    );
 
     let title_col = if selected {
         th.on_accent
@@ -938,14 +1065,7 @@ pub fn draw_notifs(
             12.0,
             if hot { th.tile_hover } else { th.tile },
         );
-        cv.text(
-            fonts.regular.as_ref(),
-            label,
-            bx + 8,
-            30,
-            11.0,
-            th.accent,
-        );
+        cv.text(fonts.regular.as_ref(), label, bx + 8, 30, 11.0, th.accent);
         regions.push(Region {
             x: bx,
             y: 14,
@@ -1009,9 +1129,7 @@ pub fn draw_notifs(
             let cx = (bx0 + btn / 2) as f32;
             let cy = (y + 48) as f32;
             match c {
-                crate::media::Control::Previous => {
-                    cv.icon_skip(cx, cy, 13.0, false, th.text)
-                }
+                crate::media::Control::Previous => cv.icon_skip(cx, cy, 13.0, false, th.text),
                 crate::media::Control::Next => cv.icon_skip(cx, cy, 13.0, true, th.text),
                 crate::media::Control::PlayPause if m.playing => {
                     cv.icon_pause(cx, cy, 15.0, th.text)
@@ -1072,7 +1190,14 @@ pub fn draw_notifs(
             );
         }
         let aw = text_width(fonts.regular.as_ref(), &ago, 9.5);
-        cv.text(fonts.regular.as_ref(), &ago, w - 20 - aw, y + 14, 9.5, th.text_dim);
+        cv.text(
+            fonts.regular.as_ref(),
+            &ago,
+            w - 20 - aw,
+            y + 14,
+            9.5,
+            th.text_dim,
+        );
         cv.text_truncated(
             fonts.regular.as_ref(),
             text,
@@ -1106,7 +1231,14 @@ pub fn draw_about(
     cv.draw_app_squircle(cx0 - 21, 14, 42, "solyra", None, fonts);
     let title = "Solyra OS";
     let tw = text_width(fonts.semibold.as_ref(), title, 15.0);
-    cv.text(fonts.semibold.as_ref(), title, cx0 - tw / 2, 74, 15.0, th.text);
+    cv.text(
+        fonts.semibold.as_ref(),
+        title,
+        cx0 - tw / 2,
+        74,
+        15.0,
+        th.text,
+    );
     let mut y = 98;
     for (label, value) in specs {
         cv.text(fonts.regular.as_ref(), label, 44, y, 11.0, th.text_dim);
@@ -2260,8 +2392,13 @@ mod tests {
         let cat = vec![app("Files", "thunar"), app("Terminal", "foot")];
         let items = launcher::search("", &cat, &[], false);
         let (lay, regions) = paint("", &items);
-        assert!(lay.card.is_none(), "nothing is listed before there is a query");
-        assert!(regions.iter().all(|r| !matches!(r.action, HitAction::Launch(_))));
+        assert!(
+            lay.card.is_none(),
+            "nothing is listed before there is a query"
+        );
+        assert!(regions
+            .iter()
+            .all(|r| !matches!(r.action, HitAction::Launch(_))));
         assert!(regions
             .iter()
             .any(|r| matches!(r.action, HitAction::Shell(ShellCmd::CloseOverlays))));
@@ -2271,7 +2408,11 @@ mod tests {
 
     #[test]
     fn a_query_lists_matches_in_a_card_sized_to_fit() {
-        let cat = vec![app("Files", "thunar"), app("Terminal", "foot"), app("Text Editor", "mousepad")];
+        let cat = vec![
+            app("Files", "thunar"),
+            app("Terminal", "foot"),
+            app("Text Editor", "mousepad"),
+        ];
         let one = launcher::search("files", &cat, &[], false);
         let two = launcher::search("t", &cat, &[], false);
         let (a, regions) = paint("files", &one);
@@ -2285,10 +2426,17 @@ mod tests {
         assert!(!rows.is_empty());
         assert!(rows.iter().all(|r| (30..=42).contains(&r.h)));
         assert!(
-            rows.iter().all(|r| r.y >= card.y && r.y + r.h <= card.y + card.h),
+            rows.iter()
+                .all(|r| r.y >= card.y && r.y + r.h <= card.y + card.h),
             "every row sits inside the card"
         );
-        assert!(a.capsule.y + a.capsule.h < card.y, "the card floats below the capsule");
-        assert!((a.h as i32) >= card.y + card.h, "the surface holds the card and its shadow");
+        assert!(
+            a.capsule.y + a.capsule.h < card.y,
+            "the card floats below the capsule"
+        );
+        assert!(
+            (a.h as i32) >= card.y + card.h,
+            "the surface holds the card and its shadow"
+        );
     }
 }

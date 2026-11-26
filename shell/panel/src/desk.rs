@@ -47,7 +47,8 @@ pub struct Target {
 /// of `~/.config/solyra/project.txt` are used. Both absent: the calm placeholder.
 pub fn project_lines() -> Vec<String> {
     let env = std::env::var("SOLYRA_PROJECT").ok();
-    let file = solyra_conf::config_path("project.txt").and_then(|p| std::fs::read_to_string(p).ok());
+    let file =
+        solyra_conf::config_path("project.txt").and_then(|p| std::fs::read_to_string(p).ok());
     resolve_project(env.as_deref(), file.as_deref())
 }
 
@@ -159,8 +160,23 @@ pub fn paint(
     };
 
     // Time, then what the agents are doing as one quiet status.
-    cv.text(fonts.regular.as_ref(), g.date, ix, y + 40, 13.0, th.text_dim);
-    cv.text_tracked(fonts.regular.as_ref(), g.clock, ix - 2, y + 96, 56.0, -1.6, th.text);
+    cv.text(
+        fonts.regular.as_ref(),
+        g.date,
+        ix,
+        y + 40,
+        13.0,
+        th.text_dim,
+    );
+    cv.text_tracked(
+        fonts.regular.as_ref(),
+        g.clock,
+        ix - 2,
+        y + 96,
+        56.0,
+        -1.6,
+        th.text,
+    );
     let (status, live) = match g.agents_running {
         None => ("Offline".to_string(), false),
         Some(0) => ("Idle".to_string(), false),
@@ -168,7 +184,14 @@ pub fn paint(
     };
     let sw = text_width(fonts.medium.as_ref(), &status, 12.0);
     let sx = ix + iw - sw;
-    cv.text(fonts.medium.as_ref(), &status, sx, y + 40, 12.0, th.text_med);
+    cv.text(
+        fonts.medium.as_ref(),
+        &status,
+        sx,
+        y + 40,
+        12.0,
+        th.text_med,
+    );
     let dot = (sx - 12) as f32;
     if live {
         cv.circle(dot, (y + 36) as f32, 3.2, th.agent_active);
@@ -189,7 +212,15 @@ pub fn paint(
     let tx = ix + 38 + 14;
     let tw = iw - 38 - 14;
     if let Some(first) = lines.first() {
-        cv.text_truncated(fonts.semibold.as_ref(), first, tx, py + 18, 15.0, tw, th.text);
+        cv.text_truncated(
+            fonts.semibold.as_ref(),
+            first,
+            tx,
+            py + 18,
+            15.0,
+            tw,
+            th.text,
+        );
     }
     for (i, line) in lines.iter().skip(1).take(2).enumerate() {
         let is_path = line.starts_with('/') || line.starts_with('~');
@@ -205,7 +236,14 @@ pub fn paint(
     // Environment: a plain segmented control.
     let cur_env = g.environment.min(2);
     let label_y = y + 224;
-    cv.text(fonts.regular.as_ref(), "Run agents in", ix, label_y, 12.0, th.text_dim);
+    cv.text(
+        fonts.regular.as_ref(),
+        "Run agents in",
+        ix,
+        label_y,
+        12.0,
+        th.text_dim,
+    );
     let track_y = label_y + 12;
     let track_h = 34;
     cv.round_rect(
@@ -227,7 +265,11 @@ pub fn paint(
     let mut targets = Vec::with_capacity(ENVIRONMENTS.len());
     for (i, label) in ENVIRONMENTS.iter().enumerate() {
         let sx = ix + seg_pad + i as i32 * seg_w;
-        let sw = if i == 2 { ix + iw - seg_pad - sx } else { seg_w };
+        let sw = if i == 2 {
+            ix + iw - seg_pad - sx
+        } else {
+            seg_w
+        };
         let env = i as u8;
         let active = env == cur_env;
         let over = hover.is_some_and(|(hx, hy)| {
@@ -264,7 +306,14 @@ pub fn paint(
         let lw = text_width(font, label, 12.5);
         let group_w = 13 + 6 + lw;
         let gx = sx + (sw - group_w) / 2;
-        draw_env_icon(cv, env, gx as f32 + 6.5, seg_y as f32 + seg_h as f32 / 2.0, 11.5, fg);
+        draw_env_icon(
+            cv,
+            env,
+            gx as f32 + 6.5,
+            seg_y as f32 + seg_h as f32 / 2.0,
+            11.5,
+            fg,
+        );
         cv.text(font, label, gx + 19, seg_y + seg_h / 2 + 4, 12.5, fg);
         targets.push(Target {
             x: sx,

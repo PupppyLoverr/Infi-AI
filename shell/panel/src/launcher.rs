@@ -199,7 +199,11 @@ pub fn search(
             .filter(|a| is_command(a))
             .filter_map(|a| score(q, &a.title, &a.app_id, &a.subtitle).map(|s| (s, a))),
         |a| a.title.as_str(),
-        if q.is_empty() { EMPTY_COMMANDS } else { MAX_COMMANDS },
+        if q.is_empty() {
+            EMPTY_COMMANDS
+        } else {
+            MAX_COMMANDS
+        },
     );
     out.extend(commands.into_iter().map(item_from_app));
 
@@ -241,7 +245,12 @@ pub struct Row {
 pub const HEADING_H: i32 = 22;
 pub const ROW_H: i32 = 40;
 
-fn section_label(items: &[Item], index: usize, first: usize, spotlight: bool) -> Option<&'static str> {
+fn section_label(
+    items: &[Item],
+    index: usize,
+    first: usize,
+    spotlight: bool,
+) -> Option<&'static str> {
     let kind = items[index].kind;
     // The best match stands alone as Top Hit. The rest of its group keeps the
     // normal section title on the following row.

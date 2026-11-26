@@ -39,6 +39,7 @@ use smithay_client_toolkit::{
     registry_handlers,
     seat::{
         keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
+        pointer::{PointerEvent, PointerEventKind, PointerHandler},
         Capability, SeatHandler, SeatState,
     },
     session_lock::{
@@ -50,8 +51,8 @@ use smithay_client_toolkit::{
 use wayland_client::{
     globals::registry_queue_init,
     protocol::{
-        wl_keyboard::WlKeyboard, wl_output::WlOutput, wl_seat::WlSeat, wl_shm::Format,
-        wl_surface::WlSurface,
+        wl_keyboard::WlKeyboard, wl_output::WlOutput, wl_pointer::WlPointer, wl_seat::WlSeat,
+        wl_shm::Format, wl_surface::WlSurface,
     },
     Connection, QueueHandle,
 };
@@ -72,6 +73,8 @@ struct LockSurface {
     height: u32,
     /// The blurred and sharp backdrops at this size (logical), cached.
     backdrop: Option<(u32, u32, Vec<u8>, Vec<u8>)>,
+    /// Media controls drawn on this surface last frame.
+    hits: Vec<Hit>,
 }
 
 struct App {
@@ -85,6 +88,10 @@ struct App {
     lock: Option<SessionLock>,
     surfaces: Vec<LockSurface>,
     keyboard: Option<WlKeyboard>,
+    pointer: Option<WlPointer>,
+    /// The password was accepted: the padlock opens, then the lock lets go.
+    unlocking: Option<Instant>,
+    started: Instant,
     conn: Connection,
     qh: QueueHandle<App>,
 
@@ -158,6 +165,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         lock: None,
         surfaces: Vec::new(),
         keyboard: None,
+        pointer: None,
+        unlocking: None,
+        started: Instant::now(),
         conn: conn.clone(),
         qh: qh.clone(),
         fonts: Fonts::load(),
@@ -221,7 +231,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     while !app.exit {
-        event_loop.dispatch(Duration::from_millis(250), &mut app)?;
+        let wait = if app.unlocking.is_some() { 16 } else { 250 };
+        event_loop.dispatch(Duration::from_millis(wait), &mut app)?;
+        app.step_unlock();
     }
     Ok(())
 }
@@ -239,6 +251,7 @@ impl App {
             width: 0,
             height: 0,
             backdrop: None,
+            hits: Vec::new(),
         });
     }
 
@@ -278,11 +291,9 @@ impl App {
         self.checking = false;
         match result {
             Ok(()) => {
-                if let Some(lock) = self.lock.take() {
-                    lock.unlock();
-                }
-                let _ = self.conn.roundtrip();
-                self.exit = true;
+                // Droppy: the padlock springs open in the notch first.
+                self.unlocking = Some(Instant::now());
+                self.draw_all();
             }
             Err(e) => {
                 self.fails += 1;
@@ -297,6 +308,20 @@ impl App {
                 }
                 self.draw_all();
             }
+        }
+    }
+
+    /// Advance the unlock animation; release the lock when it is done.
+    fn step_unlock(&mut self) {
+        let Some(t) = self.unlocking else { return };
+        if t.elapsed() >= Duration::from_millis(UNLOCK_MS) {
+            if let Some(lock) = self.lock.take() {
+                lock.unlock();
+            }
+            let _ = self.conn.roundtrip();
+            self.exit = true;
+        } else {
+            self.draw_all();
         }
     }
 
@@ -370,8 +395,15 @@ impl App {
                 media_title,
                 media_artist,
                 weather: self.weather.as_deref(),
+                media: playing
+                    .as_ref()
+                    .filter(|m| m.playing || !m.title.trim().is_empty()),
+                unlock: self
+                    .unlocking
+                    .map(|t| t.elapsed().as_secs_f32() * 1000.0 / UNLOCK_MS as f32),
+                phase: self.started.elapsed().as_secs_f32(),
             };
-            paint(&mut cv, &view);
+            self.surfaces[i].hits = paint(&mut cv, &view);
         }
         let surface = self.surfaces[i].lock.wl_surface();
         surface.set_buffer_scale(scale as i32);
@@ -544,7 +576,9 @@ pub fn blur(src: &[u8], w: u32, h: u32) -> Vec<u8> {
             for c in 0..3 {
                 let top = at(x0, y0, c) * (1.0 - tx) + at(x1, y0, c) * tx;
                 let bot = at(x0, y1, c) * (1.0 - tx) + at(x1, y1, c) * tx;
-                out[di + c] = (top * (1.0 - ty) + bot * ty + dither).round().clamp(0.0, 255.0) as u8;
+                out[di + c] = (top * (1.0 - ty) + bot * ty + dither)
+                    .round()
+                    .clamp(0.0, 255.0) as u8;
             }
             out[di + 3] = 255;
         }
@@ -581,6 +615,248 @@ pub struct View<'a> {
     pub media_artist: Option<&'a str>,
     /// Short weather label, e.g. `25°`.
     pub weather: Option<&'a str>,
+    /// What is playing: Droppy's lock-screen media panel.
+    pub media: Option<&'a crate::media::Media>,
+    /// Unlock animation progress (0..=1) once the password was accepted.
+    pub unlock: Option<f32>,
+    /// Seconds since some epoch, for the visualizer bars.
+    pub phase: f32,
+}
+
+/// A clickable spot on the lock screen (only media controls: nothing on the
+/// lock screen can reach the session behind it).
+pub type Hit = (i32, i32, i32, i32, crate::media::Control);
+
+/// How long the padlock takes to spring open before the session unlocks.
+pub const UNLOCK_MS: u64 = 420;
+
+/// Droppy's lock-screen notch: a black pill at the top with the padlock in
+/// its left wing (and a small visualizer in the right one while music
+/// plays). On unlock the shackle lifts and the pill springs
+/// (1.0 → 1.015 → 0.99 → 1.0) before the lock lets go.
+pub fn lock_notch(cv: &mut Canvas<'_>, v: &View<'_>, w: i32) {
+    let t = v.unlock.unwrap_or(0.0).clamp(0.0, 1.0);
+    let spring = if t <= 0.0 {
+        1.0
+    } else if t < 0.35 {
+        1.0 + 0.015 * (t / 0.35)
+    } else if t < 0.7 {
+        1.015 - 0.025 * ((t - 0.35) / 0.35)
+    } else {
+        0.99 + 0.01 * ((t - 0.7) / 0.3)
+    };
+    let (bw, bh) = (210.0 * spring, 37.0 * spring);
+    let (pw, ph) = (bw.round() as i32, bh.round() as i32);
+    let (px, py) = ((w - pw) / 2, 4);
+    cv.round_rect_shadow(px, py, pw, ph, ph as f32 / 2.0, 3.0, 10.0, 70);
+    cv.round_rect(px, py, pw, ph, ph as f32 / 2.0, Rgba::rgb(0, 0, 0));
+    let green = Rgba::rgb(0x35, 0xc7, 0x59);
+    let ink = if t >= 0.5 {
+        green
+    } else {
+        Rgba::rgb(0xff, 0xff, 0xff)
+    };
+    padlock_t(cv, (px + 24) as f32, (py + ph / 2 + 2) as f32, t, ink);
+    if v.media.is_some_and(|m| m.playing) {
+        visualizer(
+            cv,
+            px + pw - 24 - 17,
+            py + ph / 2 - 7,
+            17,
+            14,
+            v.phase,
+            true,
+        );
+    } else if t > 0.0 {
+        let a = ((t - 0.3) / 0.4).clamp(0.0, 1.0);
+        cv.text(
+            v.fonts.semibold.as_ref(),
+            "Unlocked",
+            px + pw - 84,
+            py + ph / 2 + 5,
+            13.0,
+            Rgba::rgba(0xff, 0xff, 0xff, (a * 230.0) as u8),
+        );
+    }
+}
+
+/// A padlock whose shackle lifts and swings open as `t` goes 0 → 1.
+pub fn padlock_t(cv: &mut Canvas<'_>, cx: f32, cy: f32, t: f32, c: Rgba) {
+    let (bw, bh) = (13, 10);
+    let (bx, by) = (cx as i32 - bw / 2, cy as i32 - 1);
+    let (rad, th) = (4.3f32, 1.9f32);
+    let (sx, sy) = (cx + 4.5 * t, cy - 4.5 - 3.5 * t);
+    cv.ring(sx, sy, rad, th, c);
+    let top = sy.round() as i32;
+    let right = (sx + rad - th / 2.0).round() as i32;
+    let left = (sx - rad - th / 2.0).round() as i32;
+    cv.fill_rect(right, top, 2, (by - top).max(1), c);
+    let left_len = if t < 0.5 { by - top } else { 2 };
+    cv.fill_rect(left, top, 2, left_len.max(1), c);
+    cv.round_rect(bx, by, bw, bh, 2.5, c);
+}
+
+/// Droppy's 5-bar visualizer; static and low when paused.
+fn visualizer(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, phase: f32, playing: bool) {
+    let bar = ((w - 4 * 2) / 5).max(2);
+    for i in 0..5 {
+        let f = if playing {
+            let a = (phase * 5.3 + i as f32 * 1.7).sin() * 0.5 + 0.5;
+            let b = (phase * 3.1 + i as f32 * 2.9).sin() * 0.5 + 0.5;
+            0.25 + 0.75 * (a * 0.6 + b * 0.4)
+        } else {
+            0.18
+        };
+        let bh = ((h as f32 * f).round() as i32).max(3);
+        let bx = x + i * (bar + 2);
+        cv.round_rect(
+            bx,
+            y + (h - bh) / 2,
+            bar,
+            bh,
+            bar as f32 / 2.0,
+            Rgba::rgba(255, 255, 255, 235),
+        );
+    }
+}
+
+/// Droppy's lock-screen media panel (380×160, radius 24, glass): art,
+/// title and artist, a visualizer, the progress with timestamps, and
+/// previous / play / next. Returns the clickable controls.
+pub fn media_panel(
+    cv: &mut Canvas<'_>,
+    v: &View<'_>,
+    m: &crate::media::Media,
+    x: i32,
+    y: i32,
+) -> Vec<Hit> {
+    use crate::media::Control;
+    let (w, h, r, pad) = (380, 160, 24.0, 16);
+    let white = Rgba::rgb(0xff, 0xff, 0xff);
+    let dim = Rgba::rgba(255, 255, 255, 160);
+    cv.round_rect_shadow(x, y, w, h, r, 8.0, 18.0, 80);
+    cv.round_rect(x, y, w, h, r, Rgba::rgba(12, 12, 16, 120));
+    crate::material::liquid_glass(cv, x, y, w, h, r, 16, 0.9);
+
+    // Row 1: art, title / artist, visualizer.
+    cv.draw_album_art(x + pad, y + pad, 56, 10.0);
+    let tx = x + pad + 56 + 12;
+    let text_w = w - (tx - x) - pad - 23 - 10;
+    let title = if m.title.trim().is_empty() {
+        "Not Playing"
+    } else {
+        m.title.trim()
+    };
+    cv.text_truncated(
+        v.fonts.semibold.as_ref(),
+        title,
+        tx,
+        y + pad + 24,
+        15.0,
+        text_w,
+        white,
+    );
+    cv.text_truncated(
+        v.fonts.medium.as_ref(),
+        m.artist.trim(),
+        tx,
+        y + pad + 44,
+        13.0,
+        text_w,
+        dim,
+    );
+    visualizer(
+        cv,
+        x + w - pad - 23,
+        y + pad + 18,
+        23,
+        20,
+        v.phase,
+        m.playing,
+    );
+
+    let mut hits = Vec::new();
+    // Row 2: progress with timestamps in 32 px columns.
+    let row2 = y + pad + 56 + 16;
+    let (bar_x, bar_w) = (x + pad + 32 + 8, w - 2 * pad - 2 * (32 + 8));
+    let (l, rlab, pct) = m
+        .elapsed_label()
+        .unwrap_or_else(|| ("--:--".into(), "--:--".into(), 0.0));
+    cv.text(v.fonts.medium.as_ref(), &l, x + pad, row2 + 4, 11.0, dim);
+    let rw = text_width(v.fonts.medium.as_ref(), &rlab, 11.0);
+    cv.text(
+        v.fonts.medium.as_ref(),
+        &rlab,
+        x + w - pad - rw,
+        row2 + 4,
+        11.0,
+        dim,
+    );
+    cv.round_rect(
+        bar_x,
+        row2 - 2,
+        bar_w,
+        4,
+        2.0,
+        Rgba::rgba(255, 255, 255, 56),
+    );
+    let fill = (bar_w as f32 * pct).round() as i32;
+    if fill > 0 {
+        cv.round_rect(
+            bar_x,
+            row2 - 2,
+            fill.max(4),
+            4,
+            2.0,
+            Rgba::rgba(255, 255, 255, 235),
+        );
+    }
+    if let Some(len) = m.length_us.filter(|l| *l > 0) {
+        let steps = crate::media::SEEK_STEPS;
+        for i in 0..steps {
+            let sx = bar_x + bar_w * i / steps;
+            let ex = bar_x + bar_w * (i + 1) / steps;
+            hits.push((
+                sx,
+                row2 - 9,
+                ex - sx,
+                18,
+                Control::SeekTo(crate::media::seek_target(i, steps, len)),
+            ));
+        }
+    }
+
+    // Row 3: previous, play / pause, next.
+    let cy = y + h - pad - 16;
+    let cx = x + w / 2;
+    for (dx, c) in [
+        (-64, Control::Previous),
+        (0, Control::PlayPause),
+        (64, Control::Next),
+    ] {
+        let bx = (cx + dx) as f32;
+        match c {
+            Control::Previous => cv.icon_skip(bx, cy as f32, 22.0, false, white),
+            Control::Next => cv.icon_skip(bx, cy as f32, 22.0, true, white),
+            _ if m.playing => cv.icon_pause(bx, cy as f32, 20.0, white),
+            _ => cv.icon_play(bx, cy as f32, 24.0, white),
+        }
+        hits.push((cx + dx - 22, cy - 18, 44, 36, c));
+    }
+    hits
+}
+
+/// Where the media panel goes for each layout: under the big clock for
+/// Classic, top-right otherwise (clear of the clock and the sign-in).
+pub fn media_panel_pos(style: LockStyle, w: i32, h: i32) -> (i32, i32) {
+    match style {
+        LockStyle::Classic => {
+            let clock_size = (h as f32 * 0.20).clamp(96.0, 190.0);
+            let clock_base = (h as f32 * 0.29) as i32;
+            ((w - 380) / 2, clock_base + (clock_size * 0.12) as i32 + 28)
+        }
+        _ => (w - 380 - 24, 64),
+    }
 }
 
 fn centred_shadow(
@@ -658,7 +934,13 @@ fn centred_display_clock_a(
 
 fn avatar(cv: &mut Canvas<'_>, v: &View<'_>, cx: i32, cy: i32, r: f32) {
     cv.circle(cx as f32, cy as f32, r, Rgba::rgba(255, 255, 255, 58));
-    cv.ring(cx as f32, cy as f32, r - 0.5, 1.0, Rgba::rgba(255, 255, 255, 96));
+    cv.ring(
+        cx as f32,
+        cy as f32,
+        r - 0.5,
+        1.0,
+        Rgba::rgba(255, 255, 255, 96),
+    );
     let initial = v
         .name
         .chars()
@@ -687,14 +969,7 @@ fn glass_pill(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32) {
 
 /// Clean neutral frosted scrim over a blurred wallpaper — airy, zero mud or colour cast.
 fn neutral_veil(cv: &mut Canvas<'_>, w: i32, h: i32) {
-    cv.fill_rect_vgrad(
-        0,
-        0,
-        w,
-        h,
-        Rgba::rgba(0, 0, 0, 26),
-        Rgba::rgba(0, 0, 0, 58),
-    );
+    cv.fill_rect_vgrad(0, 0, w, h, Rgba::rgba(0, 0, 0, 26), Rgba::rgba(0, 0, 0, 58));
 }
 
 /// Atmospheric top-and-bottom edge scrims for Classic so the middle Beach
@@ -755,14 +1030,26 @@ fn field(cv: &mut Canvas<'_>, v: &View<'_>, cx: i32, y: i32, w: i32) {
         let start = dots_cx - (n - 1) * gap / 2;
         let cy = (y + h / 2) as f32;
         for i in 0..n {
-            cv.circle((start + i * gap) as f32, cy + 0.8, 3.8, Rgba::rgba(0, 0, 0, 48));
+            cv.circle(
+                (start + i * gap) as f32,
+                cy + 0.8,
+                3.8,
+                Rgba::rgba(0, 0, 0, 48),
+            );
             cv.circle((start + i * gap) as f32, cy, 3.8, Rgba::rgb(255, 255, 255));
         }
         // Subtle Apple-style frosted return button on the right inside the capsule.
         let btn_cx = (x + w - 19) as f32;
         cv.circle(btn_cx, cy, 12.0, Rgba::rgba(255, 255, 255, 48));
         cv.ring(btn_cx, cy, 11.5, 1.0, Rgba::rgba(255, 255, 255, 120));
-        cv.line(btn_cx - 4.0, cy, btn_cx + 3.5, cy, 1.6, Rgba::rgb(255, 255, 255));
+        cv.line(
+            btn_cx - 4.0,
+            cy,
+            btn_cx + 3.5,
+            cy,
+            1.6,
+            Rgba::rgb(255, 255, 255),
+        );
         cv.line(
             btn_cx + 0.5,
             cy - 3.5,
@@ -809,21 +1096,20 @@ fn field(cv: &mut Canvas<'_>, v: &View<'_>, cx: i32, y: i32, w: i32) {
 }
 
 /// Colourful miniature live audio bars for the Dashboard now-playing capsule.
-fn lock_media_bars(cv: &mut Canvas<'_>, x: i32, mid: f32) {
-    let bars: [(i32, Rgba); 4] = [
-        (6, Rgba::rgb(0xFF, 0x7A, 0x5A)),
-        (11, Rgba::rgb(0xFF, 0xB2, 0x4E)),
-        (8, Rgba::rgb(0x64, 0xD2, 0xFF)),
-        (12, Rgba::rgb(0x30, 0xB8, 0xFF)),
-    ];
-    for (i, (bh, col)) in bars.into_iter().enumerate() {
-        cv.round_rect(x + i as i32 * 4, (mid as i32) - bh / 2, 2, bh, 1.0, col);
+/// Paint the lock screen over the backdrop already in the canvas.
+pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) -> Vec<Hit> {
+    let (w, h) = (cv.width as i32, cv.height as i32);
+    paint_layout(cv, v, w, h);
+    let mut hits = Vec::new();
+    if let Some(m) = v.media {
+        let (x, y) = media_panel_pos(v.style, w, h);
+        hits = media_panel(cv, v, m, x, y);
     }
+    lock_notch(cv, v, w);
+    hits
 }
 
-/// Paint the lock screen over the backdrop already in the canvas.
-pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
-    let (w, h) = (cv.width as i32, cv.height as i32);
+fn paint_layout(cv: &mut Canvas<'_>, v: &View<'_>, w: i32, h: i32) {
     let white = Rgba::rgb(0xff, 0xff, 0xff);
     let soft = Rgba::rgba(255, 255, 255, 228);
     match v.style {
@@ -966,15 +1252,6 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
         LockStyle::Dashboard => {
             neutral_veil(cv, w, h);
             let weather = v.weather.filter(|t| !t.is_empty());
-            let title = v.media_title.unwrap_or("").trim();
-            let artist = v.media_artist.unwrap_or("").trim();
-            let media_line = match (title.is_empty(), artist.is_empty()) {
-                (false, false) => Some(format!("{title}  ·  {artist}")),
-                (false, true) => Some(title.to_string()),
-                (true, false) => Some(artist.to_string()),
-                (true, true) => None,
-            };
-
             if let Some(label) = weather {
                 let size = 13.5;
                 let tw = text_width(v.fonts.semibold.as_ref(), label, size);
@@ -995,45 +1272,7 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
                 );
             }
 
-            // Top-centre Live Activity capsule (pure hardware black when playing)
-            // or the clean white-on-black nL brand mark when silent.
-            if let Some(line) = media_line.as_deref() {
-                let size = 12.6;
-                let side = if weather.is_some() { 130 } else { 36 };
-                let max_tw = (w - side * 2 - 76).clamp(110, 310);
-                let tw = text_width(v.fonts.medium.as_ref(), line, size).min(max_tw);
-                let (pw, ph) = (tw + 66, 36);
-                let px = (w - pw) / 2;
-                let py = 18;
-                cv.round_rect_shadow(px, py, pw, ph, 18.0, 4.0, 10.0, 68);
-                cv.round_rect(px, py, pw, ph, 18.0, Rgba::rgb(0, 0, 0));
-                cv.round_rect_glass_rim(
-                    px,
-                    py,
-                    pw,
-                    ph,
-                    18.0,
-                    Rgba::rgba(255, 255, 255, 42),
-                    Rgba::rgba(255, 255, 255, 20),
-                    Rgba::rgba(255, 255, 255, 14),
-                );
-                cv.draw_album_art(px + 8, py + 8, 20, 6.0);
-                cv.text_truncated(
-                    v.fonts.medium.as_ref(),
-                    line,
-                    px + 36,
-                    py + 23,
-                    size,
-                    max_tw,
-                    white,
-                );
-                lock_media_bars(cv, px + pw - 24, py as f32 + ph as f32 / 2.0);
-            } else {
-                let mh = 26;
-                let mw = crate::canvas::nl_mark_width(mh, v.fonts);
-                cv.mark_nl((w - mw) / 2, 22, mh, v.fonts);
-            }
-
+            // The top centre belongs to the lock notch (drawn for every layout).
             // Monumental SF-Pro-weighted Display Clock with tracked date above.
             let clock_size = (h as f32 * 0.21).clamp(104.0, 192.0);
             let clock_base = (h as f32 * 0.40) as i32;
@@ -1259,6 +1498,11 @@ impl SeatHandler for App {
         seat: WlSeat,
         cap: Capability,
     ) {
+        if cap == Capability::Pointer && self.pointer.is_none() {
+            if let Ok(p) = self.seats.get_pointer(qh, &seat) {
+                self.pointer = Some(p);
+            }
+        }
         if cap == Capability::Keyboard && self.keyboard.is_none() {
             match self.seats.get_keyboard(qh, &seat, None) {
                 Ok(k) => self.keyboard = Some(k),
@@ -1354,6 +1598,42 @@ delegate_session_lock!(App);
 delegate_shm!(App);
 delegate_seat!(App);
 delegate_keyboard!(App);
+smithay_client_toolkit::delegate_pointer!(App);
+
+impl PointerHandler for App {
+    /// Only the media panel's controls react; a click anywhere else does
+    /// nothing, so nothing behind the lock can be reached.
+    fn pointer_frame(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &WlPointer,
+        events: &[PointerEvent],
+    ) {
+        for e in events {
+            let PointerEventKind::Press { button: 0x110, .. } = e.kind else {
+                continue;
+            };
+            let Some(s) = self
+                .surfaces
+                .iter()
+                .find(|s| s.lock.wl_surface() == &e.surface)
+            else {
+                continue;
+            };
+            let (x, y) = (e.position.0 as i32, e.position.1 as i32);
+            let hit = s
+                .hits
+                .iter()
+                .find(|(hx, hy, hw, hh, _)| x >= *hx && x < hx + hw && y >= *hy && y < hy + hh)
+                .map(|h| h.4);
+            if let (Some(c), Some(m)) = (hit, self.media.lock().ok().and_then(|g| g.clone())) {
+                crate::media::control(m.bus, c);
+                self.last_key = Instant::now();
+            }
+        }
+    }
+}
 delegate_registry!(App);
 
 #[cfg(test)]
