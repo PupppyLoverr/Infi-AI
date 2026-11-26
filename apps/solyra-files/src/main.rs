@@ -670,9 +670,9 @@ fn sidebar(app: &FilesApp, style: &solyra_ui::Style, lights: View) -> View {
         .pb(10.)
         .gap(4.)
         .rounded(14.)
-        .bg(if style.dark() { Color(255, 255, 255, 16) } else { Color(255, 255, 255, 120) })
+        .bg(if style.dark() { Color(255, 255, 255, 20) } else { Color(255, 255, 255, 120) })
         .border(1.)
-        .border_color(if style.dark() { Color(255, 255, 255, 26) } else { Color(0, 0, 0, 18) })
+        .border_color(if style.dark() { Color(255, 255, 255, 46) } else { Color(255, 255, 255, 160) })
         .window_drag()
         .child(row().pl(4.).pb(14.).child(lights))
         .child(sidebar_section("Favourites", style, favourites))
@@ -1672,7 +1672,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // One frosted surface: the compositor blurs behind the window,
             // this single tint lies under sidebar, toolbar and content.
             let surface = if style.glass {
-                if style.dark() { Color(24, 26, 30, 168) } else { Color(246, 246, 248, 190) }
+                if style.dark() { Color(26, 28, 32, 132) } else { Color(246, 246, 248, 165) }
             } else {
                 style.content_bg()
             };
@@ -1682,7 +1682,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .rounded(16.)
                 .overflow_hidden()
                 .border(1.)
-                .border_color(Color(255, 255, 255, 30))
+                .border_color(Color(255, 255, 255, 44))
                 .text_color(solyra_ui::color(theme.text))
                 .bg(surface)
                 .child(sidebar(&app, &style, window_lights(window.clone())))

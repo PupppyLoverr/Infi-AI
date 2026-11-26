@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Effects
+import QtQuick.Shapes
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -132,7 +133,11 @@ PanelWindow {
 
     Rectangle {
         id: shape
-        color: "black"
+        // Idle, compact and HUD: solid black, the camera housing. Expanded:
+        // dark Liquid Glass over Hyprland's blur, with the lensing rim.
+        readonly property bool glassy: win.mode === "expanded" && !Theme.reduceTransparency
+        color: glassy ? Qt.rgba(0.03, 0.03, 0.04, 0.80) : "black"
+        Behavior on color { ColorAnimation { duration: Theme.ms(220) } }
         opacity: Theme.hideNotch && win.mode === "idle" && !hoverIdle.hovered ? 0 : 1
         Behavior on opacity { NumberAnimation { duration: Theme.ms(220) } }
         HoverHandler { id: hoverIdle }
@@ -158,6 +163,35 @@ PanelWindow {
             onEntered: { win.tab = "shelf"; win.dropping = true; win.hovering = true; win.mode = "expanded" }
             onExited: win.dropping = false
             onDropped: drop => { win.dropping = false; for (const u of drop.urls) shelf.add(u.toString()) }
+        }
+
+        Shape {
+            anchors.fill: parent
+            visible: shape.glassy
+            opacity: shape.glassy ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: Theme.ms(220) } }
+            preferredRendererType: Shape.CurveRenderer
+            ShapePath {
+                strokeWidth: 0
+                fillRule: ShapePath.OddEvenFill
+                fillGradient: LinearGradient {
+                    x1: 0; y1: 0; x2: shape.width; y2: shape.height
+                    GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0.42) }
+                    GradientStop { position: 0.4; color: Qt.rgba(1, 1, 1, 0.10) }
+                    GradientStop { position: 1.0; color: Qt.rgba(1, 1, 1, 0.24) }
+                }
+                PathRectangle { x: 0; y: 0; width: shape.width; height: shape.height; radius: shape.radius }
+                PathRectangle { x: 1.2; y: 1.2; width: shape.width - 2.4; height: shape.height - 2.4; radius: Math.max(0, shape.radius - 1.2) }
+            }
+        }
+        Rectangle {
+            anchors { left: parent.left; right: parent.right; top: parent.top }
+            height: 50; radius: shape.radius
+            visible: shape.glassy
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0.10) }
+                GradientStop { position: 1.0; color: "transparent" }
+            }
         }
 
         // Compact live activity: art left, equaliser right.
