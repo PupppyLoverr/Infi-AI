@@ -1,0 +1,43 @@
+=== Hyprland --version
+Hyprland 0.57.2 built from branch v0.57.2 at commit 11cbc6c577b84ffb1edf4df3fc5b6128c3ae6947 clean (VERSION: bump to 0.57.2).
+Date: Mon Nov 9 11:05:46 2026
+Tag: v0.57.2, commits: 8015
+
+Libraries:
+=== Hyprland --help
+usage: Hyprland [arg [...]].
+
+Arguments:
+    --help              -h       - Show this message again
+    --config FILE       -c FILE  - Specify config file to use
+    --socket NAME                - Sets the Wayland socket name (for Wayland socket handover)
+    --wayland-fd FD              - Sets the Wayland socket fd (for Wayland socket handover)
+    --watchdog-fd FD             - Used by start-hyprland
+    --safe-mode                  - Starts Hyprland in safe mode
+    --systeminfo                 - Prints system infos
+    --i-am-really-stupid         - Omits root user privileges check (why would you do that?)
+    --verify-config              - Do not run Hyprland, only print if the config has any errors
+    --version           -v       - Print this binary's version
+    --version-json               - Print this binary's version as json
+    --locked-cmd [COMMAND]       - Launches locker on startup via the provided command
+=== /usr/share/hypr
+/usr/share/hypr
+/usr/share/hypr/hyprland.lua
+/usr/share/hypr/lockdead.png
+/usr/share/hypr/lockdead2.png
+/usr/share/hypr/stubs
+/usr/share/hypr/stubs/hl.meta.lua
+/usr/share/hypr/wall0.png
+/usr/share/hypr/wall1.png
+/usr/share/hypr/wall2.png
+=== config strings
+    "buildHyprlang": "{}",
+Hyprlang: built against {}, system has {}
+hyprlangH
+N8Hyprlang9SVector2DE
+RIP hyprlang
+    "systemHyprlang": "{}",
+XCursor failed to find a legacy shape with name {}, skipping
+*Z13legacyCommandIPFNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEN3IPC7Socket113eOutputFormatES5_EENS7_8SCommandES5_NS7_13eCommandMatchET_EUlRKNS7_8SRequestEE_
+_ZN15CXCursorManager18getLegacyShapeNameERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+_ZTSN8Hyprlang9SVector2DE
