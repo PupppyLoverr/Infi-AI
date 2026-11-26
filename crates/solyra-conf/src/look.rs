@@ -121,6 +121,9 @@ pub struct Look {
     pub spotlight_in_notch: bool,
     /// Calendar and weather cards at the top left of the desktop.
     pub desktop_widgets: bool,
+    /// The dock, notch, Spotlight and Control Centre come from solyra-web
+    /// (Tauri + React); the panel keeps the bar, lock, widgets and services.
+    pub web_shell: bool,
     pub show_workspaces: bool,
     pub clock_24h: bool,
     pub show_date: bool,
@@ -157,6 +160,7 @@ impl Default for Look {
             notch_hover: true,
             spotlight_in_notch: true,
             desktop_widgets: true,
+            web_shell: false,
             show_workspaces: false,
             clock_24h: true,
             show_date: true,
@@ -212,6 +216,7 @@ impl Look {
             notch_hover: flag(text, "notch_hover", d.notch_hover),
             spotlight_in_notch: flag(text, "spotlight_in_notch", d.spotlight_in_notch),
             desktop_widgets: flag(text, "desktop_widgets", d.desktop_widgets),
+            web_shell: flag(text, "web_shell", d.web_shell),
             show_workspaces: flag(text, "show_workspaces", d.show_workspaces),
             clock_24h: flag(text, "clock_24h", d.clock_24h),
             show_date: flag(text, "show_date", d.show_date),
@@ -264,6 +269,7 @@ impl Look {
             ("notch_hover", b(self.notch_hover)),
             ("spotlight_in_notch", b(self.spotlight_in_notch)),
             ("desktop_widgets", b(self.desktop_widgets)),
+            ("web_shell", b(self.web_shell)),
             ("show_workspaces", b(self.show_workspaces)),
             ("clock_24h", b(self.clock_24h)),
             ("show_date", b(self.show_date)),

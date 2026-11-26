@@ -1,4 +1,53 @@
+/* Solyra web shell. The compositor blurs and bends the desktop behind each
+   surface (layer rules / solyra_glass_v1); these styles are the material
+   painted on top: tint, rim, specular and shadow — one recipe for every
+   surface, tuned per role with the --glass-* variables. */
+:root {
+  --font: "Inter", "SF Pro Text", system-ui, -apple-system, sans-serif;
+  --ink: rgba(255, 255, 255, 0.96);
+  --ink-2: rgba(255, 255, 255, 0.62);
+  --ink-3: rgba(255, 255, 255, 0.38);
+  --accent: #0a84ff;
+  --glass-tint: rgba(28, 28, 34, 0.34);
+  --glass-rim: rgba(255, 255, 255, 0.22);
+  --glass-spec: rgba(255, 255, 255, 0.42);
+  --hover: rgba(255, 255, 255, 0.1);
+}
+* { box-sizing: border-box; }
 html, body, #root { margin: 0; height: 100%; background: transparent; overflow: hidden; }
-.proto { margin: 8px auto; width: 360px; height: 56px; border-radius: 20px;
-  display: grid; place-items: center; color: white; font: 600 15px system-ui;
-  background: rgba(30, 30, 40, 0.35); border: 1px solid rgba(255,255,255,0.35); }
+body { font-family: var(--font); color: var(--ink); -webkit-font-smoothing: antialiased; user-select: none; cursor: default; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: default; }
+input { font: inherit; color: inherit; background: none; border: 0; outline: 0; }
+
+/* Liquid Glass: thin tint, lit top rim (specular), soft lower rim, lensed
+   inner band, grounded shadow. */
+.glass {
+  position: relative;
+  background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02)), var(--glass-tint);
+  border: 1px solid var(--glass-rim);
+  box-shadow:
+    inset 0 1px 0 var(--glass-spec),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03),
+    inset 0 0 18px rgba(255, 255, 255, 0.05),
+    0 12px 32px rgba(0, 0, 0, 0.28),
+    0 2px 6px rgba(0, 0, 0, 0.18);
+}
+.glass::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: radial-gradient(120% 60% at 20% -10%, rgba(255,255,255,0.16), transparent 55%);
+}
+.glass.clear { --glass-tint: rgba(255, 255, 255, 0.06); }
+.glass.dark { --glass-tint: rgba(12, 12, 16, 0.56); }
+.glass.tooltip { --glass-tint: rgba(30, 30, 36, 0.7); border-radius: 999px; }
+
+.notch-black { background: #000; }
+.muted { color: var(--ink-2); }
+.dim { color: var(--ink-3); }
+.row { display: flex; align-items: center; }
+.col { display: flex; flex-direction: column; }
+.grow { flex: 1; min-width: 0; }
+.ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pill { border-radius: 999px; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 8px; }

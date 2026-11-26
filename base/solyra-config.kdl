@@ -191,6 +191,22 @@ layer-rule {
     }
 }
 
+// solyra-web (Tauri + React shell): transparent surfaces whose cards send
+// their exact rounded boxes over solyra_glass_v1, which clips this blur to
+// them. The notch is opaque black and needs none.
+layer-rule {
+    match namespace=r#"^solyra-web-(dock|spotlight|control)$"#
+    background-effect {
+        blur true
+        xray false
+        blur-passes 2
+        blur-offset 2.5
+        refraction 11
+        refraction-radius 24
+        saturation 1.35
+    }
+}
+
 // Materials. Glass: clean blur with a little extra colour. Acrylic: a softer
 // colour lift plus fine grain (the panel adds the wallpaper-tinted layer).
 layer-rule {

@@ -537,6 +537,14 @@ fn gshape(
     }
 }
 
+/// Hand a shell request to solyra-web (the Tauri + React surfaces).
+fn web_shell(args: &str) {
+    let _ = std::process::Command::new("solyra-web")
+        .args(args.split_whitespace())
+        .stdin(std::process::Stdio::null())
+        .spawn();
+}
+
 #[allow(clippy::too_many_arguments)]
 fn make_layer_surface(
     compositor: &CompositorState,
@@ -890,6 +898,9 @@ impl App {
                     ));
                 }
             }
+            ShellCmd::ToggleLauncher if self.prefs.look.web_shell => web_shell("toggle spotlight"),
+            ShellCmd::ToggleControl if self.prefs.look.web_shell => web_shell("toggle control"),
+            ShellCmd::ToggleIsland if self.prefs.look.web_shell => web_shell("emit island island-open"),
             ShellCmd::ToggleLauncher => {
                 if self.launcher.is_some() {
                     self.launcher = None;
@@ -1505,7 +1516,7 @@ impl App {
 
     fn ensure_island(&mut self) {
         use solyra_conf::look::NotchStyle;
-        let want = self.prefs.look.notch != NotchStyle::Off;
+        let want = self.prefs.look.notch != NotchStyle::Off && !self.prefs.look.web_shell;
         let mat = self.prefs.look.material(self.prefs.look.notch_material);
         if mat != self.notch_material {
             // The namespace carries the material: make the surface anew.
@@ -1888,7 +1899,8 @@ impl App {
             }
         }
 
-        if self.dock.configured && self.dock.width > 0 {
+        // With the web shell the dock surface stays unmapped (no buffer).
+        if self.dock.configured && self.dock.width > 0 && !self.prefs.look.web_shell {
             let raw_hover = self.hover_on(&self.dock.surface);
             // pearOS smooths the magnification pointer: it lerps toward the
             // real position instead of snapping, which is the fluid feel.

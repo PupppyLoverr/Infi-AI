@@ -130,6 +130,7 @@ impl FramebufferEffectElement {
         &self,
         crop: Rectangle<f64, Logical>,
         transform: Transform,
+        tex: Option<(Rectangle<f64, Buffer>, Size<f64, Buffer>)>,
     ) -> [Uniform<'static>; 19] {
         let offset = crop.loc - (self.clip_geo.loc - self.geometry.loc);
         let offset = Vec2::new(offset.x as f32, offset.y as f32);
@@ -144,7 +145,17 @@ impl FramebufferEffectElement {
         let transform_mat = Mat3::from_translation(Vec2::new(0.5, 0.5))
             * transform.matrix()
             * Mat3::from_translation(Vec2::new(-0.5, -0.5));
-        let input_to_clip_geo = input_to_clip_geo * transform_mat;
+        // The capture texture is padded (blur and lens margin), so v_coords
+        // span only the `tex_src` part of it: first bring them back to [0, 1]
+        // inside that crop, otherwise every shape, the corner clip and the
+        // geometry clip are scaled about the origin.
+        let tex_to_crop = tex.map_or(Mat3::IDENTITY, |(c, t)| {
+            let t = Vec2::new(t.w.max(1.) as f32, t.h.max(1.) as f32);
+            let loc = Vec2::new(c.loc.x as f32, c.loc.y as f32);
+            let size = Vec2::new(c.size.w.max(1.) as f32, c.size.h.max(1.) as f32);
+            Mat3::from_scale(t / size) * Mat3::from_translation(-loc / t)
+        });
+        let input_to_clip_geo = input_to_clip_geo * transform_mat * tex_to_crop;
         let [g0, g1, g2, g3, g4, g5, g6, g7, g8] = self.glass.uniforms();
 
         let clip_geo_size = (self.clip_geo.size.w as f32, self.clip_geo.size.h as f32);
@@ -470,12 +481,6 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
             clamped_dst.size.to_f64().upscale(dst_to_src).to_logical(1.),
         );
 
-        let program = Shaders::get_from_frame(frame).postprocess_and_clip.clone();
-        let uniforms = program
-            .is_some()
-            .then(|| self.compute_uniforms(crop, frame.transformation()));
-        let uniforms = uniforms.as_ref().map_or(&[][..], |x| &x[..]);
-
         let tex_src = {
             let c = inner.texture_crop;
             if c.size.w > 0 && c.size.h > 0 {
@@ -484,6 +489,13 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
                 Rectangle::from_size(texture.size().to_f64())
             }
         };
+
+        let program = Shaders::get_from_frame(frame).postprocess_and_clip.clone();
+        let tex_norm = Some((tex_src, texture.size().to_f64()));
+        let uniforms = program
+            .is_some()
+            .then(|| self.compute_uniforms(crop, frame.transformation(), tex_norm));
+        let uniforms = uniforms.as_ref().map_or(&[][..], |x| &x[..]);
 
         frame.render_texture_from_to(
             texture,

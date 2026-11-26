@@ -18,7 +18,16 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 gtk = "0.18"
-gtk-layer-shell = "0.8"
+gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
+portable-pty = "0.8"
+dbus = "0.9"
+# Shape-accurate glass: solyra_glass_v1 on GTK's own wl_surface (foreign display).
+gdkwayland-sys = "0.18"
+glib = "0.18"
+wayland-client = "0.31"
+wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-sys = { version = "0.31", features = ["client"] }
+wayland-scanner = "0.31"
 
 [profile.release]
 strip = true
