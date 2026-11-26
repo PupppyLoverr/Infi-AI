@@ -7,7 +7,7 @@ description = "Solyra terminal: zgx, workspace tabs and split panes"
 
 [dependencies]
 zgx.workspace = true
-zgx-desktop = { workspace = true, features = ["terminal"] }
+zgx-desktop = { workspace = true, features = ["terminal", "webkitgtk"] }
 zgx-components.workspace = true
 serde_json = "1"
 solyra-ui.workspace = true

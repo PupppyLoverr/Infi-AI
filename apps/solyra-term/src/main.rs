@@ -24,6 +24,7 @@ use zgx::{
     compose::prelude::*,
     input::{EventPhase, InputEvent, Key, Modifiers, PointerButton},
     terminal::{Terminal, TerminalOptions, terminal},
+    web_view::{WebView, WebViewOptions, web_view},
 };
 use zgx_components::{Tab, TabsOptions, tabs};
 use zgx_desktop::{Application, WindowOptions};
@@ -65,6 +66,8 @@ struct NewWorkspace;
 struct ToggleSidePanel;
 #[derive(Clone, Copy)]
 struct ToggleChat;
+#[derive(Clone, Copy)]
+struct ToggleBrowser;
 #[derive(Clone, Copy)]
 struct NextWorkspace;
 #[derive(Clone, Copy)]
@@ -108,6 +111,7 @@ fn keymap() -> Keymap {
     let map = bind_char(map, 'T', CTRL_SHIFT, NewWorkspace);
     let map = bind_char(map, 'P', CTRL_SHIFT, ToggleSidePanel);
     let map = bind_char(map, 'M', CTRL_SHIFT, ToggleChat);
+        let map = bind_char(map, 'B', CTRL_SHIFT, ToggleBrowser);
     let map = bind_tab(map, CTRL, NextWorkspace);
     bind_tab(map, CTRL_SHIFT, PrevWorkspace)
 }
@@ -141,6 +145,7 @@ struct TermApp {
     agents_rev: zgx::reactive::Signal<u32>,
     /// Panes in harness-chat mode: pane id -> live claude stream-json session.
     chats: Rc<RefCell<HashMap<String, Rc<chat::Chat>>>>,
+    browsers: Rc<RefCell<HashMap<String, BrowserPane>>>,
     tasks: zgx_desktop::TaskSpawner,
 }
 
@@ -287,6 +292,84 @@ impl TermApp {
             }
         }
         self.bump();
+    }
+
+    /// Switch the focused pane between terminal and the built-in browser.
+    /// The shell stays alive underneath, like chat mode does.
+    fn toggle_browser(&self) {
+        let Some(id) = self.session.borrow().active().map(|w| w.focused.clone()) else {
+            return;
+        };
+        if self.browsers.borrow_mut().remove(&id).is_some() {
+            self.status.set("terminal".into());
+        } else {
+            let web = WebView::new(&self.rt, WebViewOptions::default());
+            web.load_url("https://github.com");
+            self.browsers.borrow_mut().insert(
+                id,
+                BrowserPane {
+                    web,
+                    input: self.rt.signal(String::new()),
+                },
+            );
+            self.status.set("browser — Ctrl+Shift+B switches back".into());
+        }
+        self.bump();
+    }
+
+    /// A browser pane: address row over the web view.
+    fn browser_view(&self, b: BrowserPane) -> View {
+        let theme = solyra_ui::current().theme;
+        let input = b.input.clone();
+        let web = b.web.clone();
+        let go = {
+            let (web, input) = (b.web.clone(), b.input.clone());
+            move || {
+                let mut url = input.get();
+                if !url.is_empty() {
+                    if !url.contains("://") {
+                        url = format!("https://{url}");
+                    }
+                    web.load_url(url);
+                }
+            }
+        };
+        let addr = text_input("Address or URL", input.clone())
+            .grow()
+            .rounded(14.)
+            .on_event(move |cx| {
+                if cx.phase == EventPhase::Capture {
+                    return;
+                }
+                if let InputEvent::KeyDown {
+                    key: Key::Enter, ..
+                } = &cx.event
+                {
+                    let mut url = input.get();
+                    if !url.is_empty() {
+                        if !url.contains("://") {
+                            url = format!("https://{url}");
+                        }
+                        web.load_url(url);
+                    }
+                    cx.prevent_default();
+                }
+            });
+        column()
+            .grow()
+            .w_full()
+            .h_full()
+            .child(
+                row()
+                    .w_full()
+                    .shrink_0()
+                    .gap(6.)
+                    .px(6.)
+                    .py(4.)
+                    .child(addr)
+                    .child(tool_button("Go", go)),
+            )
+            .child(web_view(&b.web).grow().w_full())
     }
 
     fn close_focused(&self) {
@@ -566,8 +649,11 @@ impl TermApp {
     }
 
     fn pane(&self, id: &str, workspace: &str) -> View {
+        let in_browser = self.browsers.borrow().get(id).cloned();
         let in_chat = self.chats.borrow().get(id).cloned();
-        let body = if let Some(c) = in_chat {
+        let body = if let Some(b) = in_browser {
+            self.browser_view(b)
+        } else if let Some(c) = in_chat {
             self.chat_view(c)
         } else {
             match self.terms.borrow().get(id).cloned() {
@@ -739,6 +825,21 @@ impl TermApp {
     }
 }
 
+/// A browser living in one pane: the web view plus its address field.
+struct BrowserPane {
+    web: WebView,
+    input: zgx::reactive::Signal<String>,
+}
+
+impl Clone for BrowserPane {
+    fn clone(&self) -> Self {
+        Self {
+            web: self.web.clone(),
+            input: self.input.clone(),
+        }
+    }
+}
+
 fn weighted(view: View, weight: f32) -> View {
     view.flex_grow(weight)
         .flex_shrink(1.)
@@ -794,11 +895,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 panel_open: rt.signal(true),
                 agents_rev: rt.signal(0),
                 chats: Rc::default(),
+                browsers: Rc::default(),
                 tasks: cx.tasks.clone(),
             };
             app.focus_only("pane-1");
             // Verification hooks: 1 enters chat mode, 2 also sends a test
             // message once the harness is up (screenshot tests).
+            if std::env::var("SOLYRA_TERM_BROWSER").is_ok() {
+                app.toggle_browser();
+            }
             if let Ok(mode) = std::env::var("SOLYRA_TERM_CHAT") {
                 app.toggle_chat();
                 if mode == "2" {
@@ -974,6 +1079,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     move |_: &ToggleChat, cx| {
                         cx.prevent_default();
                         app.toggle_chat();
+                    }
+                })
+                .on_action({
+                    let app = app.clone();
+                    move |_: &ToggleBrowser, cx| {
+                        cx.prevent_default();
+                        app.toggle_browser();
                     }
                 })
                 .on_action({
