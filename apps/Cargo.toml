@@ -6,6 +6,7 @@ members = [
     "solyra-browse",
     "solyra-files",
     "solyra-setup",
+    "solyra-term",
 ]
 
 [workspace.package]

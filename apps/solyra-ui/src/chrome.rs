@@ -152,7 +152,9 @@ fn snap_menu(style: &Style, open: Signal<bool>) -> View {
 /// The titlebar. `tools` sits after the title (Finder-style toolbars put
 /// their controls there); `snap_open` is the Snap menu's state, owned by the
 /// window so it survives re-renders.
-pub fn titlebar(rt: &Runtime, style: &Style, title: &str, ctl: WindowCtl, tools: Option<View>) -> View {
+/// The traffic lights (close, minimise, zoom with the Snap popover), for
+/// apps that build their own titlebar row (the terminal).
+pub fn traffic_lights(rt: &Runtime, style: &Style, ctl: WindowCtl) -> View {
     let show = rt.signal(false);
     let snap_open = rt.signal(false);
     let (s_in, s_out) = (show.clone(), show.clone());
@@ -222,6 +224,11 @@ pub fn titlebar(rt: &Runtime, style: &Style, title: &str, ctl: WindowCtl, tools:
                 .child(snap_menu(style, snap_open.clone()))
         });
 
+    lights
+}
+
+pub fn titlebar(rt: &Runtime, style: &Style, title: &str, ctl: WindowCtl, tools: Option<View>) -> View {
+    let lights = traffic_lights(rt, style, ctl);
     let ink = color(style.theme.text);
     let bar_bg = if style.dark() {
         Color(8, 18, 20, if style.glass { 165 } else { 255 })

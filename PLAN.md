@@ -333,3 +333,58 @@ claimed without a VM run.
    already does. Pluggable, so more providers (Gemini CLI, OpenCode, API
    keys) can be added. Only official CLIs and their own login flows; never
    scraping web sessions.
+
+## 9. Additions (user, 2026-11-26 night): binding requirements
+1. **One terminal app, an exact copy of both recordings** (frames in
+   `docs/ref/terminal-*.png`). Not two apps: a single zgx app that has:
+   - **Recording A:** the green glass window, traffic lights, sidebar toggle,
+     tab pills with one glyph per pane plus a title, `+`, split-right and
+     split-down buttons, rounded pane cards, and an Agents sidebar
+     ("Agents N", harness icon, name, "now", "○ Idle · ~").
+   - **Recording B:** when a pane talks to a harness it switches to the chat
+     view: a dark window, title plus cwd, `$cost`, a `>_` toggle, "What
+     should Claude do? / in <dir>", user bubbles on the right, plain agent
+     text, "Thinking… / Writing… Ns", and a composer with Auto / model /
+     effort chips and a round send/stop button. `>_` swaps to the
+     harness's own TUI on the same session id.
+2. **Notch and lock screen: Droppy parity** (from getdroppy.app's site source).
+
+   *Notch:*
+   - File Shelf and Floating Basket
+   - Media Player (album art, scrubbing, controls, real MPRIS: Spotify,
+     browsers, any player)
+   - HUDs in the notch (volume, brightness, media, Bluetooth headphones,
+     battery and charging, caps lock)
+   - Clipboard Manager (favourites and pinning, incognito)
+   - Quick Actions and Quick Look previews
+   - Dynamic Island mode (no notch needed)
+   - Termi-Notch (run a command from the notch)
+   - High Alert (caffeinate timer)
+   - Notchface (webcam preview)
+   - Reminders/calendar glance
+   - Hide Notch
+   - Advanced Autofade
+   - Multi-Display
+   - Keyboard shortcuts
+   - Window Snap
+   - Tracked Folders
+   - OCR
+   - Voice Transcribe
+   - Element Capture
+
+   *Lock screen:* full-screen ambient album art, synced lyrics, large
+   clock, the notch with a lock/unlock animation, media controls, battery.
+
+   *Not portable* (marked so, with reasons): AirDrop, Apple Music-only
+   APIs, Finder Services, Alfred workflows.
+3. **Island motion like Apple's Dynamic Island:**
+   - The idle notch is small and centred (about 126×37 px, fully
+     rounded).
+   - It grows by pulling down from the top edge with a spring (response
+     0.34 s, damping 0.8, as Droppy uses) and morphs between compact,
+     expanded and alert shapes with matched-geometry transitions.
+   - Content fades and scales in after the shape leads (about 0.06 s).
+   - Collapsing uses response 0.24 s.
+   - All of it is disabled or crossfaded under Reduce Motion.
+4. **Reporting:** at every milestone, text plus screenshots from the VM. No
+   stubs; anything not possible is stated with the reason.

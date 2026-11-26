@@ -1,0 +1,17 @@
+[package]
+name = "solyra-term"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Solyra terminal: zgx, workspace tabs and split panes"
+
+[dependencies]
+zgx.workspace = true
+zgx-desktop = { workspace = true, features = ["terminal", "webkitgtk"] }
+zgx-components.workspace = true
+serde_json = "1"
+solyra-ui.workspace = true
+solyra-tokens.workspace = true
+
+[dev-dependencies]
+zgx-terminal.workspace = true
