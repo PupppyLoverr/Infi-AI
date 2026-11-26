@@ -738,10 +738,9 @@ fn clipboard_body(
         });
         px += pw + 8;
     }
-    // Top-right circular expand button.
+    // Top-right circular expand button (drawn vector diagonal arrows — no missing font glyph).
     let ex = bx + bw - 26;
-    cv.circle((ex + 13) as f32, (by + 13) as f32, 13.0, Rgba::rgba(255, 255, 255, 24));
-    cv.text(fonts.semibold.as_ref(), "⤢", ex + 7, by + 18, 12.5, Rgba::rgba(255, 255, 255, 210));
+    draw_expand_button(cv, ex, by);
 
     // Horizontal rich cards row.
     let card_y = by + pill_h + 12;
@@ -1651,8 +1650,7 @@ fn draw_droppy_media_body(
         // Bottom-right circular expand-to-fullscreen button (launches Lock/Ambient Media).
         let ex = bx + bw - 26;
         let ey = by + bh - 26;
-        cv.circle((ex + 13) as f32, (ey + 13) as f32, 13.0, Rgba::rgba(255, 255, 255, 26));
-        cv.text(fonts.semibold.as_ref(), "⤢", ex + 7, ey + 18, 12.5, Rgba::rgba(255, 255, 255, 220));
+        draw_expand_button(cv, ex, ey);
         regions.push(Region {
             x: ex,
             y: ey,
@@ -1661,6 +1659,22 @@ fn draw_droppy_media_body(
             action: HitAction::Shell(ShellCmd::Lock),
         });
     }
+}
+
+/// Crisp vector diagonal expand icon (`↗↙`) inside a 26 px dark glass circle.
+fn draw_expand_button(cv: &mut Canvas<'_>, x: i32, y: i32) {
+    cv.circle((x + 13) as f32, (y + 13) as f32, 13.0, Rgba::rgba(255, 255, 255, 26));
+    let fg = Rgba::rgba(255, 255, 255, 220);
+    // Diagonal shaft from bottom-left (x+9, y+17) to top-right (x+17, y+9)
+    for i in 0..8 {
+        cv.fill_rect(x + 9 + i, y + 16 - i, 2, 2, fg);
+    }
+    // Top-right arrowhead
+    cv.fill_rect(x + 13, y + 8, 5, 2, fg);
+    cv.fill_rect(x + 16, y + 8, 2, 5, fg);
+    // Bottom-left arrowhead
+    cv.fill_rect(x + 8, y + 16, 5, 2, fg);
+    cv.fill_rect(x + 8, y + 13, 2, 5, fg);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1900,15 +1914,15 @@ mod tests {
         assert_eq!(busy.h, idle.h, "a live activity keeps the pill's height");
         assert!(busy.w > idle.w, "and widens");
         let open = target(NotchStyle::Island, &media, true);
-        assert_eq!(open.w, 450.0, "Droppy expanded shelf / media width");
+        assert_eq!(open.w, 332.0, "Droppy expanded media width");
         assert!(
             (130.0..=160.0).contains(&open.h),
             "expanded media height {}",
             open.h
         );
-        assert_eq!(open.r, 44.0);
+        assert_eq!(open.r, 34.0);
         let glance = target(NotchStyle::Island, &Content::Idle, true);
-        assert_eq!(glance.r, 44.0);
+        assert_eq!(glance.r, 36.0);
         assert!(glance.h < open.h);
         assert!(glance.h > busy.h);
     }

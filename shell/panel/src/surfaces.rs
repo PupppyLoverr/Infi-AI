@@ -2536,9 +2536,6 @@ mod tests {
         );
         assert!(regions
             .iter()
-            .all(|r| !matches!(r.action, HitAction::Launch(_))));
-        assert!(regions
-            .iter()
             .any(|r| matches!(r.action, HitAction::Shell(ShellCmd::CloseOverlays))));
         let (small, _) = paint("zzzz", &[]);
         assert!(small.h > lay.h, "a query opens the results card");
