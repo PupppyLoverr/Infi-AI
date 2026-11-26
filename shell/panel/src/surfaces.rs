@@ -136,11 +136,34 @@ pub fn draw_bar(
     // menu bar, so it needs no scrim at all and the sky stays untouched.
     let flip = crate::material::ink_flips(bar_mat, th.bar, prefs.wall_tint);
     if bar_mat == crate::material::Material::Glass {
-        if !flip {
-            let scrim = if dark_theme { 26 } else { 34 };
-            let top = Rgba::rgba(0, 0, 0, scrim);
-            cv.fill_rect_vgrad(0, 0, w, h, top, Rgba::rgba(0, 0, 0, 0));
-        }
+        // Frosted, see-through menu bar (macOS): the compositor blurs the
+        // desktop and windows behind it; the panel adds a thin veil in the
+        // tone opposite to the text (it follows the wallpaper, as macOS's
+        // does), a soft sheen and a hairline at the bottom.
+        let light_ink = dark_theme != flip;
+        let (top, bottom, line) = if light_ink {
+            (
+                Rgba::rgba(0, 0, 0, 78),
+                Rgba::rgba(0, 0, 0, 58),
+                Rgba::rgba(255, 255, 255, 26),
+            )
+        } else {
+            (
+                Rgba::rgba(255, 255, 255, 118),
+                Rgba::rgba(255, 255, 255, 92),
+                Rgba::rgba(0, 0, 0, 20),
+            )
+        };
+        cv.fill_rect_vgrad(0, 0, w, h, top, bottom);
+        cv.fill_rect_vgrad(
+            0,
+            0,
+            w,
+            h / 2,
+            Rgba::rgba(255, 255, 255, 14),
+            Rgba::rgba(255, 255, 255, 0),
+        );
+        cv.fill_rect(0, h - 1, w, 1, line);
     } else {
         crate::material::paint(cv, &slab, 0, 0, w, h, 0.0);
         if matches!(
@@ -731,6 +754,26 @@ pub fn island_spot_shape(lay: &SpotLayout) -> (Rect, f32) {
     )
 }
 
+/// The shape at morph progress `t`: ease out (cubic) from the idle pill to
+/// the full shape. `(x, y, w, h, radius)`.
+pub fn island_spot_morph(lay: &SpotLayout, notch: bool, t: f32) -> (i32, i32, i32, i32, f32) {
+    let (target, r_end) = island_spot_shape(lay);
+    let e = 1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3);
+    let lerp = |a: f32, b: f32| a + (b - a) * e;
+    let cx = target.x as f32 + target.w as f32 / 2.0;
+    let (pw, ph) = if notch { (180.0, 32.0) } else { (210.0, 37.0) };
+    let w = lerp(pw, target.w as f32);
+    let h = lerp(ph, target.h as f32);
+    let r = lerp(ph / 2.0, r_end).min(h / 2.0);
+    (
+        (cx - w / 2.0).round() as i32,
+        target.y,
+        w.round() as i32,
+        h.round() as i32,
+        r,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn draw_island_spotlight(
     cv: &mut Canvas<'_>,
@@ -742,33 +785,42 @@ pub fn draw_island_spotlight(
     icons: &mut HashMap<String, Option<Icon>>,
     hover: Option<(f64, f64)>,
     notch: bool,
+    glass: bool,
     t: f32,
 ) -> Vec<Region> {
     let lay = island_spot_layout(query, items, notch);
-    let (target, r_end) = island_spot_shape(&lay);
-    // Ease out (cubic) from the idle pill (210×37) to the full shape.
+    let (x, y, wi, hi, r) = island_spot_morph(&lay, notch, t);
     let e = 1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3);
-    let lerp = |a: f32, b: f32| a + (b - a) * e;
-    let cx = target.x as f32 + target.w as f32 / 2.0;
-    let (pw, ph) = (
-        if notch { 180.0 } else { 210.0 },
-        if notch { 32.0 } else { 37.0 },
-    );
-    let w = lerp(pw, target.w as f32);
-    let h = lerp(ph, target.h as f32);
-    let r = lerp(ph / 2.0, r_end).min(h / 2.0);
-    let (x, y) = ((cx - w / 2.0).round() as i32, target.y);
-    let (wi, hi) = (w.round() as i32, h.round() as i32);
-    let black = Rgba::rgb(0, 0, 0);
-    if e > 0.3 {
-        cv.round_rect_shadow(x, y, wi, hi, r, 10.0, 30.0, (60.0 * e) as u8);
-    }
-    cv.round_rect(x, y, wi, hi, r, black);
-    if notch {
-        // Flush with the top edge, with the notch's little ears.
-        cv.fill_rect(x, 0, wi, (r as i32).min(hi), black);
-        cv.concave_corner(x as f32 - 10.0, 0.0, 10.0, true, black);
-        cv.concave_corner((x + wi) as f32, 0.0, 10.0, false, black);
+    if glass {
+        let lift = if notch { r.ceil() as i32 + 2 } else { 0 };
+        cv.round_rect_shadow(
+            x,
+            y - lift,
+            wi,
+            hi + lift,
+            r,
+            10.0,
+            30.0,
+            (40.0 + 30.0 * e) as u8,
+        );
+        crate::material::smoked_glass(cv, x, y - lift, wi, hi + lift, r);
+        if notch {
+            let ear = Rgba::rgba(10, 10, 14, 150);
+            cv.concave_corner(x as f32 - 10.0, 0.0, 10.0, true, ear);
+            cv.concave_corner((x + wi) as f32, 0.0, 10.0, false, ear);
+        }
+    } else {
+        let black = Rgba::rgb(0, 0, 0);
+        if e > 0.3 {
+            cv.round_rect_shadow(x, y, wi, hi, r, 10.0, 30.0, (60.0 * e) as u8);
+        }
+        cv.round_rect(x, y, wi, hi, r, black);
+        if notch {
+            // Flush with the top edge, with the notch's little ears.
+            cv.fill_rect(x, 0, wi, (r as i32).min(hi), black);
+            cv.concave_corner(x as f32 - 10.0, 0.0, 10.0, true, black);
+            cv.concave_corner((x + wi) as f32, 0.0, 10.0, false, black);
+        }
     }
     if t < 0.62 {
         return Vec::new();

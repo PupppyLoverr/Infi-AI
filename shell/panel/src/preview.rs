@@ -297,6 +297,23 @@ fn island_spot_shot(
     );
     let lay = crate::surfaces::island_spot_layout(query, &items, notch);
     let at = ((scene.w as i32 - lay.w as i32) / 2, 0);
+    {
+        let (x, y, w, h, r) = crate::surfaces::island_spot_morph(&lay, notch, t);
+        let lift = if notch { r.ceil() as i32 + 2 } else { 0 };
+        let rects: Vec<_> = crate::material::blur_rects(x, y - lift, w, h + lift, r)
+            .into_iter()
+            .filter(|rc| rc.1 >= 0)
+            .collect();
+        compositor_backdrop(
+            &scene.sharp,
+            &scene.soft,
+            scene.w,
+            Material::Glass,
+            &rects,
+            at,
+            &mut scene.out,
+        );
+    }
     let mut buf = vec![0u8; (lay.w * lay.h * 4) as usize];
     {
         let mut cv = Canvas::new(&mut buf, lay.w, lay.h, 1);
@@ -311,6 +328,7 @@ fn island_spot_shot(
             &mut icons,
             None,
             notch,
+            true,
             t,
         );
     }
@@ -342,14 +360,12 @@ fn island_spotlight_renders() {
             &cat,
         ),
     ];
-    // The finished shape is black at the top centre where the island was.
+    // The finished shape is smoked glass at the top centre: dark enough for
+    // white text, but not opaque black.
     for s in &shots[1..] {
         let i = ((10 * s.w + s.w / 2) * 4) as usize;
-        assert!(
-            s.rgba[i] < 12 && s.rgba[i + 1] < 12,
-            "{}: not black at the island",
-            s.name
-        );
+        let l = s.rgba[i] as u32 + s.rgba[i + 1] as u32 + s.rgba[i + 2] as u32;
+        assert!(l < 3 * 110, "{}: too light behind the field ({l})", s.name);
     }
     if let Some(dir) = std::env::var_os("SOLYRA_RENDER_DIR") {
         let dir = std::path::PathBuf::from(dir);
@@ -990,6 +1006,7 @@ fn island_shots(fonts: &Fonts) -> Vec<Shot> {
     .ok()
     .and_then(|b| crate::canvas::decode_png(&b));
     let beach = crate::lock::backdrop(beach_px.as_ref(), w, h);
+    let soft = crate::lock::blur(&crate::lock::blur(&beach, w, h), w, h);
     let mut out = Vec::new();
     for style in [NotchStyle::Notch, NotchStyle::Island] {
         for (name, content, expanded) in &cases {
@@ -1000,9 +1017,20 @@ fn island_shots(fonts: &Fonts) -> Vec<Shot> {
                 date: "Thursday 19 November",
                 reply: "",
                 typing: false,
+                glass: true,
             };
             let tag = format!("island-{}-{name}", style.as_str());
             let mut buf = beach.clone();
+            let rects = island::glass_rects(style, &anim.cur);
+            compositor_backdrop(
+                &beach,
+                &soft,
+                w,
+                crate::material::Material::Glass,
+                &rects,
+                (0, 0),
+                &mut buf,
+            );
             {
                 let mut cv = crate::canvas::Canvas::new_keep(&mut buf, w, h, 1);
                 island::draw(
@@ -1268,7 +1296,7 @@ fn compositor_backdrop(
 ) {
     use crate::material::Material;
     let (sat, noise) = match m {
-        Material::Glass => (1.18f32, 0.0f32),
+        Material::Glass => (1.4f32, 0.0f32),
         Material::Acrylic => (1.12, 0.05),
         _ => return,
     };
@@ -1443,7 +1471,7 @@ fn scene_pixels_with(
             None,
         );
     }
-    if bar_m == crate::material::Material::Acrylic {
+    if crate::material::blurs(bar_m) {
         compositor_backdrop(
             &sharp,
             &soft,
@@ -1530,6 +1558,7 @@ fn scene_pixels_with(
             date: "Thursday 19 November",
             reply: "",
             typing: false,
+            glass: crate::material::blurs(notch_m),
         };
         let (sw, sh) = (island::SURF_W, island::SURF_H);
         let mut buf = vec![0u8; (sw * sh * 4) as usize];
@@ -1538,6 +1567,10 @@ fn scene_pixels_with(
             island::draw(&mut cv, fonts, notch, &anim, &content, false, &extra, None);
         }
         let at = ((w as i32 - sw as i32) / 2, 0);
+        if crate::material::blurs(notch_m) {
+            let rects = island::glass_rects(notch, &anim.cur);
+            compositor_backdrop(&sharp, &soft, w, notch_m, &rects, at, &mut out);
+        }
         over(&mut out, w, &buf, sw, sh, at);
     }
 

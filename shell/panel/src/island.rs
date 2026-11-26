@@ -253,6 +253,31 @@ pub fn input_rect(s: &Shape) -> (i32, i32, i32, i32) {
     )
 }
 
+/// Where the compositor should blur behind a glass island / notch: the
+/// shape itself (for the notch, the body that runs up past the top edge,
+/// clipped to the surface).
+pub fn glass_rects(style: NotchStyle, s: &Shape) -> Vec<(i32, i32, i32, i32)> {
+    let (x, w) = (s.x().round() as i32, s.w.round() as i32);
+    let rects = if style == NotchStyle::Island {
+        crate::material::blur_rects(x, s.y.round() as i32, w, s.h.round() as i32, s.r)
+    } else {
+        let lift = s.r.ceil() as i32 + 2;
+        let mut v = crate::material::blur_rects(x, -lift, w, s.h.round() as i32 + lift, s.r);
+        // The ears beside the notch.
+        v.push((x - EAR as i32, 0, EAR as i32, EAR as i32));
+        v.push((x + w, 0, EAR as i32, EAR as i32));
+        v
+    };
+    rects
+        .into_iter()
+        .filter_map(|(rx, ry, rw, rh)| {
+            let top = ry.max(0);
+            let h = ry + rh - top;
+            (h > 0 && rw > 0).then_some((rx, top, rw, h))
+        })
+        .collect()
+}
+
 fn hovered(hover: Option<(f64, f64)>, x: i32, y: i32, w: i32, h: i32) -> bool {
     hover.is_some_and(|(hx, hy)| {
         hx >= x as f64 && hx < (x + w) as f64 && hy >= y as f64 && hy < (y + h) as f64
@@ -266,6 +291,8 @@ pub struct Extra<'a> {
     pub date: &'a str,
     pub reply: &'a str,
     pub typing: bool,
+    /// Smoked Liquid Glass over the compositor's blur instead of hardware black.
+    pub glass: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -290,20 +317,44 @@ pub fn draw(
         h.round() as i32,
     );
 
-    // The island and the notch are hardware black. A translucent one reads as
-    // a grey pill, so the material setting never thins it out.
+    // Solid: hardware black. Glass: smoked Liquid Glass (dark enough that
+    // white text and art always read, clear enough that the desktop shows
+    // through, blurred by the compositor).
     let pure_black = Rgba::rgb(0, 0, 0);
-    match style {
-        NotchStyle::Island => {
-            if expanded {
-                cv.round_rect_shadow(xi, yi, wi, hi, s.r, 8.0, 18.0, 56);
+    match (style, extra.glass) {
+        (NotchStyle::Island, glass) => {
+            if expanded || glass {
+                cv.round_rect_shadow(
+                    xi,
+                    yi,
+                    wi,
+                    hi,
+                    s.r,
+                    8.0,
+                    18.0,
+                    if expanded { 64 } else { 40 },
+                );
             }
-            cv.round_rect(xi, yi, wi, hi, s.r, pure_black);
-            if expanded {
-                cv.stroke_round_rect(xi, yi, wi, hi, s.r, 1.0, Rgba::rgba(255, 255, 255, 16));
+            if glass {
+                crate::material::smoked_glass(cv, xi, yi, wi, hi, s.r);
+            } else {
+                cv.round_rect(xi, yi, wi, hi, s.r, pure_black);
+                if expanded {
+                    cv.stroke_round_rect(xi, yi, wi, hi, s.r, 1.0, Rgba::rgba(255, 255, 255, 16));
+                }
             }
         }
-        _ => {
+        (_, true) => {
+            // Flush with the top edge: the glass body runs up past the
+            // screen edge so only its lower rim and corners show.
+            let lift = s.r.ceil() as i32 + 2;
+            cv.round_rect_shadow(xi, -lift, wi, hi + lift, s.r, 8.0, 18.0, 44);
+            crate::material::smoked_glass(cv, xi, -lift, wi, hi + lift, s.r);
+            let ear = Rgba::rgba(10, 10, 14, 150);
+            cv.concave_corner(x - EAR, 0.0, EAR, true, ear);
+            cv.concave_corner(x + w, 0.0, EAR, false, ear);
+        }
+        (_, false) => {
             cv.notch_body(xi, 0, wi, hi, s.r, pure_black);
             cv.concave_corner(x - EAR, 0.0, EAR, true, pure_black);
             cv.concave_corner(x + w, 0.0, EAR, false, pure_black);

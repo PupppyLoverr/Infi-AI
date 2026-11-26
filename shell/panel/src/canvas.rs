@@ -581,6 +581,67 @@ impl<'a> Canvas<'a> {
         self.draw_icon_raw(x * s, y * s, box_px * s, icon);
     }
 
+    /// Directional rim light for thick glass: inside a rounded rectangle, a
+    /// band of `band` logical pixels along the edge is lit according to how
+    /// much the edge faces the light. The key light comes from the top-left
+    /// (sharp, strong); a fill from the bottom-right is the internal
+    /// reflection Liquid Glass shows on the opposite edge. Intensity falls
+    /// off inward, so the edge reads as a lens rather than a stroke.
+    #[allow(clippy::too_many_arguments)]
+    pub fn rim_light(
+        &mut self,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        r: f32,
+        band: f32,
+        color: Rgba,
+        fill: f32,
+    ) {
+        let s = self.s() as f32;
+        let (x0, y0, w0, h0) = (x as f32 * s, y as f32 * s, w as f32 * s, h as f32 * s);
+        let r = (r * s).min(w0 / 2.0).min(h0 / 2.0).max(0.0);
+        let band = (band * s).max(1.0);
+        let (cx, cy) = (x0 + w0 / 2.0, y0 + h0 / 2.0);
+        let (hx, hy) = (w0 / 2.0 - r, h0 / 2.0 - r);
+        let key = (-0.55f32, -0.835f32);
+        let back = (0.55f32, 0.835f32);
+        let px0 = (x0.floor() as i32).max(0);
+        let py0 = (y0.floor() as i32).max(0);
+        let px1 = ((x0 + w0).ceil() as i32).min(self.pw as i32);
+        let py1 = ((y0 + h0).ceil() as i32).min(self.ph as i32);
+        for py in py0..py1 {
+            let dy = py as f32 + 0.5 - cy;
+            for px in px0..px1 {
+                let dx = px as f32 + 0.5 - cx;
+                let qx = dx.abs() - hx;
+                let qy = dy.abs() - hy;
+                let (ox, oy) = (qx.max(0.0), qy.max(0.0));
+                let outside = (ox * ox + oy * oy).sqrt();
+                let d = outside + qx.max(qy).min(0.0) - r;
+                if d > 0.5 || d < -band {
+                    continue;
+                }
+                // Outward normal of the rounded rectangle at this point.
+                let (nx, ny) = if outside > 0.0 {
+                    (ox / outside * dx.signum(), oy / outside * dy.signum())
+                } else if qx > qy {
+                    (dx.signum(), 0.0)
+                } else {
+                    (0.0, dy.signum())
+                };
+                let k = (nx * key.0 + ny * key.1).max(0.0);
+                let b = (nx * back.0 + ny * back.1).max(0.0);
+                let facing = 0.1 + k.powf(1.4) * 0.95 + b.powf(1.8) * fill;
+                let depth = (-d).max(0.0);
+                let fall = (-depth / (band * 0.38)).exp();
+                let cov = (0.5 - d).clamp(0.0, 1.0);
+                self.blend(px, py, color, (facing * fall * cov).min(1.0));
+            }
+        }
+    }
+
     /// Premultiplied Porter-Duff `source-over` into BGRA (`Argb8888` LE).
     #[inline]
     pub fn blend(&mut self, x: i32, y: i32, color: Rgba, coverage: f32) {

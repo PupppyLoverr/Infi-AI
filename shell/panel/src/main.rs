@@ -1062,6 +1062,32 @@ impl App {
                 region.add(r.x, r.y, r.w, r.h);
                 slot.surface.set_input_region(Some(region.wl_region()));
             }
+            if material::blurs(self.notch_material) {
+                let notch = self.prefs.look.notch == NotchStyle::Notch;
+                let t = self.spot_in_island.map_or(1.0, |o| {
+                    if self.prefs.look.reduced_motion {
+                        1.0
+                    } else {
+                        (o.elapsed().as_secs_f32() / 0.30).min(1.0)
+                    }
+                });
+                let (x, y, w, h, rr) = surfaces::island_spot_morph(&lay, notch, t);
+                let lift = if notch { rr.ceil() as i32 + 2 } else { 0 };
+                let rects: Vec<_> = material::blur_rects(x, y - lift, w, h + lift, rr)
+                    .into_iter()
+                    .filter_map(|(rx, ry, rw, rh)| {
+                        let top = ry.max(0);
+                        (ry + rh > top).then_some((rx, top, rw, ry + rh - top))
+                    })
+                    .collect();
+                set_blur(
+                    self.blur_mgr.as_ref(),
+                    &self.compositor,
+                    &self.qh,
+                    slot,
+                    rects,
+                );
+            }
             return;
         }
         if (slot.width, slot.height) != (lay.w, lay.h) {
@@ -1481,9 +1507,9 @@ impl App {
                     )
                 };
                 let bar_shown = self.prefs.look.bar != solyra_conf::look::BarStyle::Hidden;
-                // Only Acrylic blurs the bar: a blurred strip over a sharp
-                // wallpaper would show as a band, and Glass keeps the sky clear.
-                let rects = if bar_shown && self.bar_material == material::Material::Acrylic {
+                // Glass and Acrylic bars are frosted: the compositor blurs the
+                // desktop and windows behind the whole strip.
+                let rects = if bar_shown && material::blurs(self.bar_material) {
                     vec![(0, 0, w as i32, h as i32)]
                 } else {
                     Vec::new()
@@ -1631,6 +1657,7 @@ impl App {
                 &mut self.icons,
                 hover,
                 notch,
+                material::blurs(self.notch_material),
                 t,
             ));
         } else {
@@ -1989,6 +2016,7 @@ impl App {
             date: &date,
             reply: &self.reply_buf,
             typing,
+            glass: material::blurs(self.notch_material),
         };
         let Ok((buffer, bytes)) = self.pool.create_buffer(
             (w * scale) as i32,
@@ -2016,13 +2044,19 @@ impl App {
             region.add(ix - 10, iy, iw + 20, ih);
             slot.surface.set_input_region(Some(region.wl_region()));
         }
-        // The island is opaque black: there is nothing to blur behind it.
+        // Glass: blur behind the shape as it is this frame. Solid black
+        // has nothing to blur.
+        let rects = if material::blurs(self.notch_material) {
+            island::glass_rects(self.prefs.look.notch, &self.island_anim.cur)
+        } else {
+            Vec::new()
+        };
         set_blur(
             self.blur_mgr.as_ref(),
             &self.compositor,
             &self.qh,
             slot,
-            Vec::new(),
+            rects,
         );
         if moving {
             // Ask for the next frame; `CompositorHandler::frame` redraws.

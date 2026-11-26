@@ -135,7 +135,7 @@ impl Default for Look {
             desktop: DesktopMode::default(),
             bar_material: Material::Glass,
             dock_material: Material::Glass,
-            notch_material: Material::Solid,
+            notch_material: Material::Glass,
             accent: "blue".into(),
         }
     }

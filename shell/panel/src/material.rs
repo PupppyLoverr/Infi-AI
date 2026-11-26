@@ -112,13 +112,13 @@ pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
         // and a specular top edge, so the wallpaper's colour shows through.
         Material::Glass if dark => Slab {
             kind: m,
-            fill: Rgba::rgba(255, 255, 255, boost(40)),
+            fill: Rgba::rgba(255, 255, 255, boost(26)),
             edge: Rgba::rgba(255, 255, 255, 80),
             highlight: Some(Rgba::rgba(255, 255, 255, 220)),
         },
         Material::Glass => Slab {
             kind: m,
-            fill: Rgba::rgba(255, 255, 255, 96),
+            fill: Rgba::rgba(255, 255, 255, 70),
             edge: rim(24),
             highlight: Some(Rgba::rgba(255, 255, 255, 220)),
         },
@@ -160,12 +160,10 @@ pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f
         return;
     }
     match s.kind {
-        Material::Glass if s.fill.0 == 255 && s.fill.3 < 60 => {
-            // Liquid Glass (dark theme), Droppy's / macOS 26's recipe: the
-            // blurred desktop shows through a thin white veil; the rim is lit
-            // sharply at the top, clear in the middle and occluded at the
-            // bottom; a soft shadow lifts it off the desktop.
-            liquid_glass(cv, x, y, w, h, r, s.fill.3, 0.9);
+        Material::Glass if s.fill.0 == 255 => {
+            // Liquid Glass, Droppy's / macOS 26's recipe: the blurred desktop
+            // shows through a thin veil with lensed, lit edges.
+            liquid_glass(cv, x, y, w, h, r, s.fill.3, 1.0);
         }
         Material::Glass => {
             let a = s.fill.3;
@@ -232,8 +230,18 @@ pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f
     }
 }
 
-/// The Liquid Glass body: veil + specular rim (top 70 % white, middle 10 %,
-/// bottom occluded) + a hairline that separates it from bright wallpapers.
+/// The Liquid Glass body, Apple's recipe as closely as a 2D painter can get
+/// over the compositor's blur:
+///
+/// * a thin veil that is brighter toward the top (light falling on a droplet);
+/// * a **refraction band**: the inner few pixels of the edge are lit, the way
+///   a thick lens bends the light at its rim (Liquid Glass's lensing);
+/// * a curved **top sheen** over the upper part of the body;
+/// * a **specular rim**: sharp white at the top, soft at the sides and a
+///   second, weaker catch-light at the bottom (internal reflection);
+/// * an outer hairline so the edge reads on any wallpaper.
+///
+/// `veil` is the body's white alpha; `depth` (0..=1) scales every highlight.
 pub fn liquid_glass(
     cv: &mut Canvas<'_>,
     x: i32,
@@ -244,17 +252,57 @@ pub fn liquid_glass(
     veil: u8,
     depth: f32,
 ) {
-    // Veil: brighter toward the top, like light falling on a droplet.
+    if w <= 2 || h <= 2 {
+        return;
+    }
+    let d = depth.clamp(0.0, 1.0);
+    let a = |v: f32| (v * d).round().clamp(0.0, 255.0) as u8;
+    // Veil.
     cv.round_rect_vgrad(
         x,
         y,
         w,
         h,
         r,
-        Rgba::rgba(255, 255, 255, veil.saturating_add(22)),
-        Rgba::rgba(255, 255, 255, veil / 2),
+        Rgba::rgba(255, 255, 255, veil.saturating_add(16)),
+        Rgba::rgba(255, 255, 255, veil / 3),
     );
-    // Outer hairline (occlusion) so the glass edge reads on any wallpaper.
+    // Top sheen: a soft dome of light over the upper ~45 %.
+    let sh = ((h as f32) * 0.46).round() as i32;
+    cv.round_rect_vgrad(
+        x + 2,
+        y + 2,
+        w - 4,
+        sh,
+        (r - 2.0).max(0.0),
+        Rgba::rgba(255, 255, 255, a(34.0)),
+        Rgba::rgba(255, 255, 255, 0),
+    );
+    // Refraction: the edge is a lens. A directional rim light lights the
+    // band facing the top-left strongly and the bottom-right softly.
+    let band = (r * 0.55).clamp(5.0, 12.0);
+    cv.rim_light(
+        x,
+        y,
+        w,
+        h,
+        r,
+        band,
+        Rgba::rgba(255, 255, 255, a(150.0)),
+        0.5,
+    );
+    // A crisp 1 px specular line on the lit edge.
+    cv.rim_light(
+        x,
+        y,
+        w,
+        h,
+        r,
+        1.4,
+        Rgba::rgba(255, 255, 255, a(235.0)),
+        0.55,
+    );
+    // Outer hairline (occlusion) so the glass edge reads on bright wallpaper.
     cv.stroke_round_rect(
         x - 1,
         y - 1,
@@ -262,30 +310,24 @@ pub fn liquid_glass(
         h + 2,
         r + 1.0,
         1.0,
-        Rgba::rgba(0, 0, 0, 46),
+        Rgba::rgba(0, 0, 0, 56),
     );
-    // Specular rim: sharp at the top, clear at the sides, dark at the bottom.
-    let top = (255.0 * 0.7 * depth).round() as u8;
-    cv.round_rect_glass_rim(
+}
+
+/// Smoked Liquid Glass for the notch and the island: the same optics over a
+/// dark tint, so white text and art stay readable on any wallpaper while the
+/// desktop still shows through, blurred.
+pub fn smoked_glass(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32) {
+    cv.round_rect_vgrad(
         x,
         y,
         w,
         h,
         r,
-        Rgba::rgba(255, 255, 255, top),
-        Rgba::rgba(255, 255, 255, 26),
-        Rgba::rgba(0, 0, 0, 52),
+        Rgba::rgba(10, 10, 14, 150),
+        Rgba::rgba(6, 6, 10, 178),
     );
-    // A second, softer inner highlight one pixel in, for thickness.
-    let inset = (r * 0.8).round() as i32;
-    cv.fill_rect_vgrad(
-        x + inset,
-        y + 1,
-        (w - 2 * inset).max(0),
-        2,
-        Rgba::rgba(255, 255, 255, top / 2),
-        Rgba::rgba(255, 255, 255, 0),
-    );
+    liquid_glass(cv, x, y, w, h, r, 6, 0.75);
 }
 
 /// A rounded rectangle as row strips, for a `wl_region`: corners are

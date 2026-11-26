@@ -27,9 +27,11 @@ environment {
 }
 
 // Compositor-wide backdrop blur, used by the shell's layer rules below.
+// Heavy, Apple-style frost: four passes at a wide offset so text and
+// shapes behind glass melt into colour instead of showing through.
 blur {
-    passes 3
-    offset 3.0
+    passes 4
+    offset 4.5
     noise 0.02
     saturation 1.0
 }
@@ -194,7 +196,7 @@ layer-rule {
 layer-rule {
     match namespace=r#"\.glass$"#
     background-effect {
-        saturation 1.5
+        saturation 1.8
         noise 0.0
     }
 }
@@ -210,6 +212,15 @@ layer-rule {
 // Spotlight is a capsule and a results card on one transparent surface. The
 // panel paints their shadow and asks for blur behind just those two shapes
 // (ext-background-effect), so the rule must not blur or shadow the whole surface.
+// Spotlight inside the island: smoked glass like the notch it grows from.
+layer-rule {
+    match namespace="^solyra-launcher-island$"
+    background-effect {
+        xray false
+        saturation 1.8
+    }
+}
+
 layer-rule {
     match namespace="^solyra-launcher$"
     background-effect {
