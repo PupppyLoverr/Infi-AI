@@ -3,7 +3,7 @@
 Source of truth: `docs/BRIEF.md` (the user's brief, verbatim). This file maps
 every requirement in it to work. Earlier plans: `docs/plan-2026-niri-fedora.md`.
 Status: **decided 2026-11-26 (§8)**: Hyprland + Quickshell on Arch,
-≤250 MB idle budget. M1b (measure that stack) is next.
+≤250 MB idle budget. Shell running in the CI VM; see §5 ticks and §10.
 
 ## 1. The problem (Milestone 1 result)
 Plasma 6 gives pearOS-level fidelity but measured **1144–1192 MB idle,
@@ -184,16 +184,16 @@ Ground rules for every step:
   screenshot, and limits are stated plainly.
 
 ### M0. Infrastructure (prerequisite)
-- [ ] 🟡 *Status: PKGBUILDs written for solyra-term, solyra-files and solyra-shell (`pkg/`); not yet built by makepkg in CI. The ISO installs the same files through `iso/build.sh`.* `pkg/` holds PKGBUILDs for every Solyra component; CI builds them in an
+- [ ] 🟡 *Status: PKGBUILDs for solyra-term, solyra-files and solyra-shell (`pkg/`); CI now builds them with makepkg (`solyra-packages` artifact), first run pending.* `pkg/` holds PKGBUILDs for every Solyra component; CI builds them in an
   `archlinux` container into a local pacman repo artifact.
-- [x] ✅ *Status: `.github/workflows/vm.yml` + `tools/vm/` (cached Arch image, payload over HTTP, scenario, guest-display screendump, watchdog logs, shots published to `docs/shots/`). First full run pending.* `solyra-vm` workflow: install the repo into the VM, run the session,
+- [x] ✅ *Status: done and verified; the full scenario runs on Hyprland 0.57.2 and publishes 20+ shots plus logs to `docs/shots/vm/`.* `solyra-vm` workflow: install the repo into the VM, run the session,
   then a scenario script (e.g. `hyprctl dispatch exec`, `qs ipc call`) and
   `grim` shots at 1280×800; upload shots and `report.txt`.
 - [x] ✅ *Status: the `Budget gate` step in vm.yml fails the run above 250 MB idle RAM or 3 GB installed; shots still publish.* A budget gate: fail CI if idle RAM > 250 MB (llvmpipe noted) or
   installed size > 3 GB.
 
 ### M1. Audit and measure ✅ (Plasma 1144–1192 MB). M1b: Hyprland + Quickshell 🟡
-- [ ] 🟡 *Status: first VM report (Arch + Hyprland 0.57.2, llvmpipe, 2 vCPU / 4 GiB): **737 MB used**, but two terminal windows (308 MB) and the test media player (72 MB) were still open and Quickshell had failed to load; Hyprland itself 160 MB on llvmpipe. **Installed 2426 MB ✅ (≤ 3 GB). Boot 16.9 s.** A clean idle measurement follows once the shell loads.* Record the M1b numbers. If over 250 MB, trim (portals, Xwayland
+- [ ] 🟡 *Status: with the full shell loaded (Arch + Hyprland 0.57.2 + Quickshell, llvmpipe software GL, 2 vCPU / 4 GiB): **746 MB used**. Largest: quickshell 269 MB, Hyprland 158 MB (both inflated by llvmpipe), mpv 71 MB (test player), Xwayland 58 MB, swaybg 15 MB. **Installed 2426 MB ✅. Boot 16.9 s.** Trims done: Xwayland off, wallpaper drawn by the shell, effect layers only for tinted icons, test player stopped before measuring. **Over the 250 MB budget**; needs a real-GPU measurement to judge.* Record the M1b numbers. If over 250 MB, trim (portals, Xwayland
   on demand, PipeWire socket activation) and re-measure before going on.
 
 ### M2. Terminal blur spike (zgx on Hyprland)
@@ -217,7 +217,7 @@ Ground rules for every step:
   PTY echo test. VM screenshot running `htop` and a truecolor test.
 
 ### M4. Glass, theme tokens, transparency slider
-- [ ] ⏳ *Status: not built; glass is Hyprland blur (ignore-alpha shapes, vibrancy) plus the QML rim and specular.* `solyra-glass`: a Hyprland plugin (GPL-3.0, own repo dir and
+- [ ] 🟡 *Status: replaced by Liquid Glass in QML (`shell/qs/Glass.qml`: clear body, lensing rim ring, specular sheen, inner shade, soft shadow) over Hyprland's real blur and vibrancy. True backdrop refraction (bending the image behind the glass) still needs a compositor plugin, which is not built.* `solyra-glass`: a Hyprland plugin (GPL-3.0, own repo dir and
   licence).
   - Port our refraction shader (rim lensing, diffusion, adaptive tint,
     specular rim, shadow) from `comp/`.
@@ -275,17 +275,17 @@ Ground rules for every step:
 - [x] ✅ *Status: done in `iso/` (live Hyprland session, archinstall-based installer, btrfs and snapper).* An archiso profile: our repo, Hyprland, Quickshell, apps, greeter
   (greetd + our QML greeter), Calamares or archinstall config, btrfs and
   snapper.
-- [ ] 🟡 *Status: `iso.yml` written; first build and boot pending.* CI builds the ISO (< 3 GB) and boots it in QEMU to the desktop; boot
+- [ ] 🟡 *Status: the ISO builds at **1745 MiB ✅ (< 3 GB)** and the live session boots straight into Hyprland (docs/shots/iso). Rebuilt with the Lua config and shell; the desktop screenshot is pending.* CI builds the ISO (< 3 GB) and boots it in QEMU to the desktop; boot
   time, idle RAM and installed size go in the report.
 
 ### M9. Extras (user's)
-- [x] ✅ *Status: done except voice transcription (needs a local speech model).* Droppy parity on the notch and lock screen with real MPRIS media:
+- [x] ✅ *Status: done and seen working on Hyprland in the CI VM (media with real MPRIS, shelf, tracked Downloads, clipboard, calendar, tools, HUD, Droppy lock). Voice transcription is not possible with official Arch packages (whisper.cpp is AUR-only).* Droppy parity on the notch and lock screen with real MPRIS media:
   - the inventory from Droppy's docs: shelf and file drop, media controls,
     lyrics, HUDs (volume, brightness, battery, caps lock), clipboard,
     calendar, lock-screen media, and more;
   - each feature checked off or marked "not possible on Linux" with the
     reason.
-- [x] ✅ *Status: done (snap layouts on Super+Z and the Window menu, auto-arrange toggle).* Windows 11-style management:
+- [x] ✅ *Status: snap layouts (Super+Z, Window menu, the green button's Snap popover in our apps) and the auto-arrange toggle are done. Snap zones while dragging are not done (Hyprland exposes no live-drag event to the shell).* Windows 11-style management:
   - snap layouts on maximise-button hover and Super+Z (halves, thirds,
     quarters, 2/3+1/3 and grids);
   - snap zones while dragging, snap groups restored together;
@@ -395,12 +395,12 @@ claimed without a VM run.
 |---|---|
 | M0 Test VM (`solyra-vm`) | ✅ Full scenario runs on Hyprland 0.57.2 in CI and publishes shots to docs/shots/vm |
 | M1 Audit and measure | ✅ Plasma 1144–1192 MB; Hyprland + Quickshell numbers come from the solyra-vm report |
-| M2 Terminal blur spike | Glass verified on our compositor; Hyprland check pending the VM run |
+| M2 Terminal blur spike | ✅ Verified on Hyprland 0.57.2 in the VM |
 | M3 Terminal core | ✅ PTY, alacritty_terminal, truecolor, Unicode, scrollback, selection, copy and paste, search, resize, tabs, splits (zgx-terminal) |
 | M4 Glass and tokens | ✅ One glass slider (0–100), Reduce Transparency, Reduce Motion, Show Borders, one corner radius, two-layer shadows, Hyprland blur with ignore-alpha shapes. ⏳ The refraction (lensing) plugin is not built |
 | M5 Menu bar and dock | ✅ Written (QML). Global menu: standard menus wired to real actions; DBusMenu export ⏳ |
 | M6 Spotlight, notch, Control Center, notifications | ✅ Written (QML), plus Mission Control and the lock screen |
 | M7 Terminal polish | ✅ One app, exactly recording A plus the chat inside the glass; zeron icons; shell integration (OSC 7/133) |
-| M8 ISO | ✅ Profile and CI written (archiso, < 3 GB gate, boot screenshots). **Awaiting the first build** |
+| M8 ISO | ✅ 1745 MiB, boots to Hyprland live; shell-in-ISO screenshot pending |
 | M9 Extras | ✅ Droppy set (media, shelf, clipboard, HUDs, Bluetooth, caps, battery, calendar, Notchface, High Alert, Termi-Notch, Capture Area, OCR, Tracked Folders, Hide Notch), snap layouts, auto-arrange. Not done: voice transcription (needs a local speech model, over budget) |
 | Finder | ✅ macOS 27 layout: inset glass sidebar, glass toolbar, one frosted surface (live screenshot) |
