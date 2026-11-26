@@ -23,3 +23,20 @@ vendors' logos.
   skin's glass recipe and its prism shader's parameters, used as numbers.
 - Droppy (`1of1Adam/Droppy`): notch, HUD and lock-screen layout measurements.
 - Apple's published macOS 26 screenshots: the look of Liquid Glass.
+
+## Shell stack (2026-11-26)
+
+- **Hyprland** (BSD-3-Clause): the compositor; `shell/hypr/hyprland.conf` is ours.
+- **Quickshell** (LGPL-3.0): the QML shell runtime; `shell/qs/*.qml` is ours.
+- **Qt 6** (LGPL-3.0): through Quickshell.
+- **zgx** and **zgx-terminal** (MIT, zeronsh): the terminal UI and emulator
+  glue (`alacritty_terminal` Apache-2.0, `portable-pty` MIT). Pinned at
+  `699ae02e`. The chat engine follows zeron's (MIT) documented stream-json
+  recipe; no zeron UI (GPUI) code is used.
+- **lrclib.net**: the lock screen fetches synced lyrics from its public API
+  at runtime. No lyrics are stored in the repository.
+- **Droppy** (getdroppy.app): design reference for the notch and lock screen.
+  No code or artwork copied.
+- **liquid-gel** (pearOS, GPL-3.0): reference for the glass plugin
+  (`plugins/solyra-glass`, GPL-3.0, kept separate from the MIT-derived
+  terminal).

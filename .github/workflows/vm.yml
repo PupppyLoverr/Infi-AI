@@ -1,0 +1,61 @@
+# The Solyra test VM: Arch + Hyprland + the Quickshell shell + the zgx
+# terminal, booted under QEMU/KVM. A scenario opens every surface and
+# screenshots it; idle RAM / disk / boot are measured 5 min after login.
+name: solyra-vm
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/charming-goodall-iuca3o]
+    paths: ['shell/qs/**', 'shell/hypr/**', 'tools/vm/**', 'apps/solyra-term/**', 'apps/solyra-ui/**', '.github/workflows/vm.yml']
+concurrency: { group: solyra-vm, cancel-in-progress: true }
+jobs:
+  term:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    timeout-minutes: 60
+    steps:
+      - name: Toolchain
+        run: pacman -Syu --noconfirm --needed base-devel rust git pkgconf dbus wayland libxkbcommon fontconfig >/dev/null
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/target
+          key: term-arch-${{ hashFiles('apps/Cargo.lock') }}
+      - name: Build solyra-term (release)
+        working-directory: apps
+        run: cargo build --locked --release -p solyra-term 2>&1 | tail -5
+      - name: Test solyra-term
+        working-directory: apps
+        run: cargo test --locked --release -p solyra-term 2>&1 | grep -E "test result|FAILED|panicked"
+      - uses: actions/upload-artifact@v4
+        with: { name: solyra-term, path: apps/target/release/solyra-term }
+  vm:
+    needs: term
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: solyra-term, path: bin }
+      - name: QEMU and KVM
+        run: |
+          sudo apt-get -qq update && sudo apt-get -qq install -y qemu-system-x86 qemu-utils cloud-image-utils >/dev/null
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules >/dev/null
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - uses: actions/cache@v4
+        with:
+          path: out/base.qcow2
+          key: solyra-vm-base-${{ hashFiles('tools/vm/setup.sh', 'tools/vm/sync.sh') }}
+      - name: Boot, scenario, measure
+        run: chmod +x bin/solyra-term && TERM_BIN=$PWD/bin/solyra-term OUT=$PWD/out tools/vm/run.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: solyra-vm-shots
+          path: |
+            out/shots/
+            out/setup.log
+            out/boot.log
