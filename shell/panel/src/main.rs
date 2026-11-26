@@ -428,6 +428,17 @@ fn set_glass(
         return;
     };
     let shapes = glass_proto::sanitize(shapes);
+    if shapes.is_empty() {
+        // No glass wanted here. The object must go, not just the shapes: the
+        // compositor reads an empty shape list as "lens the whole surface"
+        // (the fallback for surfaces that never describe their glass), which
+        // turned the empty-query Spotlight into a giant frosted slab.
+        if slot.glass.is_some() {
+            slot.glass = None;
+            slot.glass_shapes.clear();
+        }
+        return;
+    }
     if shapes != slot.glass_shapes || slot.glass.is_none() {
         let glass = slot
             .glass

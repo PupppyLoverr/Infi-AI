@@ -130,34 +130,34 @@ pub fn target(style: NotchStyle, content: &Content, expanded: bool) -> Shape {
                     // Droppy's Dynamic Island: a 210 x 37 pill floating 4 px
                     // below the top edge; live activities keep that height.
                     Content::Idle | Content::Shelf(_) => Shape {
-                        w: 210.0,
-                        h: 37.0,
+                        w: 136.0,
+                        h: 30.0,
                         y: 4.0,
-                        r: 18.5,
+                        r: 15.0,
                     },
                     Content::Hud(_) => Shape {
                         w: 300.0,
-                        h: 37.0,
+                        h: 30.0,
                         y: 4.0,
-                        r: 18.5,
+                        r: 15.0,
                     },
                     Content::Media(m) => Shape {
                         w: compact_media_width(m, 240.0, 320.0),
-                        h: 37.0,
+                        h: 30.0,
                         y: 4.0,
-                        r: 18.5,
+                        r: 15.0,
                     },
                     Content::Activity { .. } | Content::Message(_) => Shape {
                         w: 320.0,
-                        h: 37.0,
+                        h: 30.0,
                         y: 4.0,
-                        r: 18.5,
+                        r: 15.0,
                     },
                     Content::Attention(_) => Shape {
                         w: 340.0,
-                        h: 37.0,
+                        h: 30.0,
                         y: 4.0,
-                        r: 18.5,
+                        r: 15.0,
                     },
                 }
             }
@@ -170,28 +170,28 @@ pub fn target(style: NotchStyle, content: &Content, expanded: bool) -> Shape {
                 match content {
                     // Droppy notch: 180 px, rounded 16 px at the bottom.
                     Content::Idle | Content::Shelf(_) => Shape {
-                        w: 180.0,
-                        h: 32.0,
+                        w: 140.0,
+                        h: 26.0,
                         y: 0.0,
-                        r: 16.0,
+                        r: 13.0,
                     },
                     Content::Hud(_) => Shape {
                         w: 320.0,
-                        h: 32.0,
+                        h: 26.0,
                         y: 0.0,
-                        r: 16.0,
+                        r: 13.0,
                     },
                     Content::Media(m) => Shape {
                         w: compact_media_width(m, 212.0, 300.0),
-                        h: 36.0,
+                        h: 30.0,
                         y: 0.0,
-                        r: 16.0,
+                        r: 15.0,
                     },
                     _ => Shape {
                         w: 312.0,
-                        h: 36.0,
+                        h: 30.0,
                         y: 0.0,
-                        r: 16.0,
+                        r: 15.0,
                     },
                 }
             }
@@ -1372,7 +1372,7 @@ mod tests {
         });
         let idle = target(NotchStyle::Island, &Content::Idle, false);
         // Droppy's Dynamic Island: 210 x 37, 4 px below the top edge.
-        assert_eq!((idle.w, idle.h, idle.y), (210.0, 37.0, 4.0));
+        assert_eq!((idle.w, idle.h, idle.y), (136.0, 30.0, 4.0));
         assert!(
             (idle.r - idle.h / 2.0).abs() < 0.6,
             "idle island is a capsule"
@@ -1445,7 +1445,7 @@ mod tests {
     #[test]
     fn hover_widen_is_six_pixels_on_the_idle_pill() {
         let idle = target(NotchStyle::Island, &Content::Idle, false);
-        assert_eq!(idle.w + 6.0, 216.0);
+        assert_eq!(idle.w + 6.0, 142.0);
         let expanded = target(NotchStyle::Island, &Content::Idle, true);
         assert!(expanded.w > idle.w + 6.0);
     }

@@ -731,7 +731,7 @@ pub fn island_spot_morph(lay: &SpotLayout, notch: bool, t: f32) -> (i32, i32, i3
     let e = 1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3);
     let lerp = |a: f32, b: f32| a + (b - a) * e;
     let cx = target.x as f32 + target.w as f32 / 2.0;
-    let (pw, ph) = if notch { (180.0, 32.0) } else { (210.0, 37.0) };
+    let (pw, ph) = if notch { (140.0, 26.0) } else { (136.0, 30.0) };
     let w = lerp(pw, target.w as f32);
     let h = lerp(ph, target.h as f32);
     let r = lerp(ph / 2.0, r_end).min(h / 2.0);
