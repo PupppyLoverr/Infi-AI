@@ -8,6 +8,8 @@ on:
     branches: [claude/charming-goodall-iuca3o]
     paths: ['shell/qs/**', 'shell/hypr/**', 'tools/vm/**', 'apps/solyra-term/**', 'apps/solyra-ui/**', '.github/workflows/vm.yml']
 concurrency: { group: solyra-vm, cancel-in-progress: true }
+permissions:
+  contents: write
 jobs:
   term:
     runs-on: ubuntu-latest
@@ -51,6 +53,18 @@ jobs:
           key: solyra-vm-base-${{ hashFiles('tools/vm/setup.sh', 'tools/vm/sync.sh') }}
       - name: Boot, scenario, measure
         run: chmod +x bin/solyra-term && TERM_BIN=$PWD/bin/solyra-term OUT=$PWD/out tools/vm/run.sh
+      - name: Publish shots to docs/shots (JPEG) on this branch
+        if: always()
+        run: |
+          ls out/shots >/dev/null 2>&1 || exit 0
+          sudo apt-get -qq install -y imagemagick >/dev/null
+          rm -rf docs/shots && mkdir -p docs/shots
+          for f in out/shots/*.png; do [ -f "$f" ] && convert "$f" -quality 82 "docs/shots/$(basename "${f%.png}").jpg"; done
+          cp out/shots/*.txt out/shots/*.log docs/shots/ 2>/dev/null || true
+          git config user.name "solyra-ci"; git config user.email "solyra-ci@users.noreply.github.com"
+          git add docs/shots
+          git commit -qm "solyra-vm shots for ${GITHUB_SHA::7} [skip ci]" || exit 0
+          for i in 1 2 3; do git pull -q --rebase origin "$GITHUB_REF_NAME" && git push -q origin "HEAD:$GITHUB_REF_NAME" && break; sleep 5; done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
