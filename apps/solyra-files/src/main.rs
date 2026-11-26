@@ -280,33 +280,6 @@ fn drag_area(view: View, window: zgx_desktop::WindowHandle) -> View {
 }
 
 fn toolbar(app: &FilesApp, style: &solyra_ui::Style, window: zgx_desktop::WindowHandle) -> View {
-    let close = {
-        let window = window.clone();
-        traffic_dot(solyra_ui::chrome::RED, "Close window", move || window.close())
-    };
-    let compact = {
-        let window = window.clone();
-        traffic_dot(solyra_ui::chrome::YELLOW, "Minimize window", move || {
-            window.set_minimized(true);
-            solyra_ui::chrome::niri_action(solyra_ui::chrome::MINIMIZE);
-        })
-    };
-    let fullscreen = {
-        let window = window.clone();
-        let full = std::rc::Rc::new(std::cell::Cell::new(false));
-        traffic_dot(solyra_ui::chrome::GREEN, "Toggle fullscreen", move || {
-            let next = !full.get();
-            full.set(next);
-            window.set_fullscreen(next);
-        })
-    };
-    let traffic = row()
-        .gap(solyra_ui::chrome::LIGHT_GAP)
-        .items_center()
-        .child(close)
-        .child(compact)
-        .child(fullscreen);
-
     let back = {
         let app = app.clone();
         let enabled = {
@@ -329,35 +302,39 @@ fn toolbar(app: &FilesApp, style: &solyra_ui::Style, window: zgx_desktop::Window
         };
         icon_button("›", move || app.go_forward()).disabled_when(move || !enabled())
     };
+    let nav_capsule = row()
+        .h(30.)
+        .px(4.)
+        .gap(2.)
+        .items_center()
+        .rounded(15.)
+        .bg(solyra_ui::color(style.theme.field))
+        .child(back)
+        .child(forward);
+
     let title = text_signal({
         let location = app.location.clone();
         move || location.get().title()
     })
     .font_bold()
-    .text_size(13.)
+    .text_size(14.)
     .truncate();
 
     let hidden = {
         let app = app.clone();
         let label = {
             let show_hidden = app.show_hidden.clone();
-            move || {
-                if show_hidden.get() {
-                    "Hide hidden"
-                } else {
-                    "Show hidden"
-                }
-                .to_string()
-            }
+            move || if show_hidden.get() { "●" } else { "○" }.to_string()
         };
         button()
             .h(28.)
-            .px(10.)
-            .rounded(7.)
+            .px(8.)
+            .rounded(14.)
             .items_center()
             .justify_center()
             .border(0.)
-            .child(text_signal(label).text_size(12.))
+            .bg(solyra_ui::color(style.theme.field))
+            .child(text_signal(label).text_size(11.))
             .on_click(move || {
                 let next = !app.show_hidden.get();
                 app.show_hidden.set(next);
@@ -367,35 +344,26 @@ fn toolbar(app: &FilesApp, style: &solyra_ui::Style, window: zgx_desktop::Window
         let app = app.clone();
         icon_button("⟳", move || app.refresh())
     };
-    let search = text_input("Search this folder", app.query.clone())
-        .w(190.)
+    let search = text_input("Search", app.query.clone())
+        .w(156.)
         .h(30.)
-        .px(10.)
-        .rounded(8.)
+        .px(12.)
+        .rounded(15.)
         .bg(solyra_ui::color(style.theme.field));
 
     row()
         .w_full()
         .h(52.)
-        .px(14.)
+        .px(16.)
         .gap(10.)
         .items_center()
-        .bg(style.sidebar_bg())
-        .border_edges(zgx::scene::Insets {
-            top: 0.,
-            right: 0.,
-            bottom: 1.,
-            left: 0.,
-        })
-        .border_color(style.hairline())
-        .child(traffic)
-        .child(back)
-        .child(forward)
-        .child(drag_area(title.w(150.), window.clone()))
+        .bg(style.content_bg())
+        .child(nav_capsule)
+        .child(drag_area(title.w(160.), window.clone()))
         .child(drag_area(row().grow(), window.clone()))
+        .child(segmented("View mode", app.mode.clone(), ["⊞", "☰"]))
         .child(hidden)
         .child(refresh)
-        .child(segmented("View mode", app.mode.clone(), ["⊞", "☰"]))
         .child(search)
 }
 
@@ -541,7 +509,51 @@ fn mount_locations() -> Vec<PathBuf> {
     roots
 }
 
-fn sidebar(app: &FilesApp, style: &solyra_ui::Style) -> View {
+fn sidebar(app: &FilesApp, style: &solyra_ui::Style, window: zgx_desktop::WindowHandle) -> View {
+    let close = {
+        let window = window.clone();
+        traffic_dot(solyra_ui::chrome::RED, "Close window", move || window.close())
+    };
+    let compact = {
+        let window = window.clone();
+        traffic_dot(solyra_ui::chrome::YELLOW, "Minimize window", move || {
+            window.set_minimized(true);
+            solyra_ui::chrome::niri_action(solyra_ui::chrome::MINIMIZE);
+        })
+    };
+    let fullscreen = {
+        let window = window.clone();
+        let full = std::rc::Rc::new(std::cell::Cell::new(false));
+        traffic_dot(solyra_ui::chrome::GREEN, "Toggle fullscreen", move || {
+            let next = !full.get();
+            full.set(next);
+            window.set_fullscreen(next);
+        })
+    };
+    let header = drag_area(
+        row()
+            .w_full()
+            .h(34.)
+            .px(6.)
+            .gap(10.)
+            .items_center()
+            .child(
+                row()
+                    .gap(solyra_ui::chrome::LIGHT_GAP)
+                    .items_center()
+                    .child(close)
+                    .child(compact)
+                    .child(fullscreen),
+            )
+            .child(
+                text("Finder")
+                    .font_bold()
+                    .text_size(13.)
+                    .text_color(solyra_ui::color(style.theme.text)),
+            ),
+        window,
+    );
+
     let favourites = column()
         .gap(2.)
         .child(sidebar_button(
@@ -584,22 +596,23 @@ fn sidebar(app: &FilesApp, style: &solyra_ui::Style) -> View {
         .fold(column().gap(1.), |col, color| {
             col.child(tag_sidebar_button(app, style, color))
         });
-    // pearOS / macOS Tahoe: the sidebar is an inset rounded card floating in
-    // the window, not a strip glued to its edge.
+    // pearOS / macOS Tahoe: full-height inset rounded frosted sidebar card
+    // floating inside the window with traffic lights at its top-left.
     let card = column()
         .w_full()
         .h_full()
         .p(8.)
-        .pt(10.)
-        .gap(4.)
-        .rounded(12.)
+        .pt(8.)
+        .gap(6.)
+        .rounded(13.)
         .bg(style.sidebar_bg())
         .border(1.)
         .border_color(style.hairline())
-        .child(sidebar_section("Favourites", style, favourites))
+        .child(header)
+        .child(favourites)
         .child(sidebar_section("Locations", style, locations))
         .child(sidebar_section("Tags", style, tags));
-    column().w(222.).h_full().shrink_0().p(8.).pr(0.).child(card)
+    column().w(224.).h_full().shrink_0().p(8.).pr(0.).child(card)
 }
 
 fn folder_icon(style: &solyra_ui::Style) -> View {
@@ -1314,68 +1327,6 @@ fn content(app: &FilesApp, style: &solyra_ui::Style) -> View {
     .w_full()
 }
 
-fn breadcrumbs_for(app: &FilesApp, style: &solyra_ui::Style, location: Location) -> View {
-    let mut crumbs = row().gap(4.).items_center();
-    if let Location::Folder(path) = &location {
-        let home = model::home_dir();
-        if let Ok(rel) = path.strip_prefix(&home) {
-            let home_button = {
-                let app = app.clone();
-                let home = home.clone();
-                small_button("Home", move || app.navigate(Location::Folder(home.clone())))
-            };
-            crumbs = crumbs.child(home_button);
-            let mut cur = home.clone();
-            for part in rel.components() {
-                cur.push(part.as_os_str());
-                let label = part.as_os_str().to_string_lossy().into_owned();
-                let (app, target) = (app.clone(), cur.clone());
-                crumbs = crumbs
-                    .child(text("›").text_color(solyra_ui::color(style.theme.text_dim)))
-                    .child(small_button(&label, move || {
-                        app.navigate(Location::Folder(target.clone()))
-                    }));
-            }
-        } else {
-            crumbs = crumbs.child(
-                text(path.display().to_string())
-                    .text_size(12.)
-                    .text_color(solyra_ui::color(style.theme.text_dim)),
-            );
-        }
-    } else {
-        crumbs = crumbs.child(
-            text(location.title())
-                .text_size(12.)
-                .text_color(solyra_ui::color(style.theme.text_dim)),
-        );
-    }
-    crumbs
-        .w_full()
-        .h(34.)
-        .px(14.)
-        .bg(style.content_bg())
-        .border_edges(zgx::scene::Insets {
-            top: 0.,
-            right: 0.,
-            bottom: 1.,
-            left: 0.,
-        })
-        .border_color(style.hairline())
-}
-
-fn breadcrumbs(app: &FilesApp, style: &solyra_ui::Style) -> View {
-    let app = app.clone();
-    let style = *style;
-    switch(
-        {
-            let location = app.location.clone();
-            move || location.get()
-        },
-        move |location, _cx| breadcrumbs_for(&app, &style, location),
-    )
-}
-
 fn start_location() -> Location {
     let arg = std::env::args().skip(1).find(|arg| !arg.starts_with("--"));
     match arg.as_deref() {
@@ -1426,26 +1377,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let window = cx.window.clone();
 
-            let body = column()
+            let body = row()
                 .w_full()
                 .h_full()
-                .rounded(12.)
+                .rounded(16.)
                 .overflow_hidden()
                 .text_color(solyra_ui::color(theme.text))
                 .bg(style.content_bg())
-                .child(toolbar(&app, &style, window))
-                .child(rename_bar(&app, &style))
-                .child(confirm_bar(&app, &style))
+                .child(sidebar(&app, &style, window.clone()))
                 .child(
-                    row().w_full().grow().child(sidebar(&app, &style)).child(
-                        column()
-                            .grow()
-                            .h_full()
-                            .bg(style.content_bg())
-                            .child(breadcrumbs(&app, &style))
-                            .child(content(&app, &style))
-                            .child(action_bar(&app, &style)),
-                    ),
+                    column()
+                        .grow()
+                        .h_full()
+                        .bg(style.content_bg())
+                        .child(toolbar(&app, &style, window))
+                        .child(rename_bar(&app, &style))
+                        .child(confirm_bar(&app, &style))
+                        .child(content(&app, &style))
+                        .child(action_bar(&app, &style)),
                 );
 
             cx.render(solyra_ui::scope(&style, body));

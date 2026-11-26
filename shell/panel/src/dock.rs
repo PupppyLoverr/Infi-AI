@@ -27,7 +27,7 @@ use crate::tokens::Theme;
 /// shelf).
 pub const CARD_H: i32 = 64;
 /// Corner radius of the shelf.
-const DOCK_R: f32 = 18.0;
+const DOCK_R: f32 = 22.0;
 /// Extra room above the card for magnified icons: the biggest icon is
 /// `MAX_SCALE` times a cell, plus space for its tooltip.
 pub const MAGNIFY_ROOM: i32 = 66;
@@ -453,12 +453,12 @@ fn draw_floating(
         .to_string();
     for (it, size) in its.iter().zip(&sizes) {
         if let Item::Separator = it {
-            let sep_h = 28;
+            let sep_h = 38;
             let sep_y = card_y + (CARD_H - sep_h) / 2;
             let sw = *size;
             let sx = x + (sw - 1) / 2;
-            let mid = Rgba::rgba(ink.0, ink.1, ink.2, 52);
-            let end = Rgba::rgba(ink.0, ink.1, ink.2, 0);
+            let mid = Rgba::rgba(ink.0, ink.1, ink.2, 96);
+            let end = Rgba::rgba(ink.0, ink.1, ink.2, 16);
             cv.fill_rect_vgrad(sx, sep_y, 1, sep_h / 2, end, mid);
             cv.fill_rect_vgrad(sx, sep_y + sep_h / 2, 1, sep_h - sep_h / 2, mid, end);
             x += sw + m.gap;

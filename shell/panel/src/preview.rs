@@ -1096,9 +1096,9 @@ fn compositor_backdrop(
     out: &mut [u8],
 ) {
     use crate::material::Material;
-    let (sat, noise) = match m {
-        Material::Glass => (1.18f32, 0.0f32),
-        Material::Acrylic => (1.12, 0.05),
+    let (sat, lift, noise) = match m {
+        Material::Glass => (1.24f32, 8.0f32, 0.0f32),
+        Material::Acrylic => (1.14, 4.0, 0.05),
         _ => return,
     };
     let _ = sharp;
@@ -1120,7 +1120,7 @@ fn compositor_backdrop(
                     % 1000;
                 let g = (hash as f32 / 1000.0 - 0.5) * 2.0 * noise * 255.0;
                 for c in 0..3 {
-                    let v = l + (px[c] as f32 - l) * sat + g;
+                    let v = l + (px[c] as f32 - l) * sat + lift + g;
                     out[i + c] = v.clamp(0.0, 255.0) as u8;
                 }
                 out[i + 3] = 255;
@@ -1207,7 +1207,8 @@ fn scene_pixels(
     .ok()
     .and_then(|b| crate::canvas::decode_png(&b));
     let sharp = backdrop(wp.as_ref(), w, h);
-    let soft = blur(&blur(&sharp, w, h), w, h);
+    // Deep multi-pass Gaussian frost matching pearOS / macOS compositor backdrop blur.
+    let soft = blur(&blur(&blur(&blur(&sharp, w, h), w, h), w, h), w, h);
     let mut out = sharp.clone();
 
     let mut prefs = ShellPrefs::default();

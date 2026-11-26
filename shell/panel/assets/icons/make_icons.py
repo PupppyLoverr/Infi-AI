@@ -236,22 +236,24 @@ def viewer():
 
 
 def calculator():
-    img = body("#3c3c40", "#18181b")
+    img = body("#2f3034", "#17171a")
     lay = layer()
     d = ImageDraw.Draw(lay)
-    d.rounded_rectangle((cx(0.18), cx(0.16), cx(0.82), cx(0.34)), radius=K * 8, fill=(120, 200, 140, 255))
+    d.rounded_rectangle((cx(0.16), cx(0.15), cx(0.84), cx(0.32)), radius=K * 9, fill=(36, 38, 42, 255), outline=(255, 255, 255, 22), width=K * 2)
+    # Clean 3x2 circular macOS Sequoia button grid
     for r in range(2):
         for q in range(3):
-            x, y = cx(0.18 + q * 0.23), cx(0.42 + r * 0.22)
-            col = hexc("#ff9f0a") if q == 2 else (90, 90, 96, 255)
-            d.rounded_rectangle((x, y, x + cx(0.18) - O, y + cx(0.17) - O), radius=K * 10, fill=col)
+            cx_b = cx(0.26 + q * 0.24)
+            cy_b = cx(0.49 + r * 0.23)
+            rad = B * 0.095
+            col = hexc("#ff9f0a") if q == 2 else ((142, 142, 148, 255) if r == 0 and q < 2 else (78, 78, 84, 255))
+            d.ellipse((cx_b - rad, cy_b - rad, cx_b + rad, cy_b + rad), fill=col)
     w = K * 5
-    x, y = cx(0.41 + 0.23) + K * 2, cx(0.42 + 0.22)
-    m = cx(0.18 + 2 * 0.23) + (cx(0.18) - O) / 2
-    d.line((m - K * 14, cx(0.505), m + K * 14, cx(0.505)), fill="white", width=w)
-    d.line((m, cx(0.505) - K * 14, m, cx(0.505) + K * 14), fill="white", width=w)
-    d.line((m - K * 14, cx(0.715) - K * 6, m + K * 14, cx(0.715) - K * 6), fill="white", width=w)
-    d.line((m - K * 14, cx(0.715) + K * 6, m + K * 14, cx(0.715) + K * 6), fill="white", width=w)
+    m = cx(0.74)
+    d.line((m - K * 11, cx(0.49), m + K * 11, cx(0.49)), fill="white", width=w)
+    d.line((m, cx(0.49) - K * 11, m, cx(0.49) + K * 11), fill="white", width=w)
+    d.line((m - K * 11, cx(0.72) - K * 5, m + K * 11, cx(0.72) - K * 5), fill="white", width=w)
+    d.line((m - K * 11, cx(0.72) + K * 5, m + K * 11, cx(0.72) + K * 5), fill="white", width=w)
     finish(over(img, lay), "calculator")
 
 
@@ -299,34 +301,34 @@ def mail():
 
 
 def notes():
-    img = body("#fff8d6", "#ffd84a")
+    img = body("#ffffff", "#f2f3f6")
     lay = layer()
     d = ImageDraw.Draw(lay)
-    d.rectangle((O, O + B * 0.0, O + B, cx(0.24)), fill=hexc("#ffcc00"))
+    d.rectangle((O, O, O + B, cx(0.27)), fill=hexc("#f5c230"))
+    d.line((O, cx(0.27), O + B, cx(0.27)), fill=(214, 168, 42, 255), width=K * 3)
     for i in range(5):
-        y = cx(0.36 + i * 0.11)
-        d.line((cx(0.2), y, cx(0.8 - (0.22 if i == 4 else 0)), y), fill=(200, 170, 80, 255), width=K * 3)
+        y = cx(0.39 + i * 0.11)
+        d.line((cx(0.16), y, cx(0.84), y), fill=(216, 218, 224, 255), width=K * 3)
     img = over(img, lay)
     m = Image.new("L", (S, S), 0)
     m.paste(MASK, (O, O))
-    clipped = canvas()
-    clipped.paste(img, (0, 0), m)
-    base = body("#fff8d6", "#ffd84a")
+    base = body("#ffffff", "#f2f3f6")
     base.paste(img, (0, 0), m)
     finish(base, "notes")
 
 
 def photos():
-    img = body("#ffffff", "#f0f0f4")
+    img = body("#ffffff", "#f4f5f8")
     lay = layer()
-    d = ImageDraw.Draw(lay)
-    cols = ["#ff9500", "#ffcc00", "#34c759", "#30b0c7", "#007aff", "#5856d6", "#af52de", "#ff2d55"]
+    cols = ["#ff9500", "#ffd60a", "#34c759", "#32ade6", "#007aff", "#5856d6", "#af52de", "#ff2d55"]
     c = cx(0.5)
     for i, col in enumerate(cols):
-        a = 2 * math.pi * i / 8 - math.pi / 2
-        px, py = c + math.cos(a) * B * 0.15, c + math.sin(a) * B * 0.15
+        a = i * 45
         petal = layer()
-        ImageDraw.Draw(petal).ellipse((px - B * 0.13, py - B * 0.13, px + B * 0.13, py + B * 0.13), fill=hexc(col, 200))
+        pd = ImageDraw.Draw(petal)
+        pw, ph = B * 0.10, B * 0.19
+        pd.rounded_rectangle((c - pw, c - B * 0.36, c + pw, c - B * 0.04), radius=pw, fill=hexc(col, 205))
+        petal = petal.rotate(-a, center=(c, c), resample=Image.BICUBIC)
         lay.alpha_composite(petal)
     finish(over(img, lay), "photos")
 

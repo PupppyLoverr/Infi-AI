@@ -898,8 +898,17 @@ fn draw_droppy_lock_media(cv: &mut Canvas<'_>, v: &View<'_>, w: i32, y: i32, tit
         deck_w,
         deck_h,
         r,
-        Rgba::rgba(28, 30, 38, 176),
-        Rgba::rgba(14, 15, 20, 198),
+        Rgba::rgba(24, 26, 34, 84),
+        Rgba::rgba(16, 18, 24, 102),
+    );
+    cv.round_rect_vgrad(
+        deck_x,
+        y,
+        deck_w,
+        deck_h,
+        r,
+        Rgba::rgba(255, 255, 255, 32),
+        Rgba::rgba(255, 255, 255, 8),
     );
     cv.round_rect_glass_rim(
         deck_x,
@@ -907,9 +916,9 @@ fn draw_droppy_lock_media(cv: &mut Canvas<'_>, v: &View<'_>, w: i32, y: i32, tit
         deck_w,
         deck_h,
         r,
-        Rgba::rgba(255, 255, 255, 118),
-        Rgba::rgba(255, 255, 255, 58),
-        Rgba::rgba(255, 255, 255, 28),
+        Rgba::rgba(255, 255, 255, 152),
+        Rgba::rgba(255, 255, 255, 78),
+        Rgba::rgba(255, 255, 255, 42),
     );
 
     let pad = 18;

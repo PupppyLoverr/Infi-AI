@@ -208,12 +208,30 @@ pub fn paint(cv: &mut Canvas<'_>, fonts: &Fonts, dark: bool, today: NaiveDate, w
 
 fn calendar(cv: &mut Canvas<'_>, fonts: &Fonts, dark: bool, today: NaiveDate, x: i32, y: i32) {
     let (bg, ink, dim) = if dark {
-        (Rgba::rgba(28, 28, 32, 214), Rgba::rgb(240, 240, 245), Rgba::rgba(235, 235, 245, 120))
+        (Rgba::rgba(24, 26, 32, 128), Rgba::rgb(245, 245, 250), Rgba::rgba(235, 235, 245, 148))
     } else {
-        (Rgba::rgba(250, 250, 252, 226), Rgba::rgb(28, 28, 30), Rgba::rgba(60, 60, 67, 130))
+        (Rgba::rgba(255, 255, 255, 152), Rgba::rgb(28, 28, 30), Rgba::rgba(60, 60, 67, 140))
     };
     cv.round_rect(x, y, CARD, CARD, RADIUS, bg);
-    cv.stroke_round_rect(x, y, CARD, CARD, RADIUS, 1.0, Rgba::rgba(255, 255, 255, if dark { 30 } else { 120 }));
+    cv.round_rect_vgrad(
+        x,
+        y,
+        CARD,
+        CARD,
+        RADIUS,
+        Rgba::rgba(255, 255, 255, if dark { 28 } else { 48 }),
+        Rgba::rgba(255, 255, 255, 6),
+    );
+    cv.round_rect_glass_rim(
+        x,
+        y,
+        CARD,
+        CARD,
+        RADIUS,
+        Rgba::rgba(255, 255, 255, if dark { 112 } else { 196 }),
+        Rgba::rgba(255, 255, 255, if dark { 54 } else { 110 }),
+        Rgba::rgba(255, 255, 255, if dark { 28 } else { 70 }),
+    );
     let red = Rgba::rgb(0xff, 0x45, 0x3a);
     let month = today.format("%B").to_string().to_uppercase();
     cv.text(fonts.bold.as_ref(), &month, x + 16, y + 26, 12.5, red);
@@ -244,9 +262,28 @@ fn calendar(cv: &mut Canvas<'_>, fonts: &Fonts, dark: bool, today: NaiveDate, x:
 }
 
 fn weather_card(cv: &mut Canvas<'_>, fonts: &Fonts, w: Option<&Weather>, city_set: bool, x: i32, y: i32) {
-    let top = Rgba::rgba(0x2f, 0x7c, 0xf6, 236);
-    let bottom = Rgba::rgba(0x18, 0x4f, 0xc2, 236);
+    let top = Rgba::rgba(0x4c, 0x9b, 0xf8, 178);
+    let bottom = Rgba::rgba(0x24, 0x62, 0xd4, 194);
     cv.round_rect_vgrad(x, y, CARD, CARD, RADIUS, top, bottom);
+    cv.round_rect_vgrad(
+        x,
+        y,
+        CARD,
+        CARD,
+        RADIUS,
+        Rgba::rgba(255, 255, 255, 34),
+        Rgba::rgba(255, 255, 255, 0),
+    );
+    cv.round_rect_glass_rim(
+        x,
+        y,
+        CARD,
+        CARD,
+        RADIUS,
+        Rgba::rgba(255, 255, 255, 138),
+        Rgba::rgba(255, 255, 255, 68),
+        Rgba::rgba(255, 255, 255, 34),
+    );
     cv.stroke_round_rect(x, y, CARD, CARD, RADIUS, 1.0, Rgba::rgba(255, 255, 255, 46));
     let white = Rgba::rgb(255, 255, 255);
     let soft = Rgba::rgba(255, 255, 255, 200);

@@ -420,18 +420,29 @@ pub fn draw(
     match style {
         NotchStyle::Island => {
             if expanded {
-                cv.round_rect_shadow(xi, yi, wi, hi, s.r, 10.0, 22.0, 64);
+                cv.round_rect_shadow(xi, yi, wi, hi, s.r, 10.0, 24.0, 56);
             }
             if dynamic_glass {
-                // Top camera header pure black, melting smoothly into smoked Dynamic Glass below.
+                // True translucent Dynamic Glass: frosted smoked glass body so
+                // the blurred wallpaper glows through with crisp text contrast,
+                // with a pure-black hardware camera pill inset at the top centre.
                 cv.round_rect_vgrad(
                     xi,
                     yi,
                     wi,
                     hi,
                     s.r,
-                    Rgba::rgba(0, 0, 0, 255),
-                    Rgba::rgba(14, 14, 18, 224),
+                    Rgba::rgba(14, 16, 22, 152),
+                    Rgba::rgba(10, 12, 18, 136),
+                );
+                cv.round_rect_vgrad(
+                    xi,
+                    yi,
+                    wi,
+                    hi,
+                    s.r,
+                    Rgba::rgba(255, 255, 255, 28),
+                    Rgba::rgba(255, 255, 255, 6),
                 );
                 cv.round_rect_glass_rim(
                     xi,
@@ -439,26 +450,62 @@ pub fn draw(
                     wi,
                     hi,
                     s.r,
-                    Rgba::rgba(255, 255, 255, 58),
-                    Rgba::rgba(255, 255, 255, 34),
-                    Rgba::rgba(255, 255, 255, 16),
+                    Rgba::rgba(255, 255, 255, 148),
+                    Rgba::rgba(255, 255, 255, 78),
+                    Rgba::rgba(255, 255, 255, 42),
+                );
+                let cam_w = 56;
+                let cam_h = 16;
+                cv.round_rect(
+                    xi + (wi - cam_w) / 2,
+                    yi + 8,
+                    cam_w,
+                    cam_h,
+                    8.0,
+                    pure_black,
                 );
             } else {
                 cv.round_rect(xi, yi, wi, hi, s.r, pure_black);
                 if expanded {
-                    cv.stroke_round_rect(xi, yi, wi, hi, s.r, 1.0, Rgba::rgba(255, 255, 255, 22));
+                    cv.stroke_round_rect(xi, yi, wi, hi, s.r, 1.0, Rgba::rgba(255, 255, 255, 32));
                 }
             }
         }
         _ => {
             if dynamic_glass {
-                cv.notch_body(xi, 0, wi, hi, s.r, Rgba::rgba(10, 10, 14, 232));
-                cv.notch_body(xi, 0, wi, 36.min(hi), 16.0, pure_black);
+                cv.notch_body(xi, 0, wi, hi, s.r, Rgba::rgba(18, 20, 26, 114));
+                cv.round_rect_vgrad(
+                    xi,
+                    0,
+                    wi,
+                    hi,
+                    s.r,
+                    Rgba::rgba(255, 255, 255, 28),
+                    Rgba::rgba(255, 255, 255, 8),
+                );
+                cv.round_rect_glass_rim(
+                    xi,
+                    0,
+                    wi,
+                    hi,
+                    s.r,
+                    Rgba::rgba(255, 255, 255, 128),
+                    Rgba::rgba(255, 255, 255, 68),
+                    Rgba::rgba(255, 255, 255, 36),
+                );
+                // Compact hardware notch camera pill at the top centre
+                let cam_w = 132.min(wi - 40);
+                cv.notch_body(xi + (wi - cam_w) / 2, 0, cam_w, 26, 12.0, pure_black);
             } else {
                 cv.notch_body(xi, 0, wi, hi, s.r, pure_black);
             }
-            cv.concave_corner(x - EAR, 0.0, EAR, true, pure_black);
-            cv.concave_corner(x + w, 0.0, EAR, false, pure_black);
+            let ear_col = if dynamic_glass {
+                Rgba::rgba(18, 20, 26, 114)
+            } else {
+                pure_black
+            };
+            cv.concave_corner(x - EAR, 0.0, EAR, true, ear_col);
+            cv.concave_corner(x + w, 0.0, EAR, false, ear_col);
         }
     }
 
@@ -588,8 +635,10 @@ fn tabs(
 ) {
     let d = 22;
     let gap = 6;
-    let top = y + 7;
-    let left = x + (w - (3 * d + 2 * gap)) / 2;
+    let top = y + 6;
+    // Place page tabs neatly on the right of the header so the centred
+    // hardware camera pill stays completely unobstructed.
+    let left = x + w - (3 * d + 2 * gap) - 16;
     for page in 0u8..3u8 {
         let bx = left + page as i32 * (d + gap);
         let on = active_page == page;
