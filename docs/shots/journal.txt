@@ -1,0 +1,10 @@
+Nov 26 21:59:53 archlinux kernel: Speculative Return Stack Overflow: IBPB-extending microcode not applied!
+Nov 26 21:59:53 archlinux kernel: Speculative Return Stack Overflow: WARNING: See https://kernel.org/doc/html/latest/admin-guide/hw-vuln/srso.html for mitigation options.
+Nov 26 21:59:53 archlinux kernel: virt/tdx: TDX not supported by the host platform
+Nov 26 21:59:59 solyra kernel: BTRFS warning (device vda3): block groups with swapfile extents will not be scrubbed or balanced
+Nov 26 22:00:04 solyra kernel: faux_driver regulatory: Direct firmware load for regulatory.db failed with error -2
+Nov 26 22:00:04 solyra kernel: kauditd_printk_skb: 89 callbacks suppressed
+Nov 26 22:00:04 solyra systemd-networkd[271]: eth0: Found matching .network file, based on potentially unpredictable interface name: /etc/systemd/network/10-cloud-init-eth0.network
+Nov 26 22:00:04 solyra systemd-networkd[271]: eth0: Found matching .network file, based on potentially unpredictable interface name: /etc/systemd/network/10-cloud-init-eth0.network
+Nov 26 22:00:07 solyra NetworkManager[351]: <warn>  [1795730407.2530] dns-sd-resolved[8ef125aa9bdb2b0d]: send-updates SetLinkDomains@2 failed: GDBus.Error:org.freedesktop.resolve1.LinkBusy: Link eth0 is managed.
+Nov 26 22:00:17 solyra kernel: kauditd_printk_skb: 96 callbacks suppressed
