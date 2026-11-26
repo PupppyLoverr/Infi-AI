@@ -224,7 +224,7 @@ pub fn titlebar(rt: &Runtime, style: &Style, title: &str, ctl: WindowCtl, tools:
 
     let ink = color(style.theme.text);
     let bar_bg = if style.dark() {
-        Color(31, 31, 31, if style.glass { 110 } else { 255 })
+        Color(8, 18, 20, if style.glass { 165 } else { 255 })
     } else {
         Color(246, 246, 248, if style.glass { 150 } else { 255 })
     };
@@ -236,8 +236,6 @@ pub fn titlebar(rt: &Runtime, style: &Style, title: &str, ctl: WindowCtl, tools:
         .gap(16.)
         .items_center()
         .bg(bar_bg)
-        .border_edges(zgx::scene::Insets { top: 0., right: 0., bottom: 0.67, left: 0. })
-        .border_color(rim)
         .window_drag()
         .child(lights)
         .child(

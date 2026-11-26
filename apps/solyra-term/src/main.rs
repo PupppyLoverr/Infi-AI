@@ -27,7 +27,7 @@ use zgx::{
     web_view::{WebView, WebViewOptions, web_view},
 };
 use zgx_components::{Tab, TabsOptions, tabs};
-use zgx_desktop::{Application, WindowOptions};
+use zgx_desktop::{Application, Titlebar, WindowOptions};
 
 mod chat;
 mod panes;
@@ -580,10 +580,22 @@ impl TermApp {
             move |bubbles, _cx| {
                 let mut col = column().w_full().gap(8.).p(12.);
                 if bubbles.is_empty() {
-                    col = col.child(
-                        text("What should the agent do?")
-                            .text_size(18.)
-                            .text_color(solyra_ui::color(solyra_ui::current().theme.text_dim)),
+                    col = col.child(div().h(120.)).child(
+                        row().w_full().justify_center().child(
+                            column()
+                                .items_center()
+                                .gap(6.)
+                                .child(
+                                    text("What should the agent do?")
+                                        .text_size(22.)
+                                        .text_color(solyra_ui::color(solyra_ui::current().theme.text)),
+                                )
+                                .child(
+                                    text("type below — the harness runs in this pane's directory")
+                                        .text_size(12.)
+                                        .text_color(solyra_ui::color(solyra_ui::current().theme.text_dim)),
+                                ),
+                        ),
                     );
                 }
                 for b in bubbles {
@@ -593,9 +605,9 @@ impl TermApp {
                         .p(10.)
                         .rounded(12.)
                         .bg(if mine {
-                            zgx::scene::Color(255, 255, 255, 26)
+                            zgx::scene::Color(255, 255, 255, 34)
                         } else {
-                            zgx::scene::Color(255, 255, 255, 12)
+                            zgx::scene::Color(255, 255, 255, 18)
                         });
                     col = col.child(if mine {
                         row().w_full().justify_end().child(card.max_w(420.))
@@ -611,7 +623,11 @@ impl TermApp {
             .w_full()
             .shrink_0()
             .gap(8.)
-            .p(10.)
+            .px(14.)
+            .py(8.)
+            .m(10.)
+            .rounded(20.)
+            .bg(zgx::scene::Color(255, 255, 255, 16))
             .items_center()
             .child(
                 text_input("Message the agent", input)
@@ -644,8 +660,14 @@ impl TermApp {
             .w_full()
             .h_full()
             .child(div().grow().w_full().child(scroll))
-            .child(row().w_full().shrink_0().px(10.).child(st))
-            .child(input_row)
+            .child(row().w_full().shrink_0().justify_center().child(st))
+            .child(
+                row()
+                    .w_full()
+                    .shrink_0()
+                    .justify_center()
+                    .child(input_row.max_w(640.)),
+            )
     }
 
     fn pane(&self, id: &str, workspace: &str) -> View {
@@ -676,7 +698,7 @@ impl TermApp {
             .w_full()
             .h_full()
             .rounded(6.)
-            .border(2.)
+            .border(1.)
             .overflow_hidden()
             .reactive_style(move || {
                 let _ = revision.get();
@@ -869,6 +891,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             height: 700.,
             min_size: Some((480., 300.)),
             transparent: style.glass,
+            titlebar: Titlebar::Hidden,
             ..Default::default()
         })
         .run(move |cx| {
@@ -890,7 +913,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 items: rt.signal(Vec::new()),
                 status: rt.signal(String::new()),
                 next_id: Rc::new(Cell::new(1)),
-                accent: solyra_ui::color(theme.accent),
+                accent: zgx::scene::Color(255, 255, 255, 60),
                 hairline: style.hairline(),
                 panel_open: rt.signal(true),
                 agents_rev: rt.signal(0),
@@ -1029,7 +1052,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let root = column()
                 .w_full()
                 .h_full()
-                .bg(style.content_bg())
+                .bg(if style.glass {
+                    zgx::scene::Color(8, 18, 20, 165)
+                } else {
+                    style.content_bg()
+                })
                 .text_color(solyra_ui::color(theme.text))
                 .keymap(keymap())
                 .on_action({
