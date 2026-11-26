@@ -23,11 +23,10 @@ use crate::state::{
 use crate::surfaces::{HitAction, Live, Region};
 use crate::tokens::Theme;
 
-/// Height of the floating shelf (pearOS / macOS: 48 px icons in a ~64 px
-/// shelf).
+/// Height of the floating shelf (macOS 27: 48 px icons in a 72 px Liquid Glass capsule).
 pub const CARD_H: i32 = 72;
-/// Corner radius of the shelf.
-const DOCK_R: f32 = 22.0;
+/// Corner radius of the shelf (macOS 27 continuous rounded capsule).
+const DOCK_R: f32 = 24.0;
 /// Extra room above the card for magnified icons: the biggest icon is
 /// `MAX_SCALE` times a cell, plus space for its tooltip.
 pub const MAGNIFY_ROOM: i32 = 66;
@@ -443,9 +442,11 @@ fn draw_floating(
 
     let slab = slab_for(live, th.surface);
     let mat = live.prefs.look.material(live.prefs.look.dock_material);
+    material::set_glass_tint(live.prefs.look.glass_tint);
     if style == DockStyle::Macos && mat == material::Material::Glass {
-        // macOS 26 dock: Liquid Glass (the compositor blurs and bends the
-        // desktop behind it; see material::apple_glass).
+        // macOS 27 Golden Gate dock: soft floating shadow + uniform Liquid Glass
+        // refraction capsule (respecting the ultraclear-to-tinted slider).
+        cv.round_rect_shadow(card_x, card_y, card_w, CARD_H, DOCK_R, 6.0, 18.0, 46);
         material::apple_glass(
             cv,
             card_x,
@@ -604,6 +605,7 @@ fn draw_floating(
                     })
                     .unwrap_or(role);
                 cv.draw_app_squircle(x, y - bounce, s, key, icon, fonts);
+                apply_icon_style(cv, th, live.prefs.look.icon_style, x, y - bounce, s);
 
                 if let Item::App(e) = it {
                     if e.window_count > 0 {
@@ -832,7 +834,35 @@ fn agent_badge(
     }
 }
 
-/// A label above a magnified icon, kept on screen.
+/// Subtle macOS 27 icon appearance overlay (Dark, Tinted, Clear).
+fn apply_icon_style(
+    cv: &mut Canvas<'_>,
+    th: &Theme,
+    style: solyra_conf::look::IconStyle,
+    x: i32,
+    y: i32,
+    s: i32,
+) {
+    use solyra_conf::look::IconStyle;
+    let r = (s as f32 * 0.225).max(4.0);
+    match style {
+        IconStyle::Default => {}
+        IconStyle::Dark => {
+            cv.round_rect(x, y, s, s, r, Rgba::rgba(10, 10, 14, 72));
+            cv.stroke_round_rect(x, y, s, s, r, 1.0, Rgba::rgba(255, 255, 255, 36));
+        }
+        IconStyle::Tinted => {
+            cv.round_rect(x, y, s, s, r, Rgba::rgba(th.accent.0, th.accent.1, th.accent.2, 68));
+            cv.stroke_round_rect(x, y, s, s, r, 1.0, Rgba::rgba(255, 255, 255, 58));
+        }
+        IconStyle::Clear => {
+            cv.round_rect(x, y, s, s, r, Rgba::rgba(255, 255, 255, 28));
+            cv.rim_light(x, y, s, s, r, 1.4, Rgba::rgba(255, 255, 255, 195), 0.7);
+        }
+    }
+}
+
+/// A macOS 27 Liquid Glass pill label above a magnified icon, kept on screen.
 fn tooltip(
     cv: &mut Canvas<'_>,
     th: &Theme,
@@ -842,30 +872,24 @@ fn tooltip(
     bottom: i32,
     w: i32,
 ) {
-    if bottom < 22 {
+    if bottom < 26 {
         return;
     }
-    let tw = text_width(fonts.medium.as_ref(), label, 11.5).min(180);
-    let bw = tw + 18;
+    let tw = text_width(fonts.medium.as_ref(), label, 11.8).min(180);
+    let bw = tw + 20;
+    let bh = 22;
+    let r = bh as f32 / 2.0;
     let bx = (cx - bw / 2).clamp(2, (w - bw - 2).max(2));
-    let by = bottom - 22;
-    cv.round_rect(bx, by, bw, 20, 7.0, th.surface);
-    cv.round_rect_glass_rim(
-        bx,
-        by,
-        bw,
-        20,
-        7.0,
-        Rgba::rgba(255, 255, 255, 76),
-        Rgba::rgba(255, 255, 255, 28),
-        Rgba::rgba(0, 0, 0, 28),
-    );
+    let by = bottom - bh - 2;
+    let dark = th.surface.0 < 128;
+    cv.round_rect_shadow(bx, by, bw, bh, r, 3.0, 10.0, 38);
+    material::apple_glass(cv, bx, by, bw, bh, r, dark);
     cv.text_truncated(
         fonts.medium.as_ref(),
         label,
-        bx + 9,
-        by + 14,
-        11.5,
+        bx + 10,
+        by + 15,
+        11.8,
         180,
         th.text,
     );

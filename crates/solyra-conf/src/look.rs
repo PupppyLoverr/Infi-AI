@@ -62,13 +62,25 @@ choice! {
 }
 
 choice! {
-    /// The lock screen's layout (Dashboard = large clock, avatars, media glance).
+    /// The lock screen's layout (Dashboard = large clock, avatars, media glance;
+    /// Media = Droppy fullscreen ambient album art + synced live lyrics).
     LockStyle {
         Solyra = "solyra" / "Solyra",
         Classic = "classic" / "Centred",
         Corner = "corner" / "Clock corner",
         Dashboard = "dashboard" / "Dashboard",
+        Media = "media" / "Ambient Media",
     } default Classic
+}
+
+choice! {
+    /// macOS 27 icon appearance in the Dock and Launcher.
+    IconStyle {
+        Default = "default" / "Default",
+        Dark = "dark" / "Dark",
+        Tinted = "tinted" / "Tinted",
+        Clear = "clear" / "Clear",
+    } default Default
 }
 
 choice! {
@@ -120,6 +132,10 @@ pub struct Look {
     pub refraction_intensity: u8,
     /// Same scale as refraction, applied to compositor frost.
     pub blur_intensity: u8,
+    /// macOS 27 Liquid Glass tint slider: 0 = ultraclear, 35 = balanced, 100 = fully tinted.
+    pub glass_tint: u8,
+    /// macOS 27 icon appearance (Default, Dark, Tinted, Clear).
+    pub icon_style: IconStyle,
     pub lock: LockStyle,
     pub desktop: DesktopMode,
     pub bar_material: Material,
@@ -150,6 +166,8 @@ impl Default for Look {
             increased_contrast: false,
             refraction_intensity: 100,
             blur_intensity: 100,
+            glass_tint: 35,
+            icon_style: IconStyle::default(),
             lock: LockStyle::default(),
             desktop: DesktopMode::default(),
             bar_material: Material::Glass,
@@ -207,6 +225,13 @@ impl Look {
             blur_intensity: get(text, "blur_intensity")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(d.blur_intensity),
+            glass_tint: get(text, "glass_tint")
+                .and_then(|v| v.parse::<u8>().ok())
+                .map(|v| v.min(100))
+                .unwrap_or(d.glass_tint),
+            icon_style: get(text, "icon_style")
+                .and_then(IconStyle::parse)
+                .unwrap_or(d.icon_style),
             lock: get(text, "lock_style")
                 .and_then(LockStyle::parse)
                 .unwrap_or(d.lock),
@@ -251,6 +276,8 @@ impl Look {
                 Some(self.refraction_intensity.to_string()),
             ),
             ("blur_intensity", Some(self.blur_intensity.to_string())),
+            ("glass_tint", Some(self.glass_tint.to_string())),
+            ("icon_style", Some(self.icon_style.as_str().into())),
             ("lock_style", Some(self.lock.as_str().into())),
             ("desktop_mode", Some(self.desktop.as_str().into())),
             ("bar_material", Some(self.bar_material.as_str().into())),
@@ -340,6 +367,8 @@ mod tests {
         l.increased_contrast = true;
         l.refraction_intensity = 50;
         l.blur_intensity = 150;
+        l.glass_tint = 70;
+        l.icon_style = IconStyle::Clear;
         let text = crate::merge("theme=dark\n", &l.pairs());
         assert_eq!(Look::from_conf(&text), l);
         assert!(text.starts_with("theme=dark\n"), "foreign keys are kept");

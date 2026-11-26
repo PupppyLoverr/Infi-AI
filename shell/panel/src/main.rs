@@ -2603,6 +2603,14 @@ impl App {
                     .stderr(std::process::Stdio::null())
                     .spawn();
             }
+            HitAction::SetGlassTintFromX { x0, w } => {
+                let pct = (((x - x0 as f64) / w.max(1) as f64) * 100.0)
+                    .round()
+                    .clamp(0.0, 100.0) as u8;
+                self.prefs.look.glass_tint = pct;
+                material::set_glass_tint(pct);
+                self.save_prefs();
+            }
         }
         if on_menu && self.menu.is_some() {
             // A menu item ran: the menu closes, as menus do.
@@ -2785,6 +2793,13 @@ impl App {
                 send_ipc(&format!(
                     "{{\"Action\":{{\"FocusWindow\":{{\"id\":{id}}}}}}}"
                 ));
+            }
+            launcher::Action::CopyText(txt) => {
+                self.launcher = None;
+                let q = txt.replace('\'', "'\\''");
+                self.execute_launch(LaunchTarget::Shell(format!(
+                    "printf '%s' '{q}' | wl-copy"
+                )));
             }
             launcher::Action::AgentRequest(text) => {
                 self.launcher = None;

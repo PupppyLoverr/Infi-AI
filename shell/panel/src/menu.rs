@@ -286,11 +286,15 @@ pub fn draw_ctx(
     let w = cv.width as i32;
     let h = cv.height as i32;
     let mut regions = Vec::new();
-    cv.round_rect_shadow(0, 0, w, h, 12.0, 9.0, 26.0, 46);
-    crate::material::apple_glass(cv, 0, 0, w, h, 12.0, th.surface.0 < 128);
+    cv.round_rect_shadow(0, 0, w, h, 14.0, 9.0, 26.0, 48);
+    crate::material::apple_glass(cv, 0, 0, w, h, 14.0, th.surface.0 < 128);
     if !crate::material::compositor_material() {
-        cv.round_rect(0, 0, w, h, 12.0, th.surface);
-        cv.stroke_round_rect(0, 0, w, h, 12.0, 1.0, th.hairline);
+        let tint = if th.surface.0 < 128 {
+            crate::canvas::Rgba::rgba(18, 18, 22, 110)
+        } else {
+            crate::canvas::Rgba::rgba(255, 255, 255, 110)
+        };
+        cv.round_rect(0, 0, w, h, 14.0, tint);
     }
     let mut y = PAD;
     for e in entries {
@@ -342,17 +346,22 @@ pub fn draw(
     let screen_w = cv.width as i32;
     let screen_h = cv.height as i32;
 
-    // The open title stays highlighted in the bar area.
-    cv.round_rect(title.x - 5, 5, title.w + 10, bar_h - 10, 5.0, th.tile_hover);
+    // The open title stays highlighted in a macOS 27 pill in the bar area.
+    let bar_pill_r = ((bar_h - 4).max(8) as f32) / 2.0;
+    cv.round_rect(title.x - 6, 2, title.w + 12, bar_h - 4, bar_pill_r, th.tile_hover);
 
     let (pw, ph) = panel_size(fonts, entries);
     let px = (title.x - 8).clamp(4, (screen_w - pw - 4).max(4));
-    let py = bar_h + 2;
-    cv.round_rect_shadow(px, py, pw, ph, 10.0, 8.0, 22.0, 40);
-    crate::material::apple_glass(cv, px, py, pw, ph, 10.0, th.surface.0 < 128);
+    let py = bar_h + 4;
+    cv.round_rect_shadow(px, py, pw, ph, 14.0, 8.0, 24.0, 44);
+    crate::material::apple_glass(cv, px, py, pw, ph, 14.0, th.surface.0 < 128);
     if !crate::material::compositor_material() {
-        cv.round_rect(px, py, pw, ph, 10.0, th.surface);
-        cv.stroke_round_rect(px, py, pw, ph, 10.0, 1.0, th.hairline);
+        let tint = if th.surface.0 < 128 {
+            crate::canvas::Rgba::rgba(18, 18, 22, 110)
+        } else {
+            crate::canvas::Rgba::rgba(255, 255, 255, 110)
+        };
+        cv.round_rect(px, py, pw, ph, 14.0, tint);
     }
 
     let mut y = py + PAD;

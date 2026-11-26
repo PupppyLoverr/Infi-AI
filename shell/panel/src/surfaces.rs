@@ -22,7 +22,7 @@ pub const BAR_HEIGHT: u32 = 30;
 pub const NOTCH_WIDTH: i32 = 184;
 
 pub const CONTROL_W: u32 = 348;
-pub const CONTROL_H: u32 = 436;
+pub const CONTROL_H: u32 = 484;
 
 pub const ISLAND_CARD_W: u32 = 372;
 pub const ISLAND_CARD_H: u32 = 172;
@@ -84,6 +84,11 @@ pub enum HitAction {
         x0: i32,
         w: i32,
     },
+    /// macOS 27 Liquid Glass slider (0 = ultraclear .. 100 = fully tinted).
+    SetGlassTintFromX {
+        x0: i32,
+        w: i32,
+    },
     /// Open a menu-bar menu.
     OpenMenu(MenuId),
     /// First click on an item that needs confirming (shut down, restart).
@@ -126,6 +131,7 @@ pub fn draw_bar(
     let icon_cy = h as f32 * 0.5;
 
     let bar_mat = prefs.look.material(prefs.look.bar_material);
+    crate::material::set_glass_tint(prefs.look.glass_tint);
     let slab = crate::material::slab(bar_mat, th.bar, prefs.wall_tint);
     let is_glass_bar = matches!(
         bar_mat,
@@ -216,8 +222,9 @@ pub fn draw_bar(
     let brand_hover = hover.is_some_and(|(hx, hy)| {
         hx >= (mark_x - 3) as f64 && hx < (mark_x + mark_w + 3) as f64 && hy < h as f64
     });
+    let pill_r = ((h - 4).max(8) as f32) / 2.0;
     if brand_hover {
-        cv.round_rect(mark_x - 4, 2, mark_w + 8, h - 4, 5.0, hover_fill);
+        cv.round_rect(mark_x - 5, 2, mark_w + 10, h - 4, pill_r, hover_fill);
     }
     let drawn = cv.mark_nl(mark_x, mark_y, mark_h, fonts);
     debug_assert_eq!(drawn, mark_w);
@@ -240,7 +247,7 @@ pub fn draw_bar(
         let app_size = 14.0;
         let aw = text_width(fonts.semibold.as_ref(), &app_name, app_size);
         if hovered(hover, x - 6, 0, aw + 12, h) {
-            cv.round_rect(x - 6, 2, aw + 12, h - 4, 5.0, hover_fill);
+            cv.round_rect(x - 7, 2, aw + 14, h - 4, pill_r, hover_fill);
         }
         draw_bar_text(
             cv,
@@ -268,7 +275,7 @@ pub fn draw_bar(
             }
             let hot = hovered(hover, x - 6, 0, mw + 12, h);
             if hot {
-                cv.round_rect(x - 6, 2, mw + 12, h - 4, 5.0, hover_fill);
+                cv.round_rect(x - 7, 2, mw + 14, h - 4, pill_r, hover_fill);
             }
             draw_bar_text(
                 cv,
@@ -464,7 +471,7 @@ pub fn draw_bar(
     let status_w = (status_right - status_left).max(0);
     let status_hov = hovered(hover, status_left, 0, status_w, h);
     if status_hov {
-        cv.round_rect(status_left, 2, status_w, h - 4, 6.0, hover_fill);
+        cv.round_rect(status_left - 2, 2, status_w + 4, h - 4, pill_r, hover_fill);
     }
     // Subtle optical shadow behind right-side icons on clear dark glass.
     if let Some(sh) = bar_shadow {
@@ -507,7 +514,7 @@ pub fn draw_bar(
     let search_x = status_left - gap - search_w;
     if search_x > (w / 2) + center_reserved_half {
         if hovered(hover, search_x, 0, search_w, h) {
-            cv.round_rect(search_x, 2, search_w, h - 4, 6.0, hover_fill);
+            cv.round_rect(search_x - 2, 2, search_w + 4, h - 4, pill_r, hover_fill);
         }
         if let Some(sh) = bar_shadow {
             cv.icon_search(search_x as f32 + 11.0, icon_cy + 1.0, 13.0, sh);
@@ -685,13 +692,18 @@ pub fn draw_launcher(
     hover: Option<(f64, f64)>,
 ) -> Vec<Region> {
     let lay = spot_layout(query, items);
-    let (glass, edge) = spot_glass(th);
+    let dark = th.surface.0 < 128;
     for (r, radius) in lay.shapes() {
-        cv.round_rect_shadow(r.x, r.y, r.w, r.h, radius, 10.0, 28.0, 42);
-    }
-    for (r, radius) in lay.shapes() {
-        cv.round_rect(r.x, r.y, r.w, r.h, radius, glass);
-        cv.stroke_round_rect(r.x, r.y, r.w, r.h, radius, 1.0, edge);
+        cv.round_rect_shadow(r.x, r.y, r.w, r.h, radius, 12.0, 32.0, if dark { 58 } else { 36 });
+        crate::material::apple_glass(cv, r.x, r.y, r.w, r.h, radius, dark);
+        if !crate::material::compositor_material() {
+            let veil = if dark {
+                Rgba::rgba(18, 19, 24, 96)
+            } else {
+                Rgba::rgba(255, 255, 255, 118)
+            };
+            cv.round_rect(r.x, r.y, r.w, r.h, radius, veil);
+        }
     }
     launcher_content(cv, th, fonts, query, items, selected, icons, hover, &lay)
 }
@@ -813,12 +825,51 @@ fn launcher_content(
         cv.round_rect(text_x, cap.y + 17, 2, 22, 1.0, th.accent);
         cv.text(
             fonts.regular.as_ref(),
-            "Search or Ask",
+            "Spotlight Search",
             text_x + 7,
             base,
             19.0,
             th.text_dim,
         );
+        // macOS 27 Spotlight quick-intent pills on the right of the empty capsule.
+        let pill_h = 24;
+        let pill_y = cap.y + (cap.h - pill_h) / 2;
+        let mut px = esc_x - 14;
+        for (lbl, act) in [
+            ("Clipboard", HitAction::Shell(ShellCmd::ToggleIsland)),
+            ("Files", HitAction::Launch(LaunchTarget::Shell("solyra-open files".into()))),
+            ("Apps", HitAction::Shell(ShellCmd::ToggleAgents)),
+        ] {
+            let tw = text_width(fonts.medium.as_ref(), lbl, 11.5);
+            let pw = tw + 18;
+            px -= pw;
+            let hov = hovered(hover, px, pill_y, pw, pill_h);
+            cv.round_rect(
+                px,
+                pill_y,
+                pw,
+                pill_h,
+                pill_h as f32 / 2.0,
+                if hov { th.tile_hover } else { th.tile },
+            );
+            cv.stroke_round_rect(px, pill_y, pw, pill_h, pill_h as f32 / 2.0, 1.0, th.hairline);
+            cv.text(
+                fonts.medium.as_ref(),
+                lbl,
+                px + 9,
+                pill_y + 16,
+                11.5,
+                if hov { th.text } else { th.text_med },
+            );
+            regions.push(Region {
+                x: px,
+                y: pill_y,
+                w: pw,
+                h: pill_h,
+                action: act,
+            });
+            px -= 6;
+        }
     } else {
         let qw = cv.text_truncated(
             fonts.regular.as_ref(),
@@ -999,6 +1050,10 @@ fn draw_launcher_row(
         let action = match &item.action {
             LauncherAction::Launch(t) => HitAction::Launch(t.clone()),
             LauncherAction::FocusWindow(id) => HitAction::FocusWindow(*id),
+            LauncherAction::CopyText(txt) => {
+                let q = txt.replace('\'', "'\\''");
+                HitAction::Launch(LaunchTarget::Shell(format!("printf '%s' '{q}' | wl-copy")))
+            }
             LauncherAction::AgentRequest(q) => HitAction::AgentRequest(q.clone()),
             LauncherAction::Unavailable => return,
         };
@@ -1264,19 +1319,25 @@ pub fn draw_control(
     let h = cv.height as i32;
     let mut regions = Vec::new();
 
-    // macOS 26: the whole Control Centre is Liquid Glass (the compositor
-    // blurs and bends what is behind); tiles are lighter glass on it.
+    // macOS 27 Golden Gate: the whole Control Centre is uniform Liquid Glass
+    // honoring the ultraclear-to-tinted slider; Bento tiles sit cleanly inside.
     let dark = th.surface.0 < 128;
+    crate::material::set_glass_tint(prefs.look.glass_tint);
     crate::material::apple_glass(cv, 0, 0, w, h, R_CARD, dark);
     let tile_fill = if dark {
-        Rgba::rgba(255, 255, 255, 24)
+        Rgba::rgba(255, 255, 255, 22)
     } else {
-        Rgba::rgba(255, 255, 255, 120)
+        Rgba::rgba(255, 255, 255, 132)
     };
     let tile_hov = if dark {
-        Rgba::rgba(255, 255, 255, 40)
+        Rgba::rgba(255, 255, 255, 38)
     } else {
-        Rgba::rgba(255, 255, 255, 170)
+        Rgba::rgba(255, 255, 255, 182)
+    };
+    let tile_rim = if dark {
+        Rgba::rgba(255, 255, 255, 36)
+    } else {
+        Rgba::rgba(255, 255, 255, 180)
     };
 
     // 1. Status tiles. Network is read-only: Solyra reads link state, it does
@@ -1334,36 +1395,42 @@ pub fn draw_control(
         let tx = 16 + col * (tile_w + 10);
         let ty = 16 + row * (tile_h + 10);
         let is_hov = act.is_some() && hovered(hover, tx, ty, tile_w, tile_h);
-        if active {
-            cv.round_rect(tx, ty, tile_w, tile_h, R_TILE, th.accent);
+        cv.round_rect(
+            tx,
+            ty,
+            tile_w,
+            tile_h,
+            R_TILE,
+            if is_hov { tile_hov } else { tile_fill },
+        );
+        cv.stroke_round_rect(tx, ty, tile_w, tile_h, R_TILE, 1.0, tile_rim);
+        // macOS 27 circular icon badge (accent blue when active, glass circle when idle).
+        let (icx, icy) = (tx as f32 + 24.0, ty as f32 + 27.0);
+        let badge_bg = if active {
+            th.accent
+        } else if dark {
+            Rgba::rgba(255, 255, 255, 30)
         } else {
-            cv.round_rect(
-                tx,
-                ty,
-                tile_w,
-                tile_h,
-                R_TILE,
-                if is_hov { tile_hov } else { tile_fill },
-            );
-        }
-        let fg = if active { th.on_accent } else { th.text };
-        let fg_sub = if active { th.on_accent } else { th.text_dim };
-        let (icx, icy) = (tx as f32 + 22.0, ty as f32 + 27.0);
+            Rgba::rgba(0, 0, 0, 18)
+        };
+        cv.circle(icx, icy, 14.0, badge_bg);
+        let icon_fg = if active { th.on_accent } else { th.text };
+        let icon_dim = if active { th.on_accent } else { th.text_dim };
         match i {
-            0 => cv.icon_network(icx, icy, 14.0, telem.network, fg, fg_sub),
-            1 => cv.icon_solyra(icx, icy, 6.0, fg),
-            2 => cv.icon_moon(icx, icy, fg),
-            _ => cv.icon_sun(icx, icy, fg),
+            0 => cv.icon_network(icx, icy, 13.0, telem.network, icon_fg, icon_dim),
+            1 => cv.icon_solyra(icx, icy, 5.5, icon_fg),
+            2 => cv.icon_moon(icx, icy, icon_fg),
+            _ => cv.icon_sun(icx, icy, icon_fg),
         }
-        cv.text(fonts.semibold.as_ref(), title, tx + 40, ty + 23, 12.2, fg);
+        cv.text(fonts.semibold.as_ref(), title, tx + 46, ty + 23, 12.4, th.text);
         cv.text_truncated(
             fonts.regular.as_ref(),
             &sub,
-            tx + 40,
+            tx + 46,
             ty + 40,
             T_CAPTION + 0.4,
-            tile_w - 48,
-            fg_sub,
+            tile_w - 54,
+            th.text_dim,
         );
         if let Some(action) = act {
             regions.push(Region {
@@ -1376,21 +1443,21 @@ pub fn draw_control(
         }
     }
 
-    // 2. Sliders. A slider that cannot do anything on this machine says so
-    //    instead of moving.
+    // 2. macOS 27 Liquid Glass capsule sliders: Display, Sound, Liquid Glass tint.
     let sy = 148;
-    cv.round_rect(16, sy, w - 32, 96, R_TILE, tile_fill);
+    cv.round_rect(16, sy, w - 32, 144, R_TILE, tile_fill);
+    cv.stroke_round_rect(16, sy, w - 32, 144, R_TILE, 1.0, tile_rim);
     draw_slider_row(
         cv,
         th,
         fonts,
         &mut regions,
         28,
-        sy + 14,
+        sy + 12,
         w - 56,
         "Display",
         prefs.brightness,
-        true,
+        SliderKind::Brightness,
         telem.brightness_controllable,
     );
     draw_slider_row(
@@ -1399,16 +1466,29 @@ pub fn draw_control(
         fonts,
         &mut regions,
         28,
-        sy + 54,
+        sy + 56,
         w - 56,
         "Sound",
         prefs.volume,
-        false,
+        SliderKind::Volume,
         telem.volume_controllable,
+    );
+    draw_slider_row(
+        cv,
+        th,
+        fonts,
+        &mut regions,
+        28,
+        sy + 100,
+        w - 56,
+        "Liquid Glass",
+        prefs.look.glass_tint,
+        SliderKind::GlassTint,
+        true,
     );
 
     // 3. Dock style.
-    let dy = 258;
+    let dy = 306;
     cv.text(
         fonts.semibold.as_ref(),
         "DOCK STYLE",
@@ -1419,7 +1499,7 @@ pub fn draw_control(
     );
     let seg_y = dy + 20;
     let seg_w = w - 32;
-    cv.round_rect(16, seg_y, seg_w, 34, R_ROW, th.field);
+    cv.round_rect(16, seg_y, seg_w, 34, 17.0, th.field);
     let item_w = (seg_w - 8) / 4;
     for (i, style) in [
         DockStyle::Solyra,
@@ -1433,7 +1513,7 @@ pub fn draw_control(
         let ix = 20 + i as i32 * item_w;
         let active = prefs.dock_style == style;
         if active {
-            cv.round_rect(ix, seg_y + 3, item_w, 28, R_CONTROL, th.accent);
+            cv.round_rect(ix, seg_y + 3, item_w, 28, 14.0, th.accent);
         }
         let label = style.label();
         let tw = text_width(fonts.semibold.as_ref(), label, 11.8);
@@ -1455,7 +1535,7 @@ pub fn draw_control(
     }
 
     // 4. Wallpaper.
-    let wy = 328;
+    let wy = 376;
     cv.text(
         fonts.semibold.as_ref(),
         "WALLPAPER",
@@ -1490,7 +1570,7 @@ pub fn draw_control(
     );
 
     // 5. Real telemetry footer.
-    let my = 386;
+    let my = 434;
     cv.fill_rect(16, my, w - 32, 1, th.separator);
     let mut label = format!(
         "Memory · {} / {} MiB",
@@ -1524,6 +1604,13 @@ pub fn draw_control(
     regions
 }
 
+#[derive(Clone, Copy)]
+enum SliderKind {
+    Brightness,
+    Volume,
+    GlassTint,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_slider_row(
     cv: &mut Canvas<'_>,
@@ -1535,7 +1622,7 @@ fn draw_slider_row(
     w: i32,
     label: &str,
     pct: u8,
-    is_brightness: bool,
+    kind: SliderKind,
     available: bool,
 ) {
     cv.text(
@@ -1546,10 +1633,18 @@ fn draw_slider_row(
         T_META,
         th.text_med,
     );
-    let right = if available {
-        format!("{pct}%")
-    } else {
+    let right = if !available {
         "Not available on this device".to_string()
+    } else if matches!(kind, SliderKind::GlassTint) {
+        if pct <= 10 {
+            "Ultraclear".to_string()
+        } else if pct >= 90 {
+            "Tinted".to_string()
+        } else {
+            format!("{pct}%")
+        }
+    } else {
+        format!("{pct}%")
     };
     let pw = text_width(fonts.regular.as_ref(), &right, T_META);
     cv.text(
@@ -1561,32 +1656,62 @@ fn draw_slider_row(
         th.text_dim,
     );
 
-    let ty = y + 16;
-    let th_px = 18;
-    cv.round_rect(x, ty, w, th_px, 9.0, th.field);
+    let ty = y + 15;
+    let th_px = 20;
+    let r = th_px as f32 / 2.0;
+    cv.round_rect(x, ty, w, th_px, r, th.field);
+    cv.stroke_round_rect(x, ty, w, th_px, r, 1.0, th.hairline);
     if !available {
         return;
     }
-    let fill_w = ((w as f32) * (pct.clamp(8, 100) as f32 / 100.0)).round() as i32;
-    cv.round_rect(x, ty, fill_w, th_px, 9.0, th.accent);
-    if is_brightness {
-        cv.icon_sun(x as f32 + 11.0, ty as f32 + 9.0, th.on_accent);
-        regions.push(Region {
-            x,
-            y: ty - 4,
-            w,
-            h: th_px + 8,
-            action: HitAction::SetBrightnessFromX { x0: x, w },
-        });
+    let fill_w = ((w as f32) * (pct.clamp(10, 100) as f32 / 100.0)).round() as i32;
+    let fill_col = if matches!(kind, SliderKind::GlassTint) {
+        th.accent
     } else {
-        cv.icon_volume(x as f32 + 12.0, ty as f32 + 9.0, 11.0, pct, th.on_accent);
-        regions.push(Region {
-            x,
-            y: ty - 4,
-            w,
-            h: th_px + 8,
-            action: HitAction::SetVolumeFromX { x0: x, w },
-        });
+        Rgba::rgba(255, 255, 255, 232)
+    };
+    let glyph_col = if matches!(kind, SliderKind::GlassTint) {
+        th.on_accent
+    } else {
+        Rgba::rgb(0x1c, 0x1c, 0x1e)
+    };
+    cv.round_rect(x, ty, fill_w, th_px, r, fill_col);
+    // macOS 27 tactile circular slider thumb at the right end of the fill.
+    let thumb_cx = (x + fill_w - th_px / 2).max(x + th_px / 2) as f32;
+    let thumb_cy = ty as f32 + r;
+    cv.circle(thumb_cx, thumb_cy, r - 1.5, Rgba::rgb(255, 255, 255));
+    cv.ring(thumb_cx, thumb_cy, r - 1.5, 1.0, Rgba::rgba(0, 0, 0, 36));
+    match kind {
+        SliderKind::Brightness => {
+            cv.icon_sun(x as f32 + 11.0, thumb_cy, glyph_col);
+            regions.push(Region {
+                x,
+                y: ty - 4,
+                w,
+                h: th_px + 8,
+                action: HitAction::SetBrightnessFromX { x0: x, w },
+            });
+        }
+        SliderKind::Volume => {
+            cv.icon_volume(x as f32 + 12.0, thumb_cy, 11.0, pct, glyph_col);
+            regions.push(Region {
+                x,
+                y: ty - 4,
+                w,
+                h: th_px + 8,
+                action: HitAction::SetVolumeFromX { x0: x, w },
+            });
+        }
+        SliderKind::GlassTint => {
+            cv.circle(x as f32 + 11.0, thumb_cy, 4.5, glyph_col);
+            regions.push(Region {
+                x,
+                y: ty - 4,
+                w,
+                h: th_px + 8,
+                action: HitAction::SetGlassTintFromX { x0: x, w },
+            });
+        }
     }
 }
 

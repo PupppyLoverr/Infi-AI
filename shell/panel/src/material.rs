@@ -361,6 +361,10 @@ pub fn pear_glass(
 pub static COMPOSITOR_GLASS: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// macOS 27 Golden Gate Liquid Glass tint level (0 = ultraclear, 35 = balanced,
+/// 100 = fully tinted). Shared across all shell glass painters.
+pub static GLASS_TINT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(35);
+
 fn compositor_glass() -> bool {
     COMPOSITOR_GLASS.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -373,7 +377,39 @@ pub fn set_compositor_material(on: bool) {
     COMPOSITOR_GLASS.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
+pub fn glass_tint() -> u8 {
+    GLASS_TINT.load(std::sync::atomic::Ordering::Relaxed).min(100)
+}
+
+pub fn set_glass_tint(pct: u8) {
+    GLASS_TINT.store(pct.min(100), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Body fill alpha for macOS 27 Liquid Glass given `tint_pct` (0..=100).
+pub fn glass_fill_alpha(dark: bool, tint_pct: u8) -> u8 {
+    let t = (tint_pct.min(100) as f32) / 100.0;
+    let (lo, hi) = if dark { (28.0_f32, 198.0_f32) } else { (38.0_f32, 212.0_f32) };
+    (lo + (hi - lo) * t).round().clamp(0.0, 255.0) as u8
+}
+
+/// macOS 27 Golden Gate Liquid Glass: uniform optical refraction, improved
+/// contrast, soft top sheen, crisp top-left specular rim with subtle bottom
+/// internal reflection, and a 1 px outer occlusion hairline.
 pub fn apple_glass(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32, dark: bool) {
+    apple_glass_tinted(cv, x, y, w, h, r, dark, glass_tint());
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn apple_glass_tinted(
+    cv: &mut Canvas<'_>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    r: f32,
+    dark: bool,
+    tint_pct: u8,
+) {
     if compositor_glass() {
         cv.stroke_round_rect(
             x - 1,
@@ -386,13 +422,32 @@ pub fn apple_glass(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32, 
         );
         return;
     }
-    let fill = if dark {
-        Rgba::rgba(18, 18, 22, 92)
+    let a = glass_fill_alpha(dark, tint_pct);
+    let top = if dark {
+        Rgba::rgba(28, 28, 34, a.saturating_add(10).min(230))
     } else {
-        Rgba::rgba(255, 255, 255, 86)
+        Rgba::rgba(255, 255, 255, a.saturating_add(16).min(242))
     };
-    cv.round_rect(x, y, w, h, r, fill);
-    let band = (r * 0.6).clamp(5.0, 12.0);
+    let bot = if dark {
+        Rgba::rgba(16, 16, 20, a.saturating_sub(8))
+    } else {
+        Rgba::rgba(244, 245, 250, a.saturating_sub(14))
+    };
+    cv.round_rect_vgrad(x, y, w, h, r, top, bot);
+    // Subtle upper lensing dome for uniform macOS 27 refraction.
+    let sheen_h = ((h as f32) * 0.42).round() as i32;
+    if sheen_h > 3 && w > 6 {
+        cv.round_rect_vgrad(
+            x + 1,
+            y + 1,
+            w - 2,
+            sheen_h,
+            (r - 1.0).max(0.0),
+            Rgba::rgba(255, 255, 255, if dark { 20 } else { 52 }),
+            Rgba::rgba(255, 255, 255, 0),
+        );
+    }
+    let band = (r * 0.58).clamp(5.0, 12.0);
     cv.rim_light(
         x,
         y,
@@ -400,8 +455,8 @@ pub fn apple_glass(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32, 
         h,
         r,
         band,
-        Rgba::rgba(255, 255, 255, if dark { 46 } else { 96 }),
-        0.6,
+        Rgba::rgba(255, 255, 255, if dark { 42 } else { 92 }),
+        0.58,
     );
     cv.rim_light(
         x,
@@ -409,9 +464,9 @@ pub fn apple_glass(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32, 
         w,
         h,
         r,
-        1.6,
-        Rgba::rgba(255, 255, 255, if dark { 210 } else { 250 }),
-        0.75,
+        1.5,
+        Rgba::rgba(255, 255, 255, if dark { 215 } else { 250 }),
+        0.72,
     );
     cv.stroke_round_rect(
         x - 1,
@@ -420,8 +475,15 @@ pub fn apple_glass(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32, 
         h + 2,
         r + 1.0,
         1.0,
-        Rgba::rgba(0, 0, 0, if dark { 54 } else { 26 }),
+        Rgba::rgba(0, 0, 0, if dark { 58 } else { 28 }),
     );
+}
+
+/// Uniform macOS 27 Liquid Glass pill capsule (toolbars, floating buttons,
+/// segmented controls).
+pub fn glass_capsule(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, dark: bool) {
+    let r = (h as f32) / 2.0;
+    apple_glass(cv, x, y, w, h, r, dark);
 }
 
 /// Smoked Liquid Glass for the notch and the island: the same optics over a
@@ -636,5 +698,19 @@ mod tests {
             pixels: [10u8, 20, 30, 255].repeat(16),
         };
         assert_eq!(average(&img), Some(Rgba::rgb(10, 20, 30)));
+    }
+
+    #[test]
+    fn glass_tint_scales_monotonically_from_ultraclear_to_tinted() {
+        for dark in [true, false] {
+            let clear = glass_fill_alpha(dark, 0);
+            let mid = glass_fill_alpha(dark, 35);
+            let tinted = glass_fill_alpha(dark, 100);
+            assert!(clear < mid && mid < tinted, "dark={dark}: {clear} < {mid} < {tinted}");
+        }
+        set_glass_tint(120);
+        assert_eq!(glass_tint(), 100);
+        set_glass_tint(35);
+        assert_eq!(glass_tint(), 35);
     }
 }

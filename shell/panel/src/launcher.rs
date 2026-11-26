@@ -14,7 +14,9 @@ use crate::state::{AppEntry, LaunchTarget, WindowInfo};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Kind {
+    Calculator,
     Application,
+    File,
     Window,
     Command,
     Agent,
@@ -24,7 +26,9 @@ impl Kind {
     /// Section title in the Spotlight list. Title case, the way a menu labels a group.
     pub fn heading(self) -> &'static str {
         match self {
+            Self::Calculator => "Calculation",
             Self::Application => "Applications",
+            Self::File => "Files",
             Self::Window => "Open Windows",
             Self::Command => "Commands",
             Self::Agent => "Agent",
@@ -36,6 +40,8 @@ impl Kind {
 pub enum Action {
     Launch(LaunchTarget),
     FocusWindow(u64),
+    /// Copy a computed result (e.g. calculator) to the clipboard.
+    CopyText(String),
     /// Queue a draft task request. Carries the user's words verbatim.
     AgentRequest(String),
     /// Shown but not runnable; the item's `subtitle` says why.
@@ -145,11 +151,192 @@ fn ranked<T>(
     v.into_iter().take(cap).map(|(_, t)| t).collect()
 }
 
+/// Instant Spotlight arithmetic evaluator (supports `+`, `-`, `*`, `/`, `%`, `^`, parentheses).
+/// Requires at least one operator so plain numbers don't hijack app search.
+pub fn eval_math(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    if s.is_empty()
+        || !s.chars().any(|c| matches!(c, '+' | '-' | '*' | '/' | '%' | '^'))
+        || !s.chars().all(|c| c.is_ascii_digit() || matches!(c, '.' | '+' | '-' | '*' | '/' | '%' | '^' | '(' | ')' | ' '))
+    {
+        return None;
+    }
+    let bytes = s.as_bytes();
+    let mut pos = 0usize;
+    fn skip_ws(b: &[u8], p: &mut usize) {
+        while *p < b.len() && b[*p].is_ascii_whitespace() {
+            *p += 1;
+        }
+    }
+    fn parse_expr(b: &[u8], p: &mut usize) -> Option<f64> {
+        let mut lhs = parse_term(b, p)?;
+        loop {
+            skip_ws(b, p);
+            if *p >= b.len() {
+                break;
+            }
+            match b[*p] {
+                b'+' => {
+                    *p += 1;
+                    lhs += parse_term(b, p)?;
+                }
+                b'-' => {
+                    *p += 1;
+                    lhs -= parse_term(b, p)?;
+                }
+                _ => break,
+            }
+        }
+        Some(lhs)
+    }
+    fn parse_term(b: &[u8], p: &mut usize) -> Option<f64> {
+        let mut lhs = parse_pow(b, p)?;
+        loop {
+            skip_ws(b, p);
+            if *p >= b.len() {
+                break;
+            }
+            match b[*p] {
+                b'*' => {
+                    *p += 1;
+                    lhs *= parse_pow(b, p)?;
+                }
+                b'/' => {
+                    *p += 1;
+                    let rhs = parse_pow(b, p)?;
+                    if rhs == 0.0 {
+                        return None;
+                    }
+                    lhs /= rhs;
+                }
+                b'%' => {
+                    *p += 1;
+                    let rhs = parse_pow(b, p)?;
+                    if rhs == 0.0 {
+                        return None;
+                    }
+                    lhs %= rhs;
+                }
+                _ => break,
+            }
+        }
+        Some(lhs)
+    }
+    fn parse_pow(b: &[u8], p: &mut usize) -> Option<f64> {
+        let base = parse_unary(b, p)?;
+        skip_ws(b, p);
+        if *p < b.len() && b[*p] == b'^' {
+            *p += 1;
+            let exp = parse_pow(b, p)?;
+            Some(base.powf(exp))
+        } else {
+            Some(base)
+        }
+    }
+    fn parse_unary(b: &[u8], p: &mut usize) -> Option<f64> {
+        skip_ws(b, p);
+        if *p < b.len() && b[*p] == b'-' {
+            *p += 1;
+            return Some(-parse_unary(b, p)?);
+        }
+        if *p < b.len() && b[*p] == b'+' {
+            *p += 1;
+            return parse_unary(b, p);
+        }
+        parse_primary(b, p)
+    }
+    fn parse_primary(b: &[u8], p: &mut usize) -> Option<f64> {
+        skip_ws(b, p);
+        if *p >= b.len() {
+            return None;
+        }
+        if b[*p] == b'(' {
+            *p += 1;
+            let v = parse_expr(b, p)?;
+            skip_ws(b, p);
+            if *p < b.len() && b[*p] == b')' {
+                *p += 1;
+                return Some(v);
+            }
+            return None;
+        }
+        let start = *p;
+        let mut dot = false;
+        while *p < b.len() && (b[*p].is_ascii_digit() || (b[*p] == b'.' && !dot)) {
+            if b[*p] == b'.' {
+                dot = true;
+            }
+            *p += 1;
+        }
+        if *p == start {
+            return None;
+        }
+        std::str::from_utf8(&b[start..*p]).ok()?.parse::<f64>().ok()
+    }
+    let val = parse_expr(bytes, &mut pos)?;
+    skip_ws(bytes, &mut pos);
+    if pos != bytes.len() || !val.is_finite() {
+        return None;
+    }
+    if (val - val.round()).abs() < 1e-9 && val.abs() < 1e15 {
+        Some(format!("{}", val.round() as i64))
+    } else {
+        let formatted = format!("{val:.6}");
+        Some(formatted.trim_end_matches('0').trim_end_matches('.').to_string())
+    }
+}
+
+/// Fast shallow file search across Desktop, Documents, and Downloads.
+fn search_files(q: &str, cap: usize) -> Vec<Item> {
+    if q.chars().count() < 2 || cap == 0 {
+        return Vec::new();
+    }
+    let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
+        return Vec::new();
+    };
+    let mut hits: Vec<(u32, std::path::PathBuf, String, &'static str)> = Vec::new();
+    for (dir_name, label) in [
+        ("Desktop", "Desktop"),
+        ("Documents", "Documents"),
+        ("Downloads", "Downloads"),
+    ] {
+        let dir = home.join(dir_name);
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in rd.flatten().take(120) {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            if let Some(s) = score(q, &name, "", label) {
+                hits.push((s, entry.path(), name, label));
+            }
+        }
+    }
+    hits.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.2.len().cmp(&b.2.len())));
+    hits.into_iter()
+        .take(cap)
+        .map(|(_, path, name, label)| {
+            let quoted = path.display().to_string().replace('\'', "'\\''");
+            Item {
+                kind: Kind::File,
+                title: name,
+                subtitle: format!("{label} · Open with default app"),
+                app_id: "solyra-files".into(),
+                role: if path.is_dir() { "folder" } else { "files" }.into(),
+                action: Action::Launch(LaunchTarget::Shell(format!("xdg-open '{quoted}'"))),
+            }
+        })
+        .collect()
+}
+
 /// Build the ordered result list for `query`.
 ///
 /// * Empty query: applications (Top Hit, then Applications) and a few commands.
 ///   No windows and no agent row; there is nothing to act on yet.
-/// * Otherwise: Applications, Open windows, Commands, then the Agent row.
+/// * Otherwise: Calculation (if math), Applications, Files, Open windows,
+///   Commands, then the Agent row.
 pub fn search(
     query: &str,
     catalog: &[AppEntry],
@@ -158,6 +345,17 @@ pub fn search(
 ) -> Vec<Item> {
     let q = query.trim();
     let mut out = Vec::new();
+
+    if let Some(result) = eval_math(q) {
+        out.push(Item {
+            kind: Kind::Calculator,
+            title: format!("{q} = {result}"),
+            subtitle: "Press Enter to copy result".into(),
+            app_id: "calculator".into(),
+            role: "calculator".into(),
+            action: Action::CopyText(result),
+        });
+    }
 
     let apps = ranked(
         catalog
@@ -170,6 +368,7 @@ pub fn search(
     out.extend(apps.into_iter().map(item_from_app));
 
     if !q.is_empty() {
+        out.extend(search_files(q, 3));
         let windows = ranked(
             wins.iter()
                 .filter_map(|w| score(q, &w.title, &w.app_id, "").map(|s| (s, w))),
@@ -543,5 +742,19 @@ mod tests {
         assert_eq!(rows.len(), 1);
         let rows = rows_from(&items, 0, ROW_H - 1);
         assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn spotlight_calculator_evaluates_expressions_as_top_hit() {
+        assert_eq!(eval_math("24 * 18").as_deref(), Some("432"));
+        assert_eq!(eval_math("(120 + 45) / 3").as_deref(), Some("55"));
+        assert_eq!(eval_math("2 ^ 10").as_deref(), Some("1024"));
+        assert_eq!(eval_math("100 / 8").as_deref(), Some("12.5"));
+        assert_eq!(eval_math("42"), None, "plain number must not hijack search");
+        assert_eq!(eval_math("1 / 0"), None);
+
+        let items = search("24 * 18", &catalog(), &[], false);
+        assert_eq!(items[0].kind, Kind::Calculator);
+        assert_eq!(items[0].title, "24 * 18 = 432");
     }
 }
