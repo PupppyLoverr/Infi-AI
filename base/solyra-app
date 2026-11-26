@@ -1,0 +1,76 @@
+#!/bin/bash
+# solyra-app: universal Linux app installer for Solyra OS.
+# Supports Flatpak (Flathub), Distrobox (Ubuntu/Arch/Fedora native packages
+# exported directly to Solyra's Spotlight & Dock), and AppImages.
+set -euo pipefail
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+  install)
+    [[ $# -ge 1 ]] || { echo "usage: solyra-app install <app-name-or-flatpak-id>" >&2; exit 2; }
+    flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo >/dev/null 2>&1 || true
+    exec flatpak install --user -y flathub "$@"
+    ;;
+  search)
+    [[ $# -ge 1 ]] || { echo "usage: solyra-app search <query>" >&2; exit 2; }
+    exec flatpak search "$@"
+    ;;
+  uninstall|remove)
+    [[ $# -ge 1 ]] || { echo "usage: solyra-app remove <app-id>" >&2; exit 2; }
+    exec flatpak uninstall --user -y "$@"
+    ;;
+  list)
+    exec flatpak list --app
+    ;;
+  box)
+    distro="${1:-ubuntu}"
+    case "$distro" in
+      ubuntu) img="ubuntu:24.04" ;;
+      arch)   img="archlinux:latest" ;;
+      fedora) img="fedora:41" ;;
+      debian) img="debian:bookworm" ;;
+      *)      img="$distro"; distro="$(echo "$distro" | tr '/:' '__')" ;;
+    esac
+    if ! distrobox list --no-color 2>/dev/null | grep -qw "$distro"; then
+      echo "Creating Solyra Distrobox ($distro -> $img)..."
+      distrobox create --yes --name "$distro" --image "$img"
+    fi
+    exec distrobox enter "$distro"
+    ;;
+  appimage)
+    file="${1:-}"
+    [[ -f "$file" ]] || { echo "usage: solyra-app appimage <path/to/App.AppImage>" >&2; exit 2; }
+    mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
+    base="$(basename "$file")"
+    name="${base%.AppImage}"
+    name="${name%.appimage}"
+    dest="$HOME/.local/bin/$base"
+    cp "$file" "$dest"
+    chmod +x "$dest"
+    cat > "$HOME/.local/share/applications/solyra-appimage-${name}.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=$name
+Exec=$dest
+Terminal=false
+Categories=Utility;
+EOF
+    echo "Installed AppImage '$name' -> $dest (now available in Spotlight & Dock)."
+    ;;
+  *)
+    cat <<'EOF'
+solyra-app — Universal Linux App Installer for Solyra OS
+
+Commands:
+  solyra-app search <query>           Search Flathub Linux apps
+  solyra-app install <app-or-id>      Install any Flatpak app from Flathub
+  solyra-app remove <app-id>          Uninstall a Flatpak app
+  solyra-app list                     List installed Flatpak apps
+  solyra-app box [ubuntu|arch|fedora] Enter a Distrobox for apt/pacman/dnf apps
+                                      (use `distrobox-export --app <name>` to add to Dock)
+  solyra-app appimage <file.AppImage> Install & register an AppImage in Spotlight/Dock
+EOF
+    ;;
+esac

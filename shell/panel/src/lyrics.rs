@@ -94,16 +94,59 @@ fn parse_timestamp(tag: &str) -> Option<u64> {
     Some(mins * 60_000 + secs * 1_000 + frac_ms)
 }
 
-/// Look up a local `.lrc` file in `$XDG_DATA_HOME/solyra/lyrics/`.
-pub fn load_local(artist: &str, title: &str) -> Option<SyncedLyrics> {
-    let base = std::env::var_os("XDG_DATA_HOME")
+/// Parse unsynced plain lyrics by evenly distributing lines across `duration_ms`.
+pub fn parse_plain(raw: &str, duration_ms: u64) -> SyncedLyrics {
+    let texts: Vec<&str> = raw
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    if texts.is_empty() {
+        return SyncedLyrics::default();
+    }
+    let dur = duration_ms.max(60_000);
+    let step = dur / (texts.len() as u64).max(1);
+    let lines = texts
+        .into_iter()
+        .enumerate()
+        .map(|(i, t)| LyricLine {
+            time_ms: i as u64 * step,
+            text: t.to_string(),
+        })
+        .collect();
+    SyncedLyrics { lines }
+}
+
+fn slug(artist: &str, title: &str) -> String {
+    let raw = format!("{artist}-{title}").to_ascii_lowercase();
+    raw.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .take(96)
+        .collect()
+}
+
+fn cache_path(artist: &str, title: &str) -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
-    let dir = base.join("solyra/lyrics");
-    let candidates = [
-        dir.join(format!("{artist} - {title}.lrc")),
-        dir.join(format!("{title}.lrc")),
-    ];
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?;
+    Some(base.join(format!("solyra/lyrics/{}.lrc", slug(artist, title))))
+}
+
+/// Look up a local `.lrc` file in `$XDG_DATA_HOME/solyra/lyrics/` or the
+/// LRCLIB cache in `$XDG_CACHE_HOME/solyra/lyrics/`.
+pub fn load_local(artist: &str, title: &str) -> Option<SyncedLyrics> {
+    let mut candidates = Vec::new();
+    if let Some(base) = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+    {
+        let dir = base.join("solyra/lyrics");
+        candidates.push(dir.join(format!("{artist} - {title}.lrc")));
+        candidates.push(dir.join(format!("{title}.lrc")));
+    }
+    if let Some(cp) = cache_path(artist, title) {
+        candidates.push(cp);
+    }
     for p in candidates {
         if let Ok(raw) = std::fs::read_to_string(&p) {
             let parsed = SyncedLyrics::parse_lrc(&raw);
@@ -132,6 +175,91 @@ pub fn sample() -> SyncedLyrics {
     )
 }
 
+/// Parse an LRCLIB JSON response (`syncedLyrics` preferred, else `plainLyrics`).
+pub fn parse_lrclib_json(raw: &str, duration_ms: u64) -> Option<SyncedLyrics> {
+    let val: serde_json::Value = serde_json::from_str(raw).ok()?;
+    if let Some(synced) = val.get("syncedLyrics").and_then(|v| v.as_str()) {
+        let parsed = SyncedLyrics::parse_lrc(synced);
+        if !parsed.lines.is_empty() {
+            return Some(parsed);
+        }
+    }
+    if let Some(plain) = val.get("plainLyrics").and_then(|v| v.as_str()) {
+        let parsed = parse_plain(plain, duration_ms);
+        if !parsed.lines.is_empty() {
+            return Some(parsed);
+        }
+    }
+    None
+}
+
+fn urlencode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            b' ' => out.push_str("%20"),
+            other => out.push_str(&format!("%{other:02X}")),
+        }
+    }
+    out
+}
+
+/// Kick off a non-blocking LRCLIB lookup off the UI thread for any song playing
+/// on any MPRIS/playerctl player, caching the synced `.lrc` locally for instant
+/// reuse on subsequent frames and replays.
+pub fn fetch_async(artist: String, title: String, duration_ms: u64) {
+    if title.trim().is_empty() || load_local(&artist, &title).is_some() {
+        return;
+    }
+    let Some(cache) = cache_path(&artist, &title) else {
+        return;
+    };
+    let marker = cache.with_extension("pending");
+    if marker.exists() {
+        return;
+    }
+    if let Some(dir) = cache.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&marker, "");
+    std::thread::spawn(move || {
+        let url = format!(
+            "https://lrclib.net/api/get?artist_name={}&track_name={}",
+            urlencode(&artist),
+            urlencode(&title)
+        );
+        if let Ok(out) = std::process::Command::new("curl")
+            .args([
+                "-fsSL",
+                "--max-time",
+                "4",
+                "-H",
+                "User-Agent: SolyraOS/0.1 (https://github.com/PupppyLoverr/Infi-AI)",
+                &url,
+            ])
+            .output()
+        {
+            if out.status.success() {
+                let body = String::from_utf8_lossy(&out.stdout);
+                if let Some(lyr) = parse_lrclib_json(&body, duration_ms) {
+                    let mut lrc_out = String::new();
+                    for l in &lyr.lines {
+                        let m = l.time_ms / 60_000;
+                        let s = (l.time_ms / 1_000) % 60;
+                        let cs = (l.time_ms % 1_000) / 10;
+                        lrc_out.push_str(&format!("[{m:02}:{s:02}.{cs:02}] {}\n", l.text));
+                    }
+                    let _ = std::fs::write(&cache, lrc_out);
+                }
+            }
+        }
+        let _ = std::fs::remove_file(&marker);
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,5 +273,18 @@ mod tests {
         assert_eq!(win[0], (-1, "Under a sky of ultramarine"));
         assert_eq!(win[1], (0, "The water holds the moon"));
         assert_eq!(win[2], (1, "Drop by drop, it finds its way to you"));
+    }
+
+    #[test]
+    fn parses_lrclib_synced_and_plain_json() {
+        let synced = r#"{"syncedLyrics":"[00:05.00] Line one\n[00:10.50] Line two"}"#;
+        let lyr = parse_lrclib_json(synced, 120_000).expect("synced");
+        assert_eq!(lyr.lines.len(), 2);
+        assert_eq!(lyr.active_index(11_000), Some(1));
+
+        let plain = r#"{"plainLyrics":"First verse\nSecond verse\nChorus"}"#;
+        let p = parse_lrclib_json(plain, 90_000).expect("plain");
+        assert_eq!(p.lines.len(), 3);
+        assert_eq!(p.lines[1].time_ms, 30_000);
     }
 }

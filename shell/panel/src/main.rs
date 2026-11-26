@@ -279,10 +279,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         control: None,
         island_card: None,
         notifs_surface: None,
-        dock_mouse_smooth: None,
+        dock_spring: dock::MagnifySpring::default(),
+        dock_spring_last: Instant::now(),
         launching: Vec::new(),
         dock_ctx: None,
         dock_ctx_entries: Vec::new(),
+        downloads_stack: None,
         about: None,
         notifs: std::collections::VecDeque::new(),
         agents: None,
@@ -665,13 +667,15 @@ struct App {
     launcher: Option<SurfaceSlot>,
     /// Notification centre drawer (right edge).
     notifs_surface: Option<SurfaceSlot>,
-    /// Smoothed pointer x over the dock (pearOS lerp), drives magnification.
-    dock_mouse_smooth: Option<f32>,
+    /// Spring-damped magnification state for buttery 60 fps macOS Dock wave motion.
+    dock_spring: dock::MagnifySpring,
+    dock_spring_last: Instant,
     /// Apps clicked open from the dock: icons bounce while they start.
     launching: Vec<(String, Instant)>,
     /// Dock icon context menu (right-click).
     dock_ctx: Option<SurfaceSlot>,
     dock_ctx_entries: Vec<menu::Entry>,
+    downloads_stack: Option<SurfaceSlot>,
     /// "About This Computer" card.
     about: Option<SurfaceSlot>,
     control: Option<SurfaceSlot>,
@@ -793,6 +797,7 @@ impl App {
         self.notifs_surface = None;
         self.dock_ctx = None;
         self.dock_ctx_entries.clear();
+        self.downloads_stack = None;
         self.about = None;
         self.island_card = None;
         self.agents = None;
@@ -1102,6 +1107,50 @@ impl App {
                 if idx < self.clipboard_items.len() {
                     self.clipboard_items.remove(idx);
                     clipboard::save(&self.clipboard_items);
+                }
+            }
+            ShellCmd::ToggleDockMagnify => {
+                let on = !self.prefs.look.dock_magnify;
+                self.prefs.look.dock_magnify = on;
+                if let Some(path) = solyra_conf::config_path("shell.conf") {
+                    let _ = solyra_conf::update(
+                        &path,
+                        &[("dock_magnify", Some(if on { "1" } else { "0" }.into()))],
+                    );
+                    self.prefs_mtime = ShellPrefs::config_mtime();
+                }
+                self.ensure_dock();
+            }
+            ShellCmd::ToggleDownloadsStack => {
+                if self.downloads_stack.is_some() {
+                    self.downloads_stack = None;
+                } else {
+                    self.close_overlays();
+                    let out_w = self
+                        .output_state
+                        .outputs()
+                        .filter_map(|o| self.output_state.info(&o))
+                        .filter_map(|i| i.logical_size.map(|(w, _)| w))
+                        .max()
+                        .unwrap_or(1280);
+                    let spec = dock::spec(
+                        self.prefs.dock_style,
+                        &self.wins,
+                        self.prefs.look.dock_magnify,
+                        self.dock_hidden,
+                    );
+                    let dock_right = ((out_w + spec.width as i32) / 2).min(out_w - 8);
+                    let left = (dock_right - dock::STACK_W as i32 - 20)
+                        .clamp(8, (out_w - dock::STACK_W as i32 - 8).max(8));
+                    let bottom = spec.bottom_margin + dock::CARD_H + 12;
+                    let slot = self.open_overlay(
+                        "solyra-dock-stack",
+                        Anchor::BOTTOM | Anchor::LEFT,
+                        (0, 0, bottom, left),
+                        (dock::STACK_W, dock::STACK_H),
+                        KeyboardInteractivity::OnDemand,
+                    );
+                    self.downloads_stack = Some(slot);
                 }
             }
             ShellCmd::ShelfRemove(i) => {
@@ -1668,6 +1717,8 @@ impl App {
         }
         if let Some(m) = media {
             let badge = activity.map(|_| island::LiveBadge::Activity);
+            let dur_ms = (m.length_us.unwrap_or(180_000_000).max(1_000) / 1000) as u64;
+            lyrics::fetch_async(m.artist.clone(), m.title.clone(), dur_ms);
             if self.island_expanded && self.island_lyrics {
                 // Only real synced lyrics (a local .lrc); never invented.
                 let pos_ms = (m.position_us.unwrap_or(0).max(0) / 1000) as u64;
@@ -1902,25 +1953,22 @@ impl App {
         // With the web shell the dock surface stays unmapped (no buffer).
         if self.dock.configured && self.dock.width > 0 && !self.prefs.look.web_shell {
             let raw_hover = self.hover_on(&self.dock.surface);
-            // pearOS smooths the magnification pointer: it lerps toward the
-            // real position instead of snapping, which is the fluid feel.
-            let mut residual = 0.0f32;
-            let hover = match raw_hover {
-                Some((hx, hy)) => {
-                    let cur = self.dock_mouse_smooth.unwrap_or(hx as f32);
-                    let next = cur + (hx as f32 - cur) * 0.3;
-                    self.dock_mouse_smooth = Some(next);
-                    residual = (hx as f32 - next).abs();
-                    Some((next as f64, hy))
-                }
-                None => {
-                    self.dock_mouse_smooth = None;
-                    None
-                }
-            };
+            let card_y = self.dock.height as i32 - dock::CARD_H;
+            let mag_target = raw_hover
+                .filter(|(_, hy)| *hy >= card_y as f64)
+                .map(|(hx, _)| hx as f32)
+                .filter(|_| self.prefs.look.dock_magnify);
+            let dt = self
+                .dock_spring_last
+                .elapsed()
+                .as_secs_f32()
+                .clamp(0.001, 0.05);
+            self.dock_spring_last = Instant::now();
+            self.dock_spring.set_target(mag_target);
+            let spring_anim = self.dock_spring.step(dt, self.prefs.look.reduced_motion);
             self.launching
                 .retain(|(_, t0)| t0.elapsed() < Duration::from_millis(3000));
-            let animating = !self.launching.is_empty() || residual > 0.5;
+            let animating = !self.launching.is_empty() || spring_anim;
             let w = self.dock.width;
             let h = self.dock.height;
             if let Ok((buffer, bytes)) = self.pool.create_buffer(
@@ -1935,16 +1983,17 @@ impl App {
                     telem: &telem,
                     prefs: &self.prefs,
                 };
-                let (regions, body) = dock::draw(
+                let (regions, body) = dock::draw_with_spring(
                     &mut cv,
                     &th,
                     &self.fonts,
                     self.prefs.dock_style,
                     &self.wins,
                     &mut self.icons,
-                    hover,
+                    raw_hover,
                     &live,
                     self.prefs.look.dock_magnify,
+                    Some(self.dock_spring),
                     self.dock_hidden && self.prefs.look.dock_autohide,
                     &self.launching,
                 );
@@ -2112,7 +2161,7 @@ impl App {
                 hover
             )
         );
-        let dock_ctx_glass = overlay_shape(&self.dock_ctx, 12.0, glass_proto::Preset::Popover);
+        let dock_ctx_glass = overlay_shape(&self.dock_ctx, 14.0, glass_proto::Preset::Popover);
         overlay!(
             self.dock_ctx,
             dock_ctx_glass,
@@ -2123,6 +2172,17 @@ impl App {
                 &self.dock_ctx_entries,
                 hover
             )
+        );
+        let dl_items = if self.downloads_stack.is_some() {
+            dock::downloads_entries()
+        } else {
+            Vec::new()
+        };
+        let stack_glass = overlay_shape(&self.downloads_stack, 20.0, glass_proto::Preset::Popover);
+        overlay!(
+            self.downloads_stack,
+            stack_glass,
+            |cv, hover| dock::draw_downloads_stack(&mut cv, &th, &self.fonts, &dl_items, hover)
         );
         let telem = read_telemetry();
         let about_specs = self.about_specs(&telem);
@@ -2597,6 +2657,7 @@ impl App {
             &self.control,
             &self.notifs_surface,
             &self.dock_ctx,
+            &self.downloads_stack,
             &self.about,
             &self.island_card,
             &self.agents,
@@ -2850,8 +2911,38 @@ impl App {
                     ));
                 }
             }
+            HitAction::Shell(ShellCmd::ToggleDownloadsStack) => {
+                entries.push(menu::ctx_item(
+                    "Open Downloads in Finder".into(),
+                    HitAction::Launch(LaunchTarget::Shell(
+                        "solyra-open files \"$HOME/Downloads\"".into(),
+                    )),
+                ));
+            }
             _ => return,
         }
+        // Authentic macOS 27 Dock options appended to right-click menu.
+        entries.push(menu::ctx_sep());
+        entries.push(menu::ctx_item(
+            if self.prefs.look.dock_magnify {
+                "Turn Magnification Off".into()
+            } else {
+                "Turn Magnification On".into()
+            },
+            HitAction::Shell(ShellCmd::ToggleDockMagnify),
+        ));
+        entries.push(menu::ctx_item(
+            if self.prefs.look.dock_autohide {
+                "Turn Hiding Off".into()
+            } else {
+                "Turn Hiding On".into()
+            },
+            HitAction::Shell(ShellCmd::ToggleDockAutohide),
+        ));
+        entries.push(menu::ctx_item(
+            "Dock Settings…".into(),
+            HitAction::Launch(LaunchTarget::Shell("solyra-settings".into())),
+        ));
         let (mw, mh) = menu::panel_size(&self.fonts, &entries);
         // The dock is centred on the output: recover the icon's global x.
         let out_w = self
@@ -3368,6 +3459,7 @@ impl LayerShellHandler for App {
             &mut self.control,
             &mut self.notifs_surface,
             &mut self.dock_ctx,
+            &mut self.downloads_stack,
             &mut self.about,
             &mut self.island_card,
             &mut self.agents,
@@ -3410,6 +3502,7 @@ impl LayerShellHandler for App {
             &mut self.control,
             &mut self.notifs_surface,
             &mut self.dock_ctx,
+            &mut self.downloads_stack,
             &mut self.about,
             &mut self.island_card,
             &mut self.agents,

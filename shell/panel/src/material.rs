@@ -424,18 +424,18 @@ pub fn apple_glass_tinted(
     }
     let a = glass_fill_alpha(dark, tint_pct);
     let top = if dark {
-        Rgba::rgba(28, 28, 34, a.saturating_add(10).min(230))
+        Rgba::rgba(32, 34, 42, a.saturating_add(12).min(232))
     } else {
-        Rgba::rgba(255, 255, 255, a.saturating_add(16).min(242))
+        Rgba::rgba(255, 255, 255, a.saturating_add(18).min(242))
     };
     let bot = if dark {
-        Rgba::rgba(16, 16, 20, a.saturating_sub(8))
+        Rgba::rgba(14, 15, 20, a.saturating_sub(10))
     } else {
-        Rgba::rgba(244, 245, 250, a.saturating_sub(14))
+        Rgba::rgba(240, 243, 250, a.saturating_sub(14))
     };
     cv.round_rect_vgrad(x, y, w, h, r, top, bot);
-    // Subtle upper lensing dome for uniform macOS 27 refraction.
-    let sheen_h = ((h as f32) * 0.42).round() as i32;
+    // Subtle upper optical sheen dome for uniform macOS 27 Liquid Glass refraction.
+    let sheen_h = ((h as f32) * 0.44).round() as i32;
     if sheen_h > 3 && w > 6 {
         cv.round_rect_vgrad(
             x + 1,
@@ -443,40 +443,13 @@ pub fn apple_glass_tinted(
             w - 2,
             sheen_h,
             (r - 1.0).max(0.0),
-            Rgba::rgba(255, 255, 255, if dark { 20 } else { 52 }),
+            Rgba::rgba(255, 255, 255, if dark { 24 } else { 58 }),
             Rgba::rgba(255, 255, 255, 0),
         );
     }
-    let band = (r * 0.58).clamp(5.0, 12.0);
-    cv.rim_light(
-        x,
-        y,
-        w,
-        h,
-        r,
-        band,
-        Rgba::rgba(255, 255, 255, if dark { 42 } else { 92 }),
-        0.58,
-    );
-    cv.rim_light(
-        x,
-        y,
-        w,
-        h,
-        r,
-        1.5,
-        Rgba::rgba(255, 255, 255, if dark { 215 } else { 250 }),
-        0.72,
-    );
-    cv.stroke_round_rect(
-        x - 1,
-        y - 1,
-        w + 2,
-        h + 2,
-        r + 1.0,
-        1.0,
-        Rgba::rgba(0, 0, 0, if dark { 58 } else { 28 }),
-    );
+    // Apple macOS 27 directional specular corner highlights + inner luminous
+    // refraction bevel (replaces flat uniform 1 px outline).
+    cv.liquid_glass_bevel(x, y, w, h, r, dark);
 }
 
 /// Uniform macOS 27 Liquid Glass pill capsule (toolbars, floating buttons,

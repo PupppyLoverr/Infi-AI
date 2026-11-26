@@ -189,6 +189,10 @@ pub enum ShellCmd {
     Lock,
     /// Turn dock auto-hide on or off.
     ToggleDockAutohide,
+    /// Turn dock magnification on or off.
+    ToggleDockMagnify,
+    /// Open/close the macOS 27 Downloads folder stack popover above the Dock.
+    ToggleDownloadsStack,
     /// Show the island's shelf (true) or what is live (false).
     IslandShelf(bool),
     /// Switch Droppy notch mode pill: 0=Home/Media, 1=Shelf, 2=Clipboard, 3=Droplets.
@@ -1186,8 +1190,22 @@ pub fn catalog_apps() -> Vec<AppEntry> {
         },
     ];
 
-    // Also include additional installed `.desktop` entries without duplicating Terminal/Files.
-    if let Ok(entries) = std::fs::read_dir("/usr/share/applications") {
+    // Scan all standard Linux application directories: system RPMs, Flatpak
+    // (system + user), Distrobox exports, and AppImages (~/.local/share/applications).
+    let mut app_dirs: Vec<PathBuf> = vec![
+        PathBuf::from("/usr/share/applications"),
+        PathBuf::from("/usr/local/share/applications"),
+        PathBuf::from("/var/lib/flatpak/exports/share/applications"),
+    ];
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        app_dirs.push(home.join(".local/share/applications"));
+        app_dirs.push(home.join(".local/share/flatpak/exports/share/applications"));
+    }
+    let mut seen: std::collections::HashSet<String> = list.iter().map(|a| a.app_id.clone()).collect();
+    for dir in app_dirs {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) != Some("desktop") {
@@ -1198,7 +1216,9 @@ pub fn catalog_apps() -> Vec<AppEntry> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_string();
-            if stem.contains("foot")
+            if stem.is_empty()
+                || !seen.insert(stem.clone())
+                || stem.contains("foot")
                 || stem == "thunar"
                 || stem.contains("Xwayland")
                 || stem.contains("portal")
@@ -1210,7 +1230,7 @@ pub fn catalog_apps() -> Vec<AppEntry> {
             let Ok(raw) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            if raw.lines().any(|l| l.trim() == "NoDisplay=true") {
+            if raw.lines().any(|l| l.trim() == "NoDisplay=true" || l.trim() == "Hidden=true") {
                 continue;
             }
             let name = raw
@@ -1263,28 +1283,51 @@ pub fn load_app_icon<'a>(
 }
 
 fn find_system_icon(app_id: &str) -> Option<Icon> {
-    const DIRS: &[&str] = &[
-        "/usr/share/icons/hicolor/128x128/apps",
-        "/usr/share/icons/hicolor/64x64/apps",
-        "/usr/share/icons/hicolor/48x48/apps",
-        "/usr/share/icons/Adwaita/64x64/apps",
-        "/usr/share/icons/Adwaita/48x48/apps",
+    let mut dirs: Vec<PathBuf> = vec![
+        PathBuf::from("/usr/share/icons/hicolor/128x128/apps"),
+        PathBuf::from("/usr/share/icons/hicolor/64x64/apps"),
+        PathBuf::from("/usr/share/icons/hicolor/48x48/apps"),
+        PathBuf::from("/usr/share/icons/Adwaita/64x64/apps"),
+        PathBuf::from("/usr/share/icons/Adwaita/48x48/apps"),
+        PathBuf::from("/var/lib/flatpak/exports/share/icons/hicolor/128x128/apps"),
+        PathBuf::from("/var/lib/flatpak/exports/share/icons/hicolor/64x64/apps"),
     ];
+    let mut desktop_dirs: Vec<PathBuf> = vec![
+        PathBuf::from("/usr/share/applications"),
+        PathBuf::from("/var/lib/flatpak/exports/share/applications"),
+    ];
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        dirs.push(home.join(".local/share/icons/hicolor/128x128/apps"));
+        dirs.push(home.join(".local/share/icons/hicolor/64x64/apps"));
+        dirs.push(home.join(".local/share/flatpak/exports/share/icons/hicolor/128x128/apps"));
+        desktop_dirs.push(home.join(".local/share/applications"));
+        desktop_dirs.push(home.join(".local/share/flatpak/exports/share/applications"));
+    }
     let mut names = Vec::new();
-    if let Ok(entry) = std::fs::read_to_string(format!("/usr/share/applications/{app_id}.desktop"))
-    {
-        for line in entry.lines() {
-            if let Some(ic) = line.strip_prefix("Icon=") {
-                names.push(ic.trim().to_string());
-                break;
+    for d in &desktop_dirs {
+        if let Ok(entry) = std::fs::read_to_string(d.join(format!("{app_id}.desktop"))) {
+            for line in entry.lines() {
+                if let Some(ic) = line.strip_prefix("Icon=") {
+                    let trimmed = ic.trim();
+                    if trimmed.starts_with('/') {
+                        if let Ok(bytes) = std::fs::read(trimmed) {
+                            if let Some(icon) = decode_png(&bytes) {
+                                return Some(icon);
+                            }
+                        }
+                    }
+                    names.push(trimmed.to_string());
+                    break;
+                }
             }
+            break;
         }
     }
     names.push(app_id.to_string());
     names.push(format!("org.xfce.{app_id}"));
     for name in names {
-        for dir in DIRS {
-            if let Ok(bytes) = std::fs::read(format!("{dir}/{name}.png")) {
+        for dir in &dirs {
+            if let Ok(bytes) = std::fs::read(dir.join(format!("{name}.png"))) {
                 if let Some(icon) = decode_png(&bytes) {
                     return Some(icon);
                 }

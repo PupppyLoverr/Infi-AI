@@ -739,7 +739,8 @@ pub fn media_panel(
     crate::material::liquid_glass(cv, x, y, w, h, r, 16, 0.9);
 
     // Row 1: art, title / artist, visualizer.
-    cv.draw_album_art(x + pad, y + pad, 56, 10.0);
+    let art_img = m.art_url.as_deref().and_then(crate::media::load_art);
+    cv.draw_album_art_opt(x + pad, y + pad, 56, 10.0, art_img.as_ref());
     let tx = x + pad + 56 + 12;
     let text_w = w - (tx - x) - pad - 23 - 10;
     let title = if m.title.trim().is_empty() {
@@ -1385,7 +1386,8 @@ fn paint_ambient_media(cv: &mut Canvas<'_>, v: &View<'_>, w: i32, h: i32) -> Vec
     let art_x = pad_x + (left_w - art_size) / 2;
     let art_y = (h as f32 * 0.10).round() as i32;
     cv.round_rect_shadow(art_x, art_y, art_size, art_size, 22.0, 16.0, 40.0, 110);
-    cv.draw_album_art(art_x, art_y, art_size, 22.0);
+    let art_img = v.media.and_then(|m| m.art_url.as_deref()).and_then(crate::media::load_art);
+    cv.draw_album_art_opt(art_x, art_y, art_size, 22.0, art_img.as_ref());
     // Soft bottom vignette over lower art edge so playback metadata reads crisply.
     cv.fill_rect_vgrad(
         0,
@@ -1460,8 +1462,26 @@ fn paint_ambient_media(cv: &mut Canvas<'_>, v: &View<'_>, w: i32, h: i32) -> Vec
     // Large 5-control transport row (Shuffle, Prev, Pause/Play, Next, Repeat).
     let tr_y = scrub_y + 52;
     let cx = ctrl_x + ctrl_w / 2;
-    cv.text(v.fonts.medium.as_ref(), "⇄", ctrl_x + 4, tr_y + 6, 15.0, Rgba::rgba(255, 255, 255, 170));
-    cv.text(v.fonts.medium.as_ref(), "↻", ctrl_x + ctrl_w - 18, tr_y + 6, 15.0, Rgba::rgba(255, 255, 255, 170));
+    let shuf_on = v.media.is_some_and(|m| m.shuffle);
+    let loop_on = v.media.is_some_and(|m| m.loop_mode > 0);
+    cv.text(
+        v.fonts.medium.as_ref(),
+        "⇄",
+        ctrl_x + 4,
+        tr_y + 6,
+        15.0,
+        if shuf_on { v.theme.accent } else { Rgba::rgba(255, 255, 255, 170) },
+    );
+    hits.push((ctrl_x - 4, tr_y - 14, 30, 30, Control::ToggleShuffle));
+    cv.text(
+        v.fonts.medium.as_ref(),
+        "↻",
+        ctrl_x + ctrl_w - 18,
+        tr_y + 6,
+        15.0,
+        if loop_on { v.theme.accent } else { Rgba::rgba(255, 255, 255, 170) },
+    );
+    hits.push((ctrl_x + ctrl_w - 26, tr_y - 14, 30, 30, Control::CycleLoop));
     for (dx, c) in [(-72, Control::Previous), (0, Control::PlayPause), (72, Control::Next)] {
         let bx = (cx + dx) as f32;
         match c {

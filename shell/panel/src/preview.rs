@@ -929,6 +929,9 @@ fn island_shots(fonts: &Fonts) -> Vec<Shot> {
         playing: true,
         position_us: Some(15_000_000),
         length_us: Some(203_000_000),
+        art_url: None,
+        shuffle: false,
+        loop_mode: 0,
     };
     let cases: Vec<(&str, Content, bool)> = vec![
         ("idle", Content::Idle, false),
@@ -1200,6 +1203,9 @@ fn lock_screens_render() {
                 playing: true,
                 position_us: Some(83_000_000),
                 length_us: Some(301_000_000),
+                art_url: None,
+                shuffle: false,
+                loop_mode: 0,
             };
             let v = View {
                 theme: &th,
@@ -1607,6 +1613,9 @@ fn scene_pixels_with(
                 playing: true,
                 position_us: Some(15_000_000),
                 length_us: Some(203_000_000),
+                art_url: None,
+                shuffle: false,
+                loop_mode: 0,
             })
         };
         let anim = Anim::new(island::target(notch, &content, false));
@@ -2112,6 +2121,9 @@ fn macos27_droppy_showcase() {
             playing: false,
             position_us: Some(66_000_000),
             length_us: Some(204_000_000),
+            art_url: None,
+            shuffle: false,
+            loop_mode: 0,
         }),
     );
 
@@ -2123,6 +2135,9 @@ fn macos27_droppy_showcase() {
         playing: true,
         position_us: Some(6_000_000),
         length_us: Some(212_000_000),
+        art_url: None,
+        shuffle: false,
+        loop_mode: 0,
     };
     let moon_lyr = crate::lyrics::sample()
         .window(6_000, 1, 2)
@@ -2150,7 +2165,8 @@ fn macos27_droppy_showcase() {
     // 6. Droppy Fullscreen Ambient Lyrics Lock Screen (Reference 1)
     {
         let (w, h) = (1280u32, 800u32);
-        let wp = std::fs::read("assets/wallpapers/sunset-1920x1080.png")
+        let wp = std::fs::read("../../assets/wallpapers/sunset-1920x1080.png")
+            .or_else(|_| std::fs::read("assets/wallpapers/sunset-1920x1080.png"))
             .ok()
             .and_then(|b| crate::canvas::decode_png(&b));
         let sharp = crate::lock::backdrop(wp.as_ref(), w, h);
@@ -2163,6 +2179,9 @@ fn macos27_droppy_showcase() {
             playing: true,
             position_us: Some(51_000_000),
             length_us: Some(203_000_000),
+            art_url: None,
+            shuffle: true,
+            loop_mode: 1,
         };
         let view = crate::lock::View {
             theme: &th,
@@ -2193,6 +2212,198 @@ fn macos27_droppy_showcase() {
             w,
             h,
             rgba: flatten(&bg, w, h, Rgba::rgb(0, 0, 0)),
+        });
+    }
+
+    if let Some(dir) = std::env::var_os("SOLYRA_RENDER_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for s in &shots {
+            write_png(&dir, s);
+        }
+    }
+}
+
+
+/// Dedicated close-up screenshots of the polished macOS 27 Liquid Glass Dock:
+/// resting + magnified hover (with Liquid Glass caret tooltip) in Dark & Light
+/// themes, plus the interactive Liquid Glass Downloads folder stack popover.
+#[test]
+fn macos27_dock_closeup_showcase() {
+    use crate::material::Material;
+    use solyra_conf::look::NotchStyle;
+
+    let fonts = Fonts::load();
+    let mut shots = Vec::new();
+    let wins = [
+        win(1, "solyra-files", "Files", false),
+        win(2, "firefox", "Firefox", true),
+        win(3, "foot", "Terminal", false),
+    ];
+
+    let crop = |rgba: &[u8], full_w: u32, full_h: u32, cw: u32, ch: u32| -> Vec<u8> {
+        let x0 = (full_w.saturating_sub(cw)) / 2;
+        let y0 = full_h.saturating_sub(ch);
+        let mut out = Vec::with_capacity((cw * ch * 4) as usize);
+        for y in y0..(y0 + ch).min(full_h) {
+            let start = ((y * full_w + x0) * 4) as usize;
+            let end = start + (cw * 4) as usize;
+            out.extend_from_slice(&rgba[start..end]);
+        }
+        out
+    };
+
+    for (kind, wp_name) in [(ThemeKind::Dark, "silk"), (ThemeKind::Light, "silk-light")] {
+        for (mode_name, magnify, hover_frac) in [
+            ("resting", false, None),
+            ("magnified", true, Some(0.36f64)),
+        ] {
+            let mut scene = scene_pixels(
+                &fonts,
+                kind,
+                wp_name,
+                Material::Glass,
+                Material::Glass,
+                Material::Solid,
+                DockStyle::Minimal, // keep base scene clean; we draw our focused dock below
+                NotchStyle::Off,
+                false,
+            );
+            // Re-render clean wallpaper backdrop (without the minimal dock) so we composite
+            // the macOS 27 dock cleanly at full clarity.
+            let wp_img = std::fs::read(format!("../../assets/wallpapers/{wp_name}-1920x1080.png"))
+                .or_else(|_| std::fs::read(format!("assets/wallpapers/{wp_name}-1920x1080.png")))
+                .ok()
+                .and_then(|b| crate::canvas::decode_png(&b));
+            let sharp = crate::lock::backdrop(wp_img.as_ref(), scene.w, scene.h);
+            let mut soft = crate::lock::blur(&sharp, scene.w, scene.h);
+            crate::lock::vivid(&mut soft, 1.32);
+            scene.out = sharp;
+            scene.soft = soft;
+
+            let spec = crate::dock::spec(DockStyle::Macos, &wins, magnify, false);
+            let mut prefs = ShellPrefs::default();
+            prefs.theme = kind;
+            prefs.dock_style = DockStyle::Macos;
+            prefs.look.dock_magnify = magnify;
+            prefs.look.glass_tint = 30;
+            let th = Theme::for_kind(kind);
+            let t = telem(Some(88), NetworkState::Wireless, true);
+            let live = Live {
+                agents: Summary::of(true, &fixtures()),
+                telem: &t,
+                prefs: &prefs,
+            };
+            let hover = hover_frac.map(|f| (spec.width as f64 * f, (spec.height as i32 - 26) as f64));
+            let mut buf = vec![0u8; (spec.width * spec.height * 4) as usize];
+            let mut icons = HashMap::new();
+            let body = {
+                let mut cv = Canvas::new(&mut buf, spec.width, spec.height, 1);
+                crate::dock::draw(
+                    &mut cv,
+                    &th,
+                    &fonts,
+                    DockStyle::Macos,
+                    &wins,
+                    &mut icons,
+                    hover,
+                    &live,
+                    magnify,
+                    false,
+                    &[],
+                )
+                .1
+                .expect("dock body")
+            };
+            let at = (
+                (scene.w as i32 - spec.width as i32) / 2,
+                scene.h as i32 - spec.bottom_margin - spec.height as i32,
+            );
+            compositor_lens(
+                &scene.soft,
+                scene.w,
+                scene.h,
+                (body.x + at.0, body.y + at.1, body.w, body.h),
+                body.r,
+                12.0,
+                1.38,
+                &mut scene.out,
+            );
+            over(&mut scene.out, scene.w, &buf, spec.width, spec.height, at);
+            let flat = flatten(&scene.out, scene.w, scene.h, Rgba::rgb(0, 0, 0));
+            let (cw, ch) = (920u32, 220u32);
+            shots.push(Shot {
+                name: format!("dock-closeup-{mode_name}-{}", kind.as_str()),
+                w: cw,
+                h: ch,
+                rgba: crop(&flat, scene.w, scene.h, cw, ch),
+            });
+        }
+    }
+
+    // 5. Interactive Downloads Folder Stack Popover close-up
+    {
+        let (w, h) = (1280u32, 800u32);
+        let wp_img = std::fs::read("../../assets/wallpapers/silk-1920x1080.png")
+            .or_else(|_| std::fs::read("assets/wallpapers/silk-1920x1080.png"))
+            .ok()
+            .and_then(|b| crate::canvas::decode_png(&b));
+        let mut out = crate::lock::backdrop(wp_img.as_ref(), w, h);
+        let mut soft = crate::lock::blur(&out, w, h);
+        crate::lock::vivid(&mut soft, 1.32);
+
+        let spec = crate::dock::spec(DockStyle::Macos, &wins, false, false);
+        let mut prefs = ShellPrefs::default();
+        prefs.theme = ThemeKind::Dark;
+        prefs.dock_style = DockStyle::Macos;
+        prefs.look.glass_tint = 32;
+        let th = Theme::for_kind(ThemeKind::Dark);
+        let t = telem(Some(88), NetworkState::Wireless, true);
+        let live = Live {
+            agents: Summary::of(true, &fixtures()),
+            telem: &t,
+            prefs: &prefs,
+        };
+        let mut dbuf = vec![0u8; (spec.width * spec.height * 4) as usize];
+        let mut icons = HashMap::new();
+        let body = {
+            let mut cv = Canvas::new(&mut dbuf, spec.width, spec.height, 1);
+            crate::dock::draw(&mut cv, &th, &fonts, DockStyle::Macos, &wins, &mut icons, None, &live, false, false, &[])
+                .1
+                .unwrap()
+        };
+        let dat = ((w as i32 - spec.width as i32) / 2, h as i32 - spec.bottom_margin - spec.height as i32);
+        compositor_lens(&soft, w, h, (body.x + dat.0, body.y + dat.1, body.w, body.h), body.r, 12.0, 1.38, &mut out);
+        over(&mut out, w, &dbuf, spec.width, spec.height, dat);
+
+        // Downloads stack popover right above the Downloads icon
+        let sample_files = vec![
+            std::path::PathBuf::from("/home/solyra/Downloads/Solyra-0.1.iso"),
+            std::path::PathBuf::from("/home/solyra/Downloads/Design-Spec.pdf"),
+            std::path::PathBuf::from("/home/solyra/Downloads/wallpaper-4k.png"),
+            std::path::PathBuf::from("/home/solyra/Downloads/release-notes.md"),
+            std::path::PathBuf::from("/home/solyra/Downloads/Obsidian.AppImage"),
+            std::path::PathBuf::from("/home/solyra/Downloads/assets.zip"),
+        ];
+        let mut sbuf = vec![0u8; (crate::dock::STACK_W * crate::dock::STACK_H * 4) as usize];
+        {
+            let mut cv = Canvas::new(&mut sbuf, crate::dock::STACK_W, crate::dock::STACK_H, 1);
+            crate::dock::draw_downloads_stack(&mut cv, &th, &fonts, &sample_files, None);
+        }
+        let sat = (
+            dat.0 + spec.width as i32 - crate::dock::STACK_W as i32 - 22,
+            dat.1 - crate::dock::STACK_H as i32 - 10,
+        );
+        compositor_lens(&soft, w, h, (sat.0, sat.1, crate::dock::STACK_W as i32, crate::dock::STACK_H as i32 - 8), 20.0, 11.0, 1.35, &mut out);
+        over(&mut out, w, &sbuf, crate::dock::STACK_W, crate::dock::STACK_H, sat);
+
+        let flat = flatten(&out, w, h, Rgba::rgb(0, 0, 0));
+        let (cw, ch) = (920u32, 410u32);
+        shots.push(Shot {
+            name: "dock-closeup-downloads-stack".into(),
+            w: cw,
+            h: ch,
+            rgba: crop(&flat, w, h, cw, ch),
         });
     }
 
