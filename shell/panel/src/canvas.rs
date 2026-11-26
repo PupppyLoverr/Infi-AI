@@ -1766,6 +1766,10 @@ impl<'a> Canvas<'a> {
             "agent" => return self.agent_tile(x, y, size),
             _ => {}
         }
+        if let Some((ic, grow)) = crate::icons::user(role) {
+            self.draw_icon_body(x, y, size, ic, grow, 0.0);
+            return;
+        }
         if let Some(name) = crate::icons::name_for(role) {
             if let Some(ic) = crate::icons::get(name) {
                 let (grow, lift) = crate::icons::fit(name);

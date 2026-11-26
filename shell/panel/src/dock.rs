@@ -25,9 +25,9 @@ use crate::tokens::Theme;
 
 /// Height of the floating shelf (pearOS / macOS: 48 px icons in a ~64 px
 /// shelf).
-pub const CARD_H: i32 = 64;
+pub const CARD_H: i32 = 72;
 /// Corner radius of the shelf.
-const DOCK_R: f32 = 18.0;
+const DOCK_R: f32 = 22.0;
 /// Extra room above the card for magnified icons: the biggest icon is
 /// `MAX_SCALE` times a cell, plus space for its tooltip.
 pub const MAGNIFY_ROOM: i32 = 66;
@@ -125,11 +125,12 @@ fn metrics(style: DockStyle) -> Metrics {
             gap: 6,
             pad: 12,
         },
-        // pearOS / macOS dock: 48 px icons, 8 px apart, a 64 px shelf.
+        // pearOS dock, measured: 48 px icons on a 56 px pitch, 14 px in
+        // from the rim, a 72 px shelf with a 22 px radius.
         DockStyle::Macos => Metrics {
             cell: 48,
             gap: 8,
-            pad: 9,
+            pad: 14,
         },
         DockStyle::Solyra => Metrics {
             cell: 44,
@@ -411,8 +412,24 @@ fn draw_floating(
 
     let slab = slab_for(live, th.surface);
     // Elevation (Liquid Glass "depth"): a soft shadow under the shelf.
-    cv.round_rect_shadow(card_x, card_y, card_w, CARD_H, DOCK_R, 6.0, 14.0, 54);
-    material::paint(cv, &slab, card_x, card_y, card_w, CARD_H, DOCK_R);
+    let mat = live.prefs.look.material(live.prefs.look.dock_material);
+    if style == DockStyle::Macos && mat == material::Material::Glass {
+        // pearOS: a nearly clear pane of blurred glass with one even 1 px
+        // rim, and only a faint shadow.
+        cv.round_rect_shadow(card_x, card_y, card_w, CARD_H, DOCK_R, 6.0, 16.0, 34);
+        material::pear_glass(
+            cv,
+            card_x,
+            card_y,
+            card_w,
+            CARD_H,
+            DOCK_R,
+            th.surface.0 < 128,
+        );
+    } else {
+        cv.round_rect_shadow(card_x, card_y, card_w, CARD_H, DOCK_R, 6.0, 14.0, 54);
+        material::paint(cv, &slab, card_x, card_y, card_w, CARD_H, DOCK_R);
+    }
     let body = Body {
         x: card_x,
         y: card_y,
@@ -438,7 +455,7 @@ fn draw_floating(
     let mut regions = Vec::new();
     let mut x = card_x + m.pad;
     // Icons sit a touch above centre so the running dots have room beneath them.
-    let base_y = card_y + (CARD_H - m.cell) / 2 - 3;
+    let base_y = card_y + (CARD_H - m.cell) / 2 - 1;
     let clock = chrono::Local::now()
         .format(live.prefs.look.clock_format())
         .to_string();
@@ -553,7 +570,9 @@ fn draw_floating(
                 // An app's own icon wins over its role's (the browser pin is
                 // Firefox when Firefox is what it opens).
                 let key = app_id
-                    .filter(|id| crate::icons::name_for(id).is_some())
+                    .filter(|id| {
+                        crate::icons::user(id).is_some() || crate::icons::name_for(id).is_some()
+                    })
                     .unwrap_or(role);
                 cv.draw_app_squircle(x, y - bounce, s, key, icon, fonts);
 
@@ -597,8 +616,8 @@ fn running_mark(cv: &mut Canvas<'_>, ink: Rgba, x: i32, s: i32, card_y: i32, foc
     // One quiet dot under a running app, like macOS: the focused app's is only
     // slightly stronger.
     let cx = x as f32 + s as f32 / 2.0;
-    let cy = (card_y + CARD_H - 5) as f32;
-    let (r, a) = if focused { (2.0, 235) } else { (1.7, 150) };
+    let cy = (card_y + CARD_H - 6) as f32;
+    let (r, a) = if focused { (2.1, 235) } else { (2.0, 170) };
     cv.circle(cx, cy, r, Rgba::rgba(ink.0, ink.1, ink.2, a));
 }
 

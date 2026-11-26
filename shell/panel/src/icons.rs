@@ -6,6 +6,14 @@
 //! real depth, so the panel carries Solyra's own set: macOS-style squircles
 //! drawn by `assets/icons/make_icons.py` (first-party art, no icon library).
 //! Anything not in the set falls back to the system theme on a neutral tile.
+//!
+//! **Your own icons.** PNGs in `~/.local/share/solyra/icons/` win over the
+//! bundled set: name a file after a role (`files.png`, `browser.png`,
+//! `terminal.png`, `trash.png`, `downloads.png`, `launchpad.png`, ...) or an
+//! application id (`org.mozilla.firefox.png`). Any size works; macOS-style
+//! icons with a transparent margin are measured and scaled so their body
+//! matches the bundled squircles. These files stay on your machine; nothing
+//! from a third-party icon site is shipped with Solyra.
 
 use std::sync::OnceLock;
 
@@ -57,6 +65,103 @@ fn decoded() -> &'static [(&'static str, Icon)] {
 /// The bundled icon called `name`.
 pub fn get(name: &str) -> Option<&'static Icon> {
     decoded().iter().find(|(n, _)| *n == name).map(|(_, ic)| ic)
+}
+
+/// The folder for the person's own icons.
+pub fn user_dir() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))
+        })?;
+    Some(base.join("solyra/icons"))
+}
+
+type UserCache = std::sync::Mutex<std::collections::HashMap<String, Option<(&'static Icon, f32)>>>;
+static USER: OnceLock<UserCache> = OnceLock::new();
+
+/// A user icon for `key` (a role or an application id), with the `grow`
+/// that puts its body at the bundled squircles' size. Looked up once per key.
+pub fn user(key: &str) -> Option<(&'static Icon, f32)> {
+    let k = key.to_ascii_lowercase();
+    let cache = USER.get_or_init(Default::default);
+    if let Some(hit) = cache.lock().ok()?.get(&k) {
+        return *hit;
+    }
+    let dir = user_dir();
+    let mut names = vec![k.clone()];
+    if let Some(n) = name_for(&k) {
+        names.push(n.to_string());
+    }
+    let found = dir.and_then(|d| {
+        names.iter().find_map(|n| {
+            let bytes = std::fs::read(d.join(format!("{n}.png"))).ok()?;
+            let ic = shrink(decode_png(&bytes)?, 256);
+            let grow = BODY / body_fraction(&ic);
+            Some((&*Box::leak(Box::new(ic)), grow.clamp(0.8, 1.4)))
+        })
+    });
+    if let Ok(mut c) = cache.lock() {
+        c.insert(k, found);
+    }
+    found
+}
+
+/// How much of the icon's width its opaque body takes (macOS icons leave a
+/// transparent margin for the shadow).
+pub fn body_fraction(ic: &Icon) -> f32 {
+    let (w, h) = (ic.width as usize, ic.height as usize);
+    let (mut x0, mut x1) = (w, 0);
+    for y in 0..h {
+        for x in 0..w {
+            if ic.pixels[(y * w + x) * 4 + 3] > 200 {
+                x0 = x0.min(x);
+                x1 = x1.max(x);
+            }
+        }
+    }
+    if x1 <= x0 {
+        return 1.0;
+    }
+    ((x1 - x0 + 1) as f32 / w as f32).clamp(0.3, 1.0)
+}
+
+/// Box-filter an icon down to at most `max` pixels square (alpha-weighted).
+pub fn shrink(ic: Icon, max: u32) -> Icon {
+    if ic.width <= max && ic.height <= max {
+        return ic;
+    }
+    let k = ic.width.max(ic.height).div_ceil(max);
+    let (nw, nh) = (ic.width / k, ic.height / k);
+    let mut px = vec![0u8; (nw * nh * 4) as usize];
+    for y in 0..nh {
+        for x in 0..nw {
+            let mut acc = [0f32; 4];
+            for dy in 0..k {
+                for dx in 0..k {
+                    let i = (((y * k + dy) * ic.width + x * k + dx) * 4) as usize;
+                    let a = ic.pixels[i + 3] as f32;
+                    for c in 0..3 {
+                        acc[c] += ic.pixels[i + c] as f32 * a;
+                    }
+                    acc[3] += a;
+                }
+            }
+            let o = ((y * nw + x) * 4) as usize;
+            let n = (k * k) as f32;
+            if acc[3] > 0.0 {
+                for c in 0..3 {
+                    px[o + c] = (acc[c] / acc[3]).round() as u8;
+                }
+            }
+            px[o + 3] = (acc[3] / n).round() as u8;
+        }
+    }
+    Icon {
+        width: nw,
+        height: nh,
+        pixels: px,
+    }
 }
 
 /// Which bundled icon stands for a shell role or an application id, if any.
@@ -122,6 +227,31 @@ pub fn fit(name: &str) -> (f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn user_icons_are_measured_and_shrunk() {
+        // A 1024 canvas whose opaque body is the middle 824 px, like a
+        // macOS app icon.
+        let n = 1024u32;
+        let mut px = vec![0u8; (n * n * 4) as usize];
+        for y in 100..924u32 {
+            for x in 100..924u32 {
+                let i = ((y * n + x) * 4) as usize;
+                px[i..i + 4].copy_from_slice(&[200, 60, 60, 255]);
+            }
+        }
+        let ic = shrink(
+            Icon {
+                width: n,
+                height: n,
+                pixels: px,
+            },
+            256,
+        );
+        assert_eq!((ic.width, ic.height), (256, 256));
+        let f = body_fraction(&ic);
+        assert!((f - 824.0 / 1024.0).abs() < 0.02, "{f}");
+    }
 
     #[test]
     fn every_bundled_icon_decodes_square_with_alpha() {
