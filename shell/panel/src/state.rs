@@ -197,6 +197,10 @@ pub enum ShellCmd {
     ToggleIslandLyrics,
     /// Filter Droppy clipboard cards by category.
     ClipboardFilter(crate::clipboard::ClipCategory),
+    /// New text seen on the system clipboard (watcher).
+    ClipboardAdd(String),
+    /// Spotlight filter pill picked.
+    SpotFilter(crate::launcher::Filter),
     /// Copy clipboard item by index.
     ClipboardCopy(usize),
     /// Toggle pin on clipboard item by index.

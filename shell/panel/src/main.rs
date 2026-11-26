@@ -209,6 +209,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         media::spawn_watcher(media_slot.clone(), move || w());
     }
     {
+        // Clipboard history (the notch's Clipboard mode and Spotlight).
+        let (q, w) = (cmd_queue.clone(), waker.clone());
+        clipboard::spawn_watcher(move |text| {
+            if let Ok(mut q) = q.lock() {
+                q.push(ShellCmd::ClipboardAdd(text));
+            }
+            w();
+        });
+    }
+    {
         let conn_wake = conn.clone();
         let qh_wake = qh.clone();
         notify::spawn_server(cmd_queue.clone(), move || {
@@ -318,6 +328,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         launcher_items: Vec::new(),
         launcher_query: String::new(),
         launcher_selected: 0,
+        launcher_filter: launcher::Filter::All,
         spot_in_island: None,
         shift_held: false,
         pointer: None,
@@ -691,6 +702,7 @@ struct App {
     launcher_items: Vec<launcher::Item>,
     launcher_query: String,
     launcher_selected: usize,
+    launcher_filter: launcher::Filter,
     /// Spotlight is open inside the notch / island, and when it opened
     /// (for the morph).
     spot_in_island: Option<Instant>,
@@ -859,6 +871,7 @@ impl App {
                     self.close_overlays();
                     self.catalog = catalog_apps();
                     self.launcher_query.clear();
+                    self.launcher_filter = launcher::Filter::All;
                     self.launcher_selected = 0;
                     self.refresh_launcher_items();
                     let in_island = self.prefs.look.spotlight_in_notch
@@ -1014,6 +1027,17 @@ impl App {
                 self.island_tab_shelf = false;
                 self.island_expanded = true;
                 self.retarget_island();
+            }
+            ShellCmd::SpotFilter(f) => {
+                self.launcher_filter = f;
+                self.launcher_selected = 0;
+                self.refresh_launcher_items();
+                self.needs_redraw = true;
+            }
+            ShellCmd::ClipboardAdd(text) => {
+                clipboard::push(&mut self.clipboard_items, text);
+                clipboard::save(&self.clipboard_items);
+                self.needs_redraw = true;
             }
             ShellCmd::ClipboardFilter(cat) => {
                 self.clipboard_filter = cat;
@@ -1332,12 +1356,21 @@ impl App {
     }
 
     fn refresh_launcher_items(&mut self) {
-        self.launcher_items = launcher::search(
+        let mut items = launcher::search(
             &self.launcher_query,
             &self.catalog,
             &self.wins,
             self.agent_summary.runtime_present,
         );
+        // Clipboard history joins the results once something is typed (or
+        // when the Clipboard filter asks for it).
+        let want_clips = !self.launcher_query.trim().is_empty()
+            || self.launcher_filter == launcher::Filter::Clipboard;
+        if want_clips {
+            let max = if self.launcher_filter == launcher::Filter::Clipboard { 8 } else { 3 };
+            items.extend(launcher::clipboard_matches(&self.launcher_query, &self.clipboard_items, max));
+        }
+        self.launcher_items = launcher::filtered(items, self.launcher_filter);
         self.launcher_selected = self
             .launcher_selected
             .min(self.launcher_items.len().saturating_sub(1));
@@ -1988,6 +2021,7 @@ impl App {
                 notch,
                 material::blurs(self.notch_material),
                 t,
+                self.launcher_filter,
             ));
         } else {
             overlay!(self.launcher, |cv, hover| draw_launcher(
@@ -1999,6 +2033,7 @@ impl App {
                 self.launcher_selected,
                 &mut self.icons,
                 hover,
+                self.launcher_filter,
             ));
         }
         overlay!(
@@ -2965,8 +3000,14 @@ impl App {
             103 | 105 => {
                 self.launcher_selected = self.launcher_selected.saturating_sub(1);
             }
-            108 | 106 | 15 => {
+            108 | 106 => {
                 self.launcher_selected = (self.launcher_selected + 1).min(max_idx);
+            }
+            15 => {
+                // Tab: next filter pill.
+                self.launcher_filter = self.launcher_filter.next();
+                self.launcher_selected = 0;
+                self.refresh_launcher_items();
             }
             _ => {
                 if let Some(ch) = evdev_to_ascii(key, self.shift_held) {

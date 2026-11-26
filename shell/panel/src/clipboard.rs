@@ -229,6 +229,50 @@ pub fn push(items: &mut Vec<ClipItem>, text: String) {
     items.truncate(MAX_ITEMS);
 }
 
+/// Clipboard MIME types that mark a secret (password managers set these);
+/// such entries are never recorded.
+const SECRET_TYPES: &[&str] = &[
+    "x-kde-passwordManagerHint",
+    "application/x-password",
+    "x-password-manager",
+];
+/// Longest text recorded (a whole file pasted is not history).
+const MAX_TEXT: usize = 8 * 1024;
+
+/// Should this clipboard text, offered with these MIME types, be recorded?
+pub fn should_record(text: &str, types: &str) -> bool {
+    !text.trim().is_empty()
+        && text.len() <= MAX_TEXT
+        && !SECRET_TYPES.iter().any(|t| types.contains(t))
+        && types.lines().any(|t| t.starts_with("text/") || t == "UTF8_STRING" || t == "STRING")
+}
+
+/// Watch the Wayland clipboard (wl-paste, data-control protocol) and send
+/// each new text entry to `on_new`. Polls every 1.5 s; no thread spin when
+/// wl-paste is missing (it gives up after the first failure).
+pub fn spawn_watcher(on_new: impl Fn(String) + Send + 'static) {
+    std::thread::spawn(move || {
+        let run = |args: &[&str]| -> Option<String> {
+            let out = std::process::Command::new("wl-paste").args(args).output().ok()?;
+            out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+        };
+        if std::process::Command::new("wl-paste").arg("--version").output().is_err() {
+            eprintln!("solyra-panel: wl-paste not found; clipboard history is off");
+            return;
+        }
+        let mut last = String::new();
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            let Some(types) = run(&["--list-types"]) else { continue };
+            let Some(text) = run(&["--no-newline", "--type", "text"]) else { continue };
+            if text != last && should_record(&text, &types) {
+                last = text.clone();
+                on_new(text);
+            }
+        }
+    });
+}
+
 pub fn copy_command(text: &str) -> String {
     let q = text.replace('\'', "'\\''");
     format!("printf '%s' '{q}' | wl-copy")
@@ -280,6 +324,15 @@ pub fn demo_items() -> Vec<ClipItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secrets_and_non_text_are_not_recorded() {
+        assert!(should_record("hello", "text/plain;charset=utf-8\nTEXT\n"));
+        assert!(!should_record("hunter2", "text/plain\nx-kde-passwordManagerHint\n"));
+        assert!(!should_record("   ", "text/plain\n"));
+        assert!(!should_record("png", "image/png\n"));
+        assert!(!should_record(&"x".repeat(9000), "text/plain\n"));
+    }
 
     #[test]
     fn classifies_colors_links_videos_and_text() {

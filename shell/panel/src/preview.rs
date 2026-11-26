@@ -240,6 +240,7 @@ fn launcher_shot(
         let mut icons = HashMap::new();
         draw_launcher(
             &mut cv, &th, fonts, query, &items, selected, &mut icons, None,
+            crate::launcher::Filter::All,
         );
     }
     let rects: Vec<_> = lay
@@ -325,6 +326,7 @@ fn island_spot_shot(
             notch,
             true,
             t,
+            crate::launcher::Filter::All,
         );
     }
     over(&mut scene.out, scene.w, &buf, lay.w, lay.h, at);
@@ -847,7 +849,7 @@ fn two_x_renders_are_sharp_and_keep_logical_hit_regions() {
             |cv, th| {
                 let mut icons = HashMap::new();
                 regions.push(draw_launcher(
-                    cv, th, &fonts, "te", &items, 0, &mut icons, None,
+                    cv, th, &fonts, "te", &items, 0, &mut icons, None, crate::launcher::Filter::All,
                 ));
             },
         );
@@ -2046,7 +2048,7 @@ fn macos27_droppy_showcase() {
         let mut icons = HashMap::new();
         {
             let mut cv = Canvas::new(&mut sbuf, lay.w, lay.h, 1);
-            draw_launcher(&mut cv, &th, &fonts, q, &items, 0, &mut icons, None);
+            draw_launcher(&mut cv, &th, &fonts, q, &items, 0, &mut icons, None, crate::launcher::Filter::All);
         }
         let at = ((scene.w as i32 - lay.w as i32) / 2, 130);
         for (r, rad) in lay.shapes() {

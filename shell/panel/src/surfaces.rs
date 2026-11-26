@@ -690,6 +690,7 @@ pub fn draw_launcher(
     selected: usize,
     icons: &mut HashMap<String, Option<Icon>>,
     hover: Option<(f64, f64)>,
+    filter: crate::launcher::Filter,
 ) -> Vec<Region> {
     let lay = spot_layout(query, items);
     let dark = th.surface.0 < 128;
@@ -705,7 +706,7 @@ pub fn draw_launcher(
             cv.round_rect(r.x, r.y, r.w, r.h, radius, veil);
         }
     }
-    launcher_content(cv, th, fonts, query, items, selected, icons, hover, &lay)
+    launcher_content(cv, th, fonts, query, items, selected, icons, hover, &lay, filter)
 }
 
 /// Spotlight inside the notch / Dynamic Island, the way a MacBook Pro's
@@ -769,6 +770,7 @@ pub fn draw_island_spotlight(
     notch: bool,
     glass: bool,
     t: f32,
+    filter: crate::launcher::Filter,
 ) -> Vec<Region> {
     let lay = island_spot_layout(query, items, notch);
     let (x, y, wi, hi, r) = island_spot_morph(&lay, notch, t);
@@ -796,7 +798,7 @@ pub fn draw_island_spotlight(
         cv.round_rect(c.x, c.y, c.w, c.h, SPOT_CARD_R, Rgba::rgba(0, 0, 0, 40));
     }
     let th = Theme::with(crate::tokens::ThemeKind::Dark, accent);
-    launcher_content(cv, &th, fonts, query, items, selected, icons, hover, &lay)
+    launcher_content(cv, &th, fonts, query, items, selected, icons, hover, &lay, filter)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -810,6 +812,7 @@ fn launcher_content(
     icons: &mut HashMap<String, Option<Icon>>,
     hover: Option<(f64, f64)>,
     lay: &SpotLayout,
+    filter: crate::launcher::Filter,
 ) -> Vec<Region> {
     let lay = *lay;
     let mut regions = Vec::new();
@@ -821,6 +824,35 @@ fn launcher_content(
     let base = cap.y + cap.h / 2 + 7;
     let esc_w = text_width(fonts.regular.as_ref(), "esc", 12.5);
     let esc_x = cap.x + cap.w - 24 - esc_w;
+    // Filter pills, right-aligned before "esc": the active one is filled
+    // with the accent; Tab cycles them, a click picks one.
+    let pill_h = 24;
+    let pill_y = cap.y + (cap.h - pill_h) / 2;
+    let mut px = esc_x - 14;
+    for f in crate::launcher::Filter::ALL.iter().rev() {
+        let lbl = f.label();
+        let tw = text_width(fonts.medium.as_ref(), lbl, 11.5);
+        let pw = tw + 18;
+        px -= pw;
+        let on = *f == filter;
+        let hov = hovered(hover, px, pill_y, pw, pill_h);
+        let fill = if on { th.accent } else if hov { th.tile_hover } else { th.tile };
+        cv.round_rect(px, pill_y, pw, pill_h, pill_h as f32 / 2.0, fill);
+        if !on {
+            cv.stroke_round_rect(px, pill_y, pw, pill_h, pill_h as f32 / 2.0, 1.0, th.hairline);
+        }
+        let ink = if on { th.on_accent } else if hov { th.text } else { th.text_med };
+        cv.text(fonts.medium.as_ref(), lbl, px + 9, pill_y + 16, 11.5, ink);
+        regions.push(Region {
+            x: px,
+            y: pill_y,
+            w: pw,
+            h: pill_h,
+            action: HitAction::Shell(ShellCmd::SpotFilter(*f)),
+        });
+        px -= 6;
+    }
+    let text_end = px - 10;
     if query.is_empty() {
         cv.round_rect(text_x, cap.y + 17, 2, 22, 1.0, th.accent);
         cv.text(
@@ -831,45 +863,6 @@ fn launcher_content(
             19.0,
             th.text_dim,
         );
-        // macOS 27 Spotlight quick-intent pills on the right of the empty capsule.
-        let pill_h = 24;
-        let pill_y = cap.y + (cap.h - pill_h) / 2;
-        let mut px = esc_x - 14;
-        for (lbl, act) in [
-            ("Clipboard", HitAction::Shell(ShellCmd::ToggleIsland)),
-            ("Files", HitAction::Launch(LaunchTarget::Shell("solyra-open files".into()))),
-            ("Apps", HitAction::Shell(ShellCmd::ToggleAgents)),
-        ] {
-            let tw = text_width(fonts.medium.as_ref(), lbl, 11.5);
-            let pw = tw + 18;
-            px -= pw;
-            let hov = hovered(hover, px, pill_y, pw, pill_h);
-            cv.round_rect(
-                px,
-                pill_y,
-                pw,
-                pill_h,
-                pill_h as f32 / 2.0,
-                if hov { th.tile_hover } else { th.tile },
-            );
-            cv.stroke_round_rect(px, pill_y, pw, pill_h, pill_h as f32 / 2.0, 1.0, th.hairline);
-            cv.text(
-                fonts.medium.as_ref(),
-                lbl,
-                px + 9,
-                pill_y + 16,
-                11.5,
-                if hov { th.text } else { th.text_med },
-            );
-            regions.push(Region {
-                x: px,
-                y: pill_y,
-                w: pw,
-                h: pill_h,
-                action: act,
-            });
-            px -= 6;
-        }
     } else {
         let qw = cv.text_truncated(
             fonts.regular.as_ref(),
@@ -877,7 +870,7 @@ fn launcher_content(
             text_x,
             base,
             19.0,
-            esc_x - text_x - 20,
+            (text_end - text_x).max(40),
             th.text,
         );
         cv.round_rect(text_x + qw + 2, cap.y + 17, 2, 22, 1.0, th.accent);
@@ -2521,7 +2514,7 @@ mod tests {
         let mut buf = vec![0u8; (lay.w * lay.h * 4) as usize];
         let mut cv = Canvas::new(&mut buf, lay.w, lay.h, 1);
         let mut icons = HashMap::new();
-        let regions = draw_launcher(&mut cv, &th, &fonts, query, items, 0, &mut icons, None);
+        let regions = draw_launcher(&mut cv, &th, &fonts, query, items, 0, &mut icons, None, crate::launcher::Filter::All);
         (lay, regions)
     }
 

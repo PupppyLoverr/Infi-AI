@@ -20,6 +20,7 @@ pub enum Kind {
     Window,
     Command,
     Agent,
+    Clipboard,
 }
 
 impl Kind {
@@ -32,8 +33,78 @@ impl Kind {
             Self::Window => "Open Windows",
             Self::Command => "Commands",
             Self::Agent => "Agent",
+            Self::Clipboard => "Clipboard",
         }
     }
+}
+
+/// Spotlight's filter pills. `Tab` cycles them; a click picks one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Filter {
+    #[default]
+    All,
+    Apps,
+    Files,
+    Clipboard,
+    Actions,
+}
+
+impl Filter {
+    pub const ALL: [Filter; 5] = [Self::All, Self::Apps, Self::Files, Self::Clipboard, Self::Actions];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Apps => "Apps",
+            Self::Files => "Files",
+            Self::Clipboard => "Clipboard",
+            Self::Actions => "Actions",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        let i = Self::ALL.iter().position(|f| *f == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+
+    /// Does a result of `kind` show under this filter?
+    pub fn admits(self, kind: Kind) -> bool {
+        match self {
+            Self::All => true,
+            Self::Apps => matches!(kind, Kind::Application | Kind::Window),
+            Self::Files => kind == Kind::File,
+            Self::Clipboard => kind == Kind::Clipboard,
+            Self::Actions => matches!(kind, Kind::Calculator | Kind::Command | Kind::Agent),
+        }
+    }
+}
+
+/// Clipboard history entries matching `query` (case-insensitive substring),
+/// newest first; Enter copies the entry back to the clipboard.
+pub fn clipboard_matches(query: &str, clips: &[crate::clipboard::ClipItem], max: usize) -> Vec<Item> {
+    let q = query.trim().to_lowercase();
+    clips
+        .iter()
+        .filter(|c| q.is_empty() || c.text.to_lowercase().contains(&q))
+        .take(max)
+        .map(|c| {
+            let first = c.text.lines().next().unwrap_or("").trim();
+            let title: String = first.chars().take(80).collect();
+            Item {
+                kind: Kind::Clipboard,
+                title,
+                subtitle: format!("Clipboard · {} · {}", c.kind.label(), c.age),
+                app_id: String::new(),
+                role: "notes".into(),
+                action: Action::CopyText(c.text.clone()),
+            }
+        })
+        .collect()
+}
+
+/// Apply a filter, keeping order.
+pub fn filtered(items: Vec<Item>, filter: Filter) -> Vec<Item> {
+    items.into_iter().filter(|i| filter.admits(i.kind)).collect()
 }
 
 #[derive(Clone, Debug)]
@@ -521,6 +592,29 @@ pub fn spotlight_first(items: &[Item], selected: usize, avail_h: i32) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn filters_cycle_and_admit_the_right_kinds() {
+        assert_eq!(Filter::All.next(), Filter::Apps);
+        assert_eq!(Filter::Actions.next(), Filter::All);
+        assert!(Filter::Apps.admits(Kind::Window));
+        assert!(!Filter::Apps.admits(Kind::File));
+        assert!(Filter::Actions.admits(Kind::Calculator));
+        assert!(Filter::Clipboard.admits(Kind::Clipboard));
+        assert!(!Filter::Files.admits(Kind::Clipboard));
+    }
+
+    #[test]
+    fn clipboard_history_is_searchable() {
+        let mut clips = Vec::new();
+        crate::clipboard::push(&mut clips, "ssh deploy@build-01".into());
+        crate::clipboard::push(&mut clips, "#FF9F43".into());
+        let hits = clipboard_matches("deploy", &clips, 3);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].kind, Kind::Clipboard);
+        assert!(matches!(&hits[0].action, Action::CopyText(t) if t == "ssh deploy@build-01"));
+        assert_eq!(clipboard_matches("", &clips, 1).len(), 1);
+    }
     use crate::state::ShellCmd;
 
     fn app(title: &str, id: &str, sub: &str) -> AppEntry {
