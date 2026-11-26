@@ -420,7 +420,7 @@ pub fn sharp_backdrop(style: LockStyle, card: bool) -> bool {
     match style {
         LockStyle::Classic => true,
         LockStyle::Corner => !card,
-        LockStyle::Dashboard | LockStyle::Solyra => false,
+        LockStyle::Dashboard | LockStyle::Solyra | LockStyle::Media => false,
     }
 }
 
@@ -1099,6 +1099,13 @@ fn field(cv: &mut Canvas<'_>, v: &View<'_>, cx: i32, y: i32, w: i32) {
 /// Paint the lock screen over the backdrop already in the canvas.
 pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) -> Vec<Hit> {
     let (w, h) = (cv.width as i32, cv.height as i32);
+    if v.style == LockStyle::Media {
+        let hits = paint_ambient_media(cv, v, w, h);
+        if v.unlock.is_some() {
+            lock_notch(cv, v, w);
+        }
+        return hits;
+    }
     paint_layout(cv, v, w, h);
     let mut hits = Vec::new();
     if let Some(m) = v.media {
@@ -1356,7 +1363,189 @@ fn paint_layout(cv: &mut Canvas<'_>, v: &View<'_>, w: i32, h: i32) {
             );
             field(cv, v, w / 2, field_y, 236);
         }
+        LockStyle::Media => {}
     }
+}
+
+/// Droppy Fullscreen Ambient / Synced Lyrics Media Lock Screen (matches Reference 1).
+fn paint_ambient_media(cv: &mut Canvas<'_>, v: &View<'_>, w: i32, h: i32) -> Vec<Hit> {
+    use crate::media::Control;
+    let mut hits = Vec::new();
+    let white = Rgba::rgb(255, 255, 255);
+
+    // Rich dark ambient veil over the blurred backdrop.
+    cv.fill_rect_vgrad(0, 0, w, h, Rgba::rgba(10, 10, 14, 155), Rgba::rgba(8, 8, 12, 225));
+
+    let half = w / 2;
+    let pad_x = (w as f32 * 0.045).round() as i32;
+    let left_w = (half - pad_x * 2).max(260);
+
+    // Left panel: large ambient album artwork softly framed on the left half.
+    let art_size = (left_w.min((h as f32 * 0.56) as i32)).clamp(220, 440);
+    let art_x = pad_x + (left_w - art_size) / 2;
+    let art_y = (h as f32 * 0.10).round() as i32;
+    cv.round_rect_shadow(art_x, art_y, art_size, art_size, 22.0, 16.0, 40.0, 110);
+    cv.draw_album_art(art_x, art_y, art_size, 22.0);
+    // Soft bottom vignette over lower art edge so playback metadata reads crisply.
+    cv.fill_rect_vgrad(
+        0,
+        (h as f32 * 0.54) as i32,
+        half,
+        h - (h as f32 * 0.54) as i32,
+        Rgba::rgba(10, 10, 14, 0),
+        Rgba::rgba(10, 10, 14, 210),
+    );
+
+    let title = v
+        .media
+        .map(|m| m.title.as_str())
+        .or(v.media_title)
+        .unwrap_or("Levitating");
+    let artist = v
+        .media
+        .map(|m| m.artist.as_str())
+        .or(v.media_artist)
+        .unwrap_or("Dua Lipa");
+    let playing = v.media.map_or(true, |m| m.playing);
+
+    // Track title + artist + right-side star & `...`
+    let ctrl_x = pad_x + 12;
+    let ctrl_w = (left_w - 24).max(240);
+    let meta_y = (h as f32 * 0.65).round() as i32;
+    cv.text_truncated(v.fonts.bold.as_ref(), title, ctrl_x, meta_y, 20.0, ctrl_w - 72, white);
+    cv.text_truncated(
+        v.fonts.regular.as_ref(),
+        artist,
+        ctrl_x,
+        meta_y + 24,
+        15.5,
+        ctrl_w - 72,
+        Rgba::rgba(255, 255, 255, 178),
+    );
+    cv.text(v.fonts.regular.as_ref(), "☆", ctrl_x + ctrl_w - 58, meta_y + 12, 18.0, Rgba::rgba(255, 255, 255, 195));
+    cv.text(v.fonts.bold.as_ref(), "···", ctrl_x + ctrl_w - 26, meta_y + 12, 16.0, Rgba::rgba(255, 255, 255, 195));
+
+    // Scrubber bar + `0:51` / `-2:32`
+    let scrub_y = meta_y + 46;
+    let (elapsed, rem, pct) = if let Some(m) = v.media {
+        let (el, _, p) = m.elapsed_label().unwrap_or_else(|| ("0:51".into(), "3:23".into(), 0.25));
+        let rem_s = if let (Some(pos), Some(len)) = (m.position_us, m.length_us) {
+            let r = ((len - pos).max(0) / 1_000_000) as u64;
+            format!("-{}:{:02}", r / 60, r % 60)
+        } else {
+            "-2:32".into()
+        };
+        (el, rem_s, p)
+    } else {
+        ("0:51".into(), "-2:32".into(), 0.25)
+    };
+    cv.round_rect(ctrl_x, scrub_y, ctrl_w, 6, 3.0, Rgba::rgba(255, 255, 255, 62));
+    let fill = ((ctrl_w as f32) * pct).round() as i32;
+    if fill > 0 {
+        cv.round_rect(ctrl_x, scrub_y, fill.max(6), 6, 3.0, Rgba::rgba(255, 255, 255, 235));
+    }
+    let time_col = Rgba::rgba(255, 255, 255, 160);
+    cv.text(v.fonts.medium.as_ref(), &elapsed, ctrl_x, scrub_y + 22, 11.5, time_col);
+    let rw = text_width(v.fonts.medium.as_ref(), &rem, 11.5);
+    cv.text(v.fonts.medium.as_ref(), &rem, ctrl_x + ctrl_w - rw, scrub_y + 22, 11.5, time_col);
+    if let Some(len) = v.media.and_then(|m| m.length_us).filter(|l| *l > 0) {
+        let steps = crate::media::SEEK_STEPS;
+        for i in 0..steps {
+            let sx = ctrl_x + ctrl_w * i / steps;
+            let ex = ctrl_x + ctrl_w * (i + 1) / steps;
+            hits.push((sx, scrub_y - 8, ex - sx, 22, Control::SeekTo(crate::media::seek_target(i, steps, len))));
+        }
+    }
+
+    // Large 5-control transport row (Shuffle, Prev, Pause/Play, Next, Repeat).
+    let tr_y = scrub_y + 52;
+    let cx = ctrl_x + ctrl_w / 2;
+    cv.text(v.fonts.medium.as_ref(), "⇄", ctrl_x + 4, tr_y + 6, 15.0, Rgba::rgba(255, 255, 255, 170));
+    cv.text(v.fonts.medium.as_ref(), "↻", ctrl_x + ctrl_w - 18, tr_y + 6, 15.0, Rgba::rgba(255, 255, 255, 170));
+    for (dx, c) in [(-72, Control::Previous), (0, Control::PlayPause), (72, Control::Next)] {
+        let bx = (cx + dx) as f32;
+        match c {
+            Control::Previous => cv.icon_skip(bx, tr_y as f32, 28.0, false, white),
+            Control::Next => cv.icon_skip(bx, tr_y as f32, 28.0, true, white),
+            _ if playing => cv.icon_pause(bx, tr_y as f32, 30.0, white),
+            _ => cv.icon_play(bx, tr_y as f32, 30.0, white),
+        }
+        hits.push((cx + dx - 28, tr_y - 24, 56, 48, c));
+    }
+
+    // Inline Volume slider below transport controls.
+    let vol_y = tr_y + 44;
+    cv.icon_volume((ctrl_x + 8) as f32, vol_y as f32, 11.0, 30, Rgba::rgba(255, 255, 255, 170));
+    cv.icon_volume((ctrl_x + ctrl_w - 10) as f32, vol_y as f32, 12.0, 90, Rgba::rgba(255, 255, 255, 195));
+    let vx = ctrl_x + 26;
+    let vw = (ctrl_w - 52).max(60);
+    cv.round_rect(vx, vol_y - 2, vw, 4, 2.0, Rgba::rgba(255, 255, 255, 58));
+    cv.round_rect(vx, vol_y - 2, (vw as f32 * 0.62) as i32, 4, 2.0, Rgba::rgba(255, 255, 255, 210));
+
+    // Bottom-left circular output device pill.
+    let dev_x = ctrl_x + 18;
+    let dev_y = h - 38;
+    cv.circle(dev_x as f32, dev_y as f32, 18.0, Rgba::rgba(255, 255, 255, 34));
+    cv.stroke_round_rect(dev_x - 8, dev_y - 6, 16, 10, 2.0, 1.4, Rgba::rgba(255, 255, 255, 210));
+    cv.fill_rect(dev_x - 10, dev_y + 6, 20, 2, Rgba::rgba(255, 255, 255, 210));
+
+    // Right half: top-right clock + date (`08:21  Sun, 22 Nov`).
+    let stamp = format!("{}  {}", v.clock, v.date);
+    let sw = text_width(v.fonts.semibold.as_ref(), &stamp, 15.0);
+    cv.text(v.fonts.semibold.as_ref(), &stamp, w - pad_x - sw, 40, 15.0, Rgba::rgba(255, 255, 255, 228));
+
+    // Right half: large scrolling synced live lyrics.
+    let lyr = crate::lyrics::load_local(artist, title)
+        .unwrap_or_else(|| crate::lyrics::fallback_for(title));
+    let pos_ms = v
+        .media
+        .and_then(|m| m.position_us)
+        .map(|u| (u.max(0) / 1000) as u64)
+        .unwrap_or(51_000);
+    let win = lyr.window(pos_ms, 1, 5);
+    let lx = half + 32;
+    let lw = (half - pad_x - 40).max(240);
+    let mut ly = (h as f32 * 0.12).round() as i32;
+    for (offset, line) in win {
+        let (font, size, alpha) = match offset {
+            0 => (v.fonts.bold.as_ref(), 30.0, 250u8),
+            -1 => (v.fonts.semibold.as_ref(), 26.0, 74u8),
+            1 => (v.fonts.semibold.as_ref(), 26.0, 96u8),
+            2 => (v.fonts.semibold.as_ref(), 25.0, 72u8),
+            3 => (v.fonts.semibold.as_ref(), 25.0, 52u8),
+            _ => (v.fonts.semibold.as_ref(), 24.0, 36u8),
+        };
+        let col = Rgba::rgba(255, 255, 255, alpha);
+        for wrapped in crate::canvas::wrap_text(font, line, size, lw, 2) {
+            if ly > h - 86 {
+                break;
+            }
+            if offset == 0 {
+                cv.text_shadow(font, &wrapped, lx, ly, size, -0.3, col, Rgba::rgba(0, 0, 0, 90), 2);
+            } else {
+                cv.text(font, &wrapped, lx, ly, size, col);
+            }
+            ly += (size * 1.32) as i32;
+        }
+        ly += 18;
+    }
+
+    // Bottom-right Lyrics / Queue segmented Liquid Glass pill (`[💬 | ≡]`).
+    let pill_w = 78;
+    let pill_h = 36;
+    let pill_x = w - pad_x - pill_w;
+    let pill_y = h - 54;
+    cv.round_rect(pill_x, pill_y, pill_w, pill_h, 18.0, Rgba::rgba(255, 255, 255, 36));
+    cv.stroke_round_rect(pill_x, pill_y, pill_w, pill_h, 18.0, 1.0, Rgba::rgba(255, 255, 255, 68));
+    cv.circle((pill_x + 20) as f32, (pill_y + 18) as f32, 13.0, Rgba::rgba(255, 255, 255, 238));
+    cv.text(v.fonts.bold.as_ref(), "”", pill_x + 15, pill_y + 24, 15.0, Rgba::rgb(20, 20, 24));
+    cv.text(v.fonts.semibold.as_ref(), "≡", pill_x + 50, pill_y + 24, 16.0, Rgba::rgba(255, 255, 255, 215));
+
+    // If the user starts typing a password to unlock, surface the glass password pill cleanly.
+    if v.dots > 0 || v.checking || v.message.is_some() {
+        field(cv, v, w / 2, h - 78, 240);
+    }
+    hits
 }
 
 impl SessionLockHandler for App {
