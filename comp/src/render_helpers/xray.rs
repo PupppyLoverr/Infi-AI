@@ -271,7 +271,7 @@ impl Xray {
 }
 
 impl XrayElement {
-    fn compute_uniforms(&self) -> [Uniform<'static>; 17] {
+    fn compute_uniforms(&self) -> [Uniform<'static>; 18] {
         let [g0, g1, g2, g3, g4, g5, g6, g7] = self.glass.uniforms();
         [
             Uniform::new("niri_scale", self.scale),
@@ -279,6 +279,7 @@ impl XrayElement {
             Uniform::new("corner_radius", <[f32; 4]>::from(self.corner_radius)),
             mat3_uniform("input_to_geo", self.input_to_clip_geo),
             Uniform::new("noise", self.noise),
+            Uniform::new("linear_encode", if self.blur { 1f32 } else { 0. }),
             Uniform::new("saturation", self.saturation),
             Uniform::new("bg_color", self.bg_color.components()),
             Uniform::new("lens", self.lens),

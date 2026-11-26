@@ -117,6 +117,7 @@ impl Shaders {
                     UniformName::new("corner_radius", UniformType::_4f),
                     UniformName::new("input_to_geo", UniformType::Matrix3x3),
                     UniformName::new("noise", UniformType::_1f),
+                    UniformName::new("linear_encode", UniformType::_1f),
                     UniformName::new("saturation", UniformType::_1f),
                     UniformName::new("bg_color", UniformType::_4f),
                     UniformName::new("lens", UniformType::_4f),
