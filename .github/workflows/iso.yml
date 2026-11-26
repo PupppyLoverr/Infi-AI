@@ -44,14 +44,14 @@ jobs:
           iso=$(ls out/*.iso)
           qemu-system-x86_64 -accel kvm -cpu host -m 4096 -smp 2 -device virtio-vga -display none \
             -cdrom "$iso" -boot d -nic user,model=virtio -monitor unix:mon.sock,server,nowait -daemonize
-          mkdir -p docs/shots
+          mkdir -p docs/shots/iso
           for t in 60 150 240; do
             sleep $((t - ${last:-0})); last=$t
             echo "screendump /tmp/iso-$t.ppm" | socat - UNIX-CONNECT:mon.sock >/dev/null; sleep 2
-            convert /tmp/iso-$t.ppm -quality 82 docs/shots/iso-boot-${t}s.jpg && echo "shot iso-boot-${t}s"
+            convert /tmp/iso-$t.ppm -quality 82 docs/shots/iso/boot-${t}s.jpg && echo "shot iso-boot-${t}s"
           done
           echo "quit" | socat - UNIX-CONNECT:mon.sock >/dev/null || true
-          cp out/iso-report.txt docs/shots/
+          cp out/iso-report.txt docs/shots/iso/
       - name: Publish shots
         if: always()
         run: |

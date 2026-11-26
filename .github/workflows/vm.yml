@@ -66,10 +66,10 @@ jobs:
         run: |
           ls out/shots >/dev/null 2>&1 || exit 0
           sudo apt-get -qq install -y imagemagick >/dev/null
-          rm -rf docs/shots && mkdir -p docs/shots
+          rm -rf docs/shots/vm && mkdir -p docs/shots/vm
           for f in out/shots/*.ppm; do [ -f "$f" ] && convert "$f" "${f%.ppm}.png"; done
-          for f in out/shots/*.png; do [ -f "$f" ] && convert "$f" -quality 82 "docs/shots/$(basename "${f%.png}").jpg"; done
-          cp out/shots/*.txt out/shots/*.log docs/shots/ 2>/dev/null || true
+          for f in out/shots/*.png; do [ -f "$f" ] && convert "$f" -quality 82 "docs/shots/vm/$(basename "${f%.png}").jpg"; done
+          cp out/shots/*.txt out/shots/*.log out/shots/*.lua docs/shots/vm/ 2>/dev/null || true
           git config user.name "solyra-ci"; git config user.email "solyra-ci@users.noreply.github.com"
           git add docs/shots
           git commit -qm "solyra-vm shots for ${GITHUB_SHA::7} [skip ci]" || exit 0
