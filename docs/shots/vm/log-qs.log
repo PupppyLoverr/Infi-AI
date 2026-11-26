@@ -1,0 +1,9 @@
+[33m  WARN[0m: [31mQuickshell was built against Qt 6.12.0 but the system has updated to Qt 6.12.1 without rebuilding the package. This is likely to cause crashes, so the quickshell package must be rebuilt.
+
+[32m  INFO[0m: Launching config: "/home/solyra/.config/quickshell/shell.qml"
+[32m  INFO[0m: Shell ID: "1f23d0f74c6cc23f920c90fb6c35d007" Path ID "1f23d0f74c6cc23f920c90fb6c35d007"
+[32m  INFO[0m: Saving logs to "/run/user/1001/quickshell/by-id/7ests4pt/log.qslog"
+[31m ERROR[0m: Failed to load configuration
+[31m ERROR[0m:   caused by @shell.qml[67:13]: Type Island unavailable
+[31m ERROR[0m:   caused by @Island.qml[224:13]: Type MediaView unavailable
+[31m ERROR[0m:   caused by @MediaView.qml[24:17]: Cannot assign to non-existent property "gradient"

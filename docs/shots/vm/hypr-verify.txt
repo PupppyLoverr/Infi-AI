@@ -1,0 +1,2 @@
+[1;32mDEBUG [0m]: [main] User-specified config location: '/home/solyra/.config/hypr/hyprland.lua'
+[ ERROR ] XDG_RUNTIME_DIR is not set. Make sure you're running on a real, properly set up user.
