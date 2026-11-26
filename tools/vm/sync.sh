@@ -15,5 +15,8 @@ echo "exec-once = bash /opt/solyra/scenario.sh > /tmp/scenario.log 2>&1" > $U/.c
 sed -i 's|^exec-once = quickshell$|exec-once = quickshell > /tmp/qs.log 2>\&1|' $U/.config/hypr/hyprland.conf
 chown -R solyra: $U
 echo "solyra-sync: payload installed" > /dev/ttyS0
+# Per-run hook from the payload (diagnostics, watchdog): changes without
+# rebuilding the cached image.
+[ -f /opt/solyra/hook.sh ] && (bash /opt/solyra/hook.sh > /dev/ttyS0 2>&1 &)
 ( while [ ! -f /tmp/solyra-done ]; do sleep 5; done; sync; poweroff ) &
 disown

@@ -27,12 +27,15 @@ cp "${TERM_BIN:-$repo/apps/target/release/solyra-term}" $P/bin/solyra-term
 printf '[Desktop Entry]\nName=Terminal\nComment=Solyra Terminal\nExec=solyra-term\nIcon=utilities-terminal\nType=Application\n' > $P/share/applications/solyra-term.desktop
 cp -r "$repo/shell/qs" $P/qs; cp -r "$repo/shell/hypr" $P/hypr
 cp "$repo/assets/wallpapers/forest-1920x1080.png" $P/wallpaper.png
-cp "$here/scenario.sh" $P/scenario.sh
+cp "$here/scenario.sh" "$here/hook.sh" $P/
 tar -C $P -cf payload/payload.tar .
 python3 "$here/serve.py" payload shots & SRV=$!
 cp base.qcow2 run.qcow2
-timeout 25m qemu-system-x86_64 -accel kvm -cpu host -m 4096 -smp 2 -display none -device virtio-vga \
+GPU="-device virtio-vga -display none"
+if qemu-system-x86_64 -device help 2>/dev/null | grep -q virtio-vga-gl; then GPU="-device virtio-vga-gl -display egl-headless,rendernode=/dev/dri/renderD128"; [ -e /dev/dri/renderD128 ] || GPU="-device virtio-vga-gl -display egl-headless"; fi
+echo "GPU: $GPU"
+timeout 16m qemu-system-x86_64 -accel kvm -cpu host -m 4096 -smp 2 $GPU \
   -drive file=run.qcow2,if=virtio -nic user,model=virtio -serial file:boot.log -monitor none || echo "VM ended ($?)"
 kill $SRV || true
 rm -f run.qcow2
-ls shots; cat shots/report.txt 2>/dev/null || tail -20 boot.log
+ls shots; cat shots/report.txt 2>/dev/null || { grep -a -A80 "solyra hook" boot.log | head -120; tail -5 boot.log; }
