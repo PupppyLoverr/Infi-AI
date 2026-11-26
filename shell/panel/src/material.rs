@@ -112,15 +112,15 @@ pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
         // and a specular top edge, so the wallpaper's colour shows through.
         Material::Glass if dark => Slab {
             kind: m,
-            fill: Rgba::rgba(30, 30, 36, boost(54)),
-            edge: Rgba::rgba(255, 255, 255, 64),
-            highlight: Some(Rgba::rgba(255, 255, 255, 150)),
+            fill: Rgba::rgba(24, 24, 30, boost(54)),
+            edge: Rgba::rgba(255, 255, 255, 76),
+            highlight: Some(Rgba::rgba(255, 255, 255, 172)),
         },
         Material::Glass => Slab {
             kind: m,
-            fill: Rgba::rgba(255, 255, 255, 96),
-            edge: rim(24),
-            highlight: Some(Rgba::rgba(255, 255, 255, 220)),
+            fill: Rgba::rgba(255, 255, 255, 112),
+            edge: rim(28),
+            highlight: Some(Rgba::rgba(255, 255, 255, 232)),
         },
         Material::Acrylic => {
             // Windows Acrylic / Mica: wallpaper hue + denser luminosity fill + soft rim.
@@ -140,13 +140,21 @@ pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
 pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f32) {
     if r <= 0.5 {
         if s.kind == Material::Glass && is_dark(s.fill) {
-            // Dark menu bar: a thin smoke that fades out, so white text reads
-            // over any wallpaper while the bar still looks clear.
-            cv.fill_rect_vgrad(x, y, w, h, Rgba::rgba(18, 18, 20, 110), Rgba::rgba(18, 18, 20, 60));
+            // Cupertino / pearOS dark menu bar: smoked frosted band with a crisp 1px bottom hairline.
+            cv.fill_rect_vgrad(
+                x,
+                y,
+                w,
+                h,
+                Rgba::rgba(18, 18, 22, 108),
+                Rgba::rgba(18, 18, 22, 64),
+            );
+            cv.fill_rect(x, y + h - 1, w, 1, Rgba::rgba(255, 255, 255, 22));
         } else if s.kind == Material::Glass {
-            // A glass bar is only a veil that fades into the wallpaper.
-            let top = Rgba::rgba(255, 255, 255, s.fill.3 / 2);
-            cv.fill_rect_vgrad(x, y, w, h, top, Rgba::rgba(255, 255, 255, 0));
+            // Light glass bar: luminous white frosted band with a subtle bottom hairline.
+            let top = Rgba::rgba(255, 255, 255, (s.fill.3 / 2).max(48));
+            cv.fill_rect_vgrad(x, y, w, h, top, Rgba::rgba(255, 255, 255, 18));
+            cv.fill_rect(x, y + h - 1, w, 1, Rgba::rgba(0, 0, 0, 16));
         } else {
             cv.fill_rect(x, y, w, h, s.fill);
         }
@@ -154,7 +162,8 @@ pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f
     }
     match s.kind {
         Material::Glass if is_dark(s.fill) => {
-            // A faint wash so icons sit on something, then the glass itself.
+            // Cupertino-grade smoked dark glass: neutral dark base, top-weighted
+            // luminance sheen, subtle lower depth glaze, and optical specular rim.
             cv.round_rect(x, y, w, h, r, s.fill);
             cv.round_rect_vgrad(
                 x,
@@ -162,8 +171,8 @@ pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f
                 w,
                 h,
                 r,
-                Rgba::rgba(255, 255, 255, 40),
-                Rgba::rgba(255, 255, 255, 10),
+                Rgba::rgba(255, 255, 255, 48),
+                Rgba::rgba(255, 255, 255, 8),
             );
             let hl = s.highlight.unwrap_or(s.edge);
             cv.round_rect_glass_rim(

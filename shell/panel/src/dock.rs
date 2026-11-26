@@ -225,10 +225,10 @@ pub fn spec(style: DockStyle, wins: &[WindowInfo], magnify: bool, hidden: bool) 
     }
     if magnify {
         // Room for every icon to grow: the gaussian adds (MAX_SCALE - 1) ·
-        // σ·√(2π) cells in total (≈ 3 cells), plus a margin so the shelf's
-        // rim and shadow never touch the surface edge.
+        // σ·√(2π) cells in total (≈ 3 cells), plus generous side margin so
+        // magnified outer icons (Files / Trash) and shelf rim never clip.
         let grown = (MAX_SCALE - 1.0) * SIGMA * (2.0 * std::f32::consts::PI).sqrt();
-        let extra = (grown * m.cell as f32).ceil() as i32 + 2 * m.cell;
+        let extra = (grown * m.cell as f32).ceil() as i32 + 3 * m.cell;
         Spec {
             namespace: "solyra-dock-magnify",
             full_width: false,
@@ -402,12 +402,25 @@ fn draw_floating(
         })
         .collect();
     let content: i32 = sizes.iter().sum::<i32>() + m.gap * (its.len() as i32 - 1).max(0);
-    // Never wider than the surface: with an icon magnified the shelf grows,
-    // and it stays one pixel inside the surface so its rim is never cut.
-    let card_w = (content + m.pad * 2).min(w - 2);
-    let card_x = ((w - card_w) / 2).max(1);
+    // Keep the glass shelf safely inset inside the magnify surface so outer
+    // magnified icons and the glass rim never clip at the surface border.
+    let edge_inset = if magnify { 8 } else { 1 };
+    let max_card_w = (w - edge_inset * 2).max(120);
+    let card_w = (content + m.pad * 2).min(max_card_w);
+    let card_x = ((w - card_w) / 2).max(edge_inset);
 
     let slab = slab_for(live, th.surface);
+    if magnify {
+        // Subtle Cupertino ambient elevation shadow beneath the floating shelf.
+        cv.round_rect(
+            card_x - 1,
+            card_y + 2,
+            card_w + 2,
+            CARD_H - 1,
+            DOCK_R + 1.0,
+            Rgba::rgba(0, 0, 0, 42),
+        );
+    }
     material::paint(cv, &slab, card_x, card_y, card_w, CARD_H, DOCK_R);
     let body = Body {
         x: card_x,

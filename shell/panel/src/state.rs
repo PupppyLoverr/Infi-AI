@@ -852,10 +852,14 @@ pub fn floating_dock_entries(wins: &[WindowInfo]) -> Vec<AppEntry> {
     let candidates = vec![
         (role_binary("files", "solyra-files"), pin("files", role_binary("files", "solyra-files"), "Files", "Browse folders and drives", "solyra-open files")),
         (role_binary("browser", "firefox"), pin("browser", role_binary("browser", "firefox"), "Browser", "Browse the web", "solyra-open browser")),
-        (role_binary("terminal", "foot"), pin("terminal", role_binary("terminal", "foot"), "Terminal", "Command line shell", "solyra-open terminal")),
-        (role_binary("editor", "mousepad"), pin("editor", role_binary("editor", "mousepad"), "Text Editor", "Edit text files", "solyra-open editor")),
-        (role_binary("viewer", "ristretto"), pin("viewer", role_binary("viewer", "ristretto"), "Image Viewer", "Look at photos and pictures", "solyra-open viewer")),
+        (role_binary("mail", "thunderbird"), pin("mail", role_binary("mail", "thunderbird"), "Mail", "Email and messages", "solyra-open mail")),
+        (role_binary("maps", "gnome-maps"), pin("maps", role_binary("maps", "gnome-maps"), "Maps", "Explore places", "solyra-open maps")),
+        (role_binary("viewer", "ristretto"), pin("photos", role_binary("viewer", "ristretto"), "Photos", "Look at photos and pictures", "solyra-open viewer")),
+        (role_binary("editor", "mousepad"), pin("notes", role_binary("editor", "mousepad"), "Notes", "Quick notes and text", "solyra-open editor")),
+        (role_binary("music", "rhythmbox"), pin("music", role_binary("music", "rhythmbox"), "Music", "Play local and streaming audio", "solyra-open music")),
+        (role_binary("appstore", "gnome-software"), pin("appstore", role_binary("appstore", "gnome-software"), "App Store", "Install and update apps", "solyra-open appstore")),
         (role_binary("calculator", "galculator"), pin("calculator", role_binary("calculator", "galculator"), "Calculator", "Do the maths", "solyra-open calculator")),
+        (role_binary("terminal", "foot"), pin("terminal", role_binary("terminal", "foot"), "Terminal", "Command line shell", "solyra-open terminal")),
         ("solyra-settings".to_string(), pin("settings", "solyra-settings".into(), "System Settings", "Appearance, dock, network and more", "solyra-settings")),
     ];
     let items: Vec<AppEntry> = candidates

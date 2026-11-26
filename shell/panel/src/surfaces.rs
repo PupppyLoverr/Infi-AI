@@ -137,9 +137,21 @@ pub fn draw_bar(
     let flip = crate::material::ink_flips(bar_mat, th.bar, prefs.wall_tint);
     if bar_mat == crate::material::Material::Glass {
         if !flip {
-            let scrim = if dark_theme { 26 } else { 34 };
-            let top = Rgba::rgba(0, 0, 0, scrim);
-            cv.fill_rect_vgrad(0, 0, w, h, top, Rgba::rgba(0, 0, 0, 0));
+            if dark_theme {
+                // pearOS / Cupertino dark glass menu bar: smoked translucent band + 1px bottom hairline.
+                cv.fill_rect_vgrad(
+                    0,
+                    0,
+                    w,
+                    h,
+                    Rgba::rgba(16, 16, 20, 96),
+                    Rgba::rgba(16, 16, 20, 52),
+                );
+                cv.fill_rect(0, h - 1, w, 1, Rgba::rgba(255, 255, 255, 22));
+            } else {
+                let top = Rgba::rgba(0, 0, 0, 34);
+                cv.fill_rect_vgrad(0, 0, w, h, top, Rgba::rgba(0, 0, 0, 0));
+            }
         }
     } else {
         crate::material::paint(cv, &slab, 0, 0, w, h, 0.0);
@@ -519,6 +531,31 @@ pub fn draw_bar(
             h,
             action: HitAction::Shell(ShellCmd::ToggleLauncher),
         });
+
+        // pearOS tray overflow chevron (v) left of Search/status icons.
+        let chev_w = 20;
+        let chev_x = search_x - 8 - chev_w;
+        if chev_x > (w / 2) + center_reserved_half {
+            if hovered(hover, chev_x, 0, chev_w, h) {
+                cv.round_rect(chev_x, 2, chev_w, h - 4, 6.0, hover_fill);
+            }
+            let ccx = chev_x as f32 + chev_w as f32 / 2.0;
+            let draw_chev = |cv: &mut Canvas<'_>, cy: f32, col: Rgba| {
+                cv.line(ccx - 3.6, cy - 1.6, ccx, cy + 2.0, 1.35, col);
+                cv.line(ccx, cy + 2.0, ccx + 3.6, cy - 1.6, 1.35, col);
+            };
+            if let Some(sh) = bar_shadow {
+                draw_chev(cv, icon_cy + 1.0, sh);
+            }
+            draw_chev(cv, icon_cy, bar_menu_text);
+            regions.push(Region {
+                x: chev_x,
+                y: 0,
+                w: chev_w,
+                h,
+                action: HitAction::Shell(ShellCmd::ToggleControl),
+            });
+        }
     }
 
     regions
