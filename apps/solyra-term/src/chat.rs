@@ -130,6 +130,9 @@ impl Chat {
                     }
 "result" => {
                         state = "done — send another message".into();
+                        if let Some(cost) = v.get("total_cost_usd").and_then(|c| c.as_f64()) {
+                            state = format!("done — ${cost:.4} this session");
+                        }
                         // A desktop notification: the shell's notification
                         // centre banners it even when the terminal is behind.
                         let _ = std::process::Command::new("notify-send")
