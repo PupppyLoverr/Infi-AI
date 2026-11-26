@@ -1,5 +1,12 @@
 # Changelog
 
+## M3 – Compositor material pass (done)
+- Protocol: presets dark/dock/island/popover/window added to solyra_glass_v1.
+- Compositor shader: per-shape material — adaptive tint (in-shader luminance,
+  no readback), frost, rim light, specular, inner shade.
+- Panel: surfaces mapped to presets; CPU glass paint skipped when the
+  compositor owns the material (fallback kept).
+
 ## Unreleased
 
 ### Liquid Glass (M2)
