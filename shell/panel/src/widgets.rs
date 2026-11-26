@@ -242,7 +242,7 @@ fn calendar(cv: &mut Canvas<'_>, fonts: &Fonts, dark: bool, today: NaiveDate, x:
         CARD,
         CARD,
         RADIUS,
-        Rgba::rgba(bg.0, bg.1, bg.2, bg.3 * 3 / 4),
+        Rgba::rgba(bg.0, bg.1, bg.2, (bg.3 as u16 * 3 / 4) as u8),
     );
     let red = Rgba::rgb(0xff, 0x45, 0x3a);
     let month = today.format("%B").to_string().to_uppercase();
@@ -293,8 +293,8 @@ fn weather_card(
     y: i32,
 ) {
     // Tinted Liquid Glass: the weather blue over the blurred desktop.
-    let top = Rgba::rgba(0x2f, 0x7c, 0xf6, 178);
-    let bottom = Rgba::rgba(0x18, 0x4f, 0xc2, 196);
+    let top = Rgba::rgba(0x1b, 0x5e, 0xd6, 205);
+    let bottom = Rgba::rgba(0x0e, 0x3a, 0x9e, 224);
     cv.round_rect_vgrad(x, y, CARD, CARD, RADIUS, top, bottom);
     crate::material::apple_glass(cv, x, y, CARD, CARD, RADIUS, true);
     let white = Rgba::rgb(255, 255, 255);
