@@ -11,6 +11,14 @@
 //!   `emit spotlight spotlight-query notes`.
 
 mod glass;
+/// The panel's media.rs decodes album art into its canvas icon type;
+/// solyra-web only needs to know whether the bytes are a PNG.
+mod canvas {
+    pub struct Icon;
+    pub fn decode_png(bytes: &[u8]) -> Option<Icon> {
+        bytes.starts_with(b"\x89PNG").then_some(Icon)
+    }
+}
 mod surface;
 mod sys;
 mod term;
@@ -313,7 +321,13 @@ fn main() {
                     let (title, w, h) = if mode == "files" { ("Files", 1080.0, 680.0) } else { ("Terminal", 1100.0, 700.0) };
                     let mut url = format!("index.html#{mode}");
                     if let Some(p) = &extra {
-                        url.push_str(&format!("?path={}", p.replace(' ', "%20")));
+                        // files: a start folder; terminal: layout options
+                        // (`layout=split&sidebar=1&agent=claude`).
+                        if mode == "files" {
+                            url.push_str(&format!("?path={}", p.replace(' ', "%20")));
+                        } else {
+                            url.push_str(&format!("?{p}"));
+                        }
                     }
                     WebviewWindowBuilder::new(app, mode.as_str(), WebviewUrl::App(url.into()))
                         .title(title)

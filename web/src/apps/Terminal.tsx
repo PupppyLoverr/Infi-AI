@@ -15,21 +15,29 @@ import { disposePty, focusPty, XTermPane } from "./term/xterm";
 
 const GLASS = "rgba(14, 26, 26, 0.58)";
 
-function initial(): { tab: Tab; pane: Pane; chat?: Chat } {
-  const agent = location.hash.match(/agent=(claude|codex)/)?.[1] as Harness | undefined;
-  const id = nextId();
-  const pane: Pane = agent ? { id, kind: "agent", harness: agent, view: "chat", pty: null, cwd: null } : { id, kind: "shell", view: "tui", pty: nextId(), cwd: null };
-  return { tab: { id: nextId(), root: { pane: id }, focus: id }, pane, chat: agent ? newChat() : undefined };
+function initial(): { tab: Tab; panes: Pane[]; chat?: Chat; sidebar: boolean } {
+  const h = location.hash;
+  const agent = h.match(/agent=(claude|codex)/)?.[1] as Harness | undefined;
+  const shell = (): Pane => ({ id: nextId(), kind: "shell", view: "tui", pty: nextId(), cwd: null });
+  const first: Pane = agent ? { id: nextId(), kind: "agent", harness: agent, view: "chat", pty: null, cwd: null } : shell();
+  const panes = [first];
+  let root: Node = { pane: first.id };
+  if (/layout=split/.test(h)) {
+    const b = shell(), c = shell();
+    panes.push(b, c);
+    root = { dir: "row", a: root, b: { dir: "col", a: { pane: b.id }, b: { pane: c.id }, split: 0.5 }, split: 0.5 };
+  }
+  return { tab: { id: nextId(), root, focus: first.id }, panes, chat: agent ? newChat() : undefined, sidebar: /sidebar=1/.test(h) };
 }
 
 export function Terminal() {
   const [boot] = useState(initial);
   const [tabs, setTabs] = useState<Tab[]>([boot.tab]);
   const [active, setActive] = useState(boot.tab.id);
-  const [panes, setPanes] = useState<Record<number, Pane & { title?: string }>>({ [boot.pane.id]: boot.pane });
-  const chatsRef = useRef<Record<number, Chat & { prompt?: string }>>(boot.chat ? { [boot.pane.id]: boot.chat } : {});
+  const [panes, setPanes] = useState<Record<number, Pane & { title?: string }>>(Object.fromEntries(boot.panes.map((p) => [p.id, p])));
+  const chatsRef = useRef<Record<number, Chat & { prompt?: string }>>(boot.chat ? { [boot.panes[0].id]: boot.chat } : {});
   const [, setChatsVer] = useState(0);
-  const [sidebar, setSidebar] = useState(false);
+  const [sidebar, setSidebar] = useState(boot.sidebar);
   const [menu, setMenu] = useState(false);
   const [harnesses, setHarnesses] = useState<string[]>([]);
   const [home, setHome] = useState("");
