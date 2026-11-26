@@ -1,5 +1,20 @@
 # Changelog
 
+## solyra-term – harness chat, browser, agents panel (done)
+- Chat mode: Ctrl+Shift+M switches any pane between the raw terminal and a
+  claude stream-json harness chat (bubbles, input pill, session cost in the
+  status line, desktop notification when a turn finishes); the shell stays
+  alive underneath either way.
+- Built-in browser: Ctrl+Shift+B switches a pane to a WebKitGTK web view with
+  an address row — real pages rendered in-process; terminal and browser share
+  workspaces and splits.
+- Agents side panel (Ctrl+Shift+P): the ADE surface — live task cards from
+  the solyra-agent runtime protocol with approve/deny decisions written back
+  through the decisions channel.
+- Fixed: user bubbles no longer wiped by reader snapshots (shared
+  conversation state); zgx apps need a dbus session bus in nested test rigs.
+
+
 ## M5–M7 – Island policy, a11y, overlays (done)
 - Protocol v2: `set_intensity(refraction, frost, contrast)` accessibility
   scales (lens + frost + contrast in the material pass).
