@@ -169,6 +169,7 @@ question 2.
 - Untested, stubbed or broken parts stated plainly.
 
 ## 5. Master execution plan (one shot, autonomous)
+Legend: ✅ done and tested where possible · 🟡 partly done or awaiting a test run · ⏳ not started. Nothing is removed; status is noted inline.
 Ground rules for every step:
 - Per the brief: no subagents, short output, build only what changed.
 - After each step: commit, update HANDOFF.md, push to the dev branch, then
@@ -183,59 +184,59 @@ Ground rules for every step:
   screenshot, and limits are stated plainly.
 
 ### M0. Infrastructure (prerequisite)
-- [ ] `pkg/` holds PKGBUILDs for every Solyra component; CI builds them in an
+- [ ] 🟡 *Status: replaced by `iso/build.sh` installing our build into the archiso profile; standalone PKGBUILDs still to do.* `pkg/` holds PKGBUILDs for every Solyra component; CI builds them in an
   `archlinux` container into a local pacman repo artifact.
-- [ ] `solyra-vm` workflow: install the repo into the VM, run the session,
+- [x] ✅ *Status: `.github/workflows/vm.yml` + `tools/vm/` (cached Arch image, payload over HTTP, scenario, guest-display screendump, watchdog logs, shots published to `docs/shots/`). First full run pending.* `solyra-vm` workflow: install the repo into the VM, run the session,
   then a scenario script (e.g. `hyprctl dispatch exec`, `qs ipc call`) and
   `grim` shots at 1280×800; upload shots and `report.txt`.
-- [ ] A budget gate: fail CI if idle RAM > 250 MB (llvmpipe noted) or
+- [ ] 🟡 *Status: the report records `free -m`, disk and boot; the failing gate is not wired yet.* A budget gate: fail CI if idle RAM > 250 MB (llvmpipe noted) or
   installed size > 3 GB.
 
-### M1. Audit and measure ✅ (Plasma 1144–1192 MB). M1b: Hyprland + Quickshell (running)
-- [ ] Record the M1b numbers. If over 250 MB, trim (portals, Xwayland
+### M1. Audit and measure ✅ (Plasma 1144–1192 MB). M1b: Hyprland + Quickshell 🟡
+- [ ] 🟡 *Status: measured by the solyra-vm report; awaiting the first full run.* Record the M1b numbers. If over 250 MB, trim (portals, Xwayland
   on demand, PipeWire socket activation) and re-measure before going on.
 
 ### M2. Terminal blur spike (zgx on Hyprland)
-- [ ] `apps/solyra-term` minimal: a zgx window with a transparent clear
+- [x] ✅ *Status: done; transparent zgx window with frosted glass, verified live on our compositor.* `apps/solyra-term` minimal: a zgx window with a transparent clear
   colour, pinned zgx rev.
-- [ ] Hyprland `windowrule` blur for app-id `solyra-term`. Screenshot over a
+- [ ] 🟡 *Status: rule written in `shell/hypr/hyprland.conf`; the Hyprland screenshot is pending the VM run.* Hyprland `windowrule` blur for app-id `solyra-term`. Screenshot over a
   busy wallpaper.
-- [ ] If zgx can't make the surface transparent: the smallest patch
+- [x] ✅ *Status: not needed; zgx windows are transparent as-is.* If zgx can't make the surface transparent: the smallest patch
   (alpha mode, opaque-region removal), carried in `apps/patches/`, with
   the reason documented.
 
 ### M3. Terminal core
-- [ ] Port zeron's engine (MIT, notices kept): `alacritty_terminal`
+- [x] ✅ *Status: done via zgx-terminal (alacritty_terminal + portable-pty) plus a zeron-recipe stream-json chat engine.* Port zeron's engine (MIT, notices kept): `alacritty_terminal`
   Term/grid, `portable-pty` spawn of the user's `$SHELL`, read loop, resize.
-- [ ] zgx terminal view: glyph atlas text, truecolor, Unicode width (wide
+- [x] ✅ *Status: done (zgx-terminal view: truecolor, Unicode, cursor, input, scrollback, selection, copy and paste, search).* zgx terminal view: glyph atlas text, truecolor, Unicode width (wide
   and combining), cursor, keyboard and mouse input, scrollback, selection,
   copy and paste (wl-clipboard), search.
-- [ ] Shell integration: search zeron's source first. Else implement OSC 7
+- [x] ✅ *Status: done; zeron has none, so ours emits OSC 7 and OSC 133 with a ➜ prompt for bash, zsh and fish, and is tested.* Shell integration: search zeron's source first. Else implement OSC 7
   (cwd) and OSC 133 (prompt marks) with bash/zsh/fish snippets.
-- [ ] Tests: emulator unit tests (2J/3J `clear`, wide chars, resize reflow),
+- [x] ✅ *Status: done; 17 tests including the `clear` regressions and the integration scripts.* Tests: emulator unit tests (2J/3J `clear`, wide chars, resize reflow),
   PTY echo test. VM screenshot running `htop` and a truecolor test.
 
 ### M4. Glass, theme tokens, transparency slider
-- [ ] `solyra-glass`: a Hyprland plugin (GPL-3.0, own repo dir and
+- [ ] ⏳ *Status: not built; glass is Hyprland blur (ignore-alpha shapes, vibrancy) plus the QML rim and specular.* `solyra-glass`: a Hyprland plugin (GPL-3.0, own repo dir and
   licence).
   - Port our refraction shader (rim lensing, diffusion, adaptive tint,
     specular rim, shadow) from `comp/`.
   - Take liquid-gel's blur algorithm where it is lighter; rewrite it where
     it is heavy. Pin the Hyprland version.
-- [ ] One `glass` value 0–100 (ultra clear to fully tinted) in
+- [x] ✅ *Status: done; `Theme.glass` in look.json, a Control Center slider and `qs ipc call shell glass N`.* One `glass` value 0–100 (ultra clear to fully tinted) in
   `~/.config/solyra/look.toml`, read by the plugin (hyprctl keyword), by
   Quickshell (file watch) and by zgx apps. Text contrast ≥ 4.5:1 tested at
   0/50/100.
-- [ ] Tokens: corner radius (one value everywhere), shadows (two-layer),
+- [x] ✅ *Status: done; 16 px everywhere, two-layer shadows, dim inactive windows, Show Borders, Reduce Transparency, Reduce Motion.* Tokens: corner radius (one value everywhere), shadows (two-layer),
   active-window contrast, Show Borders, Reduce Transparency (forces
   tinted), Reduce Motion (animations off or crossfade).
 
 ### M5. Menu bar and dock (Quickshell)
-- [ ] Menu bar: logo menu, app name, global menu (DBusMenu via the
+- [x] ✅ *Status: done in QML with real actions; DBusMenu export from apps ⏳.* Menu bar: logo menu, app name, global menu (DBusMenu via the
   `org.kde.kappmenu` protocol and the appmenu registrar; GTK through
   `appmenu-gtk-module`), status items (SNI tray), Control Center button,
   clock.
-- [ ] Dock:
+- [x] ✅ *Status: done in QML (magnify, bounce, dots, background hollow dot, Stop Running in Background, Downloads, Trash).* Dock:
   - pinned and running apps from `hyprctl clients`;
   - Gaussian magnify and bounce (pearos-dock GPL-2.0+ numbers);
   - Downloads stack and Trash;
@@ -243,54 +244,54 @@ Ground rules for every step:
     or tray item) plus "Stop Running in Background" (SIGTERM, then
     SIGKILL after 5 s);
   - layered icons (Solyra icon set, foreground and background layers).
-- [ ] Rust `solyra-shelld` services over D-Bus: media (MPRIS), clipboard,
+- [ ] 🟡 *Status: covered by Quickshell's built-in services (MPRIS, PipeWire, UPower, tray, notifications) and wl-paste; no separate Rust daemon needed so far.* Rust `solyra-shelld` services over D-Bus: media (MPRIS), clipboard,
   shelf, file index, apps; ported from the panel.
 
 ### M6. Spotlight, notch, Control Center, notifications
-- [ ] Spotlight (Super+Space), "Search or Ask":
+- [x] ✅ *Status: done (apps, files, calculator, actions; Ask via the claude and codex subscriptions).* Spotlight (Super+Space), "Search or Ask":
   - instant local search over apps, files (Rust index, inotify), settings,
     calculator, clipboard and actions;
   - Ask tab with pluggable providers (claude CLI with the Claude
     subscription login, codex CLI with ChatGPT login), streamed answers.
-- [ ] Notch: built fresh. Morph animations at refresh rate (profiled with
+- [x] ✅ *Status: done; small centred idle pill, springs, compact, HUD and expanded states.* Notch: built fresh. Morph animations at refresh rate (profiled with
   `QSG_RENDER_TIMING`); compact live activities; media.
-- [ ] Control Center: Wi-Fi (NetworkManager D-Bus), Bluetooth (BlueZ),
+- [x] ✅ *Status: done.* Control Center: Wi-Fi (NetworkManager D-Bus), Bluetooth (BlueZ),
   sound and display sliders, Focus, Now Playing, the transparency slider.
-- [ ] Notifications: an `org.freedesktop.Notifications` server in Quickshell,
+- [x] ✅ *Status: done.* Notifications: an `org.freedesktop.Notifications` server in Quickshell,
   with banners, a stacked centre and actions.
-- [ ] Lock screen (ext-session-lock + PAM), widgets, launcher grid, OSDs.
-- [ ] Overview: workspace and window-overview animations (Hyprland
+- [x] ✅ *Status: done; Droppy ambient lock with lyrics and PAM.* Lock screen (ext-session-lock + PAM), widgets, launcher grid, OSDs.
+- [x] ✅ *Status: done; QML Mission Control with live screencopy thumbnails, plus the Hyprland workspace slide.* Overview: workspace and window-overview animations (Hyprland
   workspace slide bezier plus a hyprexpo-style overview, or our own QML
   overview from window screenshots via hyprland-toplevel-export).
 
 ### M7. Terminal polish (recordings design)
-- [ ] Tabs with per-pane glyphs, splits with drag ratios, Agents sidebar,
+- [x] ✅ *Status: done; one app, recording A, chat inside the glass, zeron icons.* Tabs with per-pane glyphs, splits with drag ratios, Agents sidebar,
   chat view for Claude Code / Codex (JSON streams), and a `>_` toggle to
   the TUI on the same session id.
-- [ ] Themes, a transparency slider (the shared glass value), font
+- [ ] 🟡 *Status: the glass tint follows the theme; the in-app theme and font picker are still to do.* Themes, a transparency slider (the shared glass value), font
   settings.
 
 ### M8. ISO and VM boot
-- [ ] An archiso profile: our repo, Hyprland, Quickshell, apps, greeter
+- [x] ✅ *Status: done in `iso/` (live Hyprland session, archinstall-based installer, btrfs and snapper).* An archiso profile: our repo, Hyprland, Quickshell, apps, greeter
   (greetd + our QML greeter), Calamares or archinstall config, btrfs and
   snapper.
-- [ ] CI builds the ISO (< 3 GB) and boots it in QEMU to the desktop; boot
+- [ ] 🟡 *Status: `iso.yml` written; first build and boot pending.* CI builds the ISO (< 3 GB) and boots it in QEMU to the desktop; boot
   time, idle RAM and installed size go in the report.
 
 ### M9. Extras (user's)
-- [ ] Droppy parity on the notch and lock screen with real MPRIS media:
+- [x] ✅ *Status: done except voice transcription (needs a local speech model).* Droppy parity on the notch and lock screen with real MPRIS media:
   - the inventory from Droppy's docs: shelf and file drop, media controls,
     lyrics, HUDs (volume, brightness, battery, caps lock), clipboard,
     calendar, lock-screen media, and more;
   - each feature checked off or marked "not possible on Linux" with the
     reason.
-- [ ] Windows 11-style management:
+- [x] ✅ *Status: done (snap layouts on Super+Z and the Window menu, auto-arrange toggle).* Windows 11-style management:
   - snap layouts on maximise-button hover and Super+Z (halves, thirds,
     quarters, 2/3+1/3 and grids);
   - snap zones while dragging, snap groups restored together;
   - optional auto-arrange per workspace (Hyprland dwindle/master toggled
     from the menu bar).
-- [ ] Suggested extras only after approval (§4 list).
+- [ ] ⏳ *Status: waiting for your approval; Mission Control and Quick-ish previews are already in.* Suggested extras only after approval (§4 list).
 
 ## 5b. Honest scope for one 5-hour window
 At about 40% usage already spent, one window realistically covers

@@ -222,10 +222,29 @@ impl Chat {
                         {
                             let mut text = String::new();
                             for block in content {
-                                if block.get("type").and_then(|t| t.as_str()) == Some("text") {
-                                    if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
-                                        text.push_str(t);
+                                match block.get("type").and_then(|t| t.as_str()) {
+                                    Some("text") => {
+                                        if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
+                                            text.push_str(t);
+                                        }
                                     }
+                                    // Tool calls show as one-line rows (name + target).
+                                    Some("tool_use") => {
+                                        let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("Tool");
+                                        let input = block.get("input");
+                                        let detail = ["command", "file_path", "path", "pattern", "url", "description"]
+                                            .iter()
+                                            .find_map(|k| input.and_then(|i| i.get(*k)).and_then(|v| v.as_str()))
+                                            .unwrap_or("")
+                                            .chars()
+                                            .take(120)
+                                            .collect::<String>();
+                                        if let Ok(mut c) = convo.lock() {
+                                            c.push(Bubble { role: "tool", text: format!("{name}\u{1f}{detail}") });
+                                        }
+                                        state = "Working".into();
+                                    }
+                                    _ => {}
                                 }
                             }
                             state = "Writing".into();

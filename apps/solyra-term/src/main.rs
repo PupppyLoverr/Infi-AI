@@ -157,6 +157,9 @@ struct TermApp {
     menu_open: zgx::reactive::Signal<bool>,
     /// One-second clock for "Writing… Ns" and the sidebar.
     tick: zgx::reactive::Signal<u32>,
+    /// Agent panes that finished a turn while you were elsewhere.
+    attention: Rc<RefCell<std::collections::HashSet<String>>>,
+    busy_before: Rc<RefCell<HashMap<String, bool>>>,
 }
 
 impl TermApp {
@@ -830,13 +833,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 chat_opts: Rc::default(),
                 menu_open: rt.signal(false),
                 tick: rt.signal(0),
+                attention: Rc::default(),
+                busy_before: Rc::default(),
             };
             {
-                let tick = app.tick.clone();
+                let watch = app.clone();
                 cx.tasks.spawn(async move {
                     loop {
                         zgx::timer::sleep(Duration::from_secs(1)).await;
-                        tick.update(|n| *n = n.wrapping_add(1));
+                        // A chat that went from busy to idle in a pane you are
+                        // not looking at gets the blue "done" dot.
+                        let focused = watch.session.borrow().active().map(|w| w.focused.clone()).unwrap_or_default();
+                        let mut changed = false;
+                        for (id, c) in watch.chats.borrow().iter() {
+                            let busy = !c.status.get().is_empty();
+                            let was = watch.busy_before.borrow_mut().insert(id.clone(), busy).unwrap_or(false);
+                            if was && !busy && *id != focused {
+                                watch.attention.borrow_mut().insert(id.clone());
+                                changed = true;
+                            }
+                        }
+                        if watch.attention.borrow_mut().remove(&focused) {
+                            changed = true;
+                        }
+                        if changed {
+                            watch.bump();
+                        }
+                        watch.tick.update(|n| *n = n.wrapping_add(1));
                     }
                 });
             }
@@ -854,6 +877,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     w.focused = "pane-1".into();
                 }
                 app.bump();
+            }
+            if std::env::var("SOLYRA_TERM_TABS").is_ok() {
+                // Screenshot aid: a second tab, then back to the first.
+                app.new_workspace();
+                if let Some(w) = app.session.borrow_mut().workspaces.first() {
+                    let _ = w;
+                }
+                app.session.borrow_mut().active = 0;
+                app.show_active();
             }
             if std::env::var("SOLYRA_TERM_LAYOUT").as_deref() == Ok("split") {
                 app.split(SplitDir::Vertical);

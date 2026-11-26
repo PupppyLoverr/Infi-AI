@@ -261,6 +261,25 @@ impl TermApp {
             pill = pill.child(glyph(&self.kind(id), 14.));
         }
         pill = pill.child(text(self.pane_title(focused)).text_size(13.).max_w(200.).pl(3.));
+        if ids.iter().any(|id| self.attention.borrow().contains(id)) {
+            pill = pill.child(div().w(6.).h(6.).rounded(3.).bg(Color(10, 132, 255, 255)));
+        }
+        if on && self.session.borrow().workspaces.len() > 1 {
+            let (app, name) = (self.clone(), name.to_string());
+            pill = pill.child(
+                button()
+                    .w(16.)
+                    .h(16.)
+                    .p(0.)
+                    .rounded(8.)
+                    .border(0.)
+                    .bg(Color(255, 255, 255, 20))
+                    .items_center()
+                    .justify_center()
+                    .child(text("×").text_size(12.).text_color(Color(200, 208, 205, 255)))
+                    .on_click(move || app.close_workspace(&name)),
+            );
+        }
         let (app, name) = (self.clone(), name.to_string());
         button().border(0.).p(0.).bg(Color(0, 0, 0, 0)).child(pill).on_click(move || {
             let idx = app.session.borrow().workspaces.iter().position(|w| w.name == name);
@@ -325,6 +344,8 @@ impl TermApp {
                         let state = match app.chats.borrow().get(&id).map(|c| c.status.get()) {
                             Some(p) if p == "Writing" => "Writing",
                             Some(p) if p == "Thinking" => "Thinking",
+                            Some(p) if p == "Working" => "Working",
+                            _ if app.attention.borrow().contains(&id) => "Done",
                             _ => "Idle",
                         };
                         rows.push((w.name.clone(), id.clone(), kind, state, app.pane_dir(&id)));
@@ -350,6 +371,7 @@ impl TermApp {
                         Kind::Shell => String::new(),
                     };
                     let busy = state != "Idle";
+                    let done = state == "Done";
                     let a = app.clone();
                     let card = row()
                         .w_full()
@@ -378,7 +400,7 @@ impl TermApp {
                                                 .h(7.)
                                                 .rounded(4.)
                                                 .border(if busy { 0. } else { 1.3 })
-                                                .bg(if busy { Color(126, 231, 135, 255) } else { Color(0, 0, 0, 0) })
+                                                .bg(if done { Color(10, 132, 255, 255) } else if busy { Color(126, 231, 135, 255) } else { Color(0, 0, 0, 0) })
                                                 .reactive_style(|| Styles::new().border_color(Color(141, 152, 148, 255))),
                                         )
                                         .child(text(format!("{state} · {dir}")).text_size(12.).text_color(Color(141, 152, 148, 255))),
@@ -395,6 +417,27 @@ impl TermApp {
                         }
                         a.show_active();
                     }));
+                }
+                {
+                    let a = app.clone();
+                    col = col.child(
+                        button()
+                            .w_full()
+                            .mt(6.)
+                            .px(8.)
+                            .py(7.)
+                            .rounded(10.)
+                            .border(0.)
+                            .bg(Color(255, 255, 255, 14))
+                            .child(
+                                row()
+                                    .gap(8.)
+                                    .items_center()
+                                    .child(icons::icon("plus", 14., Color(201, 211, 207, 255)))
+                                    .child(text("New agent").text_size(13.).text_color(Color(201, 211, 207, 255))),
+                            )
+                            .on_click(move || a.new_agent_tab("claude")),
+                    );
                 }
                 // Runtime tasks (approvals) from solyra-agent, when there are any.
                 if !crate::sidepanel::scan().is_empty() {
@@ -437,7 +480,22 @@ impl TermApp {
                             text(b.text).text_size(16.).text_color(INK).px(16.).py(10.).rounded(16.).bg(Color(255, 255, 255, 26)).max_w(520.),
                         ),
                         "error" => text(b.text).text_size(13.).text_color(Color(255, 143, 143, 255)),
-                        _ => text(b.text).text_size(15.).line_height(1.55).text_color(Color(232, 232, 232, 255)),
+                        "tool" => {
+                            let (name, detail) = b.text.split_once('\u{1f}').map(|(a, b)| (a.to_string(), b.to_string())).unwrap_or((b.text.clone(), String::new()));
+                            row()
+                                .gap(8.)
+                                .items_center()
+                                .child(div().w(7.).h(7.).rounded(4.).bg(Color(126, 231, 135, 255)))
+                                .child(text(name).text_size(13.).font_weight(600).font_family("JetBrains Mono").text_color(Color(214, 222, 219, 255)))
+                                .child(text(detail).text_size(13.).font_family("JetBrains Mono").text_color(Color(150, 160, 157, 255)).truncate())
+                        }
+                        // Claude's own style: a bullet, then the reply.
+                        _ => row()
+                            .w_full()
+                            .gap(10.)
+                            .items_start()
+                            .child(text("●").text_size(11.).text_color(Color(232, 232, 232, 255)).pt(5.))
+                            .child(text(b.text).text_size(15.).line_height(1.55).text_color(Color(232, 232, 232, 255)).grow()),
                     });
                 }
                 row().w_full().justify_center().px(24.).child(col)
@@ -450,6 +508,7 @@ impl TermApp {
                 match st.get().as_str() {
                     "Writing" => format!("Writing… {}s", since.get().elapsed().as_secs()),
                     "Thinking" => "Thinking…".into(),
+                    "Working" => "Working…".into(),
                     "" => String::new(),
                     other => other.to_string(),
                 }
