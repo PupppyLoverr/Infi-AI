@@ -15,7 +15,7 @@
     compositor's previous behaviour.
   </description>
 
-  <interface name="solyra_glass_manager_v1" version="1">
+  <interface name="solyra_glass_manager_v1" version="2">
     <description summary="glass shape manager"/>
 
     <enum name="error">
@@ -39,7 +39,7 @@
     </request>
   </interface>
 
-  <interface name="solyra_glass_surface_v1" version="1">
+  <interface name="solyra_glass_surface_v1" version="2">
     <description summary="glass shapes of one surface">
       Double-buffered: reset and add_shape change pending state, which is
       applied atomically with the next wl_surface.commit, so the glass shape
@@ -60,11 +60,18 @@
 
     <enum name="preset">
       <description summary="material preset">
-        How the compositor treats the backdrop under a shape.
+        How the compositor treats the backdrop under a shape. Values 0–2 are
+        the v1 presets; 3–7 are material looks. Unknown values raise
+        invalid_preset.
       </description>
       <entry name="clear" value="0" summary="light frost, full lensing"/>
       <entry name="regular" value="1" summary="regular frost, softer lensing"/>
       <entry name="solid" value="2" summary="clipped, no lensing"/>
+      <entry name="dark" value="3" summary="dark-tinted glass, full lensing"/>
+      <entry name="dock" value="4" summary="adaptive dock material"/>
+      <entry name="island" value="5" summary="dark adaptive island material"/>
+      <entry name="popover" value="6" summary="light popover material"/>
+      <entry name="window" value="7" summary="faint window material"/>
     </enum>
 
     <request name="destroy" type="destructor">
@@ -91,6 +98,17 @@
       <arg name="height" type="int"/>
       <arg name="radius" type="uint"/>
       <arg name="preset" type="uint" enum="preset"/>
+    </request>
+
+    <request name="set_intensity" since="2">
+      <description summary="scale refraction and frost for this surface">
+        100 is the preset's native strength. 0 disables lensing and frost.
+        Values above 200 are clamped. Applied with the next commit. Used by
+        accessibility sliders (reduced transparency, refraction, blur).
+      </description>
+      <arg name="refraction" type="uint" summary="percent, 100 = 1.0"/>
+      <arg name="frost" type="uint" summary="percent, 100 = 1.0"/>
+      <arg name="contrast" type="uint" summary="percent, 100 = 1.0"/>
     </request>
   </interface>
 </protocol>

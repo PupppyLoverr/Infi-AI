@@ -184,8 +184,22 @@ layer-rule {
     }
 }
 
+// Magnified dock uses a taller surface; keep the same clear Liquid Glass
+// lensing as the resting dock so hover does not drop the material.
 layer-rule {
-    match namespace=r#"^solyra-(taskbar|dock-magnify|dock-hidden|notch)(\..+)?$"#
+    match namespace=r#"^solyra-dock-magnify(\..+)?$"#
+    geometry-corner-radius 22
+    background-effect {
+        xray false
+        blur-passes 2
+        blur-offset 2.5
+        refraction 11
+        refraction-radius 22
+    }
+}
+
+layer-rule {
+    match namespace=r#"^solyra-(taskbar|dock-hidden|notch)(\..+)?$"#
     background-effect {
         xray false
     }
@@ -208,6 +222,10 @@ layer-rule {
         noise 0.06
     }
 }
+
+// Accessibility glass scales from Settings / the panel (protocol v2 is the
+// live path; this file is watched so blur-passes and refraction update too).
+include "~/.config/solyra/glass.kdl" optional=true
 
 // Spotlight is a capsule and a results card on one transparent surface. The
 // panel paints their shadow and asks for blur behind just those two shapes
@@ -247,6 +265,27 @@ layer-rule {
         blur true
         xray false
         refraction 10
+        refraction-radius 20
+    }
+}
+
+layer-rule {
+    match namespace="^solyra-menu$"
+    background-effect {
+        blur true
+        xray false
+        refraction 9
+        refraction-radius 10
+    }
+}
+
+layer-rule {
+    match namespace="^solyra-notifs$"
+    geometry-corner-radius 20
+    background-effect {
+        blur true
+        xray false
+        refraction 8
         refraction-radius 20
     }
 }

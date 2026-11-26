@@ -761,11 +761,18 @@ pub fn windows() -> Vec<WindowInfo> {
 }
 
 pub fn focused_app_menus(wins: &[WindowInfo]) -> (String, &'static [&'static str]) {
-    if let Some(w) = wins.iter().find(|w| w.is_focused) {
+    // Prefer the compositor's focused window; if focus sits on a layer-shell
+    // surface (menubar, dock, island), fall back to the sole open window so
+    // the Golden Gate menubar still shows Finder / Terminal.
+    let w = wins
+        .iter()
+        .find(|w| w.is_focused)
+        .or_else(|| (wins.len() == 1).then(|| &wins[0]));
+    if let Some(w) = w {
         let lower = w.app_id.to_ascii_lowercase();
-        if lower.contains("thunar") || lower.contains("files") {
+        if lower.contains("thunar") || lower.contains("files") || lower.contains("finder") {
             return (
-                "Files".into(),
+                "Finder".into(),
                 &["File", "Edit", "View", "Go", "Window", "Help"],
             );
         }
@@ -787,7 +794,7 @@ pub fn pretty_app_name(app_id: &str) -> String {
     let base = app_id.rsplit('.').next().unwrap_or(app_id);
     match base.to_ascii_lowercase().as_str() {
         "foot" => "Terminal".into(),
-        "thunar" => "Files".into(),
+        "thunar" | "solyra-files" | "files" => "Finder".into(),
         _ => {
             let mut s = base.to_string();
             if let Some(f) = s.get_mut(0..1) {
@@ -843,16 +850,19 @@ pub fn role_binary(role: &str, fallback: &str) -> String {
     fallback.to_string()
 }
 
-/// Is `bin` on `PATH`? Pinned apps that are not installed are left out of the
-/// dock rather than shown as icons that do nothing. Tests and previews see
-/// every pin, so the dock renders the same everywhere.
+/// Is `bin` on `PATH`? Optional pin lists can hide missing apps. The Golden
+/// Gate floating dock always shows its curated set (bundled icons), so it
+/// does not gate on this; other styles and Settings helpers still may.
+#[allow(dead_code)]
 pub fn pin_available(bin: &str) -> bool {
     cfg!(test) || on_path(bin)
 }
 
-/// The floating dock's pins, in the pearOS / macOS order: Files, then the
-/// apps people use every day, Settings last. The launcher goes in after
-/// Files (see `dock::items`).
+/// The floating dock's pins in the macOS Golden Gate / pearOS order:
+/// Finder, Safari, Mail, Maps, Photos, Notes, Music, App Store, Calculator,
+/// Terminal, Settings. The Launchpad cell is inserted after Finder in
+/// `dock::items`. Curated pins always show (bundled icons); missing
+/// binaries still launch via `solyra-open` so the silhouette stays complete.
 pub fn floating_dock_entries(wins: &[WindowInfo]) -> Vec<AppEntry> {
     let pin = |role: &str, bin: String, title: &str, subtitle: &str, open: &str| AppEntry {
         window: None,
@@ -864,83 +874,85 @@ pub fn floating_dock_entries(wins: &[WindowInfo]) -> Vec<AppEntry> {
         subtitle: subtitle.into(),
         command: LaunchTarget::Shell(open.into()),
     };
-    let candidates = vec![
-        (
+    let items = vec![
+        pin(
+            "files",
             role_binary("files", "solyra-files"),
-            pin(
-                "files",
-                role_binary("files", "solyra-files"),
-                "Files",
-                "Browse folders and drives",
-                "solyra-open files",
-            ),
+            "Finder",
+            "Browse folders and drives",
+            "solyra-open files",
         ),
-        (
+        pin(
+            "browser",
             role_binary("browser", "firefox"),
-            pin(
-                "browser",
-                role_binary("browser", "firefox"),
-                "Browser",
-                "Browse the web",
-                "solyra-open browser",
-            ),
+            "Safari",
+            "Browse the web",
+            "solyra-open browser",
         ),
-        (
-            role_binary("terminal", "foot"),
-            pin(
-                "terminal",
-                role_binary("terminal", "foot"),
-                "Terminal",
-                "Command line shell",
-                "solyra-open terminal",
-            ),
+        pin(
+            "mail",
+            role_binary("mail", "thunderbird"),
+            "Mail",
+            "Read and write email",
+            "solyra-open mail",
         ),
-        (
-            role_binary("editor", "mousepad"),
-            pin(
-                "editor",
-                role_binary("editor", "mousepad"),
-                "Text Editor",
-                "Edit text files",
-                "solyra-open editor",
-            ),
+        pin(
+            "maps",
+            role_binary("maps", "gnome-maps"),
+            "Maps",
+            "Find places nearby",
+            "solyra-open maps",
         ),
-        (
-            role_binary("viewer", "ristretto"),
-            pin(
-                "viewer",
-                role_binary("viewer", "ristretto"),
-                "Image Viewer",
-                "Look at photos and pictures",
-                "solyra-open viewer",
-            ),
+        pin(
+            "photos",
+            role_binary("photos", "ristretto"),
+            "Photos",
+            "Look at your pictures",
+            "solyra-open photos",
         ),
-        (
+        pin(
+            "notes",
+            role_binary("notes", "mousepad"),
+            "Notes",
+            "Jot things down",
+            "solyra-open notes",
+        ),
+        pin(
+            "music",
+            role_binary("music", "rhythmbox"),
+            "Music",
+            "Play your library",
+            "solyra-open music",
+        ),
+        pin(
+            "appstore",
+            role_binary("appstore", "gnome-software"),
+            "App Store",
+            "Find and install apps",
+            "solyra-open appstore",
+        ),
+        pin(
+            "calculator",
             role_binary("calculator", "galculator"),
-            pin(
-                "calculator",
-                role_binary("calculator", "galculator"),
-                "Calculator",
-                "Do the maths",
-                "solyra-open calculator",
-            ),
+            "Calculator",
+            "Do the maths",
+            "solyra-open calculator",
         ),
-        (
-            "solyra-settings".to_string(),
-            pin(
-                "settings",
-                "solyra-settings".into(),
-                "System Settings",
-                "Appearance, dock, network and more",
-                "solyra-settings",
-            ),
+        pin(
+            "terminal",
+            role_binary("terminal", "foot"),
+            "Terminal",
+            "Command line shell",
+            "solyra-open terminal",
+        ),
+        pin(
+            "settings",
+            "solyra-settings".into(),
+            "System Settings",
+            "Appearance, dock, network and more",
+            "solyra-settings",
         ),
     ];
-    let items: Vec<AppEntry> = candidates
-        .into_iter()
-        .filter(|(bin, _)| pin_available(bin))
-        .map(|(_, e)| e)
-        .collect();
     merge_windows(items, wins)
 }
 
@@ -987,7 +999,7 @@ pub fn dock_entries(wins: &[WindowInfo]) -> Vec<AppEntry> {
             is_focused: false,
             app_id: files_bin.clone(),
             role: "files".into(),
-            title: "Files".into(),
+            title: "Finder".into(),
             subtitle: "Browse folders and drives".into(),
             command: LaunchTarget::Shell("solyra-open files".into()),
         },
@@ -1070,7 +1082,7 @@ pub fn catalog_apps() -> Vec<AppEntry> {
             is_focused: false,
             app_id: files_bin.clone(),
             role: "files".into(),
-            title: "Files".into(),
+            title: "Finder".into(),
             subtitle: "Browse local and mounted storage".into(),
             command: LaunchTarget::Shell("solyra-open files".into()),
         },

@@ -1,6 +1,9 @@
 uniform float noise;
 uniform float saturation;
 uniform vec4 bg_color;
+// 1.0 when the texture carries linear-light values (blurred glass): the
+// whole pipeline above worked in linear, encode back to sRGB at output.
+uniform float linear_encode;
 
 // Sin-less white noise by David Hoskins (MIT License).
 // https://www.shadertoy.com/view/4djSRW
@@ -27,6 +30,10 @@ vec4 postprocess(vec4 color) {
 
     // Mix bg_color behind the texture (both premultiplied alpha).
     color = color + bg_color * (1.0 - color.a);
+
+    if (linear_encode > 0.5) {
+        color.rgb = pow(max(color.rgb, vec3(0.0)), vec3(1.0 / 2.2));
+    }
 
     return color;
 }

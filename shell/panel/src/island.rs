@@ -217,8 +217,9 @@ impl Anim {
             self.cur = self.to;
             return false;
         }
-        // Critically-damped feel: fast at first, settling without overshoot.
-        let k = 1.0 - (-dt * 16.0).exp();
+        // Critically damped spring (ω ≈ 18): no overshoot, settles in ~120–180 ms
+        // for a 6 px hover widen and ~250 ms for a full expansion.
+        let k = 1.0 - (-dt * 18.0).exp();
         let lerp = |a: f32, b: f32| a + (b - a) * k;
         self.cur = Shape {
             w: lerp(self.cur.w, self.to.w),
@@ -226,16 +227,27 @@ impl Anim {
             y: lerp(self.cur.y, self.to.y),
             r: lerp(self.cur.r, self.to.r),
         };
-        let close = |a: f32, b: f32| (a - b).abs() < 0.6;
+        let close = |a: f32, b: f32| (a - b).abs() < 0.4;
         if close(self.cur.w, self.to.w)
             && close(self.cur.h, self.to.h)
             && close(self.cur.y, self.to.y)
+            && close(self.cur.r, self.to.r)
         {
             self.cur = self.to;
             false
         } else {
             true
         }
+    }
+
+    /// 0 at rest far from the target, 1 when settled. Content fades in after 0.6.
+    pub fn morph_t(&self) -> f32 {
+        let remain = (self.cur.w - self.to.w)
+            .abs()
+            .max((self.cur.h - self.to.h).abs())
+            .max((self.cur.r - self.to.r).abs());
+        let span = self.to.w.max(self.to.h).max(48.0);
+        (1.0 - (remain / span).clamp(0.0, 1.0)).clamp(0.0, 1.0)
     }
 
     pub fn moving(&self) -> bool {
@@ -293,6 +305,16 @@ pub struct Extra<'a> {
     pub typing: bool,
     /// Smoked Liquid Glass over the compositor's blur instead of hardware black.
     pub glass: bool,
+    /// A lower-priority live activity shown as a small indicator, never dropped.
+    pub badge: Option<LiveBadge>,
+}
+
+/// Compact secondary activity while a higher-priority card owns the island.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LiveBadge {
+    Media,
+    Activity,
+    Message,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -373,12 +395,20 @@ pub fn draw(
     });
 
     let settled = !anim.moving();
-    let to = anim.to;
-    // Draw content only once the shape is (nearly) its final size, so text
-    // never spills outside it mid-animation.
-    let fits = (s.w - to.w).abs() < 10.0 && (s.h - to.h).abs() < 10.0;
-    if !(settled || fits) {
+    // Content cross-fades in the last ~40 % of a morph so glyphs never sit
+    // on a shrinking pill. Reduced motion snaps, so this is always 1.
+    if anim.morph_t() < 0.6 && !settled {
         return regions;
+    }
+    if let Some(badge) = extra.badge {
+        let bx = xi + wi - 14;
+        let by = yi + 10;
+        let col = match badge {
+            LiveBadge::Media => Rgba::rgb(0x32, 0xd7, 0x4b),
+            LiveBadge::Activity => Rgba::rgb(0x0a, 0x84, 0xff),
+            LiveBadge::Message => Rgba::rgb(0xff, 0x9f, 0x0a),
+        };
+        cv.circle(bx as f32, by as f32, 3.5, col);
     }
 
     if expanded {
@@ -1409,5 +1439,63 @@ mod tests {
             Some(HitAction::Shell(ShellCmd::ToggleIsland))
         ));
         assert!(pick(&regions, 500.0, 5.0).is_none());
+    }
+
+    #[test]
+    fn hover_widen_is_six_pixels_on_the_idle_pill() {
+        let idle = target(NotchStyle::Island, &Content::Idle, false);
+        assert_eq!(idle.w + 6.0, 216.0);
+        let expanded = target(NotchStyle::Island, &Content::Idle, true);
+        assert!(expanded.w > idle.w + 6.0);
+    }
+
+    #[test]
+    fn spring_does_not_overshoot_and_morph_t_gates_content() {
+        let a = target(NotchStyle::Island, &Content::Idle, false);
+        let mut hover = a;
+        hover.w += 6.0;
+        let mut an = Anim::new(a);
+        an.to = hover;
+        // A 6 px hover is a tiny morph: content stays visible (morph_t high).
+        assert!(an.morph_t() > 0.9, "hover does not hide content");
+        let mut prev = a.w;
+        let mut frames = 0;
+        while an.step(1.0 / 60.0, false) {
+            frames += 1;
+            assert!(an.cur.w >= prev - 0.01, "no overshoot backward");
+            assert!(an.cur.w <= hover.w + 0.01, "no overshoot past target");
+            prev = an.cur.w;
+            assert!(frames < 40, "hover widen should settle in ~120–180 ms");
+        }
+        assert_eq!(an.cur, hover);
+        assert_eq!(an.morph_t(), 1.0);
+        assert!(frames > 3);
+
+        // A large expand (idle → media card) starts below the 0.6 content gate.
+        let media = Content::Media(crate::media::Media {
+            bus: "x".into(),
+            title: "Clair de Lune".into(),
+            artist: "Debussy".into(),
+            playing: true,
+            position_us: Some(15_000_000),
+            length_us: Some(203_000_000),
+        });
+        let open = target(NotchStyle::Island, &media, true);
+        an = Anim::new(a);
+        an.to = open;
+        assert!(
+            an.morph_t() < 0.6,
+            "full expand starts gated: {}",
+            an.morph_t()
+        );
+        while an.step(1.0 / 60.0, false) {}
+        assert_eq!(an.cur, open);
+        assert_eq!(an.morph_t(), 1.0);
+    }
+
+    #[test]
+    fn secondary_badge_kinds_are_distinct() {
+        assert_ne!(LiveBadge::Media, LiveBadge::Activity);
+        assert_ne!(LiveBadge::Activity, LiveBadge::Message);
     }
 }

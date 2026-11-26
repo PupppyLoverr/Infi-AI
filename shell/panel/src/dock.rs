@@ -182,7 +182,7 @@ fn items<'a>(style: DockStyle, entries: &'a [AppEntry], weather: bool) -> Vec<It
             }
             v.push(Item::Clock);
         }
-        // pearOS order: Files, the launcher, the apps, the agents, then a
+        // Golden Gate / pearOS order: Finder, Launchpad, apps, Agents, then a
         // separator, the Downloads stack and the Trash.
         DockStyle::Macos => {
             for (i, e) in entries.iter().enumerate() {
@@ -1201,7 +1201,24 @@ mod tests {
     #[test]
     fn floating_dock_follows_the_pearos_order() {
         let e = crate::state::floating_dock_entries(&[]);
-        assert_eq!(e[0].role, "files", "Files first");
+        assert_eq!(e[0].role, "files", "Finder first");
+        assert_eq!(e[0].title, "Finder");
+        assert_eq!(
+            e.iter().map(|x| x.role.as_str()).collect::<Vec<_>>(),
+            [
+                "files",
+                "browser",
+                "mail",
+                "maps",
+                "photos",
+                "notes",
+                "music",
+                "appstore",
+                "calculator",
+                "terminal",
+                "settings",
+            ]
+        );
         assert_eq!(e.last().unwrap().role, "settings", "Settings last");
         let its = items(DockStyle::Macos, &e, false);
         assert!(matches!(its[1], Item::Start), "the launcher second");

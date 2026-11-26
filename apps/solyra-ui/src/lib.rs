@@ -69,7 +69,7 @@ impl Style {
         } else {
             Rgba(0xec, 0xe8, 0xf0, 255)
         };
-        with_alpha(base, if self.glass { 150 } else { 255 })
+        with_alpha(base, if self.glass { 128 } else { 255 })
     }
 
     /// Cards and grouped rows inside the content.

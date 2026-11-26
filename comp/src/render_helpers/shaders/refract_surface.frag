@@ -37,7 +37,10 @@ uniform vec4 shape2;
 uniform vec4 shape3;
 uniform vec4 shape_radius;
 uniform vec4 shape_lens;
+uniform vec4 shape_preset;
 uniform float shape_count;
+// Accessibility: refraction / frost / contrast scales (1.0 = native).
+uniform vec4 mat_intensity;
 
 uniform vec2 geo_size;
 uniform vec4 corner_radius;
@@ -67,14 +70,43 @@ float box_sdf(vec4 box, float radius, vec2 p, out vec2 n) {
 
 // Keep the nearer shape. Strict `<` keeps the earlier shape on ties, so
 // overlaps resolve deterministically to the shape added first.
-void nearer(vec4 box, float radius, float strength, vec2 p,
-            inout float best, inout vec2 best_n, inout float best_k) {
+void nearer(vec4 box, float radius, float strength, float preset, vec2 p,
+            inout float best, inout vec2 best_n, inout float best_k, inout float best_p) {
     vec2 n;
     float d = box_sdf(box, radius, p, n);
     if (d < best) {
         best = d;
         best_n = n;
         best_k = strength;
+        best_p = preset;
+    }
+}
+
+// Material parameters per preset (solyra_glass_v1): tint colour and
+// strength, rim-light intensity, specular intensity, inner shade, frost
+// (extra milky desaturation). Tuned against the macOS reference.
+void material_for(float preset, out vec3 tint, out float tint_str,
+                  out float rim, out float spec, out float shade, out float frost) {
+    tint = vec3(1.0);
+    tint_str = 0.05;
+    rim = 0.30;
+    spec = 0.45;
+    shade = 0.10;
+    frost = 0.0;
+    if (preset > 0.5 && preset < 1.5) {        // regular
+        tint_str = 0.12; rim = 0.25; spec = 0.30; shade = 0.14; frost = 0.18;
+    } else if (preset > 1.5 && preset < 2.5) { // solid
+        tint = vec3(0.92); tint_str = 0.55; rim = 0.08; spec = 0.04; shade = 0.05;
+    } else if (preset > 2.5 && preset < 3.5) { // dark
+        tint = vec3(0.02); tint_str = 0.30; rim = 0.30; spec = 0.35; shade = 0.10;
+    } else if (preset > 3.5 && preset < 4.5) { // dock: adaptive strength below
+        tint_str = 0.10; rim = 0.35; spec = 0.50; shade = 0.12;
+    } else if (preset > 4.5 && preset < 5.5) { // island
+        tint = vec3(0.02); tint_str = 0.42; rim = 0.35; spec = 0.45; shade = 0.08;
+    } else if (preset > 5.5 && preset < 6.5) { // popover
+        tint_str = 0.18; rim = 0.22; spec = 0.25; shade = 0.12; frost = 0.25;
+    } else if (preset > 6.5) {                 // window
+        tint_str = 0.06; rim = 0.18; spec = 0.20; shade = 0.08; frost = 0.08;
     }
 }
 
@@ -90,14 +122,15 @@ void main() {
     float d = 1.0;
     vec2 n = vec2(0.0);
     float k = 0.0;
+    float prst = -1.0;
     if (shape_count > 0.5) {
         // Analytic shapes (solyra_glass_v1): the union of the boxes is the
         // glass; lensing follows the nearest edge.
         float best = 1e9;
-        nearer(shape0, shape_radius.x, shape_lens.x, p, best, n, k);
-        if (shape_count > 1.5) nearer(shape1, shape_radius.y, shape_lens.y, p, best, n, k);
-        if (shape_count > 2.5) nearer(shape2, shape_radius.z, shape_lens.z, p, best, n, k);
-        if (shape_count > 3.5) nearer(shape3, shape_radius.w, shape_lens.w, p, best, n, k);
+        nearer(shape0, shape_radius.x, shape_lens.x, shape_preset.x, p, best, n, k, prst);
+        if (shape_count > 1.5) nearer(shape1, shape_radius.y, shape_lens.y, shape_preset.y, p, best, n, k, prst);
+        if (shape_count > 2.5) nearer(shape2, shape_radius.z, shape_lens.z, shape_preset.z, p, best, n, k, prst);
+        if (shape_count > 3.5) nearer(shape3, shape_radius.w, shape_lens.w, shape_preset.w, p, best, n, k, prst);
         d = best;
         // One logical pixel of antialiasing on the shape's edge.
         glass_cov = clamp(0.5 - d, 0.0, 1.0);
@@ -122,6 +155,59 @@ void main() {
     } else {
         color = texture2D(tex, v_coords);
     }
+    // Material pass (solyra_glass_v1 shapes only): adaptive tint, frost,
+    // rim light, specular streak and inner shade, all inside the glass.
+    if (shape_count > 0.5 && prst >= 0.0 && d < 0.0) {
+        vec3 tint;
+        float tint_str, rim, spec, shade, frost;
+        material_for(prst, tint, tint_str, rim, spec, shade, frost);
+        float frost_s = max(mat_intensity.y, 0.0);
+        float contrast_s = max(mat_intensity.z, 0.5);
+        tint_str *= mix(1.0, contrast_s, 0.5);
+        frost *= frost_s;
+        rim *= mix(1.0, contrast_s, 0.35);
+
+        // Backdrop luminance, no readback: the texture is already the
+        // blurred backdrop, so a few taps inside the shape estimate it.
+        vec2 per_tex2 = vec2(input_to_geo[0][0], input_to_geo[1][1]) * geo_size;
+        vec2 tap = vec2(24.0) / max(per_tex2, vec2(1.0));
+        vec3 acc = texture2D(tex, v_coords).rgb
+            + texture2D(tex, v_coords + vec2(tap.x, 0.0)).rgb
+            + texture2D(tex, v_coords - vec2(tap.x, 0.0)).rgb
+            + texture2D(tex, v_coords + vec2(0.0, tap.y)).rgb
+            + texture2D(tex, v_coords - vec2(0.0, tap.y)).rgb;
+        float luma = dot(acc / 5.0, vec3(0.2126, 0.7152, 0.0722));
+
+        // Adaptive tint: over bright backdrops darken a touch, over dark
+        // ones lighten, so text on the glass stays legible either way.
+        float adapt = (luma - 0.5) * 2.0; // -1 dark scene .. +1 bright scene
+        vec3 tint_col = tint;
+        float str = tint_str;
+        if (tint == vec3(1.0)) {
+            // Light materials adapt by darkening instead of going opaque.
+            tint_col = mix(vec3(1.0), vec3(0.05), clamp(adapt, 0.0, 1.0) * 0.55);
+        }
+        color.rgb = mix(color.rgb, tint_col * clamp(luma + 0.55, 0.4, 1.3), str);
+
+        // Frost: milky desaturation lifting the backdrop toward its luma.
+        if (frost > 0.0) {
+            float g = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
+            color.rgb = mix(color.rgb, vec3(g) * 1.06 + 0.04, frost);
+        }
+
+        // Rim light: a bright hairline just inside the edge, lit from
+        // top-left; inner shade darkens bottom-facing edges. d<0 inside.
+        float edge_band = smoothstep(-3.0, 0.0, d);
+        float lit = clamp(dot(n, normalize(vec2(-0.6, -0.8))) * 0.5 + 0.5, 0.0, 1.0);
+        color.rgb += rim * edge_band * lit * 0.35;
+        color.rgb -= shade * smoothstep(-6.0, 0.0, d) * clamp(n.y, 0.0, 1.0) * 0.25;
+
+        // Specular streak: thin bright line on top-facing edges only.
+        float spec_band = smoothstep(-1.5, 0.0, d) * clamp(-n.y, 0.0, 1.0);
+        color.rgb += spec * spec_band * 0.30;
+        color.rgb = clamp(color.rgb, 0.0, 1.0);
+    }
+
 #if defined(NO_ALPHA)
     color = vec4(color.rgb, 1.0);
 #endif

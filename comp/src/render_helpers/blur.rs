@@ -52,6 +52,7 @@ struct BlurProgramInternal {
     uniform_tex: ffi::types::GLint,
     uniform_half_pixel: ffi::types::GLint,
     uniform_offset: ffi::types::GLint,
+    uniform_decode: ffi::types::GLint,
     attrib_vert: ffi::types::GLint,
 }
 
@@ -68,6 +69,7 @@ unsafe fn compile_program(gl: &ffi::Gles2, src: &str) -> Result<BlurProgramInter
         uniform_tex: gl.GetUniformLocation(program, tex.as_ptr()),
         uniform_half_pixel: gl.GetUniformLocation(program, half_pixel.as_ptr()),
         uniform_offset: gl.GetUniformLocation(program, offset.as_ptr()),
+        uniform_decode: gl.GetUniformLocation(program, c"decode".as_ptr()),
         attrib_vert: gl.GetAttribLocation(program, vert.as_ptr()),
     })
 }
@@ -230,7 +232,13 @@ impl Blur {
 
             let src = once(source).chain(&self.textures[1..]);
             let dst = &self.textures[1..];
-            for (src, dst) in zip(src, dst) {
+            for (pass_idx, (src, dst)) in zip(src, dst).enumerate() {
+                // The first down pass reads the sRGB capture; every later
+                // pass reads linear intermediates.
+                gl.Uniform1f(
+                    program.uniform_decode,
+                    if pass_idx == 0 { 1.0 } else { 0.0 },
+                );
                 let dst_size = dst.size();
                 let w = dst_size.w;
                 let h = dst_size.h;

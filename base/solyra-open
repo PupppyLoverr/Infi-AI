@@ -1,5 +1,5 @@
 #!/bin/sh
-# solyra-open <terminal|files|browser|editor|viewer|calculator> [args...]
+# solyra-open <role> [args...]
 #
 # Opens whichever program is chosen for a role in Settings -> Default apps
 # (~/.config/solyra/defaults.toml, then /etc/solyra/defaults.toml). If that
@@ -9,13 +9,20 @@
 role=${1:-}
 [ $# -gt 0 ] && shift
 case $role in
-  terminal) default=foot; alternate=foot ;;
-  files)    default=solyra-files; alternate=thunar ;;
-  browser)  default=firefox; alternate=firefox ;;
-  editor)   default=mousepad; alternate=mousepad ;;
-  viewer)   default=ristretto; alternate=ristretto ;;
-  calculator) default=galculator; alternate=galculator ;;
-  *) echo "usage: solyra-open terminal|files|browser|editor|viewer|calculator [args...]" >&2; exit 2 ;;
+  terminal)   default=foot;           alternate=foot ;;
+  files)      default=solyra-files;   alternate=thunar ;;
+  browser)    default=firefox;        alternate=firefox ;;
+  editor)     default=mousepad;       alternate=mousepad ;;
+  viewer)     default=ristretto;      alternate=ristretto ;;
+  calculator) default=galculator;     alternate=galculator ;;
+  # Golden Gate dock extras: map to the closest installed Solyra role app.
+  mail)       default=thunderbird;    alternate=evolution ;;
+  maps)       default=gnome-maps;     alternate=firefox ;;
+  photos)     default=ristretto;      alternate=eog ;;
+  notes)      default=mousepad;       alternate=gedit ;;
+  music)      default=rhythmbox;      alternate=lollypop ;;
+  appstore)   default=gnome-software; alternate=flatpak ;;
+  *) echo "usage: solyra-open terminal|files|browser|editor|viewer|calculator|mail|maps|photos|notes|music|appstore [args...]" >&2; exit 2 ;;
 esac
 
 chosen=
