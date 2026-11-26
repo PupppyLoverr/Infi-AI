@@ -1,7 +1,8 @@
 # Handoff
 
-**Now:** Milestone 1 done. Waiting for the user to choose (a) or (b) (PLAN.md,
-decision gate). Plasma measured at 1144–1192 MB used, 3.0 GB disk.
+**Now:** PLAN.md rewritten around option (c) (Hyprland + Quickshell + Rust
+services + zgx terminal). Waiting for the user's answers (PLAN.md §8). Brief
+verbatim in docs/BRIEF.md.
 
 ## Done
 - PLAN.md: architecture, budgets, audit, decision gate.
