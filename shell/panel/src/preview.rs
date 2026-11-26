@@ -2038,7 +2038,7 @@ fn macos27_droppy_showcase() {
             false,
         );
         let th = Theme::for_kind(ThemeKind::Dark);
-        let cat = catalog_apps(&[]);
+        let cat = catalog_apps();
         let q = "24 * 18";
         let items = launcher::search(q, &cat, &[], true);
         let lay = spot_layout(q, &items);
