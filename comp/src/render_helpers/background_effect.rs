@@ -38,6 +38,9 @@ pub struct Options {
     pub saturation: Option<f64>,
     /// Liquid-glass lensing: (strength, corner radius) in logical pixels.
     pub refraction: Option<(f64, f64)>,
+    /// Per-surface blur strength (material presets): passes and offset.
+    pub blur_passes: Option<u8>,
+    pub blur_offset: Option<f64>,
 }
 
 impl Options {
@@ -70,8 +73,12 @@ impl RenderParams {
     /// The glass shape for lensing: the bounding box of the effect subregion
     /// (or the whole geometry), normalised to the clip geometry.
     pub fn lens(&self) -> [f32; 4] {
+        // `subregion.iter()` yields rects already translated by the surface
+        // position (TransformedRegion::offset), i.e. in the same absolute
+        // space as `geometry` and `clip`.
         let clip = self.clip.map_or(self.geometry, |c| c.0);
-        let (mut x0, mut y0, mut x1, mut y1) = (0., 0., self.geometry.size.w, self.geometry.size.h);
+        let g = self.geometry;
+        let (mut x0, mut y0, mut x1, mut y1) = (g.loc.x, g.loc.y, g.loc.x + g.size.w, g.loc.y + g.size.h);
         if let Some(sub) = &self.subregion {
             let mut first = true;
             for (tl, br) in sub.iter() {
@@ -86,14 +93,10 @@ impl RenderParams {
                 }
             }
         }
-        let (ox, oy) = (
-            self.geometry.loc.x - clip.loc.x,
-            self.geometry.loc.y - clip.loc.y,
-        );
         let (cw, ch) = (clip.size.w.max(1.), clip.size.h.max(1.));
         [
-            ((x0 + ox) / cw) as f32,
-            ((y0 + oy) / ch) as f32,
+            ((x0 - clip.loc.x) / cw) as f32,
+            ((y0 - clip.loc.y) / ch) as f32,
             ((x1 - x0) / cw) as f32,
             ((y1 - y0) / ch) as f32,
         ]
@@ -166,6 +169,8 @@ impl BackgroundEffect {
                 .refraction
                 .filter(|x| *x > 0.)
                 .map(|x| (x, effect.refraction_radius.unwrap_or(1000.))),
+            blur_passes: effect.blur_passes,
+            blur_offset: effect.blur_offset,
         };
 
         // If we have some background effect but xray wasn't explicitly set, default it to true
@@ -213,7 +218,16 @@ impl BackgroundEffect {
         // Use noise/saturation from options, falling back to blur defaults if blurred, and
         // to no effect if not blurred.
         let blur = self.options.blur && !self.blur_config.off;
-        let blur_options = blur.then_some(BlurOptions::from(self.blur_config));
+        let blur_options = blur.then(|| {
+            let mut o = BlurOptions::from(self.blur_config);
+            if let Some(p) = self.options.blur_passes {
+                o.passes = p.clamp(1, 8);
+            }
+            if let Some(x) = self.options.blur_offset {
+                o.offset = x;
+            }
+            o
+        });
         let noise = if blur { self.blur_config.noise } else { 0. };
         let noise = self.options.noise.unwrap_or(noise) as f32;
         let saturation = if blur {

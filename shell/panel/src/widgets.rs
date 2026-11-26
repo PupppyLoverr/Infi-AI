@@ -233,15 +233,16 @@ fn calendar(cv: &mut Canvas<'_>, fonts: &Fonts, dark: bool, today: NaiveDate, x:
             Rgba::rgba(60, 60, 67, 130),
         )
     };
-    cv.round_rect(x, y, CARD, CARD, RADIUS, bg);
-    cv.stroke_round_rect(
+    // Regular Liquid Glass (information-dense): the shared material plus a
+    // denser tint so the grid always reads over the blurred desktop.
+    crate::material::apple_glass(cv, x, y, CARD, CARD, RADIUS, dark);
+    cv.round_rect(
         x,
         y,
         CARD,
         CARD,
         RADIUS,
-        1.0,
-        Rgba::rgba(255, 255, 255, if dark { 30 } else { 120 }),
+        Rgba::rgba(bg.0, bg.1, bg.2, bg.3 / 2),
     );
     let red = Rgba::rgb(0xff, 0x45, 0x3a);
     let month = today.format("%B").to_string().to_uppercase();
@@ -291,10 +292,11 @@ fn weather_card(
     x: i32,
     y: i32,
 ) {
-    let top = Rgba::rgba(0x2f, 0x7c, 0xf6, 236);
-    let bottom = Rgba::rgba(0x18, 0x4f, 0xc2, 236);
+    // Tinted Liquid Glass: the weather blue over the blurred desktop.
+    let top = Rgba::rgba(0x2f, 0x7c, 0xf6, 178);
+    let bottom = Rgba::rgba(0x18, 0x4f, 0xc2, 196);
     cv.round_rect_vgrad(x, y, CARD, CARD, RADIUS, top, bottom);
-    cv.stroke_round_rect(x, y, CARD, CARD, RADIUS, 1.0, Rgba::rgba(255, 255, 255, 46));
+    crate::material::apple_glass(cv, x, y, CARD, CARD, RADIUS, true);
     let white = Rgba::rgb(255, 255, 255);
     let soft = Rgba::rgba(255, 255, 255, 200);
     match w {

@@ -1086,6 +1086,12 @@ pub struct BackgroundEffectRule {
     /// Corner radius of the lens shape (defaults to a capsule).
     #[knuffel(child, unwrap(argument))]
     pub refraction_radius: Option<FloatOrInt<0, 1000>>,
+    /// Per-surface blur strength (overrides the global `blur` passes).
+    #[knuffel(child, unwrap(argument))]
+    pub blur_passes: Option<u8>,
+    /// Per-surface blur offset (overrides the global `blur` offset).
+    #[knuffel(child, unwrap(argument))]
+    pub blur_offset: Option<FloatOrInt<0, 1000>>,
 }
 
 /// Resolved background effect rule.
@@ -1110,6 +1116,8 @@ pub struct BackgroundEffect {
     pub saturation: Option<f64>,
     pub refraction: Option<f64>,
     pub refraction_radius: Option<f64>,
+    pub blur_passes: Option<u8>,
+    pub blur_offset: Option<f64>,
 }
 
 impl MergeWith<BackgroundEffectRule> for BackgroundEffect {
@@ -1130,6 +1138,14 @@ impl MergeWith<BackgroundEffectRule> for BackgroundEffect {
 
         if let Some(x) = part.refraction_radius {
             self.refraction_radius = Some(x.0);
+        }
+
+        if let Some(x) = part.blur_passes {
+            self.blur_passes = Some(x);
+        }
+
+        if let Some(x) = part.blur_offset {
+            self.blur_offset = Some(x.0);
         }
     }
 }

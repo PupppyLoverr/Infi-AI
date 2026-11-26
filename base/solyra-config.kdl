@@ -30,8 +30,8 @@ environment {
 // macOS 26 Liquid Glass frost: shapes behind glass soften into colour but
 // stay legible as shapes (the lensing at the rim is what reads as glass).
 blur {
-    passes 4
-    offset 4.0
+    passes 3
+    offset 3.0
     noise 0.02
     saturation 1.0
 }
@@ -153,7 +153,10 @@ layer-rule {
     geometry-corner-radius 22
     background-effect {
         xray false
-        refraction 10
+        // Material preset: clear glass (light frost, strong lensing).
+        blur-passes 2
+        blur-offset 2.5
+        refraction 11
         refraction-radius 22
     }
 }

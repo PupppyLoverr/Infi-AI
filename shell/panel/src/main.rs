@@ -767,13 +767,31 @@ impl App {
                         )
                     };
                     self.spot_in_island = in_island.then(Instant::now);
-                    self.launcher = Some(self.open_overlay(
-                        ns,
-                        Anchor::TOP,
-                        (top, 0, 0, 0),
-                        (lay.w, lay.h),
-                        KeyboardInteractivity::Exclusive,
-                    ));
+                    self.launcher = Some(if in_island {
+                        // Exclusive zone -1, like the island: the field must
+                        // start at the very top, not below the menu bar's zone.
+                        make_layer_surface(
+                            &self.compositor,
+                            &self.layer_shell,
+                            &self.qh,
+                            Layer::Overlay,
+                            ns,
+                            Anchor::TOP,
+                            -1,
+                            (0, 0, 0, 0),
+                            lay.w,
+                            lay.h,
+                            KeyboardInteractivity::Exclusive,
+                        )
+                    } else {
+                        self.open_overlay(
+                            ns,
+                            Anchor::TOP,
+                            (top, 0, 0, 0),
+                            (lay.w, lay.h),
+                            KeyboardInteractivity::Exclusive,
+                        )
+                    });
                     if in_island {
                         // Frames for the morph out of the island.
                         let wake = self.waker.clone();
@@ -2043,6 +2061,20 @@ impl App {
             return;
         };
         let mut cv = Canvas::new(bytes, w, h, scale as i32);
+        if self.spot_in_island.is_some() && self.launcher.is_some() {
+            // Spotlight has grown out of the island: the field *is* the
+            // island now, so the pill steps aside (one continuous shape).
+            slot.regions = Vec::new();
+            set_blur(
+                self.blur_mgr.as_ref(),
+                &self.compositor,
+                &self.qh,
+                slot,
+                Vec::new(),
+            );
+            present(buffer, &slot.surface, w * scale, h * scale, scale as i32);
+            return;
+        }
         slot.regions = island::draw(
             &mut cv,
             &self.fonts,

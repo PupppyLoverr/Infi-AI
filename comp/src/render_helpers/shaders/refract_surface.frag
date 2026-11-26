@@ -42,9 +42,10 @@ float lens_sdf(vec2 p, vec2 half_size, float r) {
 void main() {
     vec3 coords_geo = input_to_geo * vec3(v_coords, 1.0);
 
-    // Sample the texture, bent at the edge of the glass like a thick lens:
-    // near the rim the backdrop is pulled in from beyond the edge (squeezed),
-    // with a slight RGB split, the way Apple's Liquid Glass refracts.
+    // Sample the texture, bent at the edge of the glass like a thick convex
+    // lens: near the rim the backdrop is sampled from further inside, so the
+    // scene behind appears to curve over the edge, with a slight RGB split.
+    // Sampling inward never leaves the captured backdrop.
     vec4 color;
     if (refraction.x > 0.0 && lens.z > 0.0 && lens.w > 0.0) {
         vec2 p = coords_geo.xy * geo_size;
@@ -53,15 +54,16 @@ void main() {
         float r = min(refraction.y, min(half_size.x, half_size.y));
         vec2 q = p - centre;
         float d = lens_sdf(q, half_size, r);
-        float band = max(refraction.x * 2.6, 6.0);
-        float f = pow(clamp(1.0 + d / band, 0.0, 1.0), 2.0);
+        float band = max(refraction.x * 1.5, 6.0);
+        // Only inside the glass, strongest at the rim, fading inward.
+        float f = d > 0.0 ? 0.0 : pow(clamp(1.0 + d / band, 0.0, 1.0), 2.0);
         vec2 g = vec2(
             lens_sdf(q + vec2(1.0, 0.0), half_size, r) - lens_sdf(q - vec2(1.0, 0.0), half_size, r),
             lens_sdf(q + vec2(0.0, 1.0), half_size, r) - lens_sdf(q - vec2(0.0, 1.0), half_size, r));
         vec2 n = length(g) > 1e-5 ? normalize(g) : vec2(0.0);
         // Pixels in clip-geo space to texture coordinates.
         vec2 per_tex = vec2(input_to_geo[0][0], input_to_geo[1][1]) * geo_size;
-        vec2 off = n * f * refraction.x / per_tex;
+        vec2 off = -n * f * refraction.x / per_tex;
         vec4 cg = texture2D(tex, v_coords + off);
         float cr = texture2D(tex, v_coords + off * 1.25).r;
         float cb = texture2D(tex, v_coords + off * 0.75).b;
