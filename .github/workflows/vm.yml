@@ -32,6 +32,19 @@ jobs:
       - name: Test solyra-term
         working-directory: apps
         run: cargo test --locked --release -p solyra-term 2>&1 | grep -E "test result|FAILED|panicked"
+      - name: Build the Arch packages (makepkg)
+        run: |
+          pacman -S --noconfirm --needed sudo >/dev/null
+          useradd -m builder 2>/dev/null || true
+          chown -R builder: "$GITHUB_WORKSPACE"
+          for p in solyra-term solyra-files solyra-shell; do
+            (cd pkg/$p && sudo -u builder env SOLYRA_REPO="$GITHUB_WORKSPACE" CARGO_HOME=/home/builder/.cargo makepkg -f --nodeps --nocheck --noconfirm 2>&1 | tail -3)
+          done
+          ls -la pkg/*/*.pkg.tar.zst
+      - uses: actions/upload-artifact@v4
+        with:
+          name: solyra-packages
+          path: pkg/*/*.pkg.tar.zst
       - uses: actions/upload-artifact@v4
         with:
           name: solyra-term
