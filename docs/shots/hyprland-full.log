@@ -8,12 +8,11 @@ DEBUG ]: [CCompositor::initManagers] Creating the DynamicPermissionManager!
 DEBUG ]: [CCompositor::initManagers] Creating the MonitorState!
 DEBUG ]: [CCompositor::initManagers] Creating the WorkspaceState!
 DEBUG ]: [CCompositor::initManagers] Creating the ConfigManager!
-DEBUG ]: [Config::initConfigManager] [cfg] Regular config at /home/solyra/.config/hypr/hyprland.lua
-WARN ]: [std::expected<void, std::__cxx11::basic_string<char> > Config::Lua::CConfigManager::generateDefaultConfig] No config file found; attempting to generate.
+DEBUG ]: [Config::initConfigManager] [cfg] Config is either explicit or special
 DEBUG ]: [CCompositor::initManagers] Creating the Error Overlay!
 DEBUG ]: [CCompositor::initManagers] Creating the LayoutManager!
 DEBUG ]: [CCompositor::initManagers] Creating the TokenManager!
-DEBUG ]: [Config::Lua::CConfigManager::postConfigReload] Disabling stdout logs (debug.enable_stdout_logs = 0). Further logs will be written to /run/user/1001/hypr/11cbc6c577b84ffb1edf4df3fc5b6128c3ae6947_1795730408_144221364/hyprland.log
+DEBUG ]: [Config::Lua::CConfigManager::postConfigReload] Disabling stdout logs (debug.enable_stdout_logs = 0). Further logs will be written to /run/user/1001/hypr/11cbc6c577b84ffb1edf4df3fc5b6128c3ae6947_1795732148_1758492046/hyprland.log
 DEBUG ]: [CCompositor::initManagers] Creating the PointerManager!
 DEBUG ]: [CCompositor::initManagers] Creating the AsyncResourceGatherer!
 DEBUG from aquamarine ]: Creating an Aquamarine backend!
@@ -24,13 +23,13 @@ DEBUG from aquamarine ]: [libinput] event0  - Power Button: is tagged by udev as
 DEBUG from aquamarine ]: [libinput] event0  - Power Button: device is a keyboard
 DEBUG from aquamarine ]: [libinput] event1  - AT Translated Set 2 keyboard: is tagged by udev as: Keyboard
 DEBUG from aquamarine ]: [libinput] event1  - AT Translated Set 2 keyboard: device is a keyboard
-DEBUG from aquamarine ]: [libinput] event4  - VirtualPS/2 VMware VMMouse: is tagged by udev as: Mouse
-DEBUG from aquamarine ]: [libinput] event4  - VirtualPS/2 VMware VMMouse: emulating high-resolution scroll wheel events.
-DEBUG from aquamarine ]: [libinput] event4  - VirtualPS/2 VMware VMMouse: device is a pointer
 DEBUG from aquamarine ]: [libinput] event3  - VirtualPS/2 VMware VMMouse: is tagged by udev as: Mouse
+DEBUG from aquamarine ]: [libinput] event3  - VirtualPS/2 VMware VMMouse: emulating high-resolution scroll wheel events.
 DEBUG from aquamarine ]: [libinput] event3  - VirtualPS/2 VMware VMMouse: device is a pointer
-DEBUG from aquamarine ]: [libinput] event2  - PC Speaker: not tagged as supported input device
-DEBUG from aquamarine ]: [libinput] event2  - not using input device '/dev/input/event2'
+DEBUG from aquamarine ]: [libinput] event2  - VirtualPS/2 VMware VMMouse: is tagged by udev as: Mouse
+DEBUG from aquamarine ]: [libinput] event2  - VirtualPS/2 VMware VMMouse: device is a pointer
+DEBUG from aquamarine ]: [libinput] event4  - PC Speaker: not tagged as supported input device
+DEBUG from aquamarine ]: [libinput] event4  - not using input device '/dev/input/event4'
 DEBUG from aquamarine ]: drm: Enumerated device /sys/devices/pci0000:00/0000:00:03.0/drm/card0
 DEBUG from aquamarine ]: libseat: Device /dev/dri/card0 supports kms
 DEBUG from aquamarine ]: drm: Found 1 GPUs
@@ -98,17 +97,6 @@ ERR from aquamarine ]: Implementation wayland failed, erasing.
 DEBUG from aquamarine ]: Created a GBM allocator with drm fd 27
 DEBUG from aquamarine ]: drm: Connectors size2 1
 DEBUG from aquamarine ]: Created a GBM allocator with drm fd 30
-DEBUG from aquamarine ]: Supported EGL client extensions: (16) EGL_EXT_device_base EGL_EXT_device_enumeration EGL_EXT_device_query EGL_EXT_platform_base EGL_KHR_client_get_all_proc_addresses EGL_EXT_client_extensions EGL_KHR_debug EGL_EXT_platform_device EGL_EXT_explicit_device EGL_EXT_platform_wayland EGL_KHR_platform_wayland EGL_EXT_platform_x11 EGL_KHR_platform_x11 EGL_EXT_platform_xcb EGL_MESA_platform_gbm EGL_KHR_platform_gbm EGL_MESA_platform_surfaceless
-DEBUG from aquamarine ]: CDRMRenderer(drm): Using device /dev/dri/card0
-DEBUG from aquamarine ]: CDRMRenderer: Using KHR_context_flush_control
-DEBUG from aquamarine ]: Creating CDRMRenderer on gpu /dev/dri/renderD128
-DEBUG from aquamarine ]: Using: OpenGL ES 3.2 Mesa 26.3.1-arch1.3
-DEBUG from aquamarine ]: Vendor: Mesa
-DEBUG from aquamarine ]: Renderer: virgl (LLVMPIPE (LLVM 21.1.8, 256 bits))
-DEBUG from aquamarine ]: Supported context extensions: (149) GL_EXT_blend_minmax GL_EXT_multi_draw_arrays GL_EXT_texture_filter_anisotropic GL_EXT_texture_compression_s3tc GL_EXT_texture_compression_dxt1 GL_EXT_texture_compression_rgtc GL_EXT_texture_format_BGRA8888 GL_OES_compressed_ETC1_RGB8_texture GL_OES_depth24 GL_OES_element_index_uint GL_OES_fbo_render_mipmap GL_OES_mapbuffer GL_OES_rgb8_rgba8 GL_OES_standard_derivatives GL_OES_stencil8 GL_OES_texture_3D GL_OES_texture_float GL_OES_texture_float_linear GL_OES_texture_half_float GL_OES_texture_half_float_linear GL_OES_texture_npot GL_OES_vertex_half_float GL_EXT_draw_instanced GL_EXT_texture_sRGB_decode GL_OES_EGL_image GL_OES_depth_texture GL_OES_packed_depth_stencil GL_EXT_texture_type_2_10_10_10_REV GL_NV_conditional_render GL_OES_get_program_binary GL_APPLE_texture_max_level GL_EXT_discard_framebuffer GL_EXT_read_format_bgra GL_EXT_texture_storage GL_NV_pack_subimage GL_NV_texture_barrier GL_EXT_frag_depth GL_NV_fbo_color_attachments GL_OES_EGL_image_external GL_OES_EGL_sync GL_OES_vertex_array_object GL_OES_viewport_array GL_ANGLE_pack_reverse_row_order GL_ANGLE_texture_compression_dxt3 GL_ANGLE_texture_compression_dxt5 GL_EXT_occlusion_query_boolean GL_EXT_robustness GL_EXT_sRGB GL_EXT_texture_rg GL_EXT_unpack_subimage GL_NV_draw_buffers GL_NV_read_buffer GL_NV_read_depth GL_NV_read_depth_stencil GL_NV_read_stencil GL_APPLE_sync GL_EXT_draw_buffers GL_EXT_instanced_arrays GL_EXT_map_buffer_range GL_EXT_shadow_samplers GL_KHR_debug GL_KHR_robustness GL_KHR_texture_compression_astc_ldr GL_NV_generate_mipmap_sRGB GL_NV_pixel_buffer_object GL_OES_depth_texture_cube_map GL_OES_required_internalformat GL_OES_surfaceless_context GL_EXT_color_buffer_float GL_EXT_debug_label GL_EXT_sRGB_write_control GL_EXT_separate_shader_objects GL_EXT_shader_group_vote GL_EXT_shader_implicit_conversions GL_EXT_shader_integer_mix GL_EXT_tessellation_point_size GL_EXT_tessellation_shader GL_ANDROID_extension_pack_es31a GL_EXT_base_instance GL_EXT_compressed_ETC1_RGB8_sub_texture GL_EXT_copy_image GL_EXT_draw_buffers_indexed GL_EXT_draw_elements_base_vertex GL_EXT_gpu_shader5 GL_EXT_multi_draw_indirect GL_EXT_polygon_offset_clamp GL_EXT_primitive_bounding_box GL_EXT_render_snorm GL_EXT_shader_io_blocks GL_EXT_texture_border_clamp GL_EXT_texture_buffer GL_EXT_texture_cube_map_array GL_EXT_texture_norm16 GL_EXT_texture_view GL_KHR_blend_equation_advanced GL_KHR_context_flush_control GL_KHR_robust_buffer_access_behavior GL_NV_image_formats GL_NV_shader_noperspective_interpolation GL_OES_copy_image GL_OES_draw_buffers_indexed GL_OES_draw_elements_base_vertex GL_OES_gpu_shader5 GL_OES_primitive_bounding_box GL_OES_sample_shading GL_OES_sample_variables GL_OES_shader_io_blocks GL_OES_shader_multisample_interpolation GL_OES_tessellation_point_size GL_OES_tessellation_shader GL_OES_texture_border_clamp GL_OES_texture_buffer GL_OES_texture_cube_map_array GL_OES_texture_stencil8 GL_OES_texture_storage_multisample_2d_array GL_OES_texture_view GL_EXT_blend_func_extended GL_EXT_float_blend GL_EXT_geometry_point_size GL_EXT_geometry_shader GL_EXT_texture_sRGB_R8 GL_EXT_texture_sRGB_RG8 GL_KHR_no_error GL_KHR_texture_compression_astc_sliced_3d GL_OES_EGL_image_external_essl3 GL_OES_geometry_point_size GL_OES_geometry_shader GL_OES_shader_image_atomic GL_EXT_clear_texture GL_EXT_clip_cull_distance GL_EXT_conservative_depth GL_EXT_disjoint_timer_query GL_EXT_texture_compression_s3tc_srgb GL_MESA_shader_integer_functions GL_EXT_clip_control GL_EXT_color_buffer_half_float GL_EXT_texture_compression_bptc GL_EXT_texture_mirror_clamp_to_edge GL_KHR_parallel_shader_compile GL_EXT_EGL_image_storage GL_EXT_texture_shadow_lod GL_MESA_framebuffer_flip_y GL_EXT_depth_clamp GL_EXT_texture_query_lod GL_MESA_sampler_objects GL_EXT_EGL_image_storage_compression GL_EXT_texture_storage_compression GL_MESA_bgra GL_EXT_shader_clock 
-DEBUG from aquamarine ]: drm: onReady: connector 41
-DEBUG from aquamarine ]: drm: onReady: connector 41 has output name Virtual-1
-DEBUG from aquamarine ]: Swapchain: Clearing
 DEBUG from aquamarine ]: Supported EGL client extensions: (16) EGL_EXT_device_base EGL_EXT_device_enumeration EGL_EXT_device_query EGL_EXT_platform_base EGL_KHR_client_get_all_proc_addresses EGL_EXT_client_extensions EGL_KHR_debug EGL_EXT_platform_device EGL_EXT_explicit_device EGL_EXT_platform_wayland EGL_KHR_platform_wayland EGL_EXT_platform_x11 EGL_KHR_platform_x11 EGL_EXT_platform_xcb EGL_MESA_platform_gbm EGL_KHR_platform_gbm EGL_MESA_platform_surfaceless
 DEBUG from aquamarine ]: CDRMRenderer(drm): Using device /dev/dri/card0
 DEBUG from aquamarine ]: CDRMRenderer: Using KHR_context_flush_control

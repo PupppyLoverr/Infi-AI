@@ -1,3 +1,4 @@
+[1;32mDEBUG [0m]: [main] User-specified config location: '/home/solyra/.config/hypr/hyprland.conf'
 Welcome to Hyprland!
 
 
@@ -41,91 +42,13 @@ DEBUG ]: [CCompositor::initManagers] Creating the DynamicPermissionManager!
 DEBUG ]: [CCompositor::initManagers] Creating the MonitorState!
 DEBUG ]: [CCompositor::initManagers] Creating the WorkspaceState!
 DEBUG ]: [CCompositor::initManagers] Creating the ConfigManager!
-DEBUG ]: [Config::initConfigManager] [cfg] Regular config at /home/solyra/.config/hypr/hyprland.lua
-WARN ]: [std::expected<void, std::__cxx11::basic_string<char> > Config::Lua::CConfigManager::generateDefaultConfig] No config file found; attempting to generate.
+DEBUG ]: [Config::initConfigManager] [cfg] Config is either explicit or special
 DEBUG ]: [CCompositor::initManagers] Creating the Error Overlay!
 DEBUG ]: [CCompositor::initManagers] Creating the LayoutManager!
 DEBUG ]: [CCompositor::initManagers] Creating the TokenManager!
-DEBUG ]: [Config::Lua::CConfigManager::postConfigReload] Disabling stdout logs (debug.enable_stdout_logs = 0). Further logs will be written to /run/user/1001/hypr/11cbc6c577b84ffb1edf4df3fc5b6128c3ae6947_1795730408_144221364/hyprland.log
+DEBUG ]: [Config::Lua::CConfigManager::postConfigReload] Disabling stdout logs (debug.enable_stdout_logs = 0). Further logs will be written to /run/user/1001/hypr/11cbc6c577b84ffb1edf4df3fc5b6128c3ae6947_1795732148_1758492046/hyprland.log
 DEBUG ]: [CCompositor::initManagers] Creating the PointerManager!
 DEBUG ]: [CCompositor::initManagers] Creating the AsyncResourceGatherer!
-[1;32mDEBUG [0m]: CConfigManager: no hyprtoolkit.conf found, using defaults (expected at $XDG_CONFIG_HOME/hypr/hyprtoolkit.conf or ~/.config/hypr/hyprtoolkit.conf)
-[1;33mWARN [0m]: CSystemIconFactory: inherited theme Adwaita not found
-[1;32mDEBUG [0m]: Starting the Wayland platform
-[1;32mDEBUG [0m]: Connected to a wayland compositor: Hyprland
-[1;32mDEBUG [0m]: Got registry at 0x56294260b4c0
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format AB4H with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format AB4H with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format XB4H with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format XB4H with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format AB48 with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format AB48 with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format XB48 with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format XB48 with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format AR30 with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format AR30 with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format XR30 with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format XR30 with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format AB30 with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format AB30 with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format XB30 with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format XB30 with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format AR24 with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format AR24 with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format BA24 with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format BA24 with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format AB24 with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format AB24 with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format RA24 with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format RA24 with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format XR24 with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format XR24 with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format BX24 with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format BX24 with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format XB24 with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format XB24 with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format AR15 with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format AR15 with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format AR12 with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format AR12 with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format RG16 with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format RG16 with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format R8 with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format R8 with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format R16 with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format R16 with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format GR88 with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format GR88 with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format GR32 with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format GR32 with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format R  H with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format R  H with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format R  F with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format R  F with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format GR H with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format GR H with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format GR F with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format GR F with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format AB8F with modifier LINEAR
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got format AB8F with modifier INVALID
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got main device
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got node /dev/dri/renderD128
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: Got done
-[1;32mDEBUG [0m]: wayland output 73: name Virtual-1
-[1;32mDEBUG [0m]: wayland output 73: description Red Hat Inc. QEMU Monitor  (Virtual-1)
-[1;32mDEBUG [0m]: wayland output 73: dimensions [Vector2D: x: 1280, y: 800]
-[1;32mDEBUG [0m]: wayland output 73: make Red Hat, Inc. model QEMU Monitor
-[1;32mDEBUG [0m]: wayland output 73: done
-[1;32mDEBUG [0m]: zwp_linux_dmabuf_v1: opened node /dev/dri/renderD128 with fd 10
-[1;32mDEBUG [0m]: Supported EGL global extensions: (16) EGL_EXT_device_base EGL_EXT_device_enumeration EGL_EXT_device_query EGL_EXT_platform_base EGL_KHR_client_get_all_proc_addresses EGL_EXT_client_extensions EGL_KHR_debug EGL_EXT_platform_device EGL_EXT_explicit_device EGL_EXT_platform_wayland EGL_KHR_platform_wayland EGL_EXT_platform_x11 EGL_KHR_platform_x11 EGL_EXT_platform_xcb EGL_MESA_platform_gbm EGL_KHR_platform_gbm EGL_MESA_platform_surfaceless
-[1;32mDEBUG [0m]: eglDeviceFromDRMFD: Using device /dev/dri/card0
-[1;32mDEBUG [0m]: DRM syncobj timeline support: yes
-[1;32mDEBUG [0m]: window opening failed: wm_capabilities received
-[1;32mDEBUG [0m]: wayland: configure toplevel with 0x0
-[1;32mDEBUG [0m]: wayland window: configure surface with 1
-[1;32mDEBUG [0m]: window: got fractional scale: 100.0%
-[1;32mDEBUG [0m]: wayland: configure toplevel with 990x550
-[1;32mDEBUG [0m]: wayland window: configure surface with 2
 The XKEYBOARD keymap compiler (xkbcomp) reports:
 > Warning:          Unsupported maximum keycode 709, clipping.
 >                   X11 cannot support keycodes above 255.
