@@ -222,9 +222,9 @@ pub fn paint(
 fn calendar(cv: &mut Canvas<'_>, fonts: &Fonts, dark: bool, today: NaiveDate, x: i32, y: i32) {
     let (bg, ink, dim) = if dark {
         (
-            Rgba::rgba(28, 28, 32, 214),
+            Rgba::rgba(16, 16, 22, 232),
             Rgba::rgb(240, 240, 245),
-            Rgba::rgba(235, 235, 245, 120),
+            Rgba::rgba(240, 240, 248, 175),
         )
     } else {
         (
@@ -242,7 +242,7 @@ fn calendar(cv: &mut Canvas<'_>, fonts: &Fonts, dark: bool, today: NaiveDate, x:
         CARD,
         CARD,
         RADIUS,
-        Rgba::rgba(bg.0, bg.1, bg.2, bg.3 / 2),
+        Rgba::rgba(bg.0, bg.1, bg.2, bg.3 * 3 / 4),
     );
     let red = Rgba::rgb(0xff, 0x45, 0x3a);
     let month = today.format("%B").to_string().to_uppercase();
