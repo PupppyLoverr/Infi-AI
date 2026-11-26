@@ -63,7 +63,11 @@ fn save_conf(pairs: &[(&str, Option<String>)], status: &Signal<String>) {
         return;
     };
     match solyra_conf::update(&path, pairs) {
-        Ok(()) => status.put(String::new()),
+        Ok(()) => {
+            let look = solyra_conf::look::Look::from_conf(&read(conf_path()));
+            let _ = look.write_glass_kdl();
+            status.put(String::new());
+        }
         Err(e) => status.put(format!("Could not save {}: {e}", path.display())),
     }
 }
@@ -178,6 +182,23 @@ fn appearance_page(status: Signal<String>) -> View {
             .child(conf_toggle(cx, &status, "app_glass", "Frosted glass in Solyra apps", app_glass))
             .child(conf_toggle(cx, &status, "opaque", "Solid surfaces everywhere (overrides the materials above)", look.opaque))
             .child(conf_toggle(cx, &status, "reduced_motion", "Reduce motion", look.reduced_motion))
+            .child(conf_toggle(cx, &status, "increased_contrast", "Increase contrast on glass", look.increased_contrast))
+            .child(conf_choice(
+                cx,
+                &status,
+                "refraction_intensity",
+                "Refraction intensity",
+                &[("0", "Off"), ("50", "Low"), ("100", "Normal"), ("150", "High")],
+                &look.refraction_intensity.to_string(),
+            ))
+            .child(conf_choice(
+                cx,
+                &status,
+                "blur_intensity",
+                "Blur intensity",
+                &[("50", "Soft"), ("100", "Normal"), ("150", "Heavy")],
+                &look.blur_intensity.to_string(),
+            ))
             .child(caption("Changes apply to the shell at once and to Solyra apps the next time they open."));
         scrolling(cx, body)
     })

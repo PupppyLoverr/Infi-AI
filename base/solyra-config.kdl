@@ -209,6 +209,10 @@ layer-rule {
     }
 }
 
+// Accessibility glass scales from Settings / the panel (protocol v2 is the
+// live path; this file is watched so blur-passes and refraction update too).
+include "~/.config/solyra/glass.kdl" optional=true
+
 // Spotlight is a capsule and a results card on one transparent surface. The
 // panel paints their shadow and asks for blur behind just those two shapes
 // (ext-background-effect), so the rule must not blur or shadow the whole surface.
@@ -247,6 +251,27 @@ layer-rule {
         blur true
         xray false
         refraction 10
+        refraction-radius 20
+    }
+}
+
+layer-rule {
+    match namespace="^solyra-menu$"
+    background-effect {
+        blur true
+        xray false
+        refraction 9
+        refraction-radius 10
+    }
+}
+
+layer-rule {
+    match namespace="^solyra-notifs$"
+    geometry-corner-radius 20
+    background-effect {
+        blur true
+        xray false
+        refraction 8
         refraction-radius 20
     }
 }

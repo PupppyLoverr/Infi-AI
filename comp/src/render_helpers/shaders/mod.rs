@@ -130,6 +130,7 @@ impl Shaders {
                     UniformName::new("shape_lens", UniformType::_4f),
                     UniformName::new("shape_preset", UniformType::_4f),
                     UniformName::new("shape_count", UniformType::_1f),
+                    UniformName::new("mat_intensity", UniformType::_4f),
                 ],
             )
             .map_err(|err| {

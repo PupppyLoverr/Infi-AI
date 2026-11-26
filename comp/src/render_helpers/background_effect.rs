@@ -61,10 +61,12 @@ pub struct GlassUniforms {
     /// Material preset id per shape (solyra_glass_v1 preset).
     pub preset: [f32; 4],
     pub count: f32,
+    /// (refraction_scale, frost_scale, contrast_scale, unused)
+    pub intensity: [f32; 4],
 }
 
 impl GlassUniforms {
-    pub fn uniforms(&self) -> [smithay::backend::renderer::gles::Uniform<'static>; 8] {
+    pub fn uniforms(&self) -> [smithay::backend::renderer::gles::Uniform<'static>; 9] {
         use smithay::backend::renderer::gles::Uniform;
         [
             Uniform::new("shape0", self.boxes[0]),
@@ -75,6 +77,7 @@ impl GlassUniforms {
             Uniform::new("shape_lens", self.lens),
             Uniform::new("shape_preset", self.preset),
             Uniform::new("shape_count", self.count),
+            Uniform::new("mat_intensity", self.intensity),
         ]
     }
 }
@@ -96,6 +99,8 @@ pub struct RenderParams {
     /// (rect, corner radius, preset lens scale, preset id). Empty: fall back
     /// to `lens()`.
     pub shapes: Vec<(Rectangle<f64, Logical>, f32, f32, f32)>,
+    /// Accessibility intensity: refraction, frost, contrast scales (1.0 = native).
+    pub intensity: [f32; 3],
     /// Scale to use for rounding to physical pixels.
     pub scale: f64,
 }
@@ -158,6 +163,14 @@ impl RenderParams {
             u.lens[i] = strength * scale;
             u.preset[i] = *preset;
             u.count += 1.;
+        }
+        if u.count > 0.5 {
+            u.intensity = [
+                self.intensity[0],
+                self.intensity[1],
+                self.intensity[2],
+                0.,
+            ];
         }
         u
     }
@@ -377,6 +390,7 @@ fn render_params_for_tile(
         scale,
         refraction: [0., 0.],
         shapes: Vec::new(),
+        intensity: [1., 1., 1.],
     })
 }
 
@@ -447,9 +461,10 @@ pub fn render_for_tile(
         // solyra_glass_v1: the committed shapes, in the same absolute space
         // as the blur sub-region (surface origin + shape * anim scale).
         if !should_block_out {
-            if let Some(shapes) = crate::protocols::solyra_glass::committed_shapes(states) {
+            if let Some(state) = crate::protocols::solyra_glass::committed(states) {
                 let origin = surface_geo.upscale(surface_anim_scale).loc + geometry.loc;
-                params.shapes = shapes
+                params.shapes = state
+                    .shapes
                     .iter()
                     .map(|s| {
                         let loc = Point::from((s.x as f64, s.y as f64)).upscale(surface_anim_scale);
@@ -457,11 +472,16 @@ pub fn render_for_tile(
                         (
                             Rectangle::new(origin + loc, size),
                             s.radius,
-                            s.preset.lens_scale(),
+                            s.preset.lens_scale() * state.refraction_scale,
                             s.preset.id(),
                         )
                     })
                     .collect();
+                params.intensity = [
+                    state.refraction_scale,
+                    state.frost_scale,
+                    state.contrast_scale,
+                ];
             }
         }
 
@@ -482,6 +502,7 @@ mod glass_tests {
             scale: 1.,
             refraction: [0., 0.],
             shapes,
+            intensity: [1., 1., 1.],
         }
     }
 

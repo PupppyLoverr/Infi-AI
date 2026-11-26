@@ -21,7 +21,7 @@ use smithay::wayland::{Dispatch2, GlobalData, GlobalDispatch2};
 use super::raw::solyra_glass::v1::server::solyra_glass_manager_v1::{self, SolyraGlassManagerV1};
 use super::raw::solyra_glass::v1::server::solyra_glass_surface_v1::{self, SolyraGlassSurfaceV1};
 
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 /// Shapes per surface. Bounded so the shader's uniforms stay small (they
 /// fit GLES2's minimum of 16 fragment uniform vectors with the rest).
@@ -148,9 +148,24 @@ pub fn validate_shape(
 }
 
 /// Double-buffered glass state of a surface.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct GlassCachedState {
     pub shapes: Vec<GlassShape>,
+    /// Accessibility scales, 1.0 = preset native. v1 clients leave these at 1.
+    pub refraction_scale: f32,
+    pub frost_scale: f32,
+    pub contrast_scale: f32,
+}
+
+impl Default for GlassCachedState {
+    fn default() -> Self {
+        Self {
+            shapes: Vec::new(),
+            refraction_scale: 1.0,
+            frost_scale: 1.0,
+            contrast_scale: 1.0,
+        }
+    }
 }
 
 impl Cacheable for GlassCachedState {
@@ -167,12 +182,19 @@ impl Cacheable for GlassCachedState {
 pub fn committed_shapes(
     states: &smithay::wayland::compositor::SurfaceData,
 ) -> Option<Vec<GlassShape>> {
+    committed(states).map(|c| c.shapes)
+}
+
+/// Committed glass state, if the surface uses the protocol and has shapes.
+pub fn committed(
+    states: &smithay::wayland::compositor::SurfaceData,
+) -> Option<GlassCachedState> {
     if !states.cached_state.has::<GlassCachedState>() {
         return None;
     }
     let mut guard = states.cached_state.get::<GlassCachedState>();
-    let shapes = &guard.current().shapes;
-    (!shapes.is_empty()).then(|| shapes.clone())
+    let current = guard.current().clone();
+    (!current.shapes.is_empty()).then_some(current)
 }
 
 /// Marks that a surface has a live glass object.
@@ -345,6 +367,19 @@ where
                     ),
                 }
             }
+            solyra_glass_surface_v1::Request::SetIntensity {
+                refraction,
+                frost,
+                contrast,
+            } => {
+                with_states(&surface, |states| {
+                    let mut guard = states.cached_state.get::<GlassCachedState>();
+                    let pending = guard.pending();
+                    pending.refraction_scale = (refraction as f32 / 100.0).clamp(0.0, 2.0);
+                    pending.frost_scale = (frost as f32 / 100.0).clamp(0.0, 2.0);
+                    pending.contrast_scale = (contrast as f32 / 100.0).clamp(0.5, 2.0);
+                });
+            }
         }
     }
 }
@@ -417,12 +452,13 @@ mod tests {
         // than the last must not keep stale ones.
         let mut current = GlassCachedState {
             shapes: vec![validate_shape(0, 0, 0, 10, 10, 2, 0).unwrap(); 3],
+            ..Default::default()
         };
         let next = GlassCachedState {
             shapes: vec![validate_shape(0, 5, 5, 20, 20, 4, 1).unwrap()],
+            ..Default::default()
         };
-        // merge_into needs a DisplayHandle only for the signature; emulate it.
-        current = next.clone();
+        current.shapes = next.shapes.clone();
         assert_eq!(current.shapes.len(), 1);
         assert_eq!(current.shapes[0].x, 5);
     }
@@ -436,8 +472,11 @@ mod tests {
         let s = &solyra_glass_surface_v1::SolyraGlassSurfaceV1::interface();
         assert_eq!(m.name, "solyra_glass_manager_v1");
         assert_eq!(s.name, "solyra_glass_surface_v1");
-        assert_eq!((m.version, s.version), (1, 1));
+        assert_eq!((m.version, s.version), (2, 2));
         let reqs: Vec<_> = s.requests.iter().map(|r| r.name).collect();
-        assert_eq!(reqs, ["destroy", "reset", "add_shape"]);
+        assert_eq!(
+            reqs,
+            ["destroy", "reset", "add_shape", "set_intensity"]
+        );
     }
 }

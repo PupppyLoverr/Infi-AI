@@ -529,6 +529,10 @@ pub fn draw_bar(
 
 /// Layered glass overlay card with subtle depth and directional specular rim.
 fn card(cv: &mut Canvas<'_>, th: &Theme, x: i32, y: i32, w: i32, h: i32, r: f32) {
+    if crate::material::compositor_material() {
+        cv.round_rect_shadow(x, y, w, h, r, 8.0, 18.0, 48);
+        return;
+    }
     let dark = th.surface.0 < 128;
     let top = if dark {
         Rgba::rgba(

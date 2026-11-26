@@ -365,6 +365,14 @@ fn compositor_glass() -> bool {
     COMPOSITOR_GLASS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+pub fn compositor_material() -> bool {
+    compositor_glass()
+}
+
+pub fn set_compositor_material(on: bool) {
+    COMPOSITOR_GLASS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 pub fn apple_glass(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32, dark: bool) {
     if compositor_glass() {
         cv.stroke_round_rect(

@@ -39,6 +39,8 @@ uniform vec4 shape_radius;
 uniform vec4 shape_lens;
 uniform vec4 shape_preset;
 uniform float shape_count;
+// Accessibility: refraction / frost / contrast scales (1.0 = native).
+uniform vec4 mat_intensity;
 
 uniform vec2 geo_size;
 uniform vec4 corner_radius;
@@ -159,6 +161,11 @@ void main() {
         vec3 tint;
         float tint_str, rim, spec, shade, frost;
         material_for(prst, tint, tint_str, rim, spec, shade, frost);
+        float frost_s = max(mat_intensity.y, 0.0);
+        float contrast_s = max(mat_intensity.z, 0.5);
+        tint_str *= mix(1.0, contrast_s, 0.5);
+        frost *= frost_s;
+        rim *= mix(1.0, contrast_s, 0.35);
 
         // Backdrop luminance, no readback: the texture is already the
         // blurred backdrop, so a few taps inside the shape estimate it.

@@ -130,7 +130,7 @@ impl FramebufferEffectElement {
         &self,
         crop: Rectangle<f64, Logical>,
         transform: Transform,
-    ) -> [Uniform<'static>; 18] {
+    ) -> [Uniform<'static>; 19] {
         let offset = crop.loc - (self.clip_geo.loc - self.geometry.loc);
         let offset = Vec2::new(offset.x as f32, offset.y as f32);
         let crop_size = Vec2::new(crop.size.w as f32, crop.size.h as f32);
@@ -145,7 +145,7 @@ impl FramebufferEffectElement {
             * transform.matrix()
             * Mat3::from_translation(Vec2::new(-0.5, -0.5));
         let input_to_clip_geo = input_to_clip_geo * transform_mat;
-        let [g0, g1, g2, g3, g4, g5, g6, g7] = self.glass.uniforms();
+        let [g0, g1, g2, g3, g4, g5, g6, g7, g8] = self.glass.uniforms();
 
         let clip_geo_size = (self.clip_geo.size.w as f32, self.clip_geo.size.h as f32);
 
@@ -171,6 +171,7 @@ impl FramebufferEffectElement {
             g5,
             g6,
             g7,
+            g8,
         ]
     }
 }

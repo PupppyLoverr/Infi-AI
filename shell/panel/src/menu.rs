@@ -287,8 +287,11 @@ pub fn draw_ctx(
     let h = cv.height as i32;
     let mut regions = Vec::new();
     cv.round_rect_shadow(0, 0, w, h, 12.0, 9.0, 26.0, 46);
-    cv.round_rect(0, 0, w, h, 12.0, th.surface);
-    cv.stroke_round_rect(0, 0, w, h, 12.0, 1.0, th.hairline);
+    crate::material::apple_glass(cv, 0, 0, w, h, 12.0, th.surface.0 < 128);
+    if !crate::material::compositor_material() {
+        cv.round_rect(0, 0, w, h, 12.0, th.surface);
+        cv.stroke_round_rect(0, 0, w, h, 12.0, 1.0, th.hairline);
+    }
     let mut y = PAD;
     for e in entries {
         let Some(action) = &e.action else {
@@ -345,8 +348,12 @@ pub fn draw(
     let (pw, ph) = panel_size(fonts, entries);
     let px = (title.x - 8).clamp(4, (screen_w - pw - 4).max(4));
     let py = bar_h + 2;
-    cv.round_rect(px, py, pw, ph, 10.0, th.surface);
-    cv.stroke_round_rect(px, py, pw, ph, 10.0, 1.0, th.hairline);
+    cv.round_rect_shadow(px, py, pw, ph, 10.0, 8.0, 22.0, 40);
+    crate::material::apple_glass(cv, px, py, pw, ph, 10.0, th.surface.0 < 128);
+    if !crate::material::compositor_material() {
+        cv.round_rect(px, py, pw, ph, 10.0, th.surface);
+        cv.stroke_round_rect(px, py, pw, ph, 10.0, 1.0, th.hairline);
+    }
 
     let mut y = py + PAD;
     for (i, e) in entries.iter().enumerate() {

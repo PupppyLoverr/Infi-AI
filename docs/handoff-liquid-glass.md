@@ -157,12 +157,15 @@ blending, padded capture, island interaction policy, settings sliders.
   `assets/wallpapers/stripes-1920x1080.png` succeed (`/tmp/solyra-live/`).
 - Tests: compositor lib **281 passed**, panel **124 passed**.
 
-**Remaining vs macOS Tahoe (explicit):** outward rim refraction still mostly
-inward in `refract_surface.frag`; compositor-side tint/rim (M3), linear-light
-blending (M4), island interaction policy (M5), accessibility sliders (M6).
+## Status after M3–M7
 
-**Next:** M3 compositor material pass (adaptive tint + rim light in the shader;
-remove `apple_glass` CPU rims from protocol surfaces), then M4 linear light.
-Compare every step against macOS Tahoe reference images under the same scene;
-list remaining differences explicitly. Measure performance on real Intel
-hardware before claiming anything.
+**Done (on top of M3 compositor material + M4 linear light already on main):**
+- Protocol v2 `set_intensity`; Settings a11y fields; `glass.kdl` optional
+  include from `base/solyra-config.kdl`.
+- Island: hover +6, springs, morph_t content gate, priority + LiveBadge.
+- Overlay presets for Control Centre, menus, notifications, agents, about.
+- M8 unverified here (Mesa software GL): measure on VMware / Intel iGPU.
+
+**Remaining vs macOS Tahoe (explicit):** lens still mostly inward; zgx apps
+cannot send `solyra_glass_v1` (window-rule blur + translucent fill only);
+no GPU frame-time numbers from this container.

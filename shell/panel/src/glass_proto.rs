@@ -80,6 +80,6 @@ mod tests {
             SolyraGlassSurfaceV1::interface().name,
             "solyra_glass_surface_v1"
         );
-        assert_eq!(SolyraGlassManagerV1::interface().version, 1);
+        assert_eq!(SolyraGlassManagerV1::interface().version, 2);
     }
 }

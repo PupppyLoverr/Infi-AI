@@ -1,5 +1,17 @@
 # Changelog
 
+## M5–M7 – Island policy, a11y, overlays (done)
+- Protocol v2: `set_intensity(refraction, frost, contrast)` accessibility
+  scales (lens + frost + contrast in the material pass).
+- Dynamic Island: hover +6 px, critically damped springs, content cross-fade,
+  permission > question > HUD > shelf > message > media > activity, secondary
+  live-activity badge; approvals never dropped.
+- Settings › Appearance: increased contrast, refraction intensity, blur
+  intensity; panel writes `~/.config/solyra/glass.kdl` (optional include).
+- Menus, Control Centre, notifications, agents, about and dock context menus
+  send popover/dark presets. `solyra-ui` titlebars/sidebars use a lighter
+  glass fill over the window-rule blur.
+
 ## M4 – Linear-light blending (done)
 - Kawase blur averages in linear light (decode on first downsample);
   material pass encodes back to sRGB at output. Glass-effect elements only.

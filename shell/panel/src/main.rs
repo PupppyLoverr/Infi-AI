@@ -150,6 +150,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut prefs = ShellPrefs::load();
     prefs.compute_wall_tint();
+    let _ = prefs.look.write_glass_kdl();
     let blur_mgr = globals
         .bind::<ExtBackgroundEffectManagerV1, _, _>(&qh, 1..=1, ())
         .ok();
@@ -159,13 +160,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let glass_mgr = (std::env::var("SOLYRA_GLASS").as_deref() != Ok("0"))
         .then(|| {
             globals
-                .bind::<glass_proto::SolyraGlassManagerV1, _, _>(&qh, 1..=1, ())
+                .bind::<glass_proto::SolyraGlassManagerV1, _, _>(&qh, 1..=2, ())
                 .ok()
         })
         .flatten();
-    if glass_mgr.is_some() {
-        crate::material::COMPOSITOR_GLASS.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
+    crate::material::set_compositor_material(glass_mgr.is_some());
     let bar_material = prefs.look.material(prefs.look.bar_material);
     let dock_material = prefs.look.material(prefs.look.dock_material);
     let bar = make_layer_surface(
@@ -423,22 +422,45 @@ fn set_glass(
     qh: &QueueHandle<App>,
     slot: &mut SurfaceSlot,
     shapes: &[glass_proto::Shape],
+    look: &solyra_conf::look::Look,
 ) {
     let Some(mgr) = mgr else {
         return;
     };
     let shapes = glass_proto::sanitize(shapes);
-    if shapes == slot.glass_shapes && slot.glass.is_some() {
-        return;
+    if shapes != slot.glass_shapes || slot.glass.is_none() {
+        let glass = slot
+            .glass
+            .get_or_insert_with(|| mgr.get_glass_surface(&slot.surface, qh, ()));
+        glass.reset();
+        for g in &shapes {
+            glass.add_shape(g.x, g.y, g.w, g.h, g.r.round() as u32, g.preset);
+        }
+        slot.glass_shapes = shapes;
     }
-    let glass = slot
-        .glass
-        .get_or_insert_with(|| mgr.get_glass_surface(&slot.surface, qh, ()));
-    glass.reset();
-    for g in &shapes {
-        glass.add_shape(g.x, g.y, g.w, g.h, g.r.round() as u32, g.preset);
+    if let Some(glass) = slot.glass.as_ref() {
+        let refraction = if look.opaque {
+            0
+        } else {
+            look.refraction_intensity as u32
+        };
+        let frost = if look.opaque {
+            0
+        } else {
+            look.blur_intensity as u32
+        };
+        let contrast = if look.increased_contrast { 140 } else { 100 };
+        glass.set_intensity(refraction, frost, contrast);
     }
-    slot.glass_shapes = shapes;
+}
+
+fn overlay_shape(
+    slot: &Option<SurfaceSlot>,
+    r: f32,
+    preset: glass_proto::Preset,
+) -> Option<glass_proto::Shape> {
+    slot.as_ref()
+        .map(|s| gshape(0, 0, s.width as i32, s.height as i32, r, preset))
 }
 
 /// A glass shape for `set_glass`.
@@ -1047,6 +1069,7 @@ impl App {
             new.wall_tint = self.prefs.wall_tint;
         }
         self.prefs = new;
+        let _ = self.prefs.look.write_glass_kdl();
         self.ensure_island();
         self.ensure_bar();
         if wallpaper_changed {
@@ -1199,7 +1222,7 @@ impl App {
                 })
                 .into_iter()
                 .collect();
-            set_glass(self.glass_mgr.as_ref(), &self.qh, slot, &shapes);
+            set_glass(self.glass_mgr.as_ref(), &self.qh, slot, &shapes, &self.prefs.look);
             set_blur(
                 self.blur_mgr.as_ref(),
                 &self.compositor,
@@ -1233,7 +1256,7 @@ impl App {
             .iter()
             .map(|(r, rad)| gshape(r.x, r.y, r.w, r.h, *rad, glass_proto::Preset::Popover))
             .collect();
-        set_glass(self.glass_mgr.as_ref(), &self.qh, slot, &shapes);
+        set_glass(self.glass_mgr.as_ref(), &self.qh, slot, &shapes, &self.prefs.look);
         set_blur(
             self.blur_mgr.as_ref(),
             &self.compositor,
@@ -1385,7 +1408,7 @@ impl App {
                 self.island = Some(slot);
                 self.island_anim = island::Anim::new(island::target(
                     self.prefs.look.notch,
-                    &self.island_content(),
+                    &self.island_content().0,
                     false,
                 ));
                 self.island_expanded = false;
@@ -1412,17 +1435,33 @@ impl App {
         });
     }
 
-    /// What the island shows, most important first: something waiting on
-    /// the human, a fresh message, what is playing, an agent at work.
-    fn island_content(&self) -> island::Content {
-        if let Some((i, t)) = self
+    /// What the island shows, most important first. Permission requests are
+    /// never silently discarded: they stay until answered. A lower-priority
+    /// live activity becomes a [`island::LiveBadge`] instead of being dropped.
+    fn island_content(&self) -> (island::Content, Option<island::LiveBadge>) {
+        let media = self
+            .media
+            .lock()
+            .ok()
+            .and_then(|m| m.clone())
+            .filter(|m| m.playing || !m.title.is_empty());
+        let now = agent::now_secs();
+        let activity = self
             .agent_tasks
             .iter()
-            .enumerate()
-            .find(|(_, t)| t.pending.is_some())
-        {
+            .find(|t| t.status == agent::Status::Running && !t.is_quiet(now));
+        let badge_from_rest = || {
+            if media.is_some() {
+                Some(island::LiveBadge::Media)
+            } else if activity.is_some() {
+                Some(island::LiveBadge::Activity)
+            } else {
+                None
+            }
+        };
+        let ask_of = |i: usize, t: &agent::TaskView| {
             let p = t.pending.as_ref().expect("filtered");
-            return island::Content::Attention(island::Ask {
+            island::Content::Attention(island::Ask {
                 task: i,
                 who: t.agent.clone().unwrap_or_else(|| t.name.clone()),
                 kind: p.kind,
@@ -1432,39 +1471,50 @@ impl App {
                 task_scope: p.scopes.contains(&agent::Scope::Task),
                 choices: p.choices.clone(),
                 sent: t.decision_sent.is_some(),
-            });
+            })
+        };
+        if let Some((i, t)) = self.agent_tasks.iter().enumerate().find(|(_, t)| {
+            t.pending
+                .as_ref()
+                .is_some_and(|p| p.kind == agent::AskKind::Permission && t.decision_sent.is_none())
+        }) {
+            return (ask_of(i, t), badge_from_rest());
+        }
+        if let Some((i, t)) = self.agent_tasks.iter().enumerate().find(|(_, t)| {
+            t.pending
+                .as_ref()
+                .is_some_and(|p| p.kind == agent::AskKind::Question && t.decision_sent.is_none())
+        }) {
+            return (ask_of(i, t), badge_from_rest());
         }
         if let Some((h, at)) = &self.hud {
             if at.elapsed() < hud::SHOW_FOR {
-                return island::Content::Hud(h.clone());
+                return (island::Content::Hud(h.clone()), badge_from_rest());
             }
         }
         if self.island_expanded && self.island_tab_shelf {
-            return island::Content::Shelf(self.shelf.clone());
+            return (island::Content::Shelf(self.shelf.clone()), badge_from_rest());
         }
         if let Some(msg) = &self.island_msg {
-            return island::Content::Message(msg.clone());
+            return (island::Content::Message(msg.clone()), badge_from_rest());
         }
-        if let Some(m) = self.media.lock().ok().and_then(|m| m.clone()) {
-            if m.playing || !m.title.is_empty() {
-                return island::Content::Media(m);
-            }
+        if let Some(m) = media {
+            let badge = activity.map(|_| island::LiveBadge::Activity);
+            return (island::Content::Media(m), badge);
         }
-        let now = agent::now_secs();
-        if let Some(t) = self
-            .agent_tasks
-            .iter()
-            .find(|t| t.status == agent::Status::Running && !t.is_quiet(now))
-        {
-            return island::Content::Activity {
-                who: t.agent.clone().unwrap_or_else(|| t.name.clone()),
-                text: t
-                    .latest_milestone()
-                    .map(|m| m.text.clone())
-                    .unwrap_or_else(|| "Working".into()),
-            };
+        if let Some(t) = activity {
+            return (
+                island::Content::Activity {
+                    who: t.agent.clone().unwrap_or_else(|| t.name.clone()),
+                    text: t
+                        .latest_milestone()
+                        .map(|m| m.text.clone())
+                        .unwrap_or_else(|| "Working".into()),
+                },
+                None,
+            );
         }
-        island::Content::Idle
+        (island::Content::Idle, None)
     }
 
     /// Point the island's animation at where it should be now.
@@ -1474,11 +1524,10 @@ impl App {
         }
         let mut to = island::target(
             self.prefs.look.notch,
-            &self.island_content(),
+            &self.island_content().0,
             self.island_expanded,
         );
-        // Hover response (Apple): the pill widens slightly while the pointer
-        // rests on it, before the dwell expansion kicks in. No glow.
+        // Hover: +6 px width within ~120 ms, no glow (M5).
         if !self.island_expanded && self.island_hover_at.is_some() {
             to.w += 6.0;
         }
@@ -1724,7 +1773,7 @@ impl App {
                     }
                     _ => Vec::new(),
                 };
-                set_glass(self.glass_mgr.as_ref(), &self.qh, &mut self.dock, &shapes);
+                set_glass(self.glass_mgr.as_ref(), &self.qh, &mut self.dock, &shapes, &self.prefs.look);
                 set_blur(
                     self.blur_mgr.as_ref(),
                     &self.compositor,
@@ -1747,9 +1796,13 @@ impl App {
             }
         }
 
-        // Overlays: each draws into its own shm buffer.
+        // Overlays: each draws into its own shm buffer. Optional glass shape
+        // is sent with the same commit as the pixels (M7).
         macro_rules! overlay {
             ($slot:expr, |$cv:ident, $hover:ident| $draw:expr) => {
+                overlay!($slot, None, |$cv, $hover| $draw);
+            };
+            ($slot:expr, $glass:expr, |$cv:ident, $hover:ident| $draw:expr) => {
                 if let Some(ref mut slot) = $slot {
                     if slot.configured && slot.width > 0 {
                         let $hover = self
@@ -1766,6 +1819,25 @@ impl App {
                         ) {
                             let mut $cv = Canvas::new(bytes, w, h, scale as i32);
                             slot.regions = $draw;
+                            if let Some(shape) = $glass {
+                                let shapes = [shape];
+                                set_glass(
+                                    self.glass_mgr.as_ref(),
+                                    &self.qh,
+                                    slot,
+                                    &shapes,
+                                    &self.prefs.look,
+                                );
+                                set_blur(
+                                    self.blur_mgr.as_ref(),
+                                    &self.compositor,
+                                    &self.qh,
+                                    slot,
+                                    material::blur_rects(
+                                        shape.x, shape.y, shape.w, shape.h, shape.r,
+                                    ),
+                                );
+                            }
                             present(buffer, &slot.surface, w * scale, h * scale, scale as i32);
                         }
                     }
@@ -1811,48 +1883,79 @@ impl App {
                 hover,
             ));
         }
-        overlay!(self.control, |cv, hover| draw_control(
-            &mut cv,
-            &th,
-            &self.fonts,
-            &self.prefs,
-            &telem,
-            agents_summary,
-            hover,
-        ));
+        overlay!(
+            self.control,
+            Some(gshape(
+                0,
+                0,
+                CONTROL_W as i32,
+                CONTROL_H as i32,
+                tokens::R_CARD,
+                glass_proto::Preset::Popover,
+            )),
+            |cv, hover| draw_control(
+                &mut cv,
+                &th,
+                &self.fonts,
+                &self.prefs,
+                &telem,
+                agents_summary,
+                hover,
+            )
+        );
         let notifs_media = self.media.lock().ok().and_then(|g| g.clone());
-        overlay!(self.notifs_surface, |cv, hover| draw_notifs(
-            &mut cv,
-            &th,
-            &self.fonts,
-            &self.notifs,
-            notifs_media.as_ref(),
-            hover
-        ));
-        overlay!(self.dock_ctx, |cv, hover| menu::draw_ctx(
-            &mut cv,
-            &th,
-            &self.fonts,
-            &self.dock_ctx_entries,
-            hover
-        ));
+        let notifs_glass = overlay_shape(
+            &self.notifs_surface,
+            tokens::R_CARD,
+            glass_proto::Preset::Popover,
+        );
+        overlay!(
+            self.notifs_surface,
+            notifs_glass,
+            |cv, hover| draw_notifs(
+                &mut cv,
+                &th,
+                &self.fonts,
+                &self.notifs,
+                notifs_media.as_ref(),
+                hover
+            )
+        );
+        let dock_ctx_glass = overlay_shape(&self.dock_ctx, 12.0, glass_proto::Preset::Popover);
+        overlay!(
+            self.dock_ctx,
+            dock_ctx_glass,
+            |cv, hover| menu::draw_ctx(
+                &mut cv,
+                &th,
+                &self.fonts,
+                &self.dock_ctx_entries,
+                hover
+            )
+        );
         let telem = read_telemetry();
         let about_specs = self.about_specs(&telem);
-        overlay!(self.about, |cv, _hover| draw_about(
-            &mut cv,
-            &th,
-            &self.fonts,
-            &about_specs
-        ));
-        overlay!(self.island_card, |cv, _hover| draw_island_card(
-            &mut cv,
-            &th,
-            &self.fonts,
-            self.island_msg.as_deref(),
-            &self.wins,
-            &telem,
-            agents_summary,
-        ));
+        let about_glass = overlay_shape(&self.about, tokens::R_OVERLAY, glass_proto::Preset::Popover);
+        overlay!(
+            self.about,
+            about_glass,
+            |cv, _hover| draw_about(&mut cv, &th, &self.fonts, &about_specs)
+        );
+        let island_card_glass =
+            overlay_shape(&self.island_card, tokens::R_OVERLAY, glass_proto::Preset::Dark);
+        overlay!(
+            self.island_card,
+            island_card_glass,
+            |cv, _hover| draw_island_card(
+                &mut cv,
+                &th,
+                &self.fonts,
+                self.island_msg.as_deref(),
+                &self.wins,
+                &telem,
+                agents_summary,
+            )
+        );
         let root_hint = agent::root_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "$XDG_RUNTIME_DIR/solyra-agent (XDG_RUNTIME_DIR is not set)".into());
@@ -1883,16 +1986,20 @@ impl App {
                 .runtime_present
                 .then_some(agents_summary.live),
         };
-        overlay!(self.agents, |cv, hover| draw_agents(
-            &mut cv,
-            &th,
-            &self.fonts,
-            &view,
-            hover
-        ));
+        overlay!(
+            self.agents,
+            Some(gshape(
+                0,
+                0,
+                AGENTS_W as i32,
+                AGENTS_H as i32,
+                tokens::R_OVERLAY,
+                glass_proto::Preset::Dark,
+            )),
+            |cv, hover| draw_agents(&mut cv, &th, &self.fonts, &view, hover)
+        );
 
-        if let (Some(id), Some(slot)) = (self.menu_open, self.menu.as_ref()) {
-            let _ = slot;
+        if let Some(id) = self.menu_open {
             let titles = self.menu_titles();
             let (name, launch, has_window) = self.menu_app_ctx();
             let app = menu::AppCtx {
@@ -1908,7 +2015,19 @@ impl App {
                 .unwrap_or(menu::Title { id, x: 12, w: 20 });
             let bar_h = self.bar.height as i32;
             let armed = self.menu_armed;
-            overlay!(self.menu, |cv, hover| menu::draw(
+            let (pw, ph) = menu::panel_size(&self.fonts, &entries);
+            let screen_w = self.menu.as_ref().map(|s| s.width as i32).unwrap_or(1280);
+            let px = (title.x - 8).clamp(4, (screen_w - pw - 4).max(4));
+            let py = bar_h + 2;
+            let glass = Some(gshape(
+                px,
+                py,
+                pw,
+                ph,
+                10.0,
+                glass_proto::Preset::Popover,
+            ));
+            overlay!(self.menu, glass, |cv, hover| menu::draw(
                 &mut cv,
                 &th,
                 &self.fonts,
@@ -2090,7 +2209,7 @@ impl App {
                 )
             })
             .collect();
-        set_glass(self.glass_mgr.as_ref(), &self.qh, slot, &shapes);
+        set_glass(self.glass_mgr.as_ref(), &self.qh, slot, &shapes, &self.prefs.look);
         set_blur(
             self.blur_mgr.as_ref(),
             &self.compositor,
@@ -2133,7 +2252,7 @@ impl App {
     }
 
     fn draw_island(&mut self, scale: u32) {
-        let content = self.island_content();
+        let (content, badge) = self.island_content();
         let now = Instant::now();
         let dt = now
             .duration_since(self.island_last_frame)
@@ -2171,6 +2290,7 @@ impl App {
             reply: &self.reply_buf,
             typing,
             glass: material::blurs(self.notch_material),
+            badge,
         };
         let Ok((buffer, bytes)) = self.pool.create_buffer(
             (w * scale) as i32,
@@ -2248,7 +2368,7 @@ impl App {
         } else {
             Vec::new()
         };
-        set_glass(self.glass_mgr.as_ref(), &self.qh, slot, &shapes);
+        set_glass(self.glass_mgr.as_ref(), &self.qh, slot, &shapes, &self.prefs.look);
         set_blur(
             self.blur_mgr.as_ref(),
             &self.compositor,
@@ -2405,7 +2525,7 @@ impl App {
             }
             HitAction::StartReply if on_island => {
                 // Typing in the island goes to the task it is showing.
-                if let island::Content::Attention(a) = self.island_content() {
+                if let island::Content::Attention(a) = self.island_content().0 {
                     self.agents_selected = a.task;
                 }
             }
@@ -2673,7 +2793,7 @@ impl App {
             return;
         }
         if self.island_expanded && self.launcher.is_none() {
-            if let island::Content::Attention(a) = self.island_content() {
+            if let island::Content::Attention(a) = self.island_content().0 {
                 // The island shows one task: keys answer it (A/D/T, 1-9, or
                 // typing for a question).
                 self.agents_selected = a.task;
