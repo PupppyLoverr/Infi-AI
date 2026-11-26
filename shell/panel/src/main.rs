@@ -478,8 +478,34 @@ fn set_glass(
         } else {
             look.blur_intensity as u32
         };
-        let contrast = if look.increased_contrast { 140 } else { 100 };
-        glass.set_intensity(refraction, frost, contrast);
+        glass.set_intensity(refraction, frost, glass_contrast(look));
+    }
+}
+
+/// The `contrast` intensity sent with solyra_glass_v1 (percent). The
+/// compositor scales tint strength and rim light by it, so it carries both
+/// the accessibility "increased contrast" switch and Control Centre's
+/// ultraclear -> tinted slider (`glass_tint`, default 35 = native look).
+fn glass_contrast(look: &solyra_conf::look::Look) -> u32 {
+    let base = if look.increased_contrast { 140.0 } else { 100.0 };
+    let tint_k = 1.0 + (look.glass_tint.min(100) as f32 - 35.0) / 100.0 * 1.2;
+    (base * tint_k).round().clamp(0.0, 200.0) as u32
+}
+
+#[cfg(test)]
+mod glass_contrast_tests {
+    #[test]
+    fn the_tint_slider_reaches_the_compositor() {
+        let mut look = solyra_conf::look::Look::default();
+        look.glass_tint = 35;
+        assert_eq!(super::glass_contrast(&look), 100, "default is the native look");
+        look.glass_tint = 0;
+        let clear = super::glass_contrast(&look);
+        look.glass_tint = 100;
+        let tinted = super::glass_contrast(&look);
+        assert!(clear < 100 && tinted > 100, "{clear} {tinted}");
+        look.increased_contrast = true;
+        assert_eq!(super::glass_contrast(&look), 200, "clamped");
     }
 }
 
