@@ -40,3 +40,11 @@ vendors' logos.
 - **liquid-gel** (pearOS, GPL-3.0): reference for the glass plugin
   (`plugins/solyra-glass`, GPL-3.0, kept separate from the MIT-derived
   terminal).
+
+## Terminal icons
+
+`apps/solyra-term/assets/icons/*.svg` are copied from zeron
+(`crates/ui/assets/icons`, github.com/zeronsh/zeron @ 850238f, MIT). They are
+Solar glyphs (CC BY 4.0, 480 Design) plus the harness marks (Claude, OpenAI,
+OpenCode), which identify those products and belong to their owners.
+`split-rows.svg` is `split-columns.svg` rotated 90 degrees.

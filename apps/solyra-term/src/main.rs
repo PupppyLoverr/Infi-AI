@@ -31,6 +31,8 @@ use zgx_desktop::{Application, Titlebar, WindowOptions};
 
 mod chat;
 mod chrome_ui;
+mod icons;
+mod shell_integration;
 mod panes;
 mod sidepanel;
 mod tabs_model;
@@ -173,9 +175,12 @@ impl TermApp {
             .and_then(|id| self.terms.borrow().get(id).map(|term| term.pwd()))
             .filter(|path| !path.is_empty())
             .map(std::path::PathBuf::from);
+        let (command, env) = shell_integration::launch();
         Terminal::new(
             &self.rt,
             TerminalOptions {
+                command,
+                env,
                 working_directory: cwd,
                 ..Default::default()
             },
@@ -800,10 +805,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut session = Session::default();
             session.add_workspace("tab-1".into(), "pane-1".into());
             let terms: Rc<RefCell<HashMap<String, Terminal>>> = Rc::default();
-            terms.borrow_mut().insert(
-                "pane-1".into(),
-                Terminal::new(&rt, TerminalOptions::default()),
-            );
+            terms.borrow_mut().insert("pane-1".into(), {
+                let (command, env) = shell_integration::launch();
+                Terminal::new(&rt, TerminalOptions { command, env, ..Default::default() })
+            });
             let app = TermApp {
                 rt: rt.clone(),
                 session: Rc::new(RefCell::new(session)),

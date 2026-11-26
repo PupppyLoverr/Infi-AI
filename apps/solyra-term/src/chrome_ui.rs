@@ -18,7 +18,7 @@ use zgx::terminal::{Terminal, TerminalOptions, terminal};
 
 use crate::chat::{self, Chat};
 use crate::panes::SplitDir;
-use crate::TermApp;
+use crate::{icons, TermApp};
 
 pub const CLAUDE_ORANGE: Color = Color(217, 119, 87, 255);
 const INK: Color = Color(236, 236, 236, 255);
@@ -224,8 +224,8 @@ impl TermApp {
                 if !single_chat {
                     let (r, d) = (app.clone(), app.clone());
                     bar = bar
-                        .child(icon_button("▯▯", move || r.split(SplitDir::Vertical)).tooltip("Split right (Ctrl+Shift+D)"))
-                        .child(icon_button("▭", move || d.split(SplitDir::Horizontal)).tooltip("Split down (Ctrl+Shift+E)"));
+                        .child(icon_button("split-columns", move || r.split(SplitDir::Vertical)).tooltip("Split right (Ctrl+Shift+D)"))
+                        .child(icon_button("split-rows", move || d.split(SplitDir::Horizontal)).tooltip("Split down (Ctrl+Shift+E)"));
                 }
                 bar
             },
@@ -240,7 +240,7 @@ impl TermApp {
             .items_center()
             .window_drag()
             .child(lights)
-            .child(icon_button("◧", move || {
+            .child(icon_button("sidebar", move || {
                 side.panel_open.set(!side.panel_open.get());
                 side.bump();
             }))
@@ -274,7 +274,7 @@ impl TermApp {
         let open = self.menu_open.clone();
         let anchor = {
             let open = open.clone();
-            icon_button("+", move || { open.set(!open.get()); })
+            icon_button("plus", move || { open.set(!open.get()); })
         };
         let (t, c, x) = (self.clone(), self.clone(), self.clone());
         let have = |b: &str| std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(b).is_file()));
@@ -523,7 +523,7 @@ impl TermApp {
                             .bg(Color(242, 242, 242, 255))
                             .items_center()
                             .justify_center()
-                            .child(text_signal(move || if busy.get().is_empty() { "↑".into() } else { "■".into() }).text_size(15.).text_color(Color(17, 17, 17, 255)))
+                            .child(switch(move || busy.get().is_empty(), |idle, _cx| icons::icon(if idle { "arrow-up" } else { "stop" }, 17., Color(17, 17, 17, 255))))
                             .on_click(move || {
                                 if !send.send() {
                                     stop.stop();
@@ -567,27 +567,25 @@ pub fn harness_name(h: &str) -> &'static str {
     }
 }
 
-/// One glyph per pane: `>_` in a rounded box for a shell, Claude's orange
-/// spark for Claude Code, a ring for Codex.
+/// One glyph per pane, from zeron's icon set: a terminal for a shell, the
+/// Claude mark for Claude Code, the OpenAI mark for Codex.
 pub fn glyph(kind: &Kind, size: f32) -> View {
     match kind {
-        Kind::Shell => text(">_")
-            .text_size(size * 0.5)
-            .font_weight(800)
-            .font_family("JetBrains Mono")
-            .w(size + 2.)
-            .h(size)
-            .rounded(4.)
-            .border(1.2)
-            .items_center()
-            .justify_center(),
-        Kind::Chat => text("✻").text_size(size).text_color(CLAUDE_ORANGE),
-        Kind::Tui(h) if h == "claude" => text("✻").text_size(size).text_color(CLAUDE_ORANGE),
-        Kind::Tui(_) => text("◎").text_size(size).text_color(Color(230, 230, 230, 255)),
+        Kind::Shell => icons::icon("terminal", size, Color(200, 208, 205, 255)),
+        Kind::Chat => icons::icon("claude", size, CLAUDE_ORANGE),
+        Kind::Tui(h) if h == "claude" => icons::icon("claude", size, CLAUDE_ORANGE),
+        Kind::Tui(h) if h == "opencode" => icons::icon("opencode", size, Color(230, 230, 230, 255)),
+        Kind::Tui(_) => icons::icon("openai", size, Color(230, 230, 230, 255)),
     }
 }
 
 fn icon_button(label: &str, on: impl FnMut() + 'static) -> View {
+    // Icons by name; ">_" and "◐" stay text (the recordings draw them so).
+    let ink = Color(182, 193, 189, 255);
+    let content = match label {
+        "sidebar" | "plus" | "split-columns" | "split-rows" => icons::icon(label, 16., ink),
+        _ => text(label).text_size(13.).font_family("JetBrains Mono").text_color(ink),
+    };
     button()
         .w(28.)
         .h(26.)
@@ -597,7 +595,7 @@ fn icon_button(label: &str, on: impl FnMut() + 'static) -> View {
         .bg(Color(0, 0, 0, 0))
         .items_center()
         .justify_center()
-        .child(text(label).text_size(13.).font_family("JetBrains Mono").text_color(Color(182, 193, 189, 255)))
+        .child(content)
         .on_click(on)
 }
 

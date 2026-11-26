@@ -1,0 +1,14 @@
+# Solyra Terminal shell integration for bash: the user's own ~/.bashrc first,
+# then OSC 7 (working directory) and OSC 133 (prompt marks), and the
+# terminal's prompt ("➜  dir") unless SOLYRA_KEEP_PROMPT is set.
+[ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"
+__solyra_mark() {
+  local s=$?
+  printf '\e]133;D;%s\e\\' "$s"
+  printf '\e]7;file://%s%s\e\\' "${HOSTNAME:-localhost}" "$PWD"
+  return $s
+}
+PROMPT_COMMAND="__solyra_mark${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+if [ -z "$SOLYRA_KEEP_PROMPT" ]; then
+  PS1='\[\e]133;A\e\\\]\[\e[1;32m\]➜\[\e[0m\]  \[\e[1;36m\]\W\[\e[0m\] \[\e]133;B\e\\\]'
+fi
