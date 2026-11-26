@@ -1,5 +1,9 @@
 # Changelog
 
+## M4 – Linear-light blending (done)
+- Kawase blur averages in linear light (decode on first downsample);
+  material pass encodes back to sRGB at output. Glass-effect elements only.
+
 ## M3 – Compositor material pass (done)
 - Protocol: presets dark/dock/island/popover/window added to solyra_glass_v1.
 - Compositor shader: per-shape material — adaptive tint (in-shader luminance,
