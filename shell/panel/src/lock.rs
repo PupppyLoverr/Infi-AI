@@ -1250,8 +1250,17 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
             }
 
             // Monumental SF-Pro-weighted Display Clock with tracked date above.
-            let clock_size = (h as f32 * 0.21).clamp(104.0, 192.0);
-            let clock_base = (h as f32 * 0.40) as i32;
+            let has_media = !title.is_empty() || !artist.is_empty();
+            let clock_size = if has_media {
+                (h as f32 * 0.16).clamp(84.0, 156.0)
+            } else {
+                (h as f32 * 0.21).clamp(104.0, 192.0)
+            };
+            let clock_base = if has_media {
+                (h as f32 * 0.31) as i32
+            } else {
+                (h as f32 * 0.40) as i32
+            };
             let date_size = (clock_size * 0.14).clamp(16.0, 24.0);
             let date_base = clock_base - (clock_size * 0.78) as i32;
             let date_tr = 1.6;
@@ -1315,9 +1324,9 @@ pub fn paint(cv: &mut Canvas<'_>, v: &View<'_>) {
             }
 
             // Droppy Split Media Deck (Album Art + Live Lyrics + Playing Next) when media is active.
-            if !title.is_empty() || !artist.is_empty() {
-                let deck_y = py + pill_h + 18;
-                if deck_y + 180 < h - 140 {
+            if has_media {
+                let deck_y = py + pill_h + 14;
+                if deck_y + 166 < h - 110 {
                     draw_droppy_lock_media(cv, v, w, deck_y, title, artist);
                 }
             }

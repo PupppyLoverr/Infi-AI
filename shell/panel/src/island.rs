@@ -172,12 +172,14 @@ fn expanded_shape(style: NotchStyle, content: &Content) -> Shape {
             ask_reply,
             ..
         } => {
-            let tall = !query.trim().is_empty() || *ask_mode || ask_reply.is_some();
-            (
-                548.0,
-                if tall { 386.0 } else { 104.0 },
-                if island { 32.0 } else { 26.0 },
-            )
+            let h = if *ask_mode || ask_reply.is_some() {
+                216.0
+            } else if !query.trim().is_empty() {
+                272.0
+            } else {
+                96.0
+            };
+            (500.0, h, if island { 30.0 } else { 24.0 })
         }
         Content::Idle => (
             if island { 348.0 } else { 392.0 },
@@ -421,7 +423,7 @@ pub fn draw(
                 cv.round_rect_shadow(xi, yi, wi, hi, s.r, 10.0, 22.0, 64);
             }
             if dynamic_glass {
-                // Top camera header pure black, melting into smoked glass below.
+                // Top camera header pure black, melting smoothly into smoked Dynamic Glass below.
                 cv.round_rect_vgrad(
                     xi,
                     yi,
@@ -429,11 +431,8 @@ pub fn draw(
                     hi,
                     s.r,
                     Rgba::rgba(0, 0, 0, 255),
-                    Rgba::rgba(14, 14, 18, 222),
+                    Rgba::rgba(14, 14, 18, 224),
                 );
-                // Solid black camera-pill cap at the very top centre.
-                let cap_h = 34.min(hi);
-                cv.round_rect(xi, yi, wi, cap_h, s.r.min(cap_h as f32 / 2.0), pure_black);
                 cv.round_rect_glass_rim(
                     xi,
                     yi,
