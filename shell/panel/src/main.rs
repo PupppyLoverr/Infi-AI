@@ -163,6 +163,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .ok()
         })
         .flatten();
+    if glass_mgr.is_some() {
+        crate::material::COMPOSITOR_GLASS.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     let bar_material = prefs.look.material(prefs.look.bar_material);
     let dock_material = prefs.look.material(prefs.look.dock_material);
     let bar = make_layer_surface(

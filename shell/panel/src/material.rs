@@ -354,7 +354,30 @@ pub fn pear_glass(
 /// bends the backdrop at the edge (the `refraction` layer rule); a sharp
 /// specular line lit from the top-left with a softer catch on the
 /// bottom-right; a soft lensed band inside the edge; a hairline outside.
+/// True when the compositor renders the glass material itself
+/// (solyra_glass_v1): the panel then skips its CPU tint and rims, which
+/// would double-paint, and keeps only what the compositor cannot know —
+/// the hairline outside the shape.
+pub static COMPOSITOR_GLASS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn compositor_glass() -> bool {
+    COMPOSITOR_GLASS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub fn apple_glass(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32, dark: bool) {
+    if compositor_glass() {
+        cv.stroke_round_rect(
+            x - 1,
+            y - 1,
+            w + 2,
+            h + 2,
+            r + 1.0,
+            1.0,
+            Rgba::rgba(0, 0, 0, if dark { 54 } else { 26 }),
+        );
+        return;
+    }
     let fill = if dark {
         Rgba::rgba(18, 18, 22, 92)
     } else {
@@ -397,6 +420,10 @@ pub fn apple_glass(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32, 
 /// dark tint, so white text and art stay readable on any wallpaper while the
 /// desktop still shows through, blurred.
 pub fn smoked_glass(cv: &mut Canvas<'_>, x: i32, y: i32, w: i32, h: i32, r: f32) {
+    if compositor_glass() {
+        cv.stroke_round_rect(x - 1, y - 1, w + 2, h + 2, r + 1.0, 1.0, Rgba::rgba(0, 0, 0, 54));
+        return;
+    }
     cv.round_rect_vgrad(
         x,
         y,
