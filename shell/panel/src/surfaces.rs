@@ -136,10 +136,11 @@ pub fn draw_bar(
     // menu bar, so it needs no scrim at all and the sky stays untouched.
     let flip = crate::material::ink_flips(bar_mat, th.bar, prefs.wall_tint);
     if bar_mat == crate::material::Material::Glass {
-        if !flip {
-            let scrim = if dark_theme { 26 } else { 34 };
-            let top = Rgba::rgba(0, 0, 0, scrim);
-            cv.fill_rect_vgrad(0, 0, w, h, top, Rgba::rgba(0, 0, 0, 0));
+        // Real pearOS / macOS menu bar: completely transparent over the
+        // wallpaper with no heavy grey band or bottom hairline; legibility
+        // comes from crisp shadowed white text (or dark ink when flipped).
+        if !flip && !dark_theme {
+            cv.fill_rect_vgrad(0, 0, w, h, Rgba::rgba(0, 0, 0, 18), Rgba::rgba(0, 0, 0, 0));
         }
     } else {
         crate::material::paint(cv, &slab, 0, 0, w, h, 0.0);
@@ -174,9 +175,9 @@ pub fn draw_bar(
         )
     } else if is_glass_bar && dark_theme {
         (
-            Rgba::rgba(255, 255, 255, 244),
-            Rgba::rgba(255, 255, 255, 224),
-            Some(Rgba::rgba(0, 0, 0, 34)),
+            Rgba::rgba(255, 255, 255, 252),
+            Rgba::rgba(255, 255, 255, 240),
+            Some(Rgba::rgba(0, 0, 0, 128)),
             th.tile_hover,
         )
     } else {
@@ -519,6 +520,31 @@ pub fn draw_bar(
             h,
             action: HitAction::Shell(ShellCmd::ToggleLauncher),
         });
+
+        // pearOS tray overflow chevron (v) left of Search/status icons.
+        let chev_w = 20;
+        let chev_x = search_x - 8 - chev_w;
+        if chev_x > (w / 2) + center_reserved_half {
+            if hovered(hover, chev_x, 0, chev_w, h) {
+                cv.round_rect(chev_x, 2, chev_w, h - 4, 6.0, hover_fill);
+            }
+            let ccx = chev_x as f32 + chev_w as f32 / 2.0;
+            let draw_chev = |cv: &mut Canvas<'_>, cy: f32, col: Rgba| {
+                cv.line(ccx - 3.6, cy - 1.6, ccx, cy + 2.0, 1.35, col);
+                cv.line(ccx, cy + 2.0, ccx + 3.6, cy - 1.6, 1.35, col);
+            };
+            if let Some(sh) = bar_shadow {
+                draw_chev(cv, icon_cy + 1.0, sh);
+            }
+            draw_chev(cv, icon_cy, bar_menu_text);
+            regions.push(Region {
+                x: chev_x,
+                y: 0,
+                w: chev_w,
+                h,
+                action: HitAction::Shell(ShellCmd::ToggleControl),
+            });
+        }
     }
 
     regions

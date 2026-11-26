@@ -102,6 +102,76 @@ pub fn open_command(p: &Path) -> String {
     format!("xdg-open '{quoted}'")
 }
 
+/// Recent files in `~/Downloads` (Droppy's Tracked Folder), newest first.
+pub fn tracked_downloads(limit: usize) -> Vec<PathBuf> {
+    let Some(home) = std::env::var_os("HOME") else {
+        return Vec::new();
+    };
+    let dir = PathBuf::from(home).join("Downloads");
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut entries: Vec<(std::time::SystemTime, PathBuf)> = rd
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            if p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with('.'))
+            {
+                return None;
+            }
+            let mtime = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            Some((mtime, p))
+        })
+        .collect();
+    entries.sort_by(|a, b| b.0.cmp(&a.0));
+    entries.into_iter().take(limit).map(|(_, p)| p).collect()
+}
+
+/// Zip the parked tray files into `~/Downloads/solyra-tray-<ts>.tar.gz`.
+/// Returns the archive path on success.
+pub fn zip_items(items: &[PathBuf]) -> Option<PathBuf> {
+    if items.is_empty() {
+        return None;
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let out_dir = home.join("Downloads");
+    let _ = std::fs::create_dir_all(&out_dir);
+    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let archive = out_dir.join(format!("solyra-tray-{ts}.tar.gz"));
+    let mut cmd = std::process::Command::new("tar");
+    cmd.arg("-czf").arg(&archive);
+    for p in items {
+        if let (Some(parent), Some(name)) = (p.parent(), p.file_name()) {
+            cmd.arg("-C").arg(parent).arg(name);
+        }
+    }
+    cmd.status().ok()?.success().then_some(archive)
+}
+
+/// Create a new timestamped folder in `~/Downloads` containing symlinks to the
+/// parked tray items (Droppy's "New folder from selection").
+pub fn gather_to_folder(items: &[PathBuf]) -> Option<PathBuf> {
+    if items.is_empty() {
+        return None;
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let dir = home.join("Downloads").join(format!("Tray-{ts}"));
+    std::fs::create_dir_all(&dir).ok()?;
+    #[cfg(unix)]
+    for p in items {
+        if let Some(name) = p.file_name() {
+            let _ = std::os::unix::fs::symlink(p, dir.join(name));
+        }
+    }
+    Some(dir)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

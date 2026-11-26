@@ -106,21 +106,20 @@ pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
         // keeps its hue and only lifts it, the way the macOS dock does.
         // Dark theme: smoked glass, the pearOS / macOS Tahoe Dark dock: a
         // near-black tint over the blur with a 1 px white 20 % rim.
-        // Dark theme: real frosted glass (macOS Tahoe dark dock). The
-        // compositor blurs the wallpaper behind; the panel adds only a faint
-        // grey wash, a white veil that brightens toward the top, a lit rim
-        // and a specular top edge, so the wallpaper's colour shows through.
+        // Dark theme: real frosted glass (pearOS / macOS Tahoe dark dock).
+        // Keep fill alpha low so the blurred wallpaper glows luminously through
+        // the glass rather than turning into opaque dark grey mud.
         Material::Glass if dark => Slab {
             kind: m,
-            fill: Rgba::rgba(30, 30, 36, boost(54)),
-            edge: Rgba::rgba(255, 255, 255, 64),
-            highlight: Some(Rgba::rgba(255, 255, 255, 150)),
+            fill: Rgba::rgba(20, 22, 28, 30),
+            edge: Rgba::rgba(255, 255, 255, 76),
+            highlight: Some(Rgba::rgba(255, 255, 255, 162)),
         },
         Material::Glass => Slab {
             kind: m,
-            fill: Rgba::rgba(255, 255, 255, 96),
-            edge: rim(24),
-            highlight: Some(Rgba::rgba(255, 255, 255, 220)),
+            fill: Rgba::rgba(255, 255, 255, 78),
+            edge: Rgba::rgba(255, 255, 255, 160),
+            highlight: Some(Rgba::rgba(255, 255, 255, 238)),
         },
         Material::Acrylic => {
             // Windows Acrylic / Mica: wallpaper hue + denser luminosity fill + soft rim.
@@ -140,13 +139,26 @@ pub fn slab(m: Material, base: Rgba, tint: Option<Rgba>) -> Slab {
 pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f32) {
     if r <= 0.5 {
         if s.kind == Material::Glass && is_dark(s.fill) {
-            // Dark menu bar: a thin smoke that fades out, so white text reads
-            // over any wallpaper while the bar still looks clear.
-            cv.fill_rect_vgrad(x, y, w, h, Rgba::rgba(18, 18, 20, 110), Rgba::rgba(18, 18, 20, 60));
+            // pearOS / macOS crystal-clear menu bar: whisper-thin top veil so
+            // white text stays crisp without a heavy dark grey rectangle band.
+            cv.fill_rect_vgrad(
+                x,
+                y,
+                w,
+                h,
+                Rgba::rgba(16, 18, 22, 34),
+                Rgba::rgba(16, 18, 22, 8),
+            );
         } else if s.kind == Material::Glass {
-            // A glass bar is only a veil that fades into the wallpaper.
-            let top = Rgba::rgba(255, 255, 255, s.fill.3 / 2);
-            cv.fill_rect_vgrad(x, y, w, h, top, Rgba::rgba(255, 255, 255, 0));
+            // Light glass bar: airy luminous veil, no harsh bottom divider.
+            cv.fill_rect_vgrad(
+                x,
+                y,
+                w,
+                h,
+                Rgba::rgba(255, 255, 255, 42),
+                Rgba::rgba(255, 255, 255, 10),
+            );
         } else {
             cv.fill_rect(x, y, w, h, s.fill);
         }
@@ -154,7 +166,9 @@ pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f
     }
     match s.kind {
         Material::Glass if is_dark(s.fill) => {
-            // A faint wash so icons sit on something, then the glass itself.
+            // pearOS-grade translucent frosted glass: soft dark glaze + airy
+            // frosted sheen + luminous optical specular rim so blurred wallpaper
+            // flows clearly through the dock and overlays.
             cv.round_rect(x, y, w, h, r, s.fill);
             cv.round_rect_vgrad(
                 x,
@@ -162,8 +176,8 @@ pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f
                 w,
                 h,
                 r,
-                Rgba::rgba(255, 255, 255, 40),
-                Rgba::rgba(255, 255, 255, 10),
+                Rgba::rgba(255, 255, 255, 26),
+                Rgba::rgba(255, 255, 255, 8),
             );
             let hl = s.highlight.unwrap_or(s.edge);
             cv.round_rect_glass_rim(
@@ -174,7 +188,7 @@ pub fn paint(cv: &mut Canvas<'_>, s: &Slab, x: i32, y: i32, w: i32, h: i32, r: f
                 r,
                 hl,
                 Rgba::rgba(255, 255, 255, s.edge.3),
-                Rgba::rgba(255, 255, 255, s.edge.3 / 2),
+                Rgba::rgba(255, 255, 255, (s.edge.3 / 2).max(32)),
             );
         }
         Material::Glass => {
