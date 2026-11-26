@@ -64,7 +64,12 @@ PanelWindow {
             }
             ScreencopyView {
                 id: shot
-                anchors.fill: parent
+                // Keep the window's aspect so the highlight hugs the thumbnail.
+                readonly property real k: sourceSize.width > 0 && sourceSize.height > 0
+                    ? Math.min(parent.width / sourceSize.width, parent.height / sourceSize.height) : 1
+                anchors.centerIn: parent
+                width: sourceSize.width > 0 ? sourceSize.width * k : parent.width
+                height: sourceSize.height > 0 ? sourceSize.height * k : parent.height
                 captureSource: ov.open ? cell.modelData : null
                 live: ov.open
                 layer.enabled: true

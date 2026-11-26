@@ -23,6 +23,7 @@ PanelWindow {
     mask: Region { item: hit }
 
     readonly property var pinned: ["solyra-files", "firefox", "solyra-term", "org.gnome.TextEditor", "mpv", "solyra-settings"]
+    readonly property var bundled: ({ "solyra-files": "Finder", "solyra-term": "Terminal", "solyra-settings": "Settings" })
     readonly property int cell: 48
     readonly property int gap: 8
     property real mx: -1
@@ -34,9 +35,13 @@ PanelWindow {
     readonly property var items: {
         const out = []
         const seen = {}
+        // Desktop entries load asynchronously: touch the list so this
+        // binding re-runs once they arrive.
+        const _apps = DesktopEntries.applications.values.length
         for (const id of pinned) {
             const e = entryFor(id)
-            if (!e) continue
+            // Keep our own apps even before (or without) a desktop entry.
+            if (!e && !(id in bundled)) continue
             out.push({ kind: "app", id: id, entry: e, appId: id })
             seen[id] = true
         }

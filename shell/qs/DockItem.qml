@@ -72,7 +72,7 @@ Item {
         width: tip.implicitWidth + 24; height: 28
         Text {
             id: tip; anchors.centerIn: parent; color: Theme.ink; font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Medium
-            text: it.item.kind === "downloads" ? "Downloads" : it.item.kind === "trash" ? "Trash" : (it.item.entry ? it.item.entry.name : it.item.id) + (it.item.kind === "bg" ? " (background)" : "")
+            text: it.item.kind === "downloads" ? "Downloads" : it.item.kind === "trash" ? "Trash" : (it.item.entry ? it.item.entry.name : (it.dock.bundled[it.item.id] || it.item.id)) + (it.item.kind === "bg" ? " (background)" : "")
         }
     }
 
@@ -86,6 +86,7 @@ Item {
             else if (k === "bg") { if (it.item.tray) it.item.tray.activate() }
             else if (it.wins.length) it.wins[0].activate()
             else if (it.item.entry) { bounceAnim.restart(); it.item.entry.execute() }
+            else { bounceAnim.restart(); Quickshell.execDetached([it.item.id]) }
         }
     }
     TapHandler {
