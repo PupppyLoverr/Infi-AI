@@ -184,7 +184,7 @@ Ground rules for every step:
   screenshot, and limits are stated plainly.
 
 ### M0. Infrastructure (prerequisite)
-- [ ] 🟡 *Status: PKGBUILDs for solyra-term, solyra-files and solyra-shell (`pkg/`); CI now builds them with makepkg (`solyra-packages` artifact), first run pending.* `pkg/` holds PKGBUILDs for every Solyra component; CI builds them in an
+- [ ] 🟡 *Status: PKGBUILDs for solyra-term (the new zgx terminal), solyra-files and solyra-shell (`pkg/`); CI builds them with makepkg, reusing its warm-cache binaries (`solyra-packages` artifact); a green run with the new terminal is pending.* `pkg/` holds PKGBUILDs for every Solyra component; CI builds them in an
   `archlinux` container into a local pacman repo artifact.
 - [x] ✅ *Status: done and verified; the full scenario runs on Hyprland 0.57.2 and publishes 20+ shots plus logs to `docs/shots/vm/`.* `solyra-vm` workflow: install the repo into the VM, run the session,
   then a scenario script (e.g. `hyprctl dispatch exec`, `qs ipc call`) and
@@ -206,7 +206,7 @@ Ground rules for every step:
   the reason documented.
 
 ### M3. Terminal core
-- [x] ✅ *Status: done via zgx-terminal (alacritty_terminal + portable-pty) plus a zeron-recipe stream-json chat engine.* Port zeron's engine (MIT, notices kept): `alacritty_terminal`
+- [x] ✅ *Status: **Solyra Terminal is now zgx's own terminal app** (`crates/zgx-desktop/examples/terminal`, MIT, at `3218e80e`) in `apps/terminal/`: Luau interface with titlebar tabs, draggable/resizable split panes, an agents sidebar, a ⌘K palette, in-pane web pages and plugins, on frosted glass; shells live in a session server and survive the window. Ported to Linux by us (XDG state dir, `/proc` process info, a foreground watcher instead of kqueue); 14 tests pass. The earlier terminal (zgx-terminal plus the zeron-recipe stream-json chat) stays as `solyra-term-classic`.* Port zeron's engine (MIT, notices kept): `alacritty_terminal`
   Term/grid, `portable-pty` spawn of the user's `$SHELL`, read loop, resize.
 - [x] ✅ *Status: done (zgx-terminal view: truecolor, Unicode, cursor, input, scrollback, selection, copy and paste, search).* zgx terminal view: glyph atlas text, truecolor, Unicode width (wide
   and combining), cursor, keyboard and mouse input, scrollback, selection,
@@ -232,7 +232,7 @@ Ground rules for every step:
   tinted), Reduce Motion (animations off or crossfade).
 
 ### M5. Menu bar and dock (Quickshell)
-- [x] ✅ *Status: done in QML with real actions; DBusMenu export from apps ⏳.* Menu bar: logo menu, app name, global menu (DBusMenu via the
+- [x] ✅ *Status: done in QML with real actions (App, File, Edit, View, Go, Window, Help send the standard keystrokes and window actions). Reading each app's own menus over DBusMenu ⏳: it needs an AppMenu registrar service plus apps exporting menus (GTK4 and most Qt 6 apps no longer do), so it is not built.* Menu bar: logo menu, app name, global menu (DBusMenu via the
   `org.kde.kappmenu` protocol and the appmenu registrar; GTK through
   `appmenu-gtk-module`), status items (SNI tray), Control Center button,
   clock.
@@ -244,16 +244,16 @@ Ground rules for every step:
     or tray item) plus "Stop Running in Background" (SIGTERM, then
     SIGKILL after 5 s);
   - layered icons (Solyra icon set, foreground and background layers).
-- [ ] 🟡 *Status: covered by Quickshell's built-in services (MPRIS, PipeWire, UPower, tray, notifications) and wl-paste; no separate Rust daemon needed so far.* Rust `solyra-shelld` services over D-Bus: media (MPRIS), clipboard,
+- [x] ✅ *Status: superseded. Quickshell's built-in services (MPRIS, PipeWire, UPower, tray, notifications, desktop entries) plus wl-paste, inotifywait and find cover every service, so no separate daemon runs (less RAM).* Rust `solyra-shelld` services over D-Bus: media (MPRIS), clipboard,
   shelf, file index, apps; ported from the panel.
 
 ### M6. Spotlight, notch, Control Center, notifications
-- [x] ✅ *Status: done (apps, files, calculator, actions; Ask via the claude and codex subscriptions).* Spotlight (Super+Space), "Search or Ask":
+- [x] ✅ *Status: done. **Spotlight lives in the Dynamic Island**: Super+Space (or the menu-bar magnifier) morphs the island into Search or Ask and results grow it downwards. Apps, files, calculator, clipboard history, actions (timers, auto-arrange…), and Ask via the claude and codex subscriptions.* Spotlight (Super+Space), "Search or Ask":
   - instant local search over apps, files (Rust index, inotify), settings,
     calculator, clipboard and actions;
   - Ask tab with pluggable providers (claude CLI with the Claude
     subscription login, codex CLI with ChatGPT login), streamed answers.
-- [x] ✅ *Status: done; small centred idle pill, springs, compact, HUD and expanded states.* Notch: built fresh. Morph animations at refresh rate (profiled with
+- [x] ✅ *Status: done and revamped: a small MacBook-size pill hanging from the top edge, springs, HUD, search and expanded states in dark Liquid Glass; **several live activities at once** (screen recording, timer, music, High Alert, charging), the second splitting off into its own bubble as on iOS.* Notch: built fresh. Morph animations at refresh rate (profiled with
   `QSG_RENDER_TIMING`); compact live activities; media.
 - [x] ✅ *Status: done.* Control Center: Wi-Fi (NetworkManager D-Bus), Bluetooth (BlueZ),
   sound and display sliders, Focus, Now Playing, the transparency slider.
@@ -285,13 +285,13 @@ Ground rules for every step:
     calendar, lock-screen media, and more;
   - each feature checked off or marked "not possible on Linux" with the
     reason.
-- [x] ✅ *Status: snap layouts (Super+Z, Window menu, the green button's Snap popover in our apps) and the auto-arrange toggle are done. Snap zones while dragging are not done (Hyprland exposes no live-drag event to the shell).* Windows 11-style management:
+- [x] ✅ *Status: snap layouts (Super+Z, Window menu, the green button's Snap popover in our apps) and the auto-arrange toggle are done. Drag-to-snap is done in the compositor config: let go of a dragged window at a screen edge for that half, at a corner for that quarter, at the top to fill (no live zone preview, since Hyprland exposes no drag-progress event). Windows float, centred, like macOS unless auto-arrange (a Hyprland rule, reloaded live) tiles them.* Windows 11-style management:
   - snap layouts on maximise-button hover and Super+Z (halves, thirds,
     quarters, 2/3+1/3 and grids);
   - snap zones while dragging, snap groups restored together;
   - optional auto-arrange per workspace (Hyprland dwindle/master toggled
     from the menu bar).
-- [ ] ⏳ *Status: waiting for your approval; Mission Control and Quick-ish previews are already in.* Suggested extras only after approval (§4 list).
+- [x] ✅ *Status: built after your go-ahead ("do everything"): Mission Control, hot corners, Quick Look (Finder), clipboard history in Spotlight, Night Shift, Focus (Do Not Disturb), screenshots with markup and screen recording, per-app volume, desktop widgets. Stage Manager is not built (it needs window thumbnails grouped per app beside a centre stage; Mission Control covers switching).* Suggested extras only after approval (§4 list).
 
 ## 5b. Honest scope for one 5-hour window
 At about 40% usage already spent, one window realistically covers
@@ -396,9 +396,9 @@ claimed without a VM run.
 | M0 Test VM (`solyra-vm`) | ✅ Full scenario runs on Hyprland 0.57.2 in CI and publishes shots to docs/shots/vm |
 | M1 Audit and measure | ✅ Plasma 1144–1192 MB; Hyprland + Quickshell numbers come from the solyra-vm report |
 | M2 Terminal blur spike | ✅ Verified on Hyprland 0.57.2 in the VM |
-| M3 Terminal core | ✅ PTY, alacritty_terminal, truecolor, Unicode, scrollback, selection, copy and paste, search, resize, tabs, splits (zgx-terminal) |
+| M3 Terminal core | ✅ zgx's terminal app (Luau UI, session server, agents sidebar, palette, plugins) ported to Linux; classic terminal kept |
 | M4 Glass and tokens | ✅ One glass slider (0–100), Reduce Transparency, Reduce Motion, Show Borders, one corner radius, two-layer shadows, Hyprland blur with ignore-alpha shapes. ✅ Refraction via Hyprland's acrylic variant |
-| M5 Menu bar and dock | ✅ Written (QML). Global menu: standard menus wired to real actions; DBusMenu export ⏳ |
+| M5 Menu bar and dock | ✅ Menu bar with real actions, dock with Liquid Glass. Apps' own DBusMenu ⏳ (not built) |
 | M6 Spotlight, notch, Control Center, notifications | ✅ Written (QML), plus Mission Control and the lock screen |
 | M7 Terminal polish | ✅ One app, exactly recording A plus the chat inside the glass; zeron icons; shell integration (OSC 7/133) |
 | M8 ISO | ✅ 1745 MiB, live session boots into the Solyra desktop |
