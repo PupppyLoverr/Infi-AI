@@ -83,14 +83,11 @@ jobs:
         run: |
           ls out/shots >/dev/null 2>&1 || exit 0
           sudo apt-get -qq install -y imagemagick >/dev/null
-          rm -rf docs/shots/vm && mkdir -p docs/shots/vm
+          mkdir -p /tmp/pub
           for f in out/shots/*.ppm; do [ -f "$f" ] && convert "$f" "${f%.ppm}.png"; done
-          for f in out/shots/*.png; do [ -f "$f" ] && convert "$f" -quality 82 "docs/shots/vm/$(basename "${f%.png}").jpg"; done
-          cp out/shots/*.txt out/shots/*.log out/shots/*.lua docs/shots/vm/ 2>/dev/null || true
-          git config user.name "solyra-ci"; git config user.email "solyra-ci@users.noreply.github.com"
-          git add docs/shots
-          git commit -qm "solyra-vm shots for ${GITHUB_SHA::7} [skip ci]" || exit 0
-          for i in 1 2 3; do git pull -q --rebase origin "$GITHUB_REF_NAME" && git push -q origin "HEAD:$GITHUB_REF_NAME" && break; sleep 5; done
+          for f in out/shots/*.png; do [ -f "$f" ] && convert "$f" -quality 82 "/tmp/pub/$(basename "${f%.png}").jpg"; done
+          cp out/shots/*.txt out/shots/*.log out/shots/*.lua /tmp/pub/ 2>/dev/null || true
+          tools/ci/publish-shots.sh /tmp/pub docs/shots/vm "solyra-vm shots for ${GITHUB_SHA::7}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

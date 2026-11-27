@@ -55,9 +55,6 @@ jobs:
       - name: Publish shots
         if: always()
         run: |
-          git config user.name "solyra-ci"; git config user.email "solyra-ci@users.noreply.github.com"
-          git add docs/shots 2>/dev/null || exit 0
-          git commit -qm "solyra-iso boot shots for ${GITHUB_SHA::7} [skip ci]" || exit 0
-          for i in 1 2 3; do git pull -q --rebase origin "$GITHUB_REF_NAME" && git push -q origin "HEAD:$GITHUB_REF_NAME" && break; sleep 5; done
+          tools/ci/publish-shots.sh docs/shots/iso docs/shots/iso "solyra-iso boot shots for ${GITHUB_SHA::7}"
       - uses: actions/upload-artifact@v4
         with: { name: solyra-iso, path: out/*.iso, retention-days: 7, compression-level: 0 }
