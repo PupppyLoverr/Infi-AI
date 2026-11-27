@@ -162,9 +162,9 @@ PanelWindow {
     // stay inside the 32 px menu bar; only the expanded tabs pull down past it.
     readonly property int barH: 32
     readonly property var dims: ({
-        idle:     { w: 84, h: 24, r: 12 },
-        compact:  { w: 232, h: 24, r: 12 },
-        hud:      { w: 280, h: 24, r: 12 },
+        idle:     { w: 58, h: 22, r: 11 },
+        compact:  { w: 210, h: 22, r: 11 },
+        hud:      { w: 260, h: 22, r: 11 },
         expanded: { w: 500, h: 200, r: 34 }
     })
     // Media and the calendar glance are shorter than the card tabs: fit them.
@@ -180,7 +180,8 @@ PanelWindow {
         readonly property bool glassy: win.mode === "expanded" && !Theme.reduceTransparency
         color: glassy ? Qt.rgba(0.07, 0.07, 0.09, 0.30 + Theme.glass / 100 * 0.45) : "black"
         Behavior on color { ColorAnimation { duration: Theme.ms(220) } }
-        opacity: Theme.hideNotch && win.mode === "idle" && !hoverIdle.hovered ? 0 : 1
+        // Spotlight opens over the notch: the island steps aside meanwhile.
+        opacity: (win.shell && win.shell.spotlightOpen) || (Theme.hideNotch && win.mode === "idle" && !hoverIdle.hovered) ? 0 : 1
         Behavior on opacity { NumberAnimation { duration: Theme.ms(220) } }
         HoverHandler { id: hoverIdle }
         anchors.horizontalCenter: parent.horizontalCenter

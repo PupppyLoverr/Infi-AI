@@ -18,12 +18,14 @@ PanelWindow {
     property var shell
     screen: screenModel
     anchors.bottom: true
-    implicitWidth: card.width + 200
-    implicitHeight: 150
-    exclusiveZone: 76
+    // The surface is exactly the card (plus the gap under it), so the
+    // compositor's lens bends the backdrop along the dock's own edges.
+    // Magnification is off, as Apple ships it; tooltips are popups.
+    implicitWidth: card.width
+    implicitHeight: card.height + 6
+    exclusiveZone: card.height + 10
     color: "transparent"
     WlrLayershell.namespace: "solyra-dock"
-    mask: Region { item: hit }
 
     readonly property var pinned: ["solyra-files", "firefox", "solyra-term", "org.gnome.TextEditor", "mpv", "solyra-settings"]
     readonly property var bundled: ({ "solyra-files": "Finder", "solyra-term": "Terminal", "solyra-settings": "Settings" })
@@ -108,24 +110,17 @@ PanelWindow {
         return out
     }
 
-    Item {
-        id: hit
-        anchors.bottom: parent.bottom
-        anchors.horizontalCenter: parent.horizontalCenter
-        width: card.width; height: dockWin.mx >= 0 ? 140 : 72
-    }
 
     Glass {
         id: card
         kind: "clear"
         r: 24
         anchors.bottom: parent.bottom
-        anchors.bottomMargin: 4
+        anchors.bottomMargin: 6
         anchors.horizontalCenter: parent.horizontalCenter
         height: 64
         width: row.width + 24
         Behavior on width { NumberAnimation { duration: Theme.ms(90) } }
-        HoverHandler { onPointChanged: dockWin.mx = point.position.x; onHoveredChanged: if (!hovered) dockWin.mx = -1 }
 
         Row {
             id: row

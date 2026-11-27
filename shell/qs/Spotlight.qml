@@ -4,27 +4,21 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 
-// Spotlight, as macOS 26/27 draws it: Super+Space springs a dark smoke-glass
-// capsule out of the Dynamic Island to just below the menu bar, "Search or
-// Ask" in large type with a microphone on the right. Under it, a separate
-// frosted panel: with nothing typed, the four places to look (Applications
-// ⌃1, Files ⌃2, Actions ⌃3, Clipboard ⌃4); typing turns it into results
-// (Top Hit, apps, files, calculator, clipboard, actions, Ask). Escape or a
-// click outside closes it. The microphone shows only when a local speech
-// tool is installed (whisper.cpp's whisper-cli with a model), and dictates
+// Spotlight, as macOS 26/27 draws it on a notched MacBook: Super+Space opens a
+// dark smoke-glass capsule right at the top, over the notch (the Dynamic
+// Island steps aside while it is open), "Search or Ask" in large type with a
+// microphone on the right. Under it, a separate frosted panel: with nothing
+// typed, where to look (Applications ⌃1, Files ⌃2, Actions ⌃3, Clipboard ⌃4);
+// typing turns it into results (Top Hit, apps, files, calculator, clipboard,
+// actions, Ask). Each is its own glass surface so the compositor's lens bends
+// the backdrop along its edges. Escape or a click outside closes it. The
+// microphone shows only with a local speech model (whisper.cpp) and dictates
 // five seconds into the field.
-PanelWindow {
+Scope {
     id: sp
     property var shell
     property bool open: false
-    visible: open || capsule.opacity > 0.01
-    anchors { top: true; bottom: true; left: true; right: true }
-    exclusionMode: ExclusionMode.Ignore
-    color: "transparent"
-    WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.namespace: "solyra-spotlight"
-    WlrLayershell.keyboardFocus: open ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-    mask: Region { item: open ? catcher : capsule }
+    property var clips: []
 
     SearchModel {
         id: search
@@ -32,8 +26,6 @@ PanelWindow {
         clips: sp.clips
         onDone: sp.hide()
     }
-    property var clips: []
-
     function show(q) {
         search.reset(q || "")
         field.text = q || ""
@@ -48,8 +40,8 @@ PanelWindow {
         ["Applications", "apps", "Apps"], ["Files", "folder", "Files"],
         ["Actions", "layers", "Actions"], ["Clipboard", "copies", "Clipboard"]]
     readonly property bool browsing: search.query.trim() === "" && search.filter === "All"
-    // A category row lights only once the arrow keys are used (as the photo:
-    // nothing is selected when Spotlight opens).
+    // A category row lights only once the arrow keys are used: nothing is
+    // selected when Spotlight opens.
     property bool arrowed: false
 
     // Speech: whisper.cpp when present.
@@ -66,87 +58,98 @@ PanelWindow {
         stdout: StdioCollector { onStreamFinished: { const t = text.replace(/\s+/g, " ").trim(); if (t) field.text = t; sp.listening = false } }
     }
 
-    // A click outside closes.
-    MouseArea { id: catcher; anchors.fill: parent; onClicked: sp.hide() }
+    readonly property int capW: 600
+    readonly property int capH: 54
+    readonly property int panelW: 580
+    readonly property int screenW: Quickshell.screens.length ? Quickshell.screens[0].width : 1280
+
+    // A click outside closes (beneath the glass).
+    PanelWindow {
+        id: catcher
+        visible: sp.open
+        anchors { top: true; bottom: true; left: true; right: true }
+        exclusionMode: ExclusionMode.Ignore
+        color: "transparent"
+        WlrLayershell.layer: WlrLayer.Top
+        WlrLayershell.namespace: "solyra-spotlight-catcher"
+        MouseArea { anchors.fill: parent; onClicked: sp.hide() }
+    }
 
     // ------------------------------------------------------------- capsule
-    Glass {
+    GlassWindow {
         id: capsule
+        visible: sp.open
         kind: "smoke"
-        r: height / 2
-        anchors.horizontalCenter: parent.horizontalCenter
-        // Springs out of the island (a 100x24 pill at the top) to its place.
-        width: sp.open ? 600 : 84
-        height: sp.open ? 56 : 24
-        y: sp.open ? 36 : 4
-        opacity: sp.open ? 1 : 0
-        Behavior on width { enabled: !Theme.reduceMotion; SpringAnimation { spring: Theme.springOpen; damping: Theme.dampOpen; epsilon: 0.3 } }
-        Behavior on height { enabled: !Theme.reduceMotion; SpringAnimation { spring: Theme.springOpen; damping: Theme.dampOpen; epsilon: 0.3 } }
-        Behavior on y { enabled: !Theme.reduceMotion; SpringAnimation { spring: Theme.springOpen; damping: Theme.dampOpen; epsilon: 0.3 } }
-        Behavior on opacity { NumberAnimation { duration: Theme.ms(140) } }
-        MouseArea { anchors.fill: parent }
+        r: sp.capH / 2
+        gx: (sp.screenW - sp.capW) / 2
+        gy: 4
+        implicitWidth: sp.capW
+        implicitHeight: sp.capH
+        WlrLayershell.keyboardFocus: sp.open ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
-        TextField {
-            id: field
-            anchors { left: parent.left; leftMargin: 24; right: mic.left; rightMargin: 12; verticalCenter: parent.verticalCenter }
-            opacity: capsule.width > 560 ? 1 : 0
-            placeholderText: search.filter === "All" ? "Search or Ask"
-                : search.filter === "Apps" ? "Search Applications"
-                : search.filter === "Ask" ? "Ask anything" : "Search " + search.filter
-            color: "white"; placeholderTextColor: Qt.rgba(1, 1, 1, 0.55)
-            selectionColor: Theme.accent; selectedTextColor: "white"
-            font.family: Theme.font; font.pixelSize: 22; font.weight: Font.Normal
-            background: null
-            onTextChanged: search.query = text
-            Keys.onPressed: ev => {
-                if (ev.key === Qt.Key_Escape) { if (search.filter !== "All" && !text) search.filter = "All"; else sp.hide(); ev.accepted = true }
-                else if ((ev.modifiers & Qt.ControlModifier) && ev.key >= Qt.Key_1 && ev.key <= Qt.Key_4) { search.filter = sp.categories[ev.key - Qt.Key_1][2]; search.sel = 0; ev.accepted = true }
-                else if (ev.key === Qt.Key_Down) { sp.arrowed = true; search.move(1); list.positionViewAtIndex(search.sel, ListView.Contain); ev.accepted = true }
-                else if (ev.key === Qt.Key_Up) { sp.arrowed = true; search.move(-1); list.positionViewAtIndex(search.sel, ListView.Contain); ev.accepted = true }
-                else if (ev.key === Qt.Key_Tab) { search.cycleFilter(); ev.accepted = true }
-                else if (ev.key === Qt.Key_Backspace && !text && search.filter !== "All") { search.filter = "All"; ev.accepted = true }
-                else if (ev.key === Qt.Key_Return || ev.key === Qt.Key_Enter) {
-                    if (sp.browsing) { search.filter = sp.categories[Math.max(0, Math.min(3, search.sel))][2]; search.sel = 0 }
-                    else search.activate()
-                    ev.accepted = true
+        // Springs out of the island: the content grows in from the middle.
+        Item {
+            anchors.fill: parent
+            scale: sp.open ? 1 : 0.6
+            opacity: sp.open ? 1 : 0
+            Behavior on scale { enabled: !Theme.reduceMotion; SpringAnimation { spring: Theme.springOpen; damping: Theme.dampOpen; epsilon: 0.005 } }
+            Behavior on opacity { NumberAnimation { duration: Theme.ms(140) } }
+
+            TextField {
+                id: field
+                anchors { left: parent.left; leftMargin: 26; right: mic.left; rightMargin: 12; verticalCenter: parent.verticalCenter }
+                placeholderText: search.filter === "All" ? "Search or Ask"
+                    : search.filter === "Apps" ? "Search Applications"
+                    : search.filter === "Ask" ? "Ask anything" : "Search " + search.filter
+                color: "white"; placeholderTextColor: Qt.rgba(1, 1, 1, 0.62)
+                selectionColor: Theme.accent; selectedTextColor: "white"
+                font.family: Theme.font; font.pixelSize: 22
+                background: null
+                onTextChanged: search.query = text
+                Keys.onPressed: ev => {
+                    if (ev.key === Qt.Key_Escape) { if (search.filter !== "All" && !text) search.filter = "All"; else sp.hide(); ev.accepted = true }
+                    else if ((ev.modifiers & Qt.ControlModifier) && ev.key >= Qt.Key_1 && ev.key <= Qt.Key_4) { search.filter = sp.categories[ev.key - Qt.Key_1][2]; search.sel = 0; ev.accepted = true }
+                    else if (ev.key === Qt.Key_Down) { sp.arrowed = true; search.move(1); list.positionViewAtIndex(search.sel, ListView.Contain); ev.accepted = true }
+                    else if (ev.key === Qt.Key_Up) { sp.arrowed = true; search.move(-1); list.positionViewAtIndex(search.sel, ListView.Contain); ev.accepted = true }
+                    else if (ev.key === Qt.Key_Tab) { search.cycleFilter(); ev.accepted = true }
+                    else if (ev.key === Qt.Key_Backspace && !text && search.filter !== "All") { search.filter = "All"; ev.accepted = true }
+                    else if (ev.key === Qt.Key_Return || ev.key === Qt.Key_Enter) {
+                        if (sp.browsing) { search.filter = sp.categories[Math.max(0, Math.min(3, search.sel))][2]; search.sel = 0 }
+                        else search.activate()
+                        ev.accepted = true
+                    }
                 }
             }
-        }
-        // Dictation (only with a local speech model).
-        Item {
-            id: mic
-            anchors { right: parent.right; rightMargin: 20; verticalCenter: parent.verticalCenter }
-            width: sp.canDictate ? 26 : 0; height: 26
-            visible: sp.canDictate
-            Icon { anchors.centerIn: parent; name: "mic"; size: 20; color: sp.listening ? "#ff453a" : Qt.rgba(1, 1, 1, 0.85) }
-            TapHandler { onTapped: if (!sp.listening) { sp.listening = true; dictate.running = true } }
+            // Dictation (only with a local speech model).
+            Item {
+                id: mic
+                anchors { right: parent.right; rightMargin: 22; verticalCenter: parent.verticalCenter }
+                width: sp.canDictate ? 26 : 0; height: 26
+                visible: sp.canDictate
+                Icon { anchors.centerIn: parent; name: "mic"; size: 20; color: sp.listening ? "#ff453a" : Qt.rgba(1, 1, 1, 0.85) }
+                TapHandler { onTapped: if (!sp.listening) { sp.listening = true; dictate.running = true } }
+            }
         }
     }
 
     // ------------------------------------------------------------- panel
-    Glass {
+    GlassWindow {
         id: panel
+        readonly property int rowsH: sp.browsing ? 4 * 58 + 20
+                                    : search.filter === "Ask" ? Math.min(360, answer.implicitHeight + 72)
+                                    : Math.min(420, list.contentHeight + 20)
+        visible: sp.open && (sp.browsing || search.filter === "Ask" || search.results.length > 0)
         kind: "frosted"
         r: 26
-        anchors.horizontalCenter: parent.horizontalCenter
-        width: 584
-        y: capsule.y + capsule.height + 14
-        readonly property int rowsH: sp.browsing ? 4 * 58 + 18
-                                    : search.filter === "Ask" ? Math.min(360, answer.implicitHeight + 70)
-                                    : Math.min(420, list.contentHeight + 20)
-        height: rowsH
-        visible: sp.open && (sp.browsing || search.filter === "Ask" || search.results.length > 0)
-        opacity: visible ? 1 : 0
-        scale: visible ? 1 : 0.96
-        Behavior on opacity { NumberAnimation { duration: Theme.ms(180) } }
-        Behavior on scale { NumberAnimation { duration: Theme.ms(220); easing.type: Easing.OutCubic } }
-        Behavior on height { NumberAnimation { duration: Theme.ms(160); easing.type: Easing.OutCubic } }
-        MouseArea { anchors.fill: parent }
+        gx: (sp.screenW - sp.panelW) / 2
+        gy: 4 + sp.capH + 14
+        implicitWidth: sp.panelW
+        implicitHeight: Math.max(60, rowsH)
 
         // Nothing typed: where to look.
         Column {
             visible: sp.browsing
-            x: 10; y: 8; width: parent.width - 20
+            x: 10; y: 10; width: parent.width - 20
             Repeater {
                 model: sp.categories
                 Rectangle {

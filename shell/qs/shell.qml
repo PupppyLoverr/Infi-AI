@@ -17,6 +17,7 @@ ShellRoot {
     readonly property string home: Quickshell.env("HOME")
     // The island's countdown timer (a live activity), shared by every screen.
     property real timerEnd: 0
+    readonly property bool spotlightOpen: spot.open
     signal menuRequested(string name)
     // Notification Center: open notifications, newest first.
     property bool centerOpen: false

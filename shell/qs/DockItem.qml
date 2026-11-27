@@ -47,7 +47,7 @@ Item {
     QtObject { id: bounce; property real offset: 0 }
     SequentialAnimation {
         id: bounceAnim
-        NumberAnimation { target: bounce; property: "offset"; to: -18; duration: Theme.ms(180); easing.type: Easing.OutQuad }
+        NumberAnimation { target: bounce; property: "offset"; to: -6; duration: Theme.ms(180); easing.type: Easing.OutQuad }
         NumberAnimation { target: bounce; property: "offset"; to: 0; duration: Theme.ms(220); easing.type: Easing.OutBounce }
     }
 
@@ -63,16 +63,17 @@ Item {
         border.color: Qt.rgba(1, 1, 1, 0.9)
     }
 
-    // Glass tooltip.
-    Glass {
+    // Glass tooltip: its own popup surface above the dock.
+    PopupWindow {
         visible: hover.hovered && !it.sep
-        r: 12
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: parent.top
-        anchors.bottomMargin: 12
-        width: tip.implicitWidth + 24; height: 28
+        anchor.item: it
+        anchor.rect.x: (it.width - implicitWidth) / 2
+        anchor.rect.y: -implicitHeight - 14
+        implicitWidth: tip.implicitWidth + 24; implicitHeight: 28
+        color: "transparent"
+        Glass { anchors.fill: parent; r: 14; kind: "clear"; shadow: false }
         Text {
-            id: tip; anchors.centerIn: parent; color: Theme.ink; font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Medium
+            id: tip; anchors.centerIn: parent; color: "white"; font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Medium
             text: it.item.kind === "downloads" ? "Downloads" : it.item.kind === "trash" ? "Trash" : it.item.kind === "min" ? (it.item.title || "Window") : (it.item.entry ? it.item.entry.name : (it.dock.bundled[it.item.id] || it.item.id)) + (it.item.kind === "bg" ? " (background)" : "")
         }
     }

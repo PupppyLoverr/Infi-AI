@@ -53,15 +53,16 @@ hl.config({
             vibrancy = 0.32,          -- colours behind stay vivid, as Apple's glass
             vibrancy_darkness = 0.2,
             popups = true,
+            popups_ignorealpha = 0.16, -- menus and tooltips: blur the card, not its corners
             -- Liquid Glass: Hyprland's acrylic variant lenses the backdrop
             -- through a curved edge (refraction + bulb), keeps it mostly clear
             -- (clarity) with a faint chromatic fringe, like macOS 26/27.
             variant = 8,
             acrylic = {
-                refraction = 26,     -- edge lensing, px: the backdrop bends at the rim
-                bulb = 16,           -- width of the curved edge, px
-                clarity = 0.22,      -- mostly blur, colours kept (vibrancy)
-                aberration = 0.010,  -- the faintest colour fringe
+                refraction = 30,     -- edge lensing, px: the backdrop bends at the rim
+                bulb = 22,           -- width of the curved edge, px
+                clarity = 0.55,      -- clear glass: the backdrop shows through, softened
+                aberration = 0.020,  -- a faint colour fringe along the edge
                 tint = 0x0CF2F6FF,
             },
         },
@@ -103,13 +104,13 @@ hl.animation({ leaf = "specialWorkspace", enabled = true, speed = 4, spring = "s
 -- gets rounded blur and its shadow never turns into a blurred box.
 hl.layer_rule({
     name = "solyra-glass",
-    match = { namespace = "^solyra-(bar|dock|control|notifications|notifcenter|snap|overview|island|widgets|spotlight)$" },
+    match = { namespace = "^solyra-(bar|dock|glass|notifications|notifcenter|snap|overview|island|widgets)$" },
     blur = true,
     ignore_alpha = 0.16,
 })
 hl.layer_rule({
     name = "solyra-pop",
-    match = { namespace = "^solyra-(control|snap)$" },
+    match = { namespace = "^solyra-(glass|snap)$" },
     animation = "popin 92%",
 })
 
