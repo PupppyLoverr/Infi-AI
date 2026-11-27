@@ -11,30 +11,39 @@ import Quickshell.Services.UPower
 import Quickshell.Widgets
 
 // The notch, after Droppy and Apple's Dynamic Island:
-// - idle: a small black pill, centred, floating just below the top edge;
-// - compact: live activity wings (album art + equaliser) while media plays;
-// - HUD: volume / brightness / battery / caps lock, in the island;
+// - idle: a small black pill hanging from the top edge, centred;
+// - compact: live activities. The first rides in the island's wings (album
+//   art + equaliser, a timer counting down, High Alert, charging); a second
+//   splits off into its own bubble beside it, as iOS does;
+// - HUD: volume / brightness / battery / caps lock / Bluetooth, in the island;
+// - search: Spotlight. Super+Space morphs the island into the search field
+//   and results grow it downwards (Apple's island-as-Spotlight);
 // - expanded: pulls down from the top with a spring into tabs
-//   (Media, Shelf, Clipboard, Tools: High Alert, Termi-Notch).
+//   (Media, Shelf, Clipboard, Calendar, Notchface, Tools).
+// Idle, compact and HUD are pure black (the camera housing); expanded and
+// search open into dark Liquid Glass over Hyprland's refracting blur.
 PanelWindow {
     id: win
     property var screenModel
+    property var shell
     screen: screenModel
     anchors.top: true
-    implicitWidth: 760
-    implicitHeight: 320
+    implicitWidth: 780
+    implicitHeight: 480
     exclusionMode: ExclusionMode.Ignore
     color: "transparent"
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.namespace: "solyra-island"
-    WlrLayershell.keyboardFocus: termField.activeFocus ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+    WlrLayershell.keyboardFocus: mode === "search" ? WlrKeyboardFocus.Exclusive
+        : (termField.activeFocus ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None)
     mask: Region {
         Region { item: shape }
+        Region { item: bubble }
         Region { item: tabsPill }
     }
 
     // ------------------------------------------------------------ state
-    property string mode: "idle"         // idle | compact | hud | expanded
+    property string mode: "idle"         // idle | compact | hud | expanded | search
     property string tab: "media"
     property string hudKind: ""
     property string hudText: ""
@@ -48,17 +57,42 @@ PanelWindow {
     }
     readonly property bool playing: player !== null && player.isPlaying
 
+    // ------------------------------------------------------------ live activities
+    // Everything running at once, most important first. The island shows the
+    // first; the second gets its own bubble.
+    readonly property real timerLeft: shell && shell.timerEnd > 0 ? Math.max(0, Math.ceil((shell.timerEnd - clock.now) / 1000)) : 0
+    readonly property bool charging: battery && battery.isLaptopBattery && battery.state === UPowerDeviceState.Charging
+    function mmss(s) { const m = Math.floor(s / 60); return m + ":" + String(s % 60).padStart(2, "0") }
+    readonly property var activities: {
+        const a = []
+        if (timerLeft > 0) a.push({ kind: "timer", icon: "timer", tint: "#ff9f0a", label: mmss(timerLeft), tab: "tools" })
+        if (playing) a.push({ kind: "media", tint: "#ff9f0a", tab: "media" })
+        if (caffeine.enabled) a.push({ kind: "alert", icon: "eye", tint: "#ffd60a", label: Math.ceil(caffeineTimer.left / 60) + "m", tab: "tools" })
+        if (charging) a.push({ kind: "charging", icon: "charging", tint: "#30d158", label: Math.round(battery.percentage * (battery.percentage <= 1 ? 100 : 1)) + "%", tab: "tools" })
+        return a
+    }
+    readonly property var primary: activities.length > 0 ? activities[0] : null
+    readonly property var secondary: activities.length > 1 ? activities[1] : null
+    QtObject { id: clock; property real now: Date.now() }
+    Timer { interval: 1000; repeat: true; running: win.shell && win.shell.timerEnd > 0; onTriggered: { clock.now = Date.now(); if (win.shell.timerEnd > 0 && clock.now >= win.shell.timerEnd) win.timerDone() } }
+    function timerDone() {
+        shell.timerEnd = 0
+        Quickshell.execDetached(["notify-send", "-a", "Clock", "Timer", "Your timer is done."])
+        hud("timer", 1, "Timer done")
+    }
+
     function settle() {
+        if (mode === "search") return
         if (hovering || tab === "shelf" && dropping) { mode = "expanded"; return }
         if (hudTimer.running) { mode = "hud"; return }
-        mode = playing ? "compact" : "idle"
+        mode = activities.length > 0 ? "compact" : "idle"
     }
     function hud(kind, value, label) {
         hudKind = kind; hudValue = value; hudText = label || ""
-        if (mode !== "expanded") { mode = "hud" }
+        if (mode !== "expanded" && mode !== "search") { mode = "hud" }
         hudTimer.restart()
     }
-    onPlayingChanged: if (mode !== "expanded" && mode !== "hud") settle()
+    onActivitiesChanged: if (mode === "idle" || mode === "compact") settle()
     Timer { id: hudTimer; interval: 1600; onTriggered: win.settle() }
     Timer { id: openTimer; interval: 160; onTriggered: { win.hovering = true; win.mode = "expanded" } }
     Timer { id: closeTimer; interval: 380; onTriggered: { win.hovering = false; win.settle() } }
@@ -123,28 +157,32 @@ PanelWindow {
     }
 
     // ------------------------------------------------------------ geometry
+    // A MacBook-sized island: small at rest, hanging from the top edge.
     readonly property var dims: ({
-        idle:     { w: 126, h: 37, r: 18.5 },
-        compact:  { w: 300, h: 37, r: 18.5 },
-        hud:      { w: 330, h: 37, r: 18.5 },
-        expanded: { w: 520, h: 214, r: 44 }
+        idle:     { w: 112, h: 30, r: 15 },
+        compact:  { w: 248, h: 30, r: 15 },
+        hud:      { w: 300, h: 30, r: 15 },
+        expanded: { w: 500, h: 200, r: 34 }
     })
-    // Media and the calendar glance are shorter than the card tabs: fit them.
-    readonly property var d: mode === "expanded" && (tab === "media" || tab === "cal")
-        ? { w: 520, h: 172, r: 40 } : dims[mode]
+    // Media and the calendar glance are shorter than the card tabs: fit them;
+    // search grows with its results.
+    readonly property var d: mode === "search" ? { w: 620, h: searchView.implicitHeight + 16, r: 28 }
+        : mode === "expanded" && (tab === "media" || tab === "cal") ? { w: 500, h: 164, r: 32 }
+        : dims[mode]
 
     Rectangle {
         id: shape
-        // Idle, compact and HUD: solid black, the camera housing. Expanded:
-        // dark Liquid Glass over Hyprland's blur, with the lensing rim.
-        readonly property bool glassy: win.mode === "expanded" && !Theme.reduceTransparency
-        color: glassy ? Qt.rgba(0.03, 0.03, 0.04, 0.80) : "black"
+        // Idle, compact and HUD: solid black, the camera housing. Expanded and
+        // search: dark Liquid Glass over Hyprland's refracting blur, with the
+        // lensing rim; clear enough that the wallpaper shows through.
+        readonly property bool glassy: (win.mode === "expanded" || win.mode === "search") && !Theme.reduceTransparency
+        color: glassy ? Qt.rgba(0.07, 0.07, 0.09, 0.30 + Theme.glass / 100 * 0.45) : "black"
         Behavior on color { ColorAnimation { duration: Theme.ms(220) } }
         opacity: Theme.hideNotch && win.mode === "idle" && !hoverIdle.hovered ? 0 : 1
         Behavior on opacity { NumberAnimation { duration: Theme.ms(220) } }
         HoverHandler { id: hoverIdle }
         anchors.horizontalCenter: parent.horizontalCenter
-        y: 5
+        y: 3
         width: win.d.w
         height: win.d.h
         radius: win.d.r
@@ -154,12 +192,19 @@ PanelWindow {
         Behavior on radius { NumberAnimation { duration: Theme.ms(260); easing.type: Easing.OutCubic } }
 
         HoverHandler {
+            enabled: win.mode !== "search"
             onHoveredChanged: {
                 if (hovered) { closeTimer.stop(); openTimer.restart() }
                 else { openTimer.stop(); closeTimer.restart() }
             }
         }
-        TapHandler { onTapped: { if (win.mode === "expanded") { win.hovering = false; win.settle() } else { win.hovering = true; win.mode = "expanded" } } }
+        TapHandler {
+            enabled: win.mode !== "search"
+            onTapped: {
+                if (win.mode === "expanded") { win.hovering = false; win.settle() }
+                else { if (win.primary) win.tab = win.primary.tab; win.hovering = true; win.mode = "expanded" }
+            }
+        }
         DropArea {
             anchors.fill: parent
             onEntered: { win.tab = "shelf"; win.dropping = true; win.hovering = true; win.mode = "expanded" }
@@ -196,17 +241,32 @@ PanelWindow {
             }
         }
 
-        // Compact live activity: art left, equaliser right.
+        // Compact live activity: the primary's leading and trailing wings.
         Item {
             anchors.fill: parent
             opacity: win.mode === "compact" ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: Theme.ms(180) } }
+            readonly property var act: win.primary
             ClippingRectangle {
-                x: 9; anchors.verticalCenter: parent.verticalCenter
-                width: 23; height: 23; radius: 6; color: "#333"
+                visible: parent.act && parent.act.kind === "media"
+                x: 7; anchors.verticalCenter: parent.verticalCenter
+                width: 20; height: 20; radius: 5; color: "#333"
                 Image { anchors.fill: parent; source: win.player ? win.player.trackArtUrl : ""; fillMode: Image.PreserveAspectCrop }
             }
-            Equaliser { anchors.right: parent.right; anchors.rightMargin: 13; anchors.verticalCenter: parent.verticalCenter; active: win.playing }
+            Icon {
+                visible: parent.act && parent.act.kind !== "media"
+                x: 10; anchors.verticalCenter: parent.verticalCenter
+                size: 16; name: parent.act ? (parent.act.icon || "info") : "info"
+                color: parent.act ? parent.act.tint : "white"
+            }
+            Equaliser { visible: parent.act && parent.act.kind === "media"; anchors.right: parent.right; anchors.rightMargin: 11; anchors.verticalCenter: parent.verticalCenter; active: win.playing }
+            Text {
+                visible: parent.act && parent.act.kind !== "media"
+                anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
+                text: parent.act ? (parent.act.label || "") : ""
+                color: parent.act ? parent.act.tint : "white"
+                font.family: Theme.font; font.pixelSize: 13; font.weight: Font.DemiBold; font.features: { "tnum": 1 }
+            }
         }
 
         // HUD row.
@@ -218,8 +278,8 @@ PanelWindow {
             Icon {
                 anchors.verticalCenter: parent.verticalCenter
                 size: 18
-                name: ({ volume: "volume", mute: "volumeMute", brightness: "sun", battery: "battery", charging: "charging", capsOn: "up", capsOff: "up", bluetooth: "bluetooth", focus: "moon" })[win.hudKind] || "info"
-                color: win.hudKind === "charging" ? "#30d158" : "white"
+                name: ({ volume: "volume", mute: "volumeMute", brightness: "sun", battery: "battery", charging: "charging", capsOn: "up", capsOff: "up", bluetooth: "bluetooth", focus: "moon", timer: "timer" })[win.hudKind] || "info"
+                color: win.hudKind === "charging" ? "#30d158" : win.hudKind === "timer" ? "#ff9f0a" : "white"
             }
             Text {
                 visible: win.hudText !== ""
@@ -244,6 +304,17 @@ PanelWindow {
                     Behavior on width { NumberAnimation { duration: Theme.ms(140) } }
                 }
             }
+        }
+
+        // Spotlight in the island.
+        SearchView {
+            id: searchView
+            model: search
+            x: 16; y: 8
+            width: 620 - 32
+            opacity: win.mode === "search" && shape.width > 560 ? 1 : 0
+            visible: opacity > 0
+            Behavior on opacity { NumberAnimation { duration: Theme.ms(160); easing.type: Easing.OutCubic } }
         }
 
         // Expanded content: fades in after the shape leads (Apple staggers it).
@@ -281,6 +352,11 @@ PanelWindow {
                             text: caffeine.enabled ? "High Alert · " + Math.ceil(caffeineTimer.left / 60) + " min" : "High Alert"
                             on: caffeine.enabled
                             onClicked: caffeine.toggle()
+                        }
+                        Pill {
+                            text: win.timerLeft > 0 ? "Timer · " + win.mmss(win.timerLeft) + "  ✕" : "Timer 5 min"
+                            on: win.timerLeft > 0
+                            onClicked: if (win.shell) win.shell.timer(win.timerLeft > 0 ? 0 : 300)
                         }
                         Pill { text: "Lock"; onClicked: Quickshell.execDetached(["qs", "ipc", "call", "shell", "lock"]) }
                         Pill { text: "Screenshot"; onClicked: Quickshell.execDetached(["sh", "-c", "grim \"$HOME/Pictures/Screenshot-$(date +%F-%H%M%S).png\""]) }
@@ -320,6 +396,51 @@ PanelWindow {
             }
         }
     }
+
+    // The second live activity splits off into its own bubble, springing out
+    // of the island's right edge (and back in when it ends).
+    Rectangle {
+        id: bubble
+        readonly property bool shown: win.mode === "compact" && win.secondary !== null
+        width: 30; height: 30; radius: 15
+        color: "black"
+        y: shape.y
+        x: shown ? shape.x + shape.width + 6 : shape.x + shape.width - width
+        scale: shown ? 1 : 0.5
+        opacity: shown ? 1 : 0
+        visible: opacity > 0.01
+        Behavior on x { enabled: !Theme.reduceMotion; SpringAnimation { spring: Theme.springOpen; damping: Theme.dampOpen; epsilon: 0.3 } }
+        Behavior on scale { enabled: !Theme.reduceMotion; SpringAnimation { spring: Theme.springOpen; damping: Theme.dampOpen; epsilon: 0.01 } }
+        Behavior on opacity { NumberAnimation { duration: Theme.ms(160) } }
+        readonly property var act: win.secondary
+        ClippingRectangle {
+            visible: bubble.act && bubble.act.kind === "media"
+            anchors.centerIn: parent; width: 20; height: 20; radius: 10; color: "#333"
+            Image { anchors.fill: parent; source: win.player ? win.player.trackArtUrl : ""; fillMode: Image.PreserveAspectCrop }
+        }
+        Icon {
+            visible: bubble.act && bubble.act.kind !== "media"
+            anchors.centerIn: parent; size: 15
+            name: bubble.act ? (bubble.act.icon || "info") : "info"
+            color: bubble.act ? bubble.act.tint : "white"
+        }
+        TapHandler { onTapped: if (bubble.act) win.expand(bubble.act.tab) }
+    }
+
+    SearchModel {
+        id: search
+        shell: win.shell
+        onDone: win.closeSearch()
+    }
+    function openSearch(q) {
+        search.reset(q)
+        searchView.setText(q || "")
+        hovering = false; openTimer.stop(); closeTimer.stop()
+        mode = "search"
+        searchView.focusField()
+    }
+    function closeSearch() { search.stop(); mode = "idle"; settle() }
+    function toggleSearch(q) { if (mode === "search" && !q) closeSearch(); else openSearch(q) }
 
     // Tabs pill floating under the open island.
     Rectangle {
@@ -368,5 +489,5 @@ PanelWindow {
     }
 
     function expand(which) { tab = which; hovering = true; mode = "expanded"; closeTimer.stop() }
-    function collapse() { hovering = false; settle() }
+    function collapse() { if (mode === "search") closeSearch(); hovering = false; settle() }
 }

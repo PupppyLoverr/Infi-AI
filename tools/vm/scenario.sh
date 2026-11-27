@@ -22,7 +22,11 @@ q hud volume 0.62; shot 07-hud-volume 0.5
 sleep 2; touch "$HOME/Downloads/report.pdf"; q island shelf; shot 07b-tracked-downloads-on-shelf
 q island close; sleep 1
 sleep 2
-q query "te"; shot 08-spotlight 1.6
+# Two live activities at once: the timer rides in the island, the music
+# splits off into its own bubble.
+q timer 300; shot 07c-live-activities 2.0
+q timer 0; sleep 0.8
+q query "te"; shot 08-spotlight-in-island 1.6
 q spotlight; sleep 0.5
 q control; shot 09-control-center
 q control; sleep 0.5

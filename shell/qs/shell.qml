@@ -5,15 +5,21 @@ import Quickshell.Io
 import Quickshell.Hyprland
 import Quickshell.Wayland
 
-// Solyra's desktop shell on Hyprland: menu bar, dock and notch on every
-// screen; Spotlight, Control Center, notifications, snap layouts and the
-// lock screen once. Keybinds arrive as Hyprland global shortcuts
+// Solyra's desktop shell on Hyprland: menu bar, dock and the Dynamic Island
+// (which is also Spotlight) on every screen; Control Center, notifications,
+// snap layouts, Mission Control and the lock screen once. Keybinds arrive as Hyprland global shortcuts
 // (solyra:spotlight …) and everything is scriptable with `qs ipc call shell …`.
 ShellRoot {
     id: shell
     property bool dnd: false
+    // The island's countdown timer (a live activity), shared by every screen.
+    property real timerEnd: 0
+    signal spotlightRequested(string query)
 
-    function spotlight(q) { if (spot.open && !q) spot.hide(); else spot.show(q || "") }
+    // Spotlight is the Dynamic Island: the one on the focused screen morphs
+    // into the search field.
+    function spotlight(q) { spotlightRequested(q || "") }
+    function timer(seconds) { timerEnd = seconds > 0 ? Date.now() + seconds * 1000 : 0 }
     function control() { cc.open = !cc.open }
     function lock() { lockScreen.lock() }
     function snap() { snaps.open = !snaps.open }
@@ -47,7 +53,7 @@ ShellRoot {
         else if (a === "new") Quickshell.execDetached(["solyra-term"])
         else if (a === "logout") Hyprland.dispatch("hl.dsp.exit()")
         else if (a === "about") Quickshell.execDetached(["notify-send", "Solyra", "A macOS-style desktop on Hyprland"])
-        else if (a === "help") Quickshell.execDetached(["notify-send", "Shortcuts", "Super+Space Spotlight · Super+Z Snap · Super+L Lock · Super+C Control Center"])
+        else if (a === "help") Quickshell.execDetached(["notify-send", "Shortcuts", "Super+Space Spotlight (in the island) · Super+Z Snap · Super+L Lock · Super+C Control Center"])
     }
 
     // New windows float and centre unless auto-arrange is on.
@@ -70,15 +76,22 @@ ShellRoot {
             Wallpaper { screenModel: perScreen.modelData }
             Bar { screenModel: perScreen.modelData; shell: shell }
             Dock { screenModel: perScreen.modelData; shell: shell }
-            Island { id: island; screenModel: perScreen.modelData }
+            Island { id: island; screenModel: perScreen.modelData; shell: shell }
             Connections {
                 target: ipc
                 function onIslandRequested(tab) { if (tab === "close") island.collapse(); else island.expand(tab) }
-                function onHudRequested(kind, value) { island.hud(kind, value) }
+                // "kind:value" (IPC signals carry one argument).
+                function onHudRequested(arg) { const i = arg.indexOf(":"); island.hud(i < 0 ? arg : arg.slice(0, i), i < 0 ? 0 : parseFloat(arg.slice(i + 1))) }
+            }
+            Connections {
+                target: shell
+                function onSpotlightRequested(q) {
+                    const focused = Hyprland.focusedMonitor
+                    if (!focused || focused.name === perScreen.modelData.name) island.toggleSearch(q)
+                }
             }
         }
     }
-    Spotlight { id: spot; shell: shell }
     ControlCenter { id: cc; shell: shell }
     Notifications { shell: shell }
     SnapLayouts { id: snaps; shell: shell }
@@ -96,7 +109,7 @@ ShellRoot {
         id: ipc
         target: "shell"
         signal islandRequested(string tab)
-        signal hudRequested(string kind, real value)
+        signal hudRequested(string arg)
         function spotlight(): void { shell.spotlight("") }
         function query(text: string): void { shell.spotlight(text) }
         function control(): void { shell.control() }
@@ -104,7 +117,9 @@ ShellRoot {
         function snap(): void { shell.snap() }
         function overview(): void { shell.toggleOverview() }
         function island(tab: string): void { islandRequested(tab) }
-        function hud(kind: string, value: real): void { hudRequested(kind, value) }
+        function hud(kind: string, value: real): void { hudRequested(kind + ":" + value) }
+        function timer(seconds: int): void { shell.timer(seconds) }
+        function search(text: string): void { shell.spotlight(text) }
         function glass(value: int): void { Theme.glass = value; Theme.save() }
         function arrange(on: bool): void { Theme.autoArrange = on; Theme.save(); shell.applyArrange() }
     }
