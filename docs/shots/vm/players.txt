@@ -1,8 +1,8 @@
-firefox.instance_1_35
+firefox.instance_1_36
 firefox mpris:trackid             '/org/mpris/MediaPlayer2/firefox'
 firefox xesam:title               Gymnopédie No. 1
 firefox xesam:album               Trois Gymnopédies
 firefox xesam:artist              Erik Satie
-firefox mpris:artUrl              file:///home/solyra/.config/mozilla/firefox/firefox-mpris/1098_0.png
+firefox mpris:artUrl              file:///home/solyra/.config/mozilla/firefox/firefox-mpris/1741_0.png
 firefox xesam:url                 http://10.0.2.2:8088/web/index.html
 firefox mpris:length              183000000
