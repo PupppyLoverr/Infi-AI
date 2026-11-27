@@ -2,12 +2,16 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
+import Quickshell.Hyprland
 import Quickshell.Services.SystemTray
 import Quickshell.Services.UPower
 import Quickshell.Widgets
 
 // The menu bar: logo menu, the active app's name and menus, status items,
-// Control Center and the clock ("Thu Nov 26  11:40").
+// Control Center and the clock ("Thu Nov 26  11:40"). As in macOS 27 it is
+// fully see-through over the desktop (no fill, no divider); once a window is
+// open on this screen's workspace a glass strip and a hairline divider fade in
+// so the menus stay readable over it.
 PanelWindow {
     id: bar
     property var screenModel
@@ -26,7 +30,27 @@ PanelWindow {
         return e ? e.name : (active.appId || "Solyra")
     }
 
-    Rectangle { anchors.fill: parent; color: Theme.glassFill; opacity: Theme.reduceTransparency ? 1 : 0.55 }
+    readonly property var workspace: {
+        const m = Hyprland.monitorFor(bar.screen)
+        return m ? m.activeWorkspace : Hyprland.focusedWorkspace
+    }
+    readonly property bool windowsOpen: workspace ? workspace.toplevels.values.length > 0 : ToplevelManager.toplevels.values.length > 0
+    readonly property bool solid: windowsOpen || Theme.reduceTransparency
+
+    Rectangle {
+        anchors.fill: parent
+        color: Theme.glassFill
+        opacity: bar.solid ? (Theme.reduceTransparency ? 1 : 0.55) : 0
+        Behavior on opacity { NumberAnimation { duration: Theme.ms(220); easing.type: Easing.OutCubic } }
+    }
+    // The divider: only over windows.
+    Rectangle {
+        anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+        height: 1
+        color: Theme.dark ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(0, 0, 0, 0.10)
+        opacity: bar.solid ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: Theme.ms(220) } }
+    }
 
     Row {
         anchors { left: parent.left; leftMargin: 14; verticalCenter: parent.verticalCenter }

@@ -52,11 +52,11 @@ hl.config({
             -- (clarity) with a faint chromatic fringe, like macOS 26/27.
             variant = 8,
             acrylic = {
-                refraction = 18,
-                bulb = 30,
-                clarity = 0.80,
-                aberration = 0.018,
-                tint = 0x12EEF5FF,
+                refraction = 22,     -- edge lensing, px
+                bulb = 22,           -- width of the curved edge, px
+                clarity = 0.88,      -- mostly clear, as Apple's glass
+                aberration = 0.012,  -- the faintest colour fringe
+                tint = 0x0CF2F6FF,
             },
         },
     },

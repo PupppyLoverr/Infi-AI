@@ -158,11 +158,14 @@ PanelWindow {
     }
 
     // ------------------------------------------------------------ geometry
-    // A MacBook-sized island: small at rest, hanging from the top edge.
+    // A MacBook-sized island: small at rest. Idle, live activities and HUDs
+    // stay inside the 30 px menu bar (3 px clear above and below); only
+    // search and the expanded tabs pull down past it.
+    readonly property int barH: 30
     readonly property var dims: ({
-        idle:     { w: 112, h: 30, r: 15 },
-        compact:  { w: 248, h: 30, r: 15 },
-        hud:      { w: 300, h: 30, r: 15 },
+        idle:     { w: 100, h: 24, r: 12 },
+        compact:  { w: 232, h: 24, r: 12 },
+        hud:      { w: 280, h: 24, r: 12 },
         expanded: { w: 500, h: 200, r: 34 }
     })
     // Media and the calendar glance are shorter than the card tabs: fit them;
@@ -251,35 +254,35 @@ PanelWindow {
             readonly property var act: win.primary
             ClippingRectangle {
                 visible: parent.act && parent.act.kind === "media"
-                x: 7; anchors.verticalCenter: parent.verticalCenter
-                width: 20; height: 20; radius: 5; color: "#333"
+                x: 5; anchors.verticalCenter: parent.verticalCenter
+                width: 16; height: 16; radius: 4; color: "#333"
                 Image { anchors.fill: parent; source: win.player ? win.player.trackArtUrl : ""; fillMode: Image.PreserveAspectCrop }
             }
             Icon {
                 visible: parent.act && parent.act.kind !== "media"
-                x: 10; anchors.verticalCenter: parent.verticalCenter
-                size: 16; name: parent.act ? (parent.act.icon || "info") : "info"
+                x: 8; anchors.verticalCenter: parent.verticalCenter
+                size: 13; name: parent.act ? (parent.act.icon || "info") : "info"
                 color: parent.act ? parent.act.tint : "white"
             }
-            Equaliser { visible: parent.act && parent.act.kind === "media"; anchors.right: parent.right; anchors.rightMargin: 11; anchors.verticalCenter: parent.verticalCenter; active: win.playing }
+            Equaliser { visible: parent.act && parent.act.kind === "media"; anchors.right: parent.right; anchors.rightMargin: 9; anchors.verticalCenter: parent.verticalCenter; active: win.playing; scale: 0.8 }
             Text {
                 visible: parent.act && parent.act.kind !== "media"
-                anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
+                anchors.right: parent.right; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter
                 text: parent.act ? (parent.act.label || "") : ""
                 color: parent.act ? parent.act.tint : "white"
-                font.family: Theme.font; font.pixelSize: 13; font.weight: Font.DemiBold; font.features: { "tnum": 1 }
+                font.family: Theme.font; font.pixelSize: 12; font.weight: Font.DemiBold; font.features: { "tnum": 1 }
             }
         }
 
         // HUD row.
         Row {
             anchors.centerIn: parent
-            spacing: 12
+            spacing: 10
             opacity: win.mode === "hud" ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: Theme.ms(160) } }
             Icon {
                 anchors.verticalCenter: parent.verticalCenter
-                size: 18
+                size: 14
                 name: ({ volume: "volume", mute: "volumeMute", brightness: "sun", battery: "battery", charging: "charging", capsOn: "up", capsOff: "up", bluetooth: "bluetooth", focus: "moon", timer: "timer" })[win.hudKind] || "info"
                 color: win.hudKind === "charging" ? "#30d158" : win.hudKind === "timer" ? "#ff9f0a" : "white"
             }
@@ -287,7 +290,7 @@ PanelWindow {
                 visible: win.hudText !== ""
                 anchors.verticalCenter: parent.verticalCenter
                 text: win.hudText + (win.hudKind === "bluetooth" ? "  · Connected" : "")
-                color: "white"; font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Medium
+                color: "white"; font.family: Theme.font; font.pixelSize: 12; font.weight: Font.Medium
             }
             Text {
                 visible: win.hudKind.startsWith("caps")
@@ -298,7 +301,7 @@ PanelWindow {
             Rectangle {
                 visible: !win.hudKind.startsWith("caps") && win.hudText === ""
                 anchors.verticalCenter: parent.verticalCenter
-                width: 200; height: 6; radius: 3; color: Qt.rgba(1, 1, 1, 0.22)
+                width: 180; height: 5; radius: 2.5; color: Qt.rgba(1, 1, 1, 0.22)
                 Rectangle {
                     width: parent.width * Math.max(0, Math.min(1, win.hudKind === "mute" ? 0 : (win.hudValue > 1.001 ? win.hudValue / 100 : win.hudValue)))
                     height: parent.height; radius: 3
@@ -411,7 +414,7 @@ PanelWindow {
     Rectangle {
         id: bubble
         readonly property bool shown: win.mode === "compact" && win.secondary !== null
-        width: 30; height: 30; radius: 15
+        width: 24; height: 24; radius: 12
         color: "black"
         y: shape.y
         x: shown ? shape.x + shape.width + 6 : shape.x + shape.width - width
@@ -424,12 +427,12 @@ PanelWindow {
         readonly property var act: win.secondary
         ClippingRectangle {
             visible: bubble.act && bubble.act.kind === "media"
-            anchors.centerIn: parent; width: 20; height: 20; radius: 10; color: "#333"
+            anchors.centerIn: parent; width: 16; height: 16; radius: 8; color: "#333"
             Image { anchors.fill: parent; source: win.player ? win.player.trackArtUrl : ""; fillMode: Image.PreserveAspectCrop }
         }
         Icon {
             visible: bubble.act && bubble.act.kind !== "media"
-            anchors.centerIn: parent; size: 15
+            anchors.centerIn: parent; size: 12
             name: bubble.act ? (bubble.act.icon || "info") : "info"
             color: bubble.act ? bubble.act.tint : "white"
         }

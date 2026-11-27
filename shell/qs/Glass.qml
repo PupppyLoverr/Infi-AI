@@ -2,14 +2,18 @@ import QtQuick
 import QtQuick.Shapes
 import QtQuick.Effects
 
-// Liquid Glass. Hyprland blurs and saturates what is behind the surface
-// (layer rule with ignore_alpha, so only the card's shape is frosted); this
-// draws Apple's material on top of that backdrop:
-//  - a clear, slightly tinted body (Theme.glass: ultra clear -> tinted);
-//  - the lensing rim: a bright edge ring, strongest top-left where light
-//    falls, fading round the shape;
-//  - a specular sheen across the top and a soft inner shade at the bottom;
-//  - a soft two-layer drop shadow lifting the card off the desktop.
+// Liquid Glass, after macOS 26/27. Hyprland does the optics behind the
+// surface: blur, saturation and the acrylic lens that bends the backdrop
+// through the curved edge (layer rules with ignore_alpha, so only the card's
+// shape is glass). This draws the material on top:
+//  - a nearly clear body: a breath of tint, more as the glass slider moves
+//    toward "tinted";
+//  - the specular rim: a thin bright edge where light catches the curve,
+//    strongest at the top-left and, fainter, at the bottom-right (Apple's
+//    highlight sits on opposite corners), dim along the sides;
+//  - a soft inner glow just inside the edge (the glass's thickness);
+//  - a light, wide shadow that lifts the card without darkening the desktop.
+// Reduce Transparency swaps all of it for a solid, legible fill.
 Item {
     id: g
     property real r: Theme.radius
@@ -17,80 +21,71 @@ Item {
     property bool shadow: true
     default property alias content: holder.data
 
-    // Soft drop shadow lifting the card (skipped under Reduce Transparency).
     RectangularShadow {
         anchors.fill: body
         visible: g.shadow && !Theme.reduceTransparency
         radius: g.r
-        blur: 28
-        spread: 0
-        offset.y: 10
-        color: Qt.rgba(0, 0, 0, g.dark ? 0.38 : 0.20)
+        blur: 36
+        spread: -2
+        offset.y: 8
+        color: Qt.rgba(0, 0, 0, g.dark ? 0.26 : 0.14)
     }
 
     Rectangle {
         id: body
         anchors.fill: parent
         radius: g.r
-        // Clear body: a whisper of white over a dark scene, more as the
-        // glass slider moves toward "tinted".
         color: Theme.reduceTransparency
-            ? (g.dark ? "#ee1c1c20" : "#f4f6f6f8")
-            : (g.dark ? Qt.rgba(0.11, 0.11, 0.13, 0.06 + Theme.glass / 100 * 0.58)
-                      : Qt.rgba(1, 1, 1, 0.14 + Theme.glass / 100 * 0.56))
+            ? (g.dark ? "#f01c1c20" : "#f6f6f6f8")
+            : (g.dark ? Qt.rgba(0.09, 0.09, 0.11, 0.04 + Theme.glass / 100 * 0.52)
+                      : Qt.rgba(1, 1, 1, 0.10 + Theme.glass / 100 * 0.52))
         border.width: Theme.showBorders ? 1.5 : 0
         border.color: Theme.rim
     }
 
-    // Specular sheen across the top (light from above).
+    // A whisper of light across the upper half (the curved top catching the
+    // sky), not a band.
     Rectangle {
-        anchors { left: parent.left; right: parent.right; top: parent.top }
-        height: Math.min(parent.height * 0.55, 46)
+        anchors.fill: parent
         radius: g.r
         visible: !Theme.reduceTransparency
         gradient: Gradient {
-            GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, g.dark ? 0.16 : 0.42) }
-            GradientStop { position: 1.0; color: "transparent" }
-        }
-    }
-    // Inner shade along the bottom edge (glass thickness).
-    Rectangle {
-        anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-        height: Math.min(parent.height * 0.35, 26)
-        radius: g.r
-        visible: !Theme.reduceTransparency
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: "transparent" }
-            GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, g.dark ? 0.16 : 0.06) }
+            GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, g.dark ? 0.07 : 0.20) }
+            GradientStop { position: 0.45; color: Qt.rgba(1, 1, 1, 0) }
         }
     }
 
-    // The lensing rim: a ring (outer rounded rect minus an inner one) filled
-    // with a diagonal gradient, bright top-left, dim bottom-right; a second
-    // faint ring inside gives the edge its thickness.
     Shape {
         anchors.fill: parent
         visible: !Theme.reduceTransparency
         preferredRendererType: Shape.CurveRenderer
+        // Specular rim: a 1 px ring lit from the top-left, echoed bottom-right.
         ShapePath {
             strokeWidth: 0
             fillRule: ShapePath.OddEvenFill
             fillGradient: LinearGradient {
                 x1: 0; y1: 0; x2: g.width; y2: g.height
-                GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, g.dark ? 0.55 : 0.85) }
-                GradientStop { position: 0.35; color: Qt.rgba(1, 1, 1, g.dark ? 0.14 : 0.35) }
-                GradientStop { position: 0.65; color: Qt.rgba(1, 1, 1, g.dark ? 0.08 : 0.25) }
-                GradientStop { position: 1.0; color: Qt.rgba(1, 1, 1, g.dark ? 0.30 : 0.6) }
+                GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, g.dark ? 0.62 : 0.95) }
+                GradientStop { position: 0.22; color: Qt.rgba(1, 1, 1, g.dark ? 0.20 : 0.45) }
+                GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, g.dark ? 0.07 : 0.22) }
+                GradientStop { position: 0.78; color: Qt.rgba(1, 1, 1, g.dark ? 0.16 : 0.38) }
+                GradientStop { position: 1.0; color: Qt.rgba(1, 1, 1, g.dark ? 0.42 : 0.75) }
             }
             PathRectangle { x: 0; y: 0; width: g.width; height: g.height; radius: g.r }
-            PathRectangle { x: 1.2; y: 1.2; width: g.width - 2.4; height: g.height - 2.4; radius: Math.max(0, g.r - 1.2) }
+            PathRectangle { x: 1; y: 1; width: g.width - 2; height: g.height - 2; radius: Math.max(0, g.r - 1) }
         }
+        // Inner glow: a soft second ring just inside the edge.
         ShapePath {
             strokeWidth: 0
             fillRule: ShapePath.OddEvenFill
-            fillColor: Qt.rgba(1, 1, 1, g.dark ? 0.05 : 0.12)
-            PathRectangle { x: 2.4; y: 2.4; width: g.width - 4.8; height: g.height - 4.8; radius: Math.max(0, g.r - 2.4) }
-            PathRectangle { x: 4; y: 4; width: g.width - 8; height: g.height - 8; radius: Math.max(0, g.r - 4) }
+            fillGradient: LinearGradient {
+                x1: 0; y1: 0; x2: g.width; y2: g.height
+                GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, g.dark ? 0.10 : 0.22) }
+                GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, g.dark ? 0.02 : 0.06) }
+                GradientStop { position: 1.0; color: Qt.rgba(1, 1, 1, g.dark ? 0.07 : 0.16) }
+            }
+            PathRectangle { x: 1; y: 1; width: g.width - 2; height: g.height - 2; radius: Math.max(0, g.r - 1) }
+            PathRectangle { x: 3.5; y: 3.5; width: g.width - 7; height: g.height - 7; radius: Math.max(0, g.r - 3.5) }
         }
     }
 
