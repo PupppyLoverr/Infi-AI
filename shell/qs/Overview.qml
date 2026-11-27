@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import Quickshell
 import Quickshell.Wayland
 
@@ -62,6 +63,11 @@ PanelWindow {
                 color: "transparent"; border.width: 3
                 border.color: hov.hovered ? Theme.accent : "transparent"
             }
+            // A soft shadow under each thumbnail.
+            RectangularShadow {
+                anchors.fill: shot; radius: Theme.radius; blur: 28; offset.y: 8
+                color: Qt.rgba(0, 0, 0, 0.35)
+            }
             ScreencopyView {
                 id: shot
                 // Keep the window's aspect so the highlight hugs the thumbnail.
@@ -72,6 +78,19 @@ PanelWindow {
                 height: sourceSize.height > 0 ? sourceSize.height * k : parent.height
                 captureSource: ov.open ? cell.modelData : null
                 live: ov.open
+                // Rounded like the windows themselves.
+                layer.enabled: true
+                layer.effect: MultiEffect {
+                    maskEnabled: true
+                    maskSource: thumbMask
+                    maskThresholdMin: 0.5
+                    maskSpreadAtMin: 1.0
+                }
+            }
+            Rectangle {
+                id: thumbMask
+                width: shot.width; height: shot.height; radius: Theme.radius
+                visible: false
                 layer.enabled: true
             }
             Text {

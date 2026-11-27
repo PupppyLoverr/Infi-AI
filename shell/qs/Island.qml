@@ -461,7 +461,10 @@ PanelWindow {
         anchors.horizontalCenter: shape.horizontalCenter
         y: shape.y + shape.height + 8
         width: tabsRow.width + 8; height: 34; radius: 17
-        color: "black"
+        // Dark Liquid Glass like the open island it belongs to.
+        color: Theme.reduceTransparency ? "black" : Qt.rgba(0.07, 0.07, 0.09, 0.30 + Theme.glass / 100 * 0.45)
+        border.width: Theme.reduceTransparency ? 0 : 1
+        border.color: Qt.rgba(1, 1, 1, 0.16)
         opacity: win.mode === "expanded" ? 1 : 0
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: Theme.ms(180) } }

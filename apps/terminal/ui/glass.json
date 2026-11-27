@@ -6,7 +6,7 @@
 	"type": "dark",
 	"extends": "zgx-dark",
 	"tokens": {
-		"glass.tint": "#13141873",
+		"glass.tint": "#1314184d",
 		"text": {
 			"primary": "#ffffffeb",
 			"secondary": "#ffffffa6",
