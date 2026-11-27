@@ -137,13 +137,13 @@ QtObject {
 
     onPlayerChanged: refresh()
 
-    property Connections playerConn: Connections {
+    property var playerConn: Connections {
         target: svc.player
         function onTrackTitleChanged() { svc.refresh() }
         function onTrackArtistChanged() { svc.refresh() }
     }
 
-    property Process fetchProc: Process {
+    property var fetchProc: Process {
         stdout: StdioCollector {
             onStreamFinished: {
                 svc.loading = false

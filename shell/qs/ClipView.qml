@@ -60,7 +60,7 @@ Item {
                     Text {
                         text: modelData.label
                         color: sel ? "white" : Qt.rgba(1, 1, 1, 0.72)
-                        font.family: Theme.font; font.pixelSize: 11.5; font.weight: sel ? Font.DemiBold : Font.Medium
+                        font.family: Theme.font; font.pixelSize: 12; font.weight: sel ? Font.DemiBold : Font.Medium
                     }
                 }
                 TapHandler { onTapped: v.activeCategory = modelData.id }
@@ -195,7 +195,7 @@ Item {
                 color: card.fg
                 wrapMode: Text.WrapAnywhere
                 elide: Text.ElideRight
-                font.family: Theme.font; font.pixelSize: 11.5
+                font.family: Theme.font; font.pixelSize: 12
             }
 
             // Footer: RGB for Color, URL/filename for Link/Video, char count for Text
@@ -258,7 +258,7 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: modelData.label
                                 color: mh.hovered ? "white" : (modelData.action === "delete" ? "#ff6961" : "white")
-                                font.family: Theme.font; font.pixelSize: 12.5; font.weight: Font.Medium
+                                font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Medium
                             }
                         }
                         HoverHandler { id: mh }

@@ -99,7 +99,7 @@ Item {
         }
         Rectangle {
             anchors.centerIn: parent
-            width: 4.5; height: 4.5; radius: 2.25
+            width: 5; height: 5; radius: 2.5
             color: it.item.kind === "bg" ? "transparent" : (Theme.dark ? Qt.rgba(1, 1, 1, 0.94) : Qt.rgba(0.1, 0.1, 0.12, 0.88))
             border.width: it.item.kind === "bg" ? 1.2 : 0
             border.color: Theme.dark ? Qt.rgba(1, 1, 1, 0.9) : Qt.rgba(0.1, 0.1, 0.12, 0.85)
@@ -122,7 +122,7 @@ Item {
                 id: tip
                 anchors.centerIn: parent
                 color: Theme.ink
-                font.family: Theme.font; font.pixelSize: 12.5; font.weight: Font.Medium
+                font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Medium
                 text: it.item.kind === "downloads" ? "Downloads"
                     : it.item.kind === "trash" ? "Trash"
                     : it.item.kind === "min" ? (it.item.title || "Window")
@@ -196,12 +196,12 @@ Item {
                     width: parent.width; height: 20
                     Text {
                         anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
-                        text: "Downloads"; color: Theme.ink; font.family: Theme.font; font.pixelSize: 13.5; font.weight: Font.DemiBold
+                        text: "Downloads"; color: Theme.ink; font.family: Theme.font; font.pixelSize: 14; font.weight: Font.DemiBold
                     }
                     Text {
                         anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
                         text: it.downloadFiles.length + (it.downloadFiles.length === 1 ? " item" : " items")
-                        color: Theme.ink2; font.family: Theme.font; font.pixelSize: 11.5
+                        color: Theme.ink2; font.family: Theme.font; font.pixelSize: 12
                     }
                 }
                 Item {
@@ -210,7 +210,7 @@ Item {
                         visible: it.downloadFiles.length === 0
                         anchors.centerIn: parent
                         text: "Downloads folder is empty"
-                        color: Theme.ink2; font.family: Theme.font; font.pixelSize: 12.5
+                        color: Theme.ink2; font.family: Theme.font; font.pixelSize: 13
                     }
                     Grid {
                         visible: it.downloadFiles.length > 0
@@ -243,7 +243,7 @@ Item {
                                     Text {
                                         width: parent.width; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight
                                         text: modelData.name
-                                        color: Theme.ink; font.family: Theme.font; font.pixelSize: 10.5; font.weight: Font.Medium
+                                        color: Theme.ink; font.family: Theme.font; font.pixelSize: 11; font.weight: Font.Medium
                                     }
                                 }
                                 HoverHandler { id: tileHov }
@@ -341,7 +341,7 @@ Item {
                                 x: 10; anchors.verticalCenter: parent.verticalCenter
                                 text: modelData[0]
                                 color: mh.hovered ? "white" : Theme.ink
-                                font.family: Theme.font; font.pixelSize: 12.5
+                                font.family: Theme.font; font.pixelSize: 13
                             }
                             HoverHandler { id: mh }
                             TapHandler {

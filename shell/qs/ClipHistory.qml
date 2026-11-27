@@ -147,7 +147,7 @@ ListModel {
         Quickshell.execDetached(["wl-copy", t])
     }
 
-    property FileView storeFile: FileView {
+    property var storeFile: FileView {
         path: h.storePath
         onLoaded: {
             if (h.count > 0) return
@@ -171,7 +171,7 @@ ListModel {
         }
     }
 
-    property Process proc: Process {
+    property var proc: Process {
         running: true
         command: [
             "wl-paste", "--type", "text", "--watch", "sh", "-c",

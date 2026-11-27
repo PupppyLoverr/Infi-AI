@@ -263,14 +263,14 @@ Item {
                     visible: m.lyricCur + 1 < m.lyricLines.length
                     text: m.lyricCur + 1 >= 0 && m.lyricCur + 1 < m.lyricLines.length ? m.lyricLines[m.lyricCur + 1].line : ""
                     color: Qt.rgba(1, 1, 1, 0.44)
-                    font.family: Theme.font; font.pixelSize: 13.5; font.weight: Font.Medium
+                    font.family: Theme.font; font.pixelSize: 14; font.weight: Font.Medium
                 }
                 Text {
                     width: parent.width; elide: Text.ElideRight
                     visible: m.lyricCur + 2 < m.lyricLines.length
                     text: m.lyricCur + 2 >= 0 && m.lyricCur + 2 < m.lyricLines.length ? m.lyricLines[m.lyricCur + 2].line : ""
                     color: Qt.rgba(1, 1, 1, 0.28)
-                    font.family: Theme.font; font.pixelSize: 12.5
+                    font.family: Theme.font; font.pixelSize: 13
                 }
             }
 

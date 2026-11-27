@@ -484,7 +484,7 @@ Scope {
                             anchors.centerIn: parent
                             visible: pw.text === "" && !pam.active
                             text: "Enter Password"
-                            color: Qt.rgba(1, 1, 1, 0.62); font.family: Theme.font; font.pixelSize: 13.5
+                            color: Qt.rgba(1, 1, 1, 0.62); font.family: Theme.font; font.pixelSize: 14
                         }
                         Connections {
                             target: pam
