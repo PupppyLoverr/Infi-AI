@@ -54,7 +54,8 @@ PanelWindow {
         stdout: StdioCollector { onStreamFinished: { const l = text.split("\n"); cc.wifiOn = l[0] === "enabled"; cc.ssid = l[1] || "" } } }
     Process { id: btProc; command: ["sh", "-c", "bluetoothctl show 2>/dev/null | grep -q 'Powered: yes' && echo on"]
         stdout: StdioCollector { onStreamFinished: cc.btOn = text.trim() === "on" } }
-    Process { id: rfProc; command: ["sh", "-c", "rfkill list 2>/dev/null | grep -q 'Soft blocked: no' || echo blocked"]
+    // Airplane Mode: every radio soft-blocked (no radios at all is not "on").
+    Process { id: rfProc; command: ["sh", "-c", "out=$(rfkill list 2>/dev/null); [ -n \"$out\" ] && ! printf '%s' \"$out\" | grep -q 'Soft blocked: no' && echo blocked"]
         stdout: StdioCollector { onStreamFinished: cc.airplane = text.trim() === "blocked" } }
     Process { id: brightProc; command: ["sh", "-c", "brightnessctl -m 2>/dev/null | cut -d, -f4 | tr -d %"]
         stdout: StdioCollector { onStreamFinished: cc.bright = text.trim() ? parseInt(text) : -1 } }

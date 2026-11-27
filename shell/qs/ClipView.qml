@@ -10,7 +10,7 @@ Item {
         text: v.history.incognito ? "Incognito: copies are not recorded" : "Copy something and it appears here"
         color: Qt.rgba(1, 1, 1, 0.5); font.family: Theme.font; font.pixelSize: 13
     }
-    Pill { anchors { right: parent.right; top: parent.top } z: 2; height: 24; text: v.history.incognito ? "Incognito on" : "Incognito"; on: v.history.incognito; onClicked: v.history.incognito = !v.history.incognito }
+    Pill { anchors { right: parent.right; top: parent.top } z: 2; height: 24; text: v.history.incognito ? "Incognito on" : "Incognito"; on: !!(v.history && v.history.incognito); onClicked: v.history.incognito = !v.history.incognito }
     ListView {
         anchors.fill: parent; anchors.topMargin: 30
         orientation: ListView.Horizontal; spacing: 10
