@@ -236,7 +236,7 @@ Ground rules for every step:
   `org.kde.kappmenu` protocol and the appmenu registrar; GTK through
   `appmenu-gtk-module`), status items (SNI tray), Control Center button,
   clock.
-- [x] ✅ *Status: done in QML (magnify, bounce, dots, background hollow dot, Stop Running in Background, Downloads, Trash).* Dock:
+- [x] ✅ *Status: done in QML (magnify, bounce, dots, background hollow dot, Stop Running in Background, minimised windows beside Downloads and Trash, restore on click; Super+M minimises).* Dock:
   - pinned and running apps from `hyprctl clients`;
   - Gaussian magnify and bounce (pearos-dock GPL-2.0+ numbers);
   - Downloads stack and Trash;
@@ -257,7 +257,7 @@ Ground rules for every step:
   `QSG_RENDER_TIMING`); compact live activities; media.
 - [x] ✅ *Status: done.* Control Center: Wi-Fi (NetworkManager D-Bus), Bluetooth (BlueZ),
   sound and display sliders, Focus, Now Playing, the transparency slider.
-- [x] ✅ *Status: done.* Notifications: an `org.freedesktop.Notifications` server in Quickshell,
+- [x] ✅ *Status: done. Banners slide in, pause on hover (close button), swipe away, show images, stack at most four; a **Notification Center** (click the clock or Super+,) lists open notifications grouped by app with actions, per-app dismiss and Clear All.* Notifications: an `org.freedesktop.Notifications` server in Quickshell,
   with banners, a stacked centre and actions.
 - [x] ✅ *Status: done; Droppy ambient lock with lyrics and PAM.* Lock screen (ext-session-lock + PAM), widgets, launcher grid, OSDs.
 - [x] ✅ *Status: done; QML Mission Control with live screencopy thumbnails, plus the Hyprland workspace slide.* Overview: workspace and window-overview animations (Hyprland
