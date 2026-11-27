@@ -58,6 +58,9 @@ mkdir -p "$HOME/Downloads"
 for f in "Solyra-0.1.iso" "Design-Spec.pdf" "wallpaper-4k.png" "release-notes.txt" "assets.zip"; do touch "$HOME/Downloads/$f"; done
 q downloads; shot 15d-dock-downloads-stack 1.4
 q downloads; sleep 0.5
+# Capture live spring-damped macOS 27 Dock magnification + Liquid Glass caret tooltip over the galaxy horizon.
+q dockHover 145; shot 15e-dock-magnified-hover 1.0
+q dockHover -1; sleep 0.4
 q island close; sleep 0.5
 
 # Verify solyra-app universal installer CLI + live LRCLIB synced lyrics API reachability.

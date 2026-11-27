@@ -3,17 +3,18 @@ import Quickshell
 import Quickshell.Services.Mpris
 import Quickshell.Widgets
 
-// Droppy-style Notch Media Player: album art, bold title + clickable [L] synced
-// lyrics badge, warm equaliser, seekable scrubber, 5-button transport row
-// (Shuffle, Prev, Play/Pause, Next, Repeat) + AirPlay output indicator, and an
-// expandable live synced lyrics drawer with expand-to-fullscreen button.
+// Exact getdroppy.app Notch Media Player & Live Synced Lyrics Drawer on pure
+// OLED black: compact 48x48 art, bold title + clickable white [L] badge, coral
+// equalizer, seekable scrubber, 5-button Droppy transport row (Queue/Shuffle,
+// Prev, Play/Pause, Next, AirPlay/Repeat), and sleek vertical synced lyrics
+// drawer with circular expand-to-ambient-lock button.
 Item {
     id: m
     property MprisPlayer player
     property var lyrics
     property bool lyricsOpen: false
     property bool shuffleOn: false
-    property string loopMode: "None" // None | Playlist | Track
+    property string loopMode: "None"
     signal expandLock()
 
     function fmt(s) {
@@ -47,7 +48,7 @@ Item {
         visible: !m.player
         anchors.centerIn: parent
         text: "Nothing is playing"
-        color: Qt.rgba(1, 1, 1, 0.5)
+        color: Qt.rgba(1, 1, 1, 0.45)
         font.family: Theme.font
         font.pixelSize: 14
     }
@@ -55,15 +56,15 @@ Item {
     Column {
         visible: !!m.player
         anchors.fill: parent
-        spacing: 12
+        spacing: 11
 
-        // Header: album art, title + [L] badge, artist, equaliser.
+        // Header: 48x48 album art, title + [L] badge, artist, warm coral equaliser.
         Row {
-            spacing: 14
+            spacing: 12
             width: parent.width
             ClippingRectangle {
-                width: 60; height: 60; radius: 14
-                color: "#ee5253"
+                width: 48; height: 48; radius: 11
+                color: "#1a1a22"
                 Rectangle {
                     anchors.fill: parent
                     gradient: Gradient {
@@ -80,33 +81,31 @@ Item {
                 }
             }
             Column {
-                width: parent.width - 60 - 14 - 40
+                width: parent.width - 48 - 12 - 36
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: 3
+                spacing: 2
                 Row {
                     width: parent.width
-                    spacing: 7
+                    spacing: 6
                     Text {
-                        width: Math.min(implicitWidth, parent.width - 28)
+                        width: Math.min(implicitWidth, parent.width - 26)
                         elide: Text.ElideRight
                         text: m.player ? (m.player.trackTitle || "Unknown title") : ""
                         color: "white"
                         font.family: Theme.font
-                        font.pixelSize: 16
-                        font.weight: Font.DemiBold
+                        font.pixelSize: 15
+                        font.weight: Font.Bold
                     }
-                    // Clickable [L] Live Synced Lyrics toggle badge (Droppy)
+                    // Droppy signature white [L] badge toggling synced lyrics
                     Rectangle {
-                        width: 20; height: 18; radius: 5
+                        width: 19; height: 17; radius: 4
                         anchors.verticalCenter: parent.verticalCenter
-                        color: m.lyricsOpen ? "white" : Qt.rgba(1, 1, 1, 0.16)
-                        border.width: m.lyricsOpen ? 0 : 1
-                        border.color: Qt.rgba(1, 1, 1, 0.24)
-                        Behavior on color { ColorAnimation { duration: Theme.ms(140) } }
+                        color: m.lyricsOpen ? "white" : Qt.rgba(1, 1, 1, 0.85)
+                        opacity: m.lyricsOpen ? 1.0 : 0.72
                         Text {
                             anchors.centerIn: parent
                             text: "L"
-                            color: m.lyricsOpen ? "#111114" : Qt.rgba(1, 1, 1, 0.88)
+                            color: "#000000"
                             font.family: Theme.font
                             font.pixelSize: 10
                             font.weight: Font.Bold
@@ -118,37 +117,49 @@ Item {
                     width: parent.width
                     elide: Text.ElideRight
                     text: m.player ? (m.player.trackArtist || m.player.identity) : ""
-                    color: Qt.rgba(1, 1, 1, 0.62)
+                    color: Qt.rgba(1, 1, 1, 0.56)
                     font.family: Theme.font
-                    font.pixelSize: 13
+                    font.pixelSize: 12
                 }
             }
             Equaliser {
                 anchors.verticalCenter: parent.verticalCenter
                 active: m.player && m.player.isPlaying
+                tint: "#ff7a45"
             }
         }
 
-        // Seekable scrubber bar.
+        // Scrubber row: elapsed, smooth white progress bar + thumb, remaining.
         Row {
             width: parent.width
-            spacing: 10
+            spacing: 8
             Text {
-                width: 36
+                width: 30
                 text: m.fmt(m.player ? m.player.position : -1)
-                color: Qt.rgba(1, 1, 1, 0.6)
+                color: Qt.rgba(1, 1, 1, 0.50)
                 font.family: Theme.font
-                font.pixelSize: 11
+                font.pixelSize: 10
                 font.features: { "tnum": 1 }
             }
-            Rectangle {
+            Item {
                 id: track
-                width: parent.width - 92; height: 6; radius: 3
+                width: parent.width - 78; height: 14
                 anchors.verticalCenter: parent.verticalCenter
-                color: Qt.rgba(1, 1, 1, 0.2)
+                readonly property real frac: m.player && m.player.length > 0 ? Math.min(1, Math.max(0, m.player.position / m.player.length)) : 0
                 Rectangle {
-                    height: parent.height; radius: 3; color: "white"
-                    width: m.player && m.player.length > 0 ? parent.width * Math.min(1, Math.max(0, m.player.position / m.player.length)) : 0
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width; height: 5; radius: 2.5
+                    color: Qt.rgba(1, 1, 1, 0.22)
+                    Rectangle {
+                        height: parent.height; radius: 2.5; color: Qt.rgba(1, 1, 1, 0.88)
+                        width: parent.width * track.frac
+                    }
+                }
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    x: Math.max(0, Math.min(parent.width - width, parent.width * track.frac - width / 2))
+                    width: 10; height: 10; radius: 5
+                    color: "white"
                 }
                 TapHandler {
                     onTapped: ev => {
@@ -158,29 +169,29 @@ Item {
                 }
             }
             Text {
-                width: 40
+                width: 32
                 horizontalAlignment: Text.AlignRight
                 text: m.player && m.player.length > 0 ? "-" + m.fmt(Math.max(0, m.player.length - m.player.position)) : "--:--"
-                color: Qt.rgba(1, 1, 1, 0.6)
+                color: Qt.rgba(1, 1, 1, 0.50)
                 font.family: Theme.font
-                font.pixelSize: 11
+                font.pixelSize: 10
                 font.features: { "tnum": 1 }
             }
         }
 
-        // 5-button Droppy transport row: Shuffle, Prev, Play/Pause, Next, Repeat (+ Lyrics/AirPlay)
+        // Droppy 5-button transport row: Queue/Shuffle, Prev, Play/Pause, Next, Output/Repeat
         Item {
             width: parent.width
-            height: 32
+            height: 36
+            Icon {
+                anchors.left: parent.left; anchors.leftMargin: 6; anchors.verticalCenter: parent.verticalCenter
+                name: m.lyricsOpen ? "queue" : "shuffle"; size: 17
+                color: m.shuffleOn ? Theme.accent : Qt.rgba(1, 1, 1, 0.56)
+                TapHandler { onTapped: m.toggleShuffle() }
+            }
             Row {
                 anchors.centerIn: parent
-                spacing: 30
-                Icon {
-                    anchors.verticalCenter: parent.verticalCenter
-                    name: "shuffle"; size: 17
-                    color: m.shuffleOn ? Theme.accent : Qt.rgba(1, 1, 1, 0.55)
-                    TapHandler { onTapped: m.toggleShuffle() }
-                }
+                spacing: 28
                 Icon {
                     anchors.verticalCenter: parent.verticalCenter
                     name: "prev"; size: 22; color: "white"
@@ -189,7 +200,7 @@ Item {
                 Icon {
                     anchors.verticalCenter: parent.verticalCenter
                     name: m.player && m.player.isPlaying ? "pause" : "play"
-                    size: 28; color: "white"
+                    size: 30; color: "white"
                     TapHandler { onTapped: if (m.player) m.player.togglePlaying() }
                 }
                 Icon {
@@ -197,44 +208,27 @@ Item {
                     name: "next"; size: 22; color: "white"
                     TapHandler { onTapped: if (m.player && m.player.canGoNext) m.player.next() }
                 }
-                Icon {
-                    anchors.verticalCenter: parent.verticalCenter
-                    name: "repeat"; size: 17
-                    color: m.loopMode !== "None" ? Theme.accent : Qt.rgba(1, 1, 1, 0.55)
-                    TapHandler { onTapped: m.cycleLoop() }
-                }
             }
             Icon {
-                anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
-                name: "lyrics"; size: 17
-                color: m.lyricsOpen ? Theme.accent : Qt.rgba(1, 1, 1, 0.52)
-                TapHandler { onTapped: m.lyricsOpen = !m.lyricsOpen }
-            }
-            Icon {
-                anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
-                name: "airplay"; size: 17
-                color: Qt.rgba(1, 1, 1, 0.55)
-                TapHandler { onTapped: m.expandLock() }
+                anchors.right: parent.right; anchors.rightMargin: 6; anchors.verticalCenter: parent.verticalCenter
+                name: m.loopMode !== "None" ? "repeat" : "airplay"; size: 18
+                color: m.loopMode !== "None" ? Theme.accent : Qt.rgba(1, 1, 1, 0.62)
+                TapHandler { onTapped: m.cycleLoop() }
             }
         }
 
-        // Droppy Live Synced Lyrics Drawer (expanded when [L] is toggled on)
-        Rectangle {
-            visible: m.lyricsOpen
-            width: parent.width; height: 1
-            color: Qt.rgba(1, 1, 1, 0.12)
-        }
+        // Droppy Live Synced Lyrics Drawer on pure pitch black (exact parity!)
         Item {
             visible: m.lyricsOpen
             width: parent.width
-            height: 118
+            height: 140
             clip: true
 
             Text {
                 visible: m.lyricLines.length === 0
                 anchors.centerIn: parent
                 text: m.lyrics && m.lyrics.loading ? "Loading synced lyrics…" : "No synced lyrics for this track"
-                color: Qt.rgba(1, 1, 1, 0.45)
+                color: Qt.rgba(1, 1, 1, 0.42)
                 font.family: Theme.font
                 font.pixelSize: 13
             }
@@ -242,16 +236,16 @@ Item {
             Column {
                 visible: m.lyricLines.length > 0
                 anchors.left: parent.left
-                anchors.right: expandBtn.left
-                anchors.rightMargin: 10
+                anchors.right: parent.right
+                anchors.rightMargin: 32
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: 6
+                spacing: 8
                 Text {
                     width: parent.width; elide: Text.ElideRight
                     visible: m.lyricCur > 0
                     text: m.lyricCur > 0 && m.lyricCur - 1 < m.lyricLines.length ? m.lyricLines[m.lyricCur - 1].line : ""
-                    color: Qt.rgba(1, 1, 1, 0.36)
-                    font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Medium
+                    color: Qt.rgba(1, 1, 1, 0.34)
+                    font.family: Theme.font; font.pixelSize: 14; font.weight: Font.DemiBold
                 }
                 Text {
                     width: parent.width; wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
@@ -260,30 +254,29 @@ Item {
                     font.family: Theme.font; font.pixelSize: 16; font.weight: Font.Bold
                 }
                 Text {
-                    width: parent.width; elide: Text.ElideRight
+                    width: parent.width; wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
                     visible: m.lyricCur + 1 < m.lyricLines.length
                     text: m.lyricCur + 1 >= 0 && m.lyricCur + 1 < m.lyricLines.length ? m.lyricLines[m.lyricCur + 1].line : ""
-                    color: Qt.rgba(1, 1, 1, 0.44)
+                    color: Qt.rgba(1, 1, 1, 0.38)
                     font.family: Theme.font; font.pixelSize: 14; font.weight: Font.Medium
                 }
                 Text {
                     width: parent.width; elide: Text.ElideRight
                     visible: m.lyricCur + 2 < m.lyricLines.length
                     text: m.lyricCur + 2 >= 0 && m.lyricCur + 2 < m.lyricLines.length ? m.lyricLines[m.lyricCur + 2].line : ""
-                    color: Qt.rgba(1, 1, 1, 0.28)
+                    color: Qt.rgba(1, 1, 1, 0.24)
                     font.family: Theme.font; font.pixelSize: 13
                 }
             }
 
-            // Expand-to-fullscreen ambient lyrics button (Droppy)
+            // Bottom-right circular expand-to-ambient-lock button (exact Droppy match)
             Rectangle {
                 id: expandBtn
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
-                width: 28; height: 28; radius: 14
+                width: 26; height: 26; radius: 13
                 color: Qt.rgba(1, 1, 1, 0.14)
-                border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.20)
-                Icon { anchors.centerIn: parent; name: "expand"; size: 14; color: "white" }
+                Icon { anchors.centerIn: parent; name: "expand"; size: 13; color: Qt.rgba(1, 1, 1, 0.85) }
                 TapHandler { onTapped: m.expandLock() }
             }
         }

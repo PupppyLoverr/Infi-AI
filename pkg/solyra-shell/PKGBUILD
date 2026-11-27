@@ -31,7 +31,7 @@ package() {
   install -Dm644 "$_repo/shell/hypr/hyprland.lua" "$pkgdir/etc/skel/.config/hypr/hyprland.lua"
   install -Dm644 /dev/null "$pkgdir/etc/skel/.config/solyra/hypr-local.lua"
   install -Dm644 "$_repo"/assets/wallpapers/*-1920x1080.png -t "$pkgdir/usr/share/backgrounds/solyra/"
-  install -Dm644 "$_repo/assets/wallpapers/forest-1920x1080.png" "$pkgdir/etc/skel/.config/solyra/wallpaper.png"
+  install -Dm644 "$_repo/assets/wallpapers/galaxy-1920x1080.png" "$pkgdir/etc/skel/.config/solyra/wallpaper.png"
   install -Dm755 "$_repo/iso/airootfs/usr/local/bin/solyra-app" "$pkgdir/usr/bin/solyra-app"
   install -Dm644 "$_repo/THIRD_PARTY.md" "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY.md"
 }

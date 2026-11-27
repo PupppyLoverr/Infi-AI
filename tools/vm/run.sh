@@ -29,13 +29,13 @@ cp "$repo/iso/airootfs/usr/local/bin/solyra-app" $P/bin/solyra-app
 printf '[Desktop Entry]\nName=Terminal\nComment=Solyra Terminal\nExec=solyra-term\nIcon=utilities-terminal\nType=Application\nStartupWMClass=solyra-term\n' > $P/share/applications/solyra-term.desktop
 printf '[Desktop Entry]\nName=Finder\nComment=Solyra Files\nExec=solyra-files\nIcon=system-file-manager\nType=Application\n' > $P/share/applications/solyra-files.desktop
 cp -r "$repo/shell/qs" $P/qs; cp -r "$repo/shell/hypr" $P/hypr
-cp "$repo/assets/wallpapers/forest-1920x1080.png" $P/wallpaper.png
+cp "$repo/assets/wallpapers/galaxy-1920x1080.png" $P/wallpaper.png
 cp "$here/scenario.sh" "$here/hook.sh" $P/
 tar -C $P -cf payload/payload.tar .
 # "Play a song on the web": a page Firefox opens in the VM, the song and its
 # artwork, served beside the payload. A public-domain recording when the
 # runner can fetch it, else a synthesised melody.
-mkdir -p payload/web && cp "$here/web/index.html" payload/web/ && cp "$repo/shell/qs/apps/music.png" payload/web/cover.png
+mkdir -p payload/web && cp "$here/web/index.html" payload/web/ && cp "$here/web/cover.png" payload/web/cover.png
 curl -fsSL --max-time 60 -A "Mozilla/5.0 (solyra-ci)" -o payload/web/song.ogg \
   "https://upload.wikimedia.org/wikipedia/commons/e/e3/Erik_Satie_-_gymnopedies_-_la_1_ere._lent_et_douloureux.ogg" \
   || rm -f payload/web/song.ogg

@@ -17,7 +17,7 @@ PanelWindow {
     property bool open: false
     visible: open
     anchors { top: true; right: true }
-    margins { top: 6; right: 10 }
+    margins { top: 36; right: 10 }
     implicitWidth: 372
     implicitHeight: grid.height + 24
     exclusiveZone: -1

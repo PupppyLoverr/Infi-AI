@@ -28,8 +28,10 @@ PanelWindow {
     readonly property var pinned: ["solyra-files", "firefox", "solyra-term", "org.gnome.TextEditor", "mpv", "solyra-settings"]
     readonly property var bundled: ({ "solyra-files": "Finder", "solyra-term": "Terminal", "solyra-settings": "Settings" })
     readonly property int cell: 48
-    readonly property int gap: 8
-    property real mx: -1
+    readonly property int gap: 7
+    property real pointerMx: -1
+    property real forcedMx: -1
+    readonly property real mx: forcedMx >= 0 ? forcedMx : pointerMx
     signal downloadsStackToggled()
 
     // Bring a minimised window back to the focused desktop and focus it.
@@ -89,23 +91,23 @@ PanelWindow {
 
     Glass {
         id: card
-        r: 23
+        r: 22
         anchors.bottom: parent.bottom
-        anchors.bottomMargin: 5
+        anchors.bottomMargin: 8
         anchors.horizontalCenter: parent.horizontalCenter
-        height: 68
-        width: row.width + 22
+        height: 66
+        width: row.width + 20
         Behavior on width {
             enabled: !Theme.reduceMotion
             SpringAnimation { spring: 4.8; damping: 0.48; epsilon: 0.3 }
         }
-        HoverHandler { onPointChanged: dockWin.mx = point.position.x; onHoveredChanged: if (!hovered) dockWin.mx = -1 }
+        HoverHandler { onPointChanged: dockWin.pointerMx = point.position.x; onHoveredChanged: if (!hovered) dockWin.pointerMx = -1 }
 
         Row {
             id: row
-            x: 11
+            x: 10
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: 11
+            anchors.bottomMargin: 10
             spacing: dockWin.gap
             Repeater {
                 model: dockWin.items
@@ -114,7 +116,7 @@ PanelWindow {
                     required property int index
                     item: modelData
                     dock: dockWin
-                    centre: 12 + index * (dockWin.cell + dockWin.gap) + dockWin.cell / 2
+                    centre: 10 + index * (dockWin.cell + dockWin.gap) + dockWin.cell / 2
                 }
             }
         }

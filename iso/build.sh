@@ -17,7 +17,7 @@ mkdir -p "$prof/airootfs/etc/skel/.config/quickshell" "$prof/airootfs/etc/skel/.
 cp -r "$repo/shell/qs/." "$prof/airootfs/etc/skel/.config/quickshell/"
 cp "$repo/shell/hypr/hyprland.lua" "$prof/airootfs/etc/skel/.config/hypr/hyprland.lua"
 cp "$repo"/assets/wallpapers/*-1920x1080.png "$prof/airootfs/usr/share/backgrounds/solyra/"
-cp "$repo/assets/wallpapers/forest-1920x1080.png" "$prof/airootfs/etc/skel/.config/solyra/wallpaper.png"
+cp "$repo/assets/wallpapers/galaxy-1920x1080.png" "$prof/airootfs/etc/skel/.config/solyra/wallpaper.png"
 : > "$prof/airootfs/etc/skel/.config/solyra/hypr-local.lua"
 install -Dm644 /dev/stdin "$prof/airootfs/usr/share/applications/solyra-term.desktop" <<'D'
 [Desktop Entry]

@@ -1,14 +1,15 @@
 import QtQuick
 import Quickshell
 
-// Droppy-style Rich Clipboard Manager inside the Dynamic Island:
-// category filter pills (Clipboard, Work, Personal), Incognito toggle, rich
-// horizontal cards (Text, Link, Color swatch with RGB, Video), and dark
-// translucent right-click context menu (Copy, Pin, Favorite, Tag, Delete).
+// Exact getdroppy.app Rich Clipboard Manager on pure OLED black:
+// category pills (Clipboard blue, Work orange, Personal green), Incognito +
+// expand button, horizontal rich cards with white header pills & "..." menu
+// pills (Text, Link, full-bleed Color swatch with RGB, Video), and dark
+// translucent context menu with blue-highlighted Copy.
 Item {
     id: v
     property var history
-    property string activeCategory: "all" // all | work | personal
+    property string activeCategory: "all"
     property string menuItemText: ""
     property bool menuPinned: false
     property bool menuFav: false
@@ -33,10 +34,18 @@ Item {
         return out
     }
 
-    // Header bar: category pills on the left, Incognito pill on the right.
+    function openContextMenu(anchorCard, item) {
+        v.menuItemText = item.text
+        v.menuPinned = !!item.pinned
+        v.menuFav = !!item.favorite
+        ctxMenu.anchor.item = anchorCard
+        ctxMenu.visible = true
+    }
+
+    // Top bar: Droppy category filter pills on left, Incognito + expand button on right.
     Row {
         anchors { left: parent.left; top: parent.top }
-        spacing: 6
+        spacing: 7
         z: 2
         Repeater {
             model: [
@@ -49,9 +58,9 @@ Item {
                 readonly property bool sel: v.activeCategory === modelData.id
                 height: 24; radius: 12
                 width: catRow.implicitWidth + 18
-                color: sel ? Qt.rgba(0.04, 0.52, 1.0, 0.24) : Qt.rgba(1, 1, 1, 0.08)
+                color: sel ? Qt.rgba(0.04, 0.42, 0.90, 0.34) : Qt.rgba(1, 1, 1, 0.09)
                 border.width: 1
-                border.color: sel ? Qt.rgba(0.25, 0.65, 1.0, 0.45) : Qt.rgba(1, 1, 1, 0.12)
+                border.color: sel ? Qt.rgba(0.20, 0.60, 1.0, 0.50) : Qt.rgba(1, 1, 1, 0.10)
                 Row {
                     id: catRow
                     anchors.centerIn: parent
@@ -59,8 +68,8 @@ Item {
                     Rectangle { width: 7; height: 7; radius: 3.5; anchors.verticalCenter: parent.verticalCenter; color: modelData.dot }
                     Text {
                         text: modelData.label
-                        color: sel ? "white" : Qt.rgba(1, 1, 1, 0.72)
-                        font.family: Theme.font; font.pixelSize: 12; font.weight: sel ? Font.DemiBold : Font.Medium
+                        color: sel ? "#6bb5ff" : Qt.rgba(1, 1, 1, 0.78)
+                        font.family: Theme.font; font.pixelSize: 12; font.weight: Font.DemiBold
                     }
                 }
                 TapHandler { onTapped: v.activeCategory = modelData.id }
@@ -68,12 +77,21 @@ Item {
         }
     }
 
-    Pill {
+    Row {
         anchors { right: parent.right; top: parent.top }
-        z: 2; height: 24
-        text: v.history && v.history.incognito ? "Incognito on" : "Incognito"
-        on: v.history && v.history.incognito
-        onClicked: if (v.history) v.history.incognito = !v.history.incognito
+        spacing: 6
+        z: 2
+        Pill {
+            height: 24
+            text: v.history && v.history.incognito ? "Incognito on" : "Incognito"
+            on: v.history && v.history.incognito
+            onClicked: if (v.history) v.history.incognito = !v.history.incognito
+        }
+        Rectangle {
+            width: 24; height: 24; radius: 12
+            color: Qt.rgba(1, 1, 1, 0.12)
+            Icon { anchors.centerIn: parent; name: "expand"; size: 12; color: Qt.rgba(1, 1, 1, 0.85) }
+        }
     }
 
     Text {
@@ -105,15 +123,14 @@ Item {
             readonly property color fg: isColor ? (brightSwatch ? "#16161a" : "#ffffff") : "#ffffff"
             readonly property color fgSub: isColor ? (brightSwatch ? Qt.rgba(0.08, 0.08, 0.1, 0.65) : Qt.rgba(1, 1, 1, 0.72)) : Qt.rgba(1, 1, 1, 0.48)
 
-            width: 158; height: ListView.view.height; radius: 15
+            width: 152; height: ListView.view.height; radius: 15
             color: isColor ? (v.history ? v.history.normalizeHex(modelData.text) : modelData.text)
                  : isVideo ? "#231a3d"
-                 : Qt.rgba(1, 1, 1, 0.08)
+                 : "#111216"
             border.width: 1
-            border.color: isColor ? Qt.rgba(1, 1, 1, 0.22) : Qt.rgba(1, 1, 1, 0.11)
+            border.color: isColor ? Qt.rgba(1, 1, 1, 0.20) : Qt.rgba(1, 1, 1, 0.09)
             clip: true
 
-            // Video card ambient gradient
             Rectangle {
                 visible: card.isVideo
                 anchors.fill: parent
@@ -123,60 +140,78 @@ Item {
                 }
             }
 
-            // Top pill header (Type · age) + Pin/Favorite badge
-            Row {
-                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 9 }
-                spacing: 6
+            // Droppy crisp white header pill + right white "..." / badge pill
+            Item {
+                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 8 }
+                height: 20
                 Rectangle {
+                    anchors.left: parent.left
                     height: 20; radius: 10
-                    width: Math.min(parent.width - (badgePill.visible ? 36 : 0), pillRow.implicitWidth + 14)
-                    color: card.isColor ? Qt.rgba(1, 1, 1, 0.88) : Qt.rgba(1, 1, 1, 0.14)
+                    width: Math.min(parent.width - 34, pillRow.implicitWidth + 12)
+                    color: "#f4f4f7"
                     Row {
                         id: pillRow
                         anchors.centerIn: parent
                         spacing: 4
-                        Icon {
+                        Rectangle {
+                            width: 12; height: 12; radius: 3
                             anchors.verticalCenter: parent.verticalCenter
-                            size: 11
-                            name: card.isColor ? "palette" : card.isLink ? "link" : card.isVideo ? "play" : "document"
-                            color: card.isColor ? "#1c1c1e" : "#7ee787"
+                            color: card.isColor ? "#ff9f43" : card.isLink ? "#0a84ff" : card.isVideo ? "#5856d6" : "#30d158"
+                            Icon {
+                                anchors.centerIn: parent; size: 8; color: "white"
+                                name: card.isColor ? "palette" : card.isLink ? "link" : card.isVideo ? "play" : "document"
+                            }
                         }
                         Text {
                             anchors.verticalCenter: parent.verticalCenter
                             text: (card.isColor ? "Color" : card.isLink ? "Link" : card.isVideo ? "Video" : "Text") + " · " + (v.history ? v.history.ageLabel(modelData.ts) : "now")
-                            color: card.isColor ? "#1c1c1e" : "white"
+                            color: "#1c1c1e"
                             font.family: Theme.font; font.pixelSize: 10; font.weight: Font.DemiBold
                         }
                     }
                 }
                 Rectangle {
-                    id: badgePill
-                    visible: modelData.pinned || modelData.favorite
-                    height: 20; width: 24; radius: 10
-                    color: card.isColor ? Qt.rgba(1, 1, 1, 0.88) : Qt.rgba(1, 1, 1, 0.14)
-                    Text {
+                    anchors.right: parent.right
+                    height: 20; radius: 10
+                    width: (modelData.pinned || modelData.favorite) ? 34 : 24
+                    color: "#f4f4f7"
+                    Row {
                         anchors.centerIn: parent
-                        text: modelData.favorite ? "★" : "●"
-                        color: modelData.favorite ? "#ff9f0a" : "#ff453a"
-                        font.pixelSize: 10
+                        spacing: 3
+                        Text {
+                            visible: modelData.pinned || modelData.favorite
+                            text: modelData.favorite ? "★" : "●"
+                            color: modelData.favorite ? "#ff9f0a" : "#ff3b30"
+                            font.pixelSize: 9
+                        }
+                        Text {
+                            text: "•••"
+                            color: "#3a3a3c"
+                            font.pixelSize: 8
+                            font.weight: Font.Bold
+                        }
                     }
+                    TapHandler { onTapped: v.openContextMenu(card, modelData) }
                 }
             }
 
-            // Center content by card type
+            // Center content
             Text {
                 visible: card.isColor
                 anchors.centerIn: parent
                 text: v.history ? v.history.normalizeHex(modelData.text) : modelData.text
                 color: card.fg
-                font.family: Theme.mono; font.pixelSize: 16; font.weight: Font.Bold
+                font.family: Theme.mono; font.pixelSize: 15; font.weight: Font.Bold
             }
 
             Rectangle {
                 visible: card.isLink
                 anchors.centerIn: parent
                 width: 34; height: 34; radius: 17
-                color: "#0a84ff"
+                gradient: Gradient {
+                    GradientStop { position: 0; color: "#4aa3ff" }
+                    GradientStop { position: 1; color: "#0055d4" }
+                }
                 Icon { anchors.centerIn: parent; name: "link"; size: 17; color: "white" }
             }
 
@@ -190,15 +225,15 @@ Item {
 
             Text {
                 visible: !card.isColor && !card.isLink && !card.isVideo
-                anchors { left: parent.left; right: parent.right; top: parent.top; bottom: footerTxt.top; margins: 10; topMargin: 35; bottomMargin: 6 }
+                anchors { left: parent.left; right: parent.right; top: parent.top; bottom: footerTxt.top; margins: 10; topMargin: 36; bottomMargin: 6 }
                 text: modelData.text
-                color: card.fg
+                color: Qt.rgba(1, 1, 1, 0.92)
                 wrapMode: Text.WrapAnywhere
                 elide: Text.ElideRight
                 font.family: Theme.font; font.pixelSize: 12
             }
 
-            // Footer: RGB for Color, URL/filename for Link/Video, char count for Text
+            // Footer
             Text {
                 id: footerTxt
                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 9 }
@@ -214,23 +249,17 @@ Item {
             TapHandler { onTapped: if (v.history) v.history.copy(modelData.text) }
             TapHandler {
                 acceptedButtons: Qt.RightButton
-                onTapped: {
-                    v.menuItemText = modelData.text
-                    v.menuPinned = !!modelData.pinned
-                    v.menuFav = !!modelData.favorite
-                    ctxMenu.anchor.item = card
-                    ctxMenu.visible = true
-                }
+                onTapped: v.openContextMenu(card, modelData)
             }
         }
     }
 
-    // Droppy dark translucent right-click context menu
+    // Droppy dark translucent context menu
     PopupWindow {
         id: ctxMenu
         anchor.item: v
         anchor.rect.y: 90
-        implicitWidth: 196
+        implicitWidth: 204
         implicitHeight: ctxCol.implicitHeight + 12
         color: "transparent"
         Glass {
@@ -240,25 +269,26 @@ Item {
                 x: 6; y: 6; width: parent.width - 12; spacing: 2
                 Repeater {
                     model: [
-                        { label: "Copy", action: "copy", icon: "copy" },
-                        { label: v.menuPinned ? "Unpin" : "Pin", action: "pin", icon: "tag" },
-                        { label: v.menuFav ? "Remove Favorite" : "Add to Favorites", action: "fav", icon: "star" },
-                        { label: "Tag: Work", action: "work", icon: "tag" },
-                        { label: "Tag: Personal", action: "personal", icon: "tag" },
-                        { label: "Delete", action: "delete", icon: "trash" }
+                        { label: "Copy", action: "copy", icon: "copy", primary: true },
+                        { label: v.menuPinned ? "Unpin" : "Pin", action: "pin", icon: "tag", primary: false },
+                        { label: v.menuFav ? "Remove Favorite" : "Add to Favorites", action: "fav", icon: "star", primary: false },
+                        { label: "Tag: Work", action: "work", icon: "tag", primary: false },
+                        { label: "Tag: Personal", action: "personal", icon: "tag", primary: false },
+                        { label: "Delete from Clipboard", action: "delete", icon: "trash", primary: false }
                     ]
                     Rectangle {
                         required property var modelData
                         width: ctxCol.width; height: 26; radius: 7
-                        color: mh.hovered ? (modelData.action === "delete" ? "#ff453a" : Theme.accent) : "transparent"
+                        color: mh.hovered ? (modelData.action === "delete" ? "#ff453a" : Theme.accent)
+                             : (modelData.primary ? Theme.accent : "transparent")
                         Row {
                             anchors.fill: parent; anchors.leftMargin: 8; spacing: 8
-                            Icon { anchors.verticalCenter: parent.verticalCenter; name: modelData.icon; size: 13; color: mh.hovered ? "white" : Qt.rgba(1, 1, 1, 0.8) }
+                            Icon { anchors.verticalCenter: parent.verticalCenter; name: modelData.icon; size: 13; color: "white" }
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: modelData.label
-                                color: mh.hovered ? "white" : (modelData.action === "delete" ? "#ff6961" : "white")
-                                font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Medium
+                                color: (mh.hovered || modelData.primary) ? "white" : (modelData.action === "delete" ? "#ff6961" : "white")
+                                font.family: Theme.font; font.pixelSize: 12; font.weight: Font.Medium
                             }
                         }
                         HoverHandler { id: mh }

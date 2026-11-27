@@ -163,37 +163,39 @@ PanelWindow {
     // search and the expanded tabs pull down past it.
     readonly property int barH: 30
     readonly property var dims: ({
-        idle:     { w: 100, h: 24, r: 12 },
-        compact:  { w: 232, h: 24, r: 12 },
+        idle:     { w: 112, h: 24, r: 12 },
+        compact:  { w: 238, h: 24, r: 12 },
         hud:      { w: 280, h: 24, r: 12 },
-        expanded: { w: 500, h: 200, r: 34 }
+        expanded: { w: 500, h: 200, r: 28 }
     })
-    // Media and the calendar glance are shorter than the card tabs: fit them;
-    // search grows with its results.
+    // Exact Droppy notch proportions per mode: jewel-like compact media (380x164),
+    // sleek vertical lyrics drawer (356x320), wide 4-card clipboard (660x226).
     readonly property var d: mode === "search" ? { w: 620, h: searchView.implicitHeight + 16, r: 28 }
-        : mode === "expanded" && tab === "media" ? { w: 500, h: mediaView.lyricsOpen ? 316 : 172, r: 32 }
-        : mode === "expanded" && tab === "cal" ? { w: 500, h: 164, r: 32 }
-        : mode === "expanded" && tab === "clip" ? { w: 560, h: 224, r: 32 }
-        : mode === "expanded" && tab === "tools" ? { w: 540, h: 236, r: 34 }
+        : mode === "expanded" && tab === "media" ? { w: mediaView.lyricsOpen ? 356 : 384, h: mediaView.lyricsOpen ? 320 : 164, r: 28 }
+        : mode === "expanded" && tab === "clip" ? { w: 660, h: 226, r: 26 }
+        : mode === "expanded" && tab === "shelf" ? { w: 520, h: 196, r: 28 }
+        : mode === "expanded" && tab === "cal" ? { w: 480, h: 168, r: 28 }
+        : mode === "expanded" && tab === "tools" ? { w: 540, h: 236, r: 28 }
         : dims[mode]
 
     Rectangle {
         id: shape
-        // Idle, compact and HUD: solid black, the camera housing. Expanded and
-        // search: dark Liquid Glass over Hyprland's refracting blur, with the
-        // lensing rim; clear enough that the wallpaper shows through.
-        readonly property bool glassy: (win.mode === "expanded" || win.mode === "search") && !Theme.reduceTransparency
-        color: glassy ? Qt.rgba(0.07, 0.07, 0.09, 0.30 + Theme.glass / 100 * 0.45) : "black"
+        // Exact getdroppy.app aesthetic: pure pitch-black OLED hardware housing (#000000)
+        // for the notch & expanded Droppy modes; dark smoked Liquid Glass for Spotlight search.
+        readonly property bool glassy: win.mode === "search" && !Theme.reduceTransparency
+        color: glassy ? Qt.rgba(0.06, 0.06, 0.09, 0.34 + Theme.glass / 100 * 0.44) : "#000000"
         Behavior on color { ColorAnimation { duration: Theme.ms(220) } }
         opacity: Theme.hideNotch && win.mode === "idle" && !hoverIdle.hovered ? 0 : 1
         Behavior on opacity { NumberAnimation { duration: Theme.ms(220) } }
         HoverHandler { id: hoverIdle }
         anchors.horizontalCenter: parent.horizontalCenter
-        y: 3
+        y: win.mode === "expanded" || win.mode === "search" ? 4 : 3
         width: win.d.w
         height: win.d.h
         radius: win.d.r
         clip: true
+        border.width: win.mode === "expanded" ? 1 : 0
+        border.color: Qt.rgba(1, 1, 1, 0.11)
         Behavior on width { enabled: !Theme.reduceMotion; SpringAnimation { spring: win.mode === "expanded" ? Theme.springOpen : Theme.springClose; damping: win.mode === "expanded" ? Theme.dampOpen : Theme.dampClose; epsilon: 0.3 } }
         Behavior on height { enabled: !Theme.reduceMotion; SpringAnimation { spring: win.mode === "expanded" ? Theme.springOpen : Theme.springClose; damping: win.mode === "expanded" ? Theme.dampOpen : Theme.dampClose; epsilon: 0.3 } }
         Behavior on radius { NumberAnimation { duration: Theme.ms(260); easing.type: Easing.OutCubic } }
@@ -464,16 +466,15 @@ PanelWindow {
     function closeSearch() { search.stop(); mode = "idle"; settle() }
     function toggleSearch(q) { if (mode === "search" && !q) closeSearch(); else openSearch(q) }
 
-    // Tabs pill floating under the open island.
+    // Detached Droppy pure-black mode-switcher pill floating below the open notch.
     Rectangle {
         id: tabsPill
         anchors.horizontalCenter: shape.horizontalCenter
         y: shape.y + shape.height + 8
-        width: tabsRow.width + 8; height: 34; radius: 17
-        // Dark Liquid Glass like the open island it belongs to.
-        color: Theme.reduceTransparency ? "black" : Qt.rgba(0.07, 0.07, 0.09, 0.30 + Theme.glass / 100 * 0.45)
-        border.width: Theme.reduceTransparency ? 0 : 1
-        border.color: Qt.rgba(1, 1, 1, 0.16)
+        width: tabsRow.width + 8; height: 32; radius: 16
+        color: "#000000"
+        border.width: 1
+        border.color: Qt.rgba(1, 1, 1, 0.12)
         opacity: win.mode === "expanded" ? 1 : 0
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: Theme.ms(180) } }
@@ -486,9 +487,9 @@ PanelWindow {
                 model: [["media", "music"], ["shelf", "tray"], ["clip", "clipboard"], ["cal", "clock"], ["face", "eye"], ["tools", "terminal"]]
                 Rectangle {
                     required property var modelData
-                    width: 38; height: 26; radius: 13
-                    color: win.tab === modelData[0] ? Qt.rgba(1, 1, 1, 0.18) : "transparent"
-                    Icon { anchors.centerIn: parent; size: 15; name: modelData[1]; color: win.tab === modelData[0] ? "white" : Qt.rgba(1, 1, 1, 0.6) }
+                    width: 34; height: 24; radius: 12
+                    color: win.tab === modelData[0] ? Qt.rgba(1, 1, 1, 0.22) : "transparent"
+                    Icon { anchors.centerIn: parent; size: 14; name: modelData[1]; color: win.tab === modelData[0] ? "white" : Qt.rgba(1, 1, 1, 0.56) }
                     TapHandler { onTapped: win.tab = modelData[0] }
                 }
             }

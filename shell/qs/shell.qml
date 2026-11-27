@@ -117,6 +117,10 @@ ShellRoot {
                     const focused = Hyprland.focusedMonitor
                     if (!focused || focused.name === perScreen.modelData.name) dock.downloadsStackToggled()
                 }
+                function onDockHoverRequested(x) {
+                    const focused = Hyprland.focusedMonitor
+                    if (!focused || focused.name === perScreen.modelData.name) dock.forcedMx = x
+                }
             }
             Connections {
                 target: root
@@ -152,6 +156,7 @@ ShellRoot {
         signal islandRequested(string tab)
         signal hudRequested(string arg)
         signal downloadsRequested()
+        signal dockHoverRequested(real x)
         function spotlight(): void { root.spotlight("") }
         function query(text: string): void { root.spotlight(text) }
         function control(): void { root.control() }
@@ -160,6 +165,7 @@ ShellRoot {
         function overview(): void { root.toggleOverview() }
         function island(tab: string): void { islandRequested(tab) }
         function downloads(): void { downloadsRequested() }
+        function dockHover(x: real): void { dockHoverRequested(x) }
         function hud(kind: string, value: real): void { hudRequested(kind + ":" + value) }
         function timer(seconds: int): void { root.timer(seconds) }
         function record(): void { root.toggleRecording() }

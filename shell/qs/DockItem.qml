@@ -107,8 +107,9 @@ Item {
     }
 
     // macOS 27 Liquid Glass hover tooltip pill with downward caret
+    readonly property bool forcedHover: dock.forcedMx >= 0 && Math.abs(dock.forcedMx - centre) <= (dock.cell + dock.gap) / 2
     Item {
-        visible: hover.hovered && !it.sep && !downloadsPop.visible
+        visible: (hover.hovered || it.forcedHover) && !it.sep && !downloadsPop.visible
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.top
         anchors.bottomMargin: 10

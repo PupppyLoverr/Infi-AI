@@ -44,22 +44,20 @@ hl.config({
         },
         blur = {
             enabled = true,
-            size = 10,
+            size = 9,
             passes = 3,
-            noise = 0.01,
-            vibrancy = 0.32,          -- colours behind stay vivid, as Apple's glass
-            vibrancy_darkness = 0.2,
+            noise = 0.012,
+            vibrancy = 0.42,          -- galaxy colours behind stay luminous like Apple's glass
+            vibrancy_darkness = 0.18,
             popups = true,
-            -- Liquid Glass: Hyprland's acrylic variant lenses the backdrop
-            -- through a curved edge (refraction + bulb), keeps it mostly clear
-            -- (clarity) with a faint chromatic fringe, like macOS 26/27.
+            -- macOS 27 Golden Gate Liquid Glass: curved rim refraction + high clarity + faint chromatic fringe.
             variant = 8,
             acrylic = {
-                refraction = 16,     -- edge lensing, px
-                bulb = 18,           -- width of the curved edge, px
-                clarity = 0.30,      -- frosted: a little sharp backdrop, mostly blur
-                aberration = 0.008,  -- the faintest colour fringe
-                tint = 0x0CF2F6FF,
+                refraction = 20,     -- curved edge lensing, px
+                bulb = 22,           -- optical bevel width, px
+                clarity = 0.36,      -- crisp frosted glass with luminous backdrop bleed
+                aberration = 0.011,  -- subtle optical prism dispersion
+                tint = 0x0AF0F6FF,
             },
         },
     },
