@@ -10,7 +10,7 @@ U=/home/solyra
 install -Dm644 -o solyra -g solyra /opt/solyra/hypr/hyprland.lua $U/.config/hypr/hyprland.lua
 printf 'hl.on("hyprland.start", function() hl.exec_cmd("bash /opt/solyra/scenario.sh > /tmp/scenario.log 2>&1") end)\n' > $U/.config/solyra/hypr-local.lua
 chown solyra: $U/.config/solyra/hypr-local.lua
-echo '[ "$(tty)" = /dev/tty1 ] && exec Hyprland > /tmp/hypr.log 2>&1' > $U/.bash_profile
+echo '[ "$(tty)" = /dev/tty1 ] && exec $(command -v start-hyprland || echo Hyprland) > /tmp/hypr.log 2>&1' > $U/.bash_profile
 chown solyra: $U/.bash_profile
 Hyprland --verify-config -c $U/.config/hypr/hyprland.lua > /tmp/hypr-verify.txt 2>&1
 up /tmp/hypr-verify.txt hypr-verify.txt

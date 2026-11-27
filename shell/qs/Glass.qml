@@ -24,10 +24,12 @@ Item {
         anchors.fill: body
         visible: g.shadow && !Theme.reduceTransparency
         radius: g.r
-        blur: 36
-        spread: -2
+        blur: 32
+        spread: -4
         offset.y: 8
-        color: Qt.rgba(0, 0, 0, g.dark ? 0.26 : 0.14)
+        // Kept under the compositor's ignore_alpha (0.16) so the shadow is
+        // never blurred into a box.
+        color: Qt.rgba(0, 0, 0, g.dark ? 0.15 : 0.10)
     }
 
     Rectangle {
@@ -36,8 +38,8 @@ Item {
         radius: g.r
         color: Theme.reduceTransparency
             ? (g.dark ? "#f01c1c20" : "#f6f6f6f8")
-            : (g.dark ? Qt.rgba(0.09, 0.09, 0.11, 0.04 + Theme.glass / 100 * 0.52)
-                      : Qt.rgba(1, 1, 1, 0.10 + Theme.glass / 100 * 0.52))
+            : (g.dark ? Qt.rgba(0.09, 0.09, 0.11, 0.18 + Theme.glass / 100 * 0.46)
+                      : Qt.rgba(1, 1, 1, 0.20 + Theme.glass / 100 * 0.46))
         border.width: Theme.showBorders ? 1.5 : 0
         border.color: Theme.rim
     }

@@ -31,6 +31,15 @@ cp -r "$repo/shell/qs" $P/qs; cp -r "$repo/shell/hypr" $P/hypr
 cp "$repo/assets/wallpapers/forest-1920x1080.png" $P/wallpaper.png
 cp "$here/scenario.sh" "$here/hook.sh" $P/
 tar -C $P -cf payload/payload.tar .
+# "Play a song on the web": a page Firefox opens in the VM, the song and its
+# artwork, served beside the payload. A public-domain recording when the
+# runner can fetch it, else a synthesised melody.
+mkdir -p payload/web && cp "$here/web/index.html" payload/web/ && cp "$repo/shell/qs/apps/music.png" payload/web/cover.png
+curl -fsSL --max-time 60 -A "Mozilla/5.0 (solyra-ci)" -o payload/web/song.ogg \
+  "https://upload.wikimedia.org/wikipedia/commons/e/e3/Erik_Satie_-_gymnopedies_-_la_1_ere._lent_et_douloureux.ogg" \
+  || rm -f payload/web/song.ogg
+python3 "$here/web/melody.py" payload/web/song.wav
+ls -la payload/web
 python3 "$here/serve.py" payload shots & SRV=$!
 cp base.qcow2 run.qcow2
 # Prefer a virgl GPU (Hyprland's happy path); the runner has no GPU, so try a

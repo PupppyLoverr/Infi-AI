@@ -52,10 +52,37 @@ hyprctl dispatch "hl.dsp.window.move({ workspace = 'special:minimized', follow =
 shot 15c-dock-minimized 1.5
 pkill -x solyra-files; sleep 1
 q glass 35
-q island close; q lock; shot 16-lock-screen 2.5
+q island close; sleep 0.5
+
+# A real song on the web: Firefox plays it from a page with Media Session
+# metadata; the notch, its live activities, Control Center and the lock
+# screen pick it up over MPRIS like any site (YouTube, Spotify web).
+pkill -x mpv; sleep 1
+mkdir -p /tmp/ffp
+cat > /tmp/ffp/user.js <<'JS'
+user_pref("media.autoplay.default", 0);
+user_pref("media.autoplay.blocking_policy", 0);
+user_pref("media.hardwaremediakeys.enabled", true);
+user_pref("browser.aboutwelcome.enabled", false);
+user_pref("browser.shell.checkDefaultBrowser", false);
+user_pref("datareporting.policy.dataSubmissionEnabled", false);
+user_pref("datareporting.policy.firstRunURL", "");
+user_pref("browser.startup.homepage_override.mstone", "ignore");
+user_pref("trailhead.firstrun.didSeeAboutWelcome", true);
+JS
+firefox --no-remote --profile /tmp/ffp --new-window "$H/web/index.html" >/tmp/firefox.log 2>&1 &
+sleep 20
+playerctl -l > /tmp/players.txt 2>&1; playerctl -p firefox metadata >> /tmp/players.txt 2>&1; up /tmp/players.txt
+shot 17-web-song-playing 0
+q island media; shot 17b-web-song-notch 2.0
+q island close; sleep 0.8
+q timer 300; shot 17c-web-song-two-activities 2.0
+q control; shot 17d-web-song-control-center 1.2
+q control; q timer 0; sleep 0.6
+q lock; shot 16-lock-screen 3.0
 # The test media player is part of the scenario, not the desktop: stop it,
 # then idle until 3 minutes after login and measure (nothing excluded).
-pkill -x mpv; qs ipc call shell island close
+pkill -x mpv; pkill -x firefox; qs ipc call shell island close
 while [ $(( $(date +%s) - T0 + 14 )) -lt 180 ]; do sleep 5; done
 {
   echo "=== solyra-vm report ==="
@@ -70,5 +97,5 @@ while [ $(( $(date +%s) - T0 + 14 )) -lt 180 ]; do sleep 5; done
   qs --version 2>/dev/null | head -1
 } > /tmp/report.txt 2>&1
 up /tmp/report.txt
-for f in /tmp/qs.log /tmp/hypr.log /tmp/scenario.log /tmp/term1.log /tmp/term2.log; do [ -f "$f" ] && cp "$f" "/tmp/log-$(basename $f)" && up "/tmp/log-$(basename $f)"; done
+for f in /tmp/qs.log /tmp/hypr.log /tmp/scenario.log /tmp/term1.log /tmp/firefox.log; do [ -f "$f" ] && cp "$f" "/tmp/log-$(basename $f)" && up "/tmp/log-$(basename $f)"; done
 touch /tmp/solyra-done

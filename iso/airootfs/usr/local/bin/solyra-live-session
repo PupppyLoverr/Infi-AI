@@ -2,4 +2,5 @@
 # Live ISO session (run by greetd as the solyra user): Hyprland with the
 # Solyra shell; its log stays in /tmp for diagnosis.
 passwd -S solyra >/dev/null 2>&1
-exec Hyprland > /tmp/hypr.log 2>&1
+# start-hyprland is Hyprland's supervised launcher (no debug warning).
+exec $(command -v start-hyprland || echo Hyprland) > /tmp/hypr.log 2>&1

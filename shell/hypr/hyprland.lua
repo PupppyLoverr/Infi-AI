@@ -92,13 +92,15 @@ hl.animation({ leaf = "layersOut", enabled = true, speed = 2, bezier = "smooth",
 hl.animation({ leaf = "workspaces", enabled = true, speed = 5, bezier = "smooth", style = "slide" })
 hl.animation({ leaf = "specialWorkspace", enabled = true, speed = 4, spring = "spring", style = "slidevert" })
 
--- Glass behind the shell's translucent surfaces: blur only where pixels are
--- drawn (ignore_alpha), so rounded cards get rounded blur.
+-- Glass behind the shell's translucent surfaces: blur only where the card
+-- itself is drawn. ignore_alpha sits above the soft drop shadows' opacity and
+-- below the glass bodies' (Glass.qml keeps every body above it), so a card
+-- gets rounded blur and its shadow never turns into a blurred box.
 hl.layer_rule({
     name = "solyra-glass",
     match = { namespace = "^solyra-(bar|dock|control|notifications|notifcenter|snap|overview|island|widgets)$" },
     blur = true,
-    ignore_alpha = 0.02,
+    ignore_alpha = 0.16,
 })
 hl.layer_rule({
     name = "solyra-pop",

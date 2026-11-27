@@ -152,6 +152,23 @@ Scope {
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.bottom: parent.bottom; anchors.bottomMargin: parent.height * 0.08
                     spacing: 8
+                    // The account: avatar (initial) and name, as macOS.
+                    Rectangle {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: 64; height: 64; radius: 32
+                        gradient: Gradient {
+                            GradientStop { position: 0; color: "#8e8e93" }
+                            GradientStop { position: 1; color: "#5a5a5f" }
+                        }
+                        border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.3)
+                        Text { anchors.centerIn: parent; text: (Quickshell.env("USER") || "?").charAt(0).toUpperCase(); color: "white"; font.family: Theme.font; font.pixelSize: 28; font.weight: Font.DemiBold }
+                    }
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        bottomPadding: 4
+                        text: { const u = Quickshell.env("USER") || "User"; return u.charAt(0).toUpperCase() + u.slice(1) }
+                        color: "white"; font.family: Theme.font; font.pixelSize: 15; font.weight: Font.DemiBold
+                    }
                     Rectangle {
                         id: pwBox
                         width: 240; height: 38; radius: 19
@@ -160,7 +177,7 @@ Scope {
                             id: pw
                             anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16
                             echoMode: TextInput.Password
-                            placeholderText: "Enter Password"
+                            placeholderText: ""
                             color: "white"; placeholderTextColor: Qt.rgba(1, 1, 1, 0.6)
                             font.family: Theme.font; font.pixelSize: 14
                             horizontalAlignment: TextInput.AlignHCenter
@@ -169,6 +186,14 @@ Scope {
                             enabled: !pam.active
                             onAccepted: { pam.start(); }
                             Component.onCompleted: forceActiveFocus()
+                        }
+                        // Our own hint: Qt hides placeholders while focused, and
+                        // this field is always focused.
+                        Text {
+                            anchors.centerIn: parent
+                            visible: pw.text === "" && !pam.active
+                            text: "Enter Password"
+                            color: Qt.rgba(1, 1, 1, 0.6); font.family: Theme.font; font.pixelSize: 14
                         }
                         Connections {
                             target: pam

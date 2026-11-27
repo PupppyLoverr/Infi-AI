@@ -1,0 +1,40 @@
+<!doctype html>
+<!-- The test VM's "play a song on the web" page: an <audio> element that
+     autoplays the song the runner served, and Media Session metadata (title,
+     artist, album, artwork). Firefox publishes both over MPRIS, as it does
+     for YouTube or Spotify's web player, and the shell's notch, lock screen
+     and Control Center read it from there. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Gymnopédie No. 1 · Erik Satie</title>
+<style>
+  body { margin: 0; height: 100vh; display: grid; place-items: center; font: 16px system-ui, sans-serif;
+         background: linear-gradient(135deg, #1d2b3a, #3a1d35); color: #fff; }
+  .card { text-align: center; }
+  img { width: 220px; height: 220px; border-radius: 18px; box-shadow: 0 20px 50px #0008; }
+  h1 { font-size: 22px; margin: 18px 0 4px; } p { opacity: .7; margin: 0 0 16px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <img src="cover.png" alt="">
+  <h1>Gymnopédie No. 1</h1>
+  <p>Erik Satie · Public domain</p>
+  <audio id="a" controls autoplay loop></audio>
+</div>
+<script>
+  const a = document.getElementById("a");
+  // The runner downloads a public-domain recording when it can; otherwise
+  // it serves a melody it synthesised (song.wav).
+  fetch("song.ogg", { method: "HEAD" }).then(r => { a.src = r.ok ? "song.ogg" : "song.wav"; a.play() })
+    .catch(() => { a.src = "song.wav"; a.play() });
+  if ("mediaSession" in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: "Gymnopédie No. 1", artist: "Erik Satie", album: "Trois Gymnopédies",
+      artwork: [{ src: new URL("cover.png", location.href).href, sizes: "512x512", type: "image/png" }]
+    });
+  }
+</script>
+</body>
+</html>
