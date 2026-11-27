@@ -28,7 +28,7 @@ files_bin="${FILES_BIN:-$repo/apps/target/release/solyra-files}"; [ -f "$files_b
 printf '[Desktop Entry]\nName=Terminal\nComment=Solyra Terminal\nExec=solyra-term\nIcon=utilities-terminal\nType=Application\nStartupWMClass=solyra-term\n' > $P/share/applications/solyra-term.desktop
 printf '[Desktop Entry]\nName=Finder\nComment=Solyra Files\nExec=solyra-files\nIcon=system-file-manager\nType=Application\n' > $P/share/applications/solyra-files.desktop
 cp -r "$repo/shell/qs" $P/qs; cp -r "$repo/shell/hypr" $P/hypr
-cp "$repo/assets/wallpapers/forest-1920x1080.png" $P/wallpaper.png
+cp "$repo/assets/wallpapers/solyra-dusk-1920x1200.png" $P/wallpaper.png
 cp "$here/scenario.sh" "$here/hook.sh" $P/
 tar -C $P -cf payload/payload.tar .
 # "Play a song on the web": a page Firefox opens in the VM, the song and its

@@ -17,7 +17,7 @@ Singleton {
     property bool autoArrange: false
     property bool hideNotch: false
     property bool hotCorners: true         // bottom-left: Mission Control; bottom-right: desktop widgets peek
-    property bool widgets: true            // desktop widgets (clock, calendar, weather)
+    property bool widgets: false            // desktop widgets (clock, calendar, weather)
     property bool nightShift: false        // warm display (hyprsunset)
 
     // Tint alpha over the compositor's blur. Even at "ultra clear" the

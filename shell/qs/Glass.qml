@@ -30,7 +30,7 @@ Item {
         if (Theme.reduceTransparency) return dark ? "#f21c1c1f" : "#f6f6f6f8"
         if (kind === "smoke") return Qt.rgba(0.02, 0.02, 0.04, 0.80 + slider * 0.15)
         if (kind === "frosted") return dark ? Qt.rgba(0.12, 0.12, 0.14, 0.30 + slider * 0.40) : Qt.rgba(1, 1, 1, 0.34 + slider * 0.40)
-        return dark ? Qt.rgba(0.14, 0.14, 0.16, 0.17 + slider * 0.38) : Qt.rgba(1, 1, 1, 0.20 + slider * 0.40)
+        return dark ? Qt.rgba(0.16, 0.16, 0.18, 0.17 + slider * 0.30) : Qt.rgba(1, 1, 1, 0.20 + slider * 0.34)
     }
 
     RectangularShadow {

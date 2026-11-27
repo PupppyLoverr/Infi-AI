@@ -37,6 +37,7 @@ PanelWindow {
     function show(q) {
         search.reset(q || "")
         field.text = q || ""
+        arrowed = false
         open = true
         field.forceActiveFocus()
     }
@@ -47,6 +48,9 @@ PanelWindow {
         ["Applications", "apps", "Apps"], ["Files", "folder", "Files"],
         ["Actions", "layers", "Actions"], ["Clipboard", "copies", "Clipboard"]]
     readonly property bool browsing: search.query.trim() === "" && search.filter === "All"
+    // A category row lights only once the arrow keys are used (as the photo:
+    // nothing is selected when Spotlight opens).
+    property bool arrowed: false
 
     // Speech: whisper.cpp when present.
     property bool canDictate: false
@@ -72,9 +76,9 @@ PanelWindow {
         r: height / 2
         anchors.horizontalCenter: parent.horizontalCenter
         // Springs out of the island (a 100x24 pill at the top) to its place.
-        width: sp.open ? 620 : 100
-        height: sp.open ? 58 : 24
-        y: sp.open ? 40 : 3
+        width: sp.open ? 600 : 84
+        height: sp.open ? 56 : 24
+        y: sp.open ? 36 : 4
         opacity: sp.open ? 1 : 0
         Behavior on width { enabled: !Theme.reduceMotion; SpringAnimation { spring: Theme.springOpen; damping: Theme.dampOpen; epsilon: 0.3 } }
         Behavior on height { enabled: !Theme.reduceMotion; SpringAnimation { spring: Theme.springOpen; damping: Theme.dampOpen; epsilon: 0.3 } }
@@ -97,8 +101,8 @@ PanelWindow {
             Keys.onPressed: ev => {
                 if (ev.key === Qt.Key_Escape) { if (search.filter !== "All" && !text) search.filter = "All"; else sp.hide(); ev.accepted = true }
                 else if ((ev.modifiers & Qt.ControlModifier) && ev.key >= Qt.Key_1 && ev.key <= Qt.Key_4) { search.filter = sp.categories[ev.key - Qt.Key_1][2]; search.sel = 0; ev.accepted = true }
-                else if (ev.key === Qt.Key_Down) { search.move(1); list.positionViewAtIndex(search.sel, ListView.Contain); ev.accepted = true }
-                else if (ev.key === Qt.Key_Up) { search.move(-1); list.positionViewAtIndex(search.sel, ListView.Contain); ev.accepted = true }
+                else if (ev.key === Qt.Key_Down) { sp.arrowed = true; search.move(1); list.positionViewAtIndex(search.sel, ListView.Contain); ev.accepted = true }
+                else if (ev.key === Qt.Key_Up) { sp.arrowed = true; search.move(-1); list.positionViewAtIndex(search.sel, ListView.Contain); ev.accepted = true }
                 else if (ev.key === Qt.Key_Tab) { search.cycleFilter(); ev.accepted = true }
                 else if (ev.key === Qt.Key_Backspace && !text && search.filter !== "All") { search.filter = "All"; ev.accepted = true }
                 else if (ev.key === Qt.Key_Return || ev.key === Qt.Key_Enter) {
@@ -125,9 +129,9 @@ PanelWindow {
         kind: "frosted"
         r: 26
         anchors.horizontalCenter: parent.horizontalCenter
-        width: 604
-        y: capsule.y + capsule.height + 12
-        readonly property int rowsH: sp.browsing ? 4 * 56 + 16
+        width: 584
+        y: capsule.y + capsule.height + 14
+        readonly property int rowsH: sp.browsing ? 4 * 58 + 18
                                     : search.filter === "Ask" ? Math.min(360, answer.implicitHeight + 70)
                                     : Math.min(420, list.contentHeight + 20)
         height: rowsH
@@ -148,10 +152,10 @@ PanelWindow {
                 Rectangle {
                     required property var modelData
                     required property int index
-                    width: parent.width; height: 56; radius: 16
-                    color: catHov.hovered || search.sel === index ? Qt.rgba(1, 1, 1, 0.12) : "transparent"
+                    width: parent.width; height: 58; radius: 18
+                    color: catHov.hovered || (sp.arrowed && search.sel === index) ? Qt.rgba(1, 1, 1, 0.12) : "transparent"
                     Icon { x: 18; anchors.verticalCenter: parent.verticalCenter; name: modelData[1]; size: 24 }
-                    Text { x: 62; anchors.verticalCenter: parent.verticalCenter; text: modelData[0]; color: "white"; font.family: Theme.font; font.pixelSize: 17; font.weight: Font.DemiBold }
+                    Text { x: 64; anchors.verticalCenter: parent.verticalCenter; text: modelData[0]; color: "white"; font.family: Theme.font; font.pixelSize: 18; font.weight: Font.DemiBold }
                     Text { anchors.right: parent.right; anchors.rightMargin: 18; anchors.verticalCenter: parent.verticalCenter; text: "⌃" + (index + 1); color: Qt.rgba(1, 1, 1, 0.5); font.family: Theme.font; font.pixelSize: 15 }
                     HoverHandler { id: catHov; onHoveredChanged: if (hovered) search.sel = index }
                     TapHandler { onTapped: { search.filter = modelData[2]; search.sel = 0; field.forceActiveFocus() } }

@@ -28,7 +28,7 @@ PanelWindow {
     readonly property var pinned: ["solyra-files", "firefox", "solyra-term", "org.gnome.TextEditor", "mpv", "solyra-settings"]
     readonly property var bundled: ({ "solyra-files": "Finder", "solyra-term": "Terminal", "solyra-settings": "Settings" })
     readonly property int cell: 48
-    readonly property int gap: 5
+    readonly property int gap: 2
     // Recently used apps that are not pinned (macOS's recent-apps section):
     // remembered as they come to the front, newest first, three kept.
     property var recent: []
@@ -122,7 +122,7 @@ PanelWindow {
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 4
         anchors.horizontalCenter: parent.horizontalCenter
-        height: 66
+        height: 64
         width: row.width + 24
         Behavior on width { NumberAnimation { duration: Theme.ms(90) } }
         HoverHandler { onPointChanged: dockWin.mx = point.position.x; onHoveredChanged: if (!hovered) dockWin.mx = -1 }

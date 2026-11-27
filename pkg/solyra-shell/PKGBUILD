@@ -29,7 +29,7 @@ package() {
   cp -r "$_repo/shell/qs/." "$pkgdir/etc/xdg/quickshell/"
   install -Dm644 "$_repo/shell/hypr/hyprland.lua" "$pkgdir/etc/skel/.config/hypr/hyprland.lua"
   install -Dm644 /dev/null "$pkgdir/etc/skel/.config/solyra/hypr-local.lua"
-  install -Dm644 "$_repo"/assets/wallpapers/*-1920x1080.png -t "$pkgdir/usr/share/backgrounds/solyra/"
-  install -Dm644 "$_repo/assets/wallpapers/forest-1920x1080.png" "$pkgdir/etc/skel/.config/solyra/wallpaper.png"
+  install -Dm644 "$_repo"/assets/wallpapers/*-1920x1080.png "$_repo"/assets/wallpapers/solyra-dusk-1920x1200.png -t "$pkgdir/usr/share/backgrounds/solyra/"
+  install -Dm644 "$_repo/assets/wallpapers/solyra-dusk-1920x1200.png" "$pkgdir/etc/skel/.config/solyra/wallpaper.png"
   install -Dm644 "$_repo/THIRD_PARTY.md" "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY.md"
 }
