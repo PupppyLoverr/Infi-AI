@@ -136,26 +136,24 @@ Scope {
                     saturation: 0.45
                 }
 
-                // Mode 1 ("Full Art & Vision Clock Depth"): crisp full-bleed center artwork blended into ambient flanks
+                // Mode 1 ("Full Art & Vision Clock Depth"): seamless edge-to-edge full-bleed artwork
                 Image {
                     visible: stage.isDepth && root.player && root.player.trackArtUrl
-                    anchors.centerIn: parent
-                    width: Math.min(stage.width, stage.height * 1.18)
-                    height: stage.height
+                    anchors.fill: parent
                     fillMode: Image.PreserveAspectCrop
                     source: root.player ? root.player.trackArtUrl : ""
-                    opacity: 0.92
+                    opacity: 0.96
                 }
-                // Soft side-edge feathering + lower readability gradient for Full Art & Depth mode
+                // Soft cinematic radial/side-edge ambient vignette for Full Art & Depth mode
                 Rectangle {
                     visible: stage.isDepth
                     anchors.fill: parent
                     gradient: Gradient {
                         orientation: Gradient.Horizontal
-                        GradientStop { position: 0.0;  color: Qt.rgba(0.02, 0.02, 0.05, 0.52) }
-                        GradientStop { position: 0.18; color: "transparent" }
-                        GradientStop { position: 0.82; color: "transparent" }
-                        GradientStop { position: 1.0;  color: Qt.rgba(0.02, 0.02, 0.05, 0.52) }
+                        GradientStop { position: 0.0;  color: Qt.rgba(0.02, 0.02, 0.05, 0.36) }
+                        GradientStop { position: 0.14; color: "transparent" }
+                        GradientStop { position: 0.86; color: "transparent" }
+                        GradientStop { position: 1.0;  color: Qt.rgba(0.02, 0.02, 0.05, 0.36) }
                     }
                 }
                 Rectangle {

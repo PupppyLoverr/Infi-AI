@@ -144,7 +144,11 @@ PanelWindow {
         if (shelf) shelf.compressSelected()
     }
     function triggerShelfSelectFirst() {
-        if (shelf && shelf.count > 0) shelf.selectOnly(Math.min(2, shelf.count - 1))
+        if (!shelf || shelf.count === 0) return
+        for (let i = 0; i < shelf.count; i++) {
+            if (shelf.get(i).ext === "pdf") { shelf.selectOnly(i); return }
+        }
+        shelf.selectOnly(Math.min(1, shelf.count - 1))
     }
 
     onActivitiesChanged: if (mode === "idle" || mode === "compact") settle()
@@ -941,10 +945,11 @@ PanelWindow {
                 }
                 // Widgets Dashboard (also lights up for pomodoro/cleaner/mixer/usage)
                 Rectangle {
+                    id: widgetsTabBtn
                     readonly property bool act: win.tab === "widgets" || win.tab === "pomodoro" || win.tab === "cleaner" || win.tab === "mixer" || win.tab === "usage"
                     width: 34; height: 24; radius: 12
-                    color: act ? Qt.rgba(1, 1, 1, 0.22) : "transparent"
-                    Icon { anchors.centerIn: parent; size: 14; name: "grid"; color: act ? "white" : Qt.rgba(1, 1, 1, 0.60) }
+                    color: widgetsTabBtn.act ? Qt.rgba(1, 1, 1, 0.22) : "transparent"
+                    Icon { anchors.centerIn: parent; size: 14; name: "grid"; color: widgetsTabBtn.act ? "white" : Qt.rgba(1, 1, 1, 0.60) }
                     TapHandler { onTapped: win.tab = "widgets" }
                 }
                 // Subtle Droppy divider

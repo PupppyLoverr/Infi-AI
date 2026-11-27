@@ -229,8 +229,12 @@ ListModel {
             "if [ \"$after\" -ge \"$before\" ] && [ -f \"${f}.gz\" ]; then after=$(stat -c %s \"${f}.gz\" 2>/dev/null || echo $after); fi; " +
             "if [ \"$after\" -ge \"$before\" ] && [ -f \"${f}.compressed.gz\" ]; then after=$(stat -c %s \"${f}.compressed.gz\" 2>/dev/null || echo $after); fi; " +
             "fmt() { awk -v b=\"$1\" 'BEGIN{if(b>=1e6) printf \"%.1f MB\", b/1e6; else if(b>=1e3) printf \"%.0f KB\", b/1e3; else printf \"%d B\", b}'; }; " +
-            "pct=0; [ \"$before\" -gt 0 ] && pct=$(( (before - after) * 100 / before )); " +
-            "echo \"Compressed $base|$(fmt $before) → $(fmt $after) (-${pct}%)\"",
+            "if [ \"$before\" -gt 0 ] && [ \"$after\" -lt \"$before\" ]; then " +
+            "  pct=$(( (before - after) * 100 / before )); " +
+            "  echo \"Compressed $base|$(fmt $before) → $(fmt $after) (-${pct}%)\"; " +
+            "else " +
+            "  echo \"Compressed $base|$(fmt $before) (already optimal)\"; " +
+            "fi",
             "sh", target
         ]
         actionProc.running = true
