@@ -13,7 +13,7 @@ cat > /tmp/solyra-archinstall.json <<J
   "network_config": { "type": "nm" },
   "audio_config": { "audio": "pipewire" },
   "custom_commands": [
-    "systemctl enable greetd NetworkManager bluetooth upower",
+    "systemctl enable greetd NetworkManager bluetooth upower power-profiles-daemon",
     "snapper --no-dbus -c root create-config / || true"
   ]
 }

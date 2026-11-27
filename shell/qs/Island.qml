@@ -16,12 +16,11 @@ import Quickshell.Widgets
 //   art + equaliser, a timer counting down, High Alert, charging); a second
 //   splits off into its own bubble beside it, as iOS does;
 // - HUD: volume / brightness / battery / caps lock / Bluetooth, in the island;
-// - search: Spotlight. Super+Space morphs the island into the search field
-//   and results grow it downwards (Apple's island-as-Spotlight);
+// - Spotlight springs out of the island (Spotlight.qml);
 // - expanded: pulls down from the top with a spring into tabs
 //   (Media, Shelf, Clipboard, Calendar, Notchface, Tools).
-// Idle, compact and HUD are pure black (the camera housing); expanded and
-// search open into dark Liquid Glass over Hyprland's refracting blur.
+// Idle, compact and HUD are pure black (the camera housing); expanded opens
+// into dark Liquid Glass over Hyprland's refracting blur.
 PanelWindow {
     id: win
     property var screenModel
@@ -34,8 +33,7 @@ PanelWindow {
     color: "transparent"
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.namespace: "solyra-island"
-    WlrLayershell.keyboardFocus: mode === "search" ? WlrKeyboardFocus.Exclusive
-        : (termField.activeFocus ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None)
+    WlrLayershell.keyboardFocus: termField.activeFocus ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
     mask: Region {
         Region { item: shape }
         Region { item: bubble }
@@ -43,7 +41,7 @@ PanelWindow {
     }
 
     // ------------------------------------------------------------ state
-    property string mode: "idle"         // idle | compact | hud | expanded | search
+    property string mode: "idle"         // idle | compact | hud | expanded
     property string tab: "media"
     property string hudKind: ""
     property string hudText: ""
@@ -83,14 +81,13 @@ PanelWindow {
     }
 
     function settle() {
-        if (mode === "search") return
         if (hovering || tab === "shelf" && dropping) { mode = "expanded"; return }
         if (hudTimer.running) { mode = "hud"; return }
         mode = activities.length > 0 ? "compact" : "idle"
     }
     function hud(kind, value, label) {
         hudKind = kind; hudValue = value; hudText = label || ""
-        if (mode !== "expanded" && mode !== "search") { mode = "hud" }
+        if (mode !== "expanded") { mode = "hud" }
         hudTimer.restart()
     }
     onActivitiesChanged: {
@@ -162,35 +159,32 @@ PanelWindow {
 
     // ------------------------------------------------------------ geometry
     // A MacBook-sized island: small at rest. Idle, live activities and HUDs
-    // stay inside the 30 px menu bar (3 px clear above and below); only
-    // search and the expanded tabs pull down past it.
-    readonly property int barH: 30
+    // stay inside the 32 px menu bar; only the expanded tabs pull down past it.
+    readonly property int barH: 32
     readonly property var dims: ({
-        idle:     { w: 100, h: 24, r: 12 },
+        idle:     { w: 84, h: 24, r: 12 },
         compact:  { w: 232, h: 24, r: 12 },
         hud:      { w: 280, h: 24, r: 12 },
         expanded: { w: 500, h: 200, r: 34 }
     })
-    // Media and the calendar glance are shorter than the card tabs: fit them;
-    // search grows with its results.
-    readonly property var d: mode === "search" ? { w: 620, h: searchView.implicitHeight + 16, r: 28 }
-        : mode === "expanded" && (tab === "media" || tab === "cal") ? { w: 500, h: 164, r: 32 }
+    // Media and the calendar glance are shorter than the card tabs: fit them.
+    readonly property var d: mode === "expanded" && (tab === "media" || tab === "cal") ? { w: 500, h: 164, r: 32 }
         : mode === "expanded" && tab === "tools" ? { w: 540, h: 236, r: 34 }
         : dims[mode]
 
     Rectangle {
         id: shape
-        // Idle, compact and HUD: solid black, the camera housing. Expanded and
-        // search: dark Liquid Glass over Hyprland's refracting blur, with the
+        // Idle, compact and HUD: solid black, the camera housing. Expanded:
+        // dark Liquid Glass over Hyprland's refracting blur, with the
         // lensing rim; clear enough that the wallpaper shows through.
-        readonly property bool glassy: (win.mode === "expanded" || win.mode === "search") && !Theme.reduceTransparency
+        readonly property bool glassy: win.mode === "expanded" && !Theme.reduceTransparency
         color: glassy ? Qt.rgba(0.07, 0.07, 0.09, 0.30 + Theme.glass / 100 * 0.45) : "black"
         Behavior on color { ColorAnimation { duration: Theme.ms(220) } }
         opacity: Theme.hideNotch && win.mode === "idle" && !hoverIdle.hovered ? 0 : 1
         Behavior on opacity { NumberAnimation { duration: Theme.ms(220) } }
         HoverHandler { id: hoverIdle }
         anchors.horizontalCenter: parent.horizontalCenter
-        y: 3
+        y: 4
         width: win.d.w
         height: win.d.h
         radius: win.d.r
@@ -200,14 +194,12 @@ PanelWindow {
         Behavior on radius { NumberAnimation { duration: Theme.ms(260); easing.type: Easing.OutCubic } }
 
         HoverHandler {
-            enabled: win.mode !== "search"
             onHoveredChanged: {
                 if (hovered) { closeTimer.stop(); openTimer.restart() }
                 else { openTimer.stop(); closeTimer.restart() }
             }
         }
         TapHandler {
-            enabled: win.mode !== "search"
             onTapped: {
                 if (win.mode === "expanded") { win.hovering = false; win.settle() }
                 else { if (win.primary) win.tab = win.primary.tab; win.hovering = true; win.mode = "expanded" }
@@ -316,16 +308,6 @@ PanelWindow {
             }
         }
 
-        // Spotlight in the island.
-        SearchView {
-            id: searchView
-            model: search
-            x: 16; y: 8
-            width: 620 - 32
-            opacity: win.mode === "search" && shape.width > 560 ? 1 : 0
-            visible: opacity > 0
-            Behavior on opacity { NumberAnimation { duration: Theme.ms(160); easing.type: Easing.OutCubic } }
-        }
 
         // Expanded content: fades in after the shape leads (Apple staggers it).
         Item {
@@ -445,21 +427,6 @@ PanelWindow {
         TapHandler { onTapped: if (bubble.act) win.expand(bubble.act.tab) }
     }
 
-    SearchModel {
-        id: search
-        shell: win.shell
-        clips: { const out = []; for (let i = 0; i < clip.count; i++) out.push(clip.get(i).text); return out }
-        onDone: win.closeSearch()
-    }
-    function openSearch(q) {
-        search.reset(q)
-        searchView.setText(q || "")
-        hovering = false; openTimer.stop(); closeTimer.stop()
-        mode = "search"
-        searchView.focusField()
-    }
-    function closeSearch() { search.stop(); mode = "idle"; settle() }
-    function toggleSearch(q) { if (mode === "search" && !q) closeSearch(); else openSearch(q) }
 
     // Tabs pill floating under the open island.
     Rectangle {
@@ -496,7 +463,8 @@ PanelWindow {
 
     // ------------------------------------------------------------ models
     ShelfModel { id: shelf }
-    ClipHistory { id: clip }
+    // The clipboard history is the shell's (shared with Spotlight).
+    readonly property var clip: shell ? shell.clipboard : null
     IdleInhibitor {
         id: caffeine
         window: win
@@ -511,5 +479,5 @@ PanelWindow {
     }
 
     function expand(which) { tab = which; hovering = true; mode = "expanded"; closeTimer.stop() }
-    function collapse() { if (mode === "search") closeSearch(); hovering = false; settle() }
+    function collapse() { hovering = false; settle() }
 }

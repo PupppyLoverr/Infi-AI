@@ -22,14 +22,16 @@ hl.config({
         gaps_in = 6,
         gaps_out = 8,
         border_size = 1,
+        -- No visible window frame (macOS 26): a hairline only to separate
+        -- dark windows from dark backdrops.
         col = {
-            active_border = "rgba(ffffff38)",
-            inactive_border = "rgba(ffffff14)",
+            active_border = "rgba(ffffff1a)",
+            inactive_border = "rgba(ffffff0d)",
         },
         layout = "dwindle",
     },
     decoration = {
-        rounding = 16,
+        rounding = 24,          -- macOS 26/27's larger window corners
         rounding_power = 2,
         active_opacity = 1.0,
         inactive_opacity = 1.0,
@@ -37,16 +39,16 @@ hl.config({
         dim_strength = 0.06,
         shadow = {
             enabled = true,
-            range = 28,
+            range = 40,
             render_power = 3,
-            offset = "0 10",
-            color = 0x59000000,
-            color_inactive = 0x33000000,
+            offset = "0 14",
+            color = 0x55000000,
+            color_inactive = 0x2E000000,
         },
         blur = {
             enabled = true,
-            size = 10,
-            passes = 3,
+            size = 14,
+            passes = 4,
             noise = 0.01,
             vibrancy = 0.32,          -- colours behind stay vivid, as Apple's glass
             vibrancy_darkness = 0.2,
@@ -56,10 +58,10 @@ hl.config({
             -- (clarity) with a faint chromatic fringe, like macOS 26/27.
             variant = 8,
             acrylic = {
-                refraction = 16,     -- edge lensing, px
-                bulb = 18,           -- width of the curved edge, px
-                clarity = 0.30,      -- frosted: a little sharp backdrop, mostly blur
-                aberration = 0.008,  -- the faintest colour fringe
+                refraction = 26,     -- edge lensing, px: the backdrop bends at the rim
+                bulb = 16,           -- width of the curved edge, px
+                clarity = 0.22,      -- mostly blur, colours kept (vibrancy)
+                aberration = 0.010,  -- the faintest colour fringe
                 tint = 0x0CF2F6FF,
             },
         },
@@ -101,7 +103,7 @@ hl.animation({ leaf = "specialWorkspace", enabled = true, speed = 4, spring = "s
 -- gets rounded blur and its shadow never turns into a blurred box.
 hl.layer_rule({
     name = "solyra-glass",
-    match = { namespace = "^solyra-(bar|dock|control|notifications|notifcenter|snap|overview|island|widgets)$" },
+    match = { namespace = "^solyra-(bar|dock|control|notifications|notifcenter|snap|overview|island|widgets|spotlight)$" },
     blur = true,
     ignore_alpha = 0.16,
 })

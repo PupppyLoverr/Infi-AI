@@ -28,8 +28,12 @@ q timer 300; shot 07c-live-activities 2.0
 q timer 0; sleep 0.8
 q record; shot 07d-recording-activity 3.0
 q record; sleep 1.5
-q query "te"; shot 08-spotlight-in-island 1.6
-q spotlight; sleep 0.5
+q spotlight; shot 08-spotlight 1.6
+q query "te"; shot 08b-spotlight-results 1.6
+q spotlight; sleep 0.6
+q menu wifi; shot 18-wifi-menu 2.0
+q menu wifi; q menu focus; shot 18b-focus-menu 1.2
+q menu focus; sleep 0.4
 q control; shot 09-control-center
 q control; sleep 0.5
 notify-send -a "Solyra" "Welcome to Solyra" "Notifications arrive in the corner and respect Focus."; shot 10-notification 1.0

@@ -7,7 +7,7 @@ pacman -S --noconfirm --needed hyprland quickshell qt6-declarative qt6-svg qt6-5
   mesa vulkan-swrast swaybg grim wl-clipboard wtype brightnessctl networkmanager bluez-utils \
   pipewire wireplumber pipewire-pulse playerctl mpv mpv-mpris libnotify upower \
   inter-font ttf-jetbrains-mono noto-fonts curl xdg-utils dbus foot qt6-multimedia qt6-multimedia-ffmpeg slurp tesseract tesseract-data-eng inotify-tools \
-  hyprsunset wf-recorder satty firefox adwaita-cursors
+  hyprsunset wf-recorder satty firefox adwaita-cursors power-profiles-daemon
 useradd -m -G wheel,video,input -s /bin/bash solyra
 echo 'solyra:solyra' | chpasswd
 mkdir -p /etc/systemd/system/getty@tty1.service.d
@@ -16,7 +16,7 @@ echo '[ "$(tty)" = /dev/tty1 ] && exec $(command -v start-hyprland || echo Hyprl
 chown solyra: /home/solyra/.bash_profile
 install -m755 /root/sync.sh /usr/local/bin/solyra-sync
 printf '[Unit]\nAfter=network-online.target\nWants=network-online.target\nBefore=getty@tty1.service\n[Service]\nType=oneshot\nExecStart=/usr/local/bin/solyra-sync\n[Install]\nWantedBy=multi-user.target\n' > /etc/systemd/system/solyra-sync.service
-systemctl enable solyra-sync.service NetworkManager upower
+systemctl enable solyra-sync.service NetworkManager upower power-profiles-daemon
 touch /etc/cloud/cloud-init.disabled
 pacman -Scc --noconfirm
 echo SETUP-DONE > /dev/ttyS0

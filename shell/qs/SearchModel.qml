@@ -11,7 +11,7 @@ QtObject {
     id: m
     property var shell
     property string query: ""
-    property string filter: "All"     // All | Apps | Files | Actions | Ask
+    property string filter: "All"     // All | Apps | Files | Actions | Clipboard | Ask
     property int sel: 0
     property var files: []
     property var clips: []                // clipboard history, newest first
@@ -22,7 +22,7 @@ QtObject {
 
     function reset(q) { query = q || ""; filter = "All"; sel = 0; answer = ""; asking = false }
     function stop() { m.askProc.running = false }
-    function cycleFilter() { const f = ["All", "Apps", "Files", "Actions", "Ask"]; filter = f[(f.indexOf(filter) + 1) % f.length] }
+    function cycleFilter() { const f = ["All", "Apps", "Files", "Actions", "Clipboard", "Ask"]; filter = f[(f.indexOf(filter) + 1) % f.length] }
     function move(d) { sel = Math.max(0, Math.min(results.length - 1, sel + d)) }
     // Return: Ask asks; anything else runs and the island closes.
     function activate(i) {
@@ -75,9 +75,9 @@ QtObject {
         }
         if (want("Files")) for (const f of files.slice(0, filter === "Files" ? 14 : 5))
             out.push({ group: "Files", title: f.split("/").pop(), sub: f, icon: "document", run: () => Qt.openUrlExternally("file://" + f) })
-        if (q && filter === "All") for (const t of clips.filter(t => t.toLowerCase().indexOf(q) >= 0).slice(0, 3))
+        if ((q && filter === "All") || filter === "Clipboard") for (const t of clips.filter(t => !q || t.toLowerCase().indexOf(q) >= 0).slice(0, filter === "Clipboard" ? 14 : 3))
             out.push({ group: "Clipboard", title: t.replace(/\s+/g, " ").slice(0, 120), sub: "Copy again", icon: "clipboard", run: () => Quickshell.execDetached(["wl-copy", t]) })
-        if (want("Actions")) for (const a of actions.filter(a => !q || score(q, a.title) > 0 || score(q, a.sub) > 0).slice(0, filter === "Actions" ? 10 : (q ? 3 : 0)))
+        if (want("Actions") && filter !== "Clipboard") for (const a of actions.filter(a => !q || score(q, a.title) > 0 || score(q, a.sub) > 0).slice(0, filter === "Actions" ? 10 : (q ? 3 : 0)))
             out.push({ group: "Actions", title: a.title, sub: a.sub, icon: a.icon, run: a.run })
         if (q && filter === "All") out.push({ group: "Ask", title: "Ask " + (provider === "claude" ? "Claude" : "ChatGPT") + ": " + query.trim(), sub: "Uses your signed-in " + (provider === "claude" ? "Claude" : "ChatGPT") + " account", icon: "agent", run: () => m.ask() })
         if (out.length && q && out[0].group === "Applications") out[0].group = "Top Hit"

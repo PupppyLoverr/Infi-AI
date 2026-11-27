@@ -28,7 +28,18 @@ PanelWindow {
     readonly property var pinned: ["solyra-files", "firefox", "solyra-term", "org.gnome.TextEditor", "mpv", "solyra-settings"]
     readonly property var bundled: ({ "solyra-files": "Finder", "solyra-term": "Terminal", "solyra-settings": "Settings" })
     readonly property int cell: 48
-    readonly property int gap: 8
+    readonly property int gap: 5
+    // Recently used apps that are not pinned (macOS's recent-apps section):
+    // remembered as they come to the front, newest first, three kept.
+    property var recent: []
+    Connections {
+        target: ToplevelManager
+        function onActiveToplevelChanged() {
+            const w = ToplevelManager.activeToplevel
+            if (!w || !w.appId || dockWin.pinned.indexOf(w.appId) >= 0) return
+            dockWin.recent = [w.appId].concat(dockWin.recent.filter(x => x !== w.appId)).slice(0, 3)
+        }
+    }
     property real mx: -1
 
     // Bring a minimised window back to the focused desktop and focus it.
@@ -37,10 +48,19 @@ PanelWindow {
         Hyprland.dispatch("hl.dsp.window.move({ workspace = " + ws + ", window = 'address:0x" + address + "' })")
         Hyprland.dispatch("hl.dsp.focus({ window = 'address:0x" + address + "' })")
     }
+    // An item's resting centre along the dock (dividers are narrower than
+    // icons), for the magnification curve.
+    function centreOf(i) {
+        let x = 12
+        for (let k = 0; k < i; k++) x += (items[k].kind === "sep" ? 9 : cell) + gap
+        return x + (items[i] && items[i].kind === "sep" ? 4.5 : cell / 2)
+    }
     function entryFor(id) { return DesktopEntries.byId(id) || DesktopEntries.heuristicLookup(id) }
     function windowsOf(appId) { return ToplevelManager.toplevels.values.filter(w => w.appId && (w.appId === appId || w.appId.toLowerCase().indexOf(appId.toLowerCase()) >= 0 || appId.toLowerCase().indexOf(w.appId.toLowerCase()) >= 0)) }
 
-    // Items: pinned, then unpinned running apps, then background apps.
+    // Items, in macOS 26/27's three sections: pinned apps | recent and running
+    // apps (and apps running in the background) | minimised windows,
+    // Downloads and Trash.
     readonly property var items: {
         const out = []
         const seen = {}
@@ -54,20 +74,29 @@ PanelWindow {
             out.push({ kind: "app", id: id, entry: e, appId: id })
             seen[id] = true
         }
+        const middle = []
         for (const w of ToplevelManager.toplevels.values) {
             if (!w.appId || seen[w.appId]) continue
             let dup = false
             for (const k in seen) if (windowsOf(k).indexOf(w) >= 0) dup = true
             if (dup) continue
             seen[w.appId] = true
-            out.push({ kind: "app", id: w.appId, entry: entryFor(w.appId), appId: w.appId })
+            middle.push({ kind: "app", id: w.appId, entry: entryFor(w.appId), appId: w.appId })
+        }
+        for (const id of recent) {
+            if (seen[id]) continue
+            const e = entryFor(id)
+            if (!e) continue
+            seen[id] = true
+            middle.push({ kind: "app", id: id, entry: e, appId: id })
         }
         for (const t of SystemTray.items.values) {
             const id = (t.id || "").toLowerCase()
             if (!id || seen[id] || windowsOf(id).length) continue
             seen[id] = true
-            out.push({ kind: "bg", id: id, entry: entryFor(id), appId: id, tray: t })
+            middle.push({ kind: "bg", id: id, entry: entryFor(id), appId: id, tray: t })
         }
+        if (middle.length) { out.push({ kind: "sep" }); for (const x of middle) out.push(x) }
         out.push({ kind: "sep" })
         for (const t of Hyprland.toplevels.values) {
             if (!t.workspace || t.workspace.name !== "special:minimized") continue
@@ -88,7 +117,8 @@ PanelWindow {
 
     Glass {
         id: card
-        r: 26
+        kind: "clear"
+        r: 24
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 4
         anchors.horizontalCenter: parent.horizontalCenter
@@ -110,7 +140,7 @@ PanelWindow {
                     required property int index
                     item: modelData
                     dock: dockWin
-                    centre: 12 + index * (dockWin.cell + dockWin.gap) + dockWin.cell / 2
+                    centre: dockWin.centreOf(index)
                 }
             }
         }

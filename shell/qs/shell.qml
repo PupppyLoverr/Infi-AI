@@ -14,8 +14,10 @@ ShellRoot {
     // name would resolve to the island's own (empty) `shell` property.
     id: root
     property bool dnd: false
+    readonly property string home: Quickshell.env("HOME")
     // The island's countdown timer (a live activity), shared by every screen.
     property real timerEnd: 0
+    signal menuRequested(string name)
     // Notification Center: open notifications, newest first.
     property bool centerOpen: false
     property var history: []
@@ -23,7 +25,6 @@ ShellRoot {
     function forget(note) { history = history.filter(x => x !== note) }
     function clearHistory() { for (const note of history.slice()) note.dismiss(); history = [] }
     function notificationCenter() { centerOpen = !centerOpen; if (centerOpen) cc.open = false }
-    signal spotlightRequested(string query)
 
     // Night Shift: hyprsunset warms the display while it runs.
     Process { running: Theme.nightShift; command: ["hyprsunset", "-t", "4500"] }
@@ -50,9 +51,8 @@ ShellRoot {
         }
     }
 
-    // Spotlight is the Dynamic Island: the one on the focused screen morphs
-    // into the search field.
-    function spotlight(q) { spotlightRequested(q || "") }
+    // Spotlight springs out of the Dynamic Island (Spotlight.qml).
+    function spotlight(q) { spot.toggle(q || "") }
     function timer(seconds) { timerEnd = seconds > 0 ? Date.now() + seconds * 1000 : 0 }
     function control() { cc.open = !cc.open }
     function lock() { lockScreen.lock() }
@@ -75,7 +75,22 @@ ShellRoot {
         }
     }
     function menuAction(a) {
-        if (a.startsWith("key:")) { Quickshell.execDetached(["wtype", "-M", "ctrl", a.slice(-1), "-m", "ctrl"]); return }
+        // "key:ctrl+shift+t": press the modifiers, the key, release them
+        // (wtype; named keys such as Left, equal, minus go by -k).
+        if (a.startsWith("key:")) {
+            const parts = a.slice(4).split("+"), key = parts.pop(), args = ["wtype"]
+            for (const m of parts) args.push("-M", m)
+            if (key.length === 1) args.push(key); else args.push("-k", key)
+            for (const m of parts.slice().reverse()) args.push("-m", m)
+            Quickshell.execDetached(args); return
+        }
+        if (a.startsWith("media:")) { Quickshell.execDetached(["playerctl", a.slice(6)]); return }
+        if (a === "volume:up" || a === "volume:down") { Quickshell.execDetached(["wpctl", "set-volume", "-l", "1", "@DEFAULT_AUDIO_SINK@", a === "volume:up" ? "5%+" : "5%-"]); return }
+        if (a.startsWith("go:")) {
+            const where = a.slice(3)
+            Quickshell.execDetached(["solyra-files", where === "home" ? root.home : (where.startsWith("/") ? where : root.home + "/" + where)])
+            return
+        }
         // Hyprland 0.57 dispatchers are Lua expressions.
         const d = {
             close: "hl.dsp.window.close()",
@@ -103,6 +118,7 @@ ShellRoot {
             id: perScreen
             required property var modelData
             Wallpaper { screenModel: perScreen.modelData }
+            ScreenCorners { screenModel: perScreen.modelData }
             Bar { screenModel: perScreen.modelData; shell: root }
             Dock { screenModel: perScreen.modelData; shell: root }
             DesktopWidgets { screenModel: perScreen.modelData }
@@ -114,18 +130,19 @@ ShellRoot {
                 // "kind:value" (IPC signals carry one argument).
                 function onHudRequested(arg) { const i = arg.indexOf(":"); island.hud(i < 0 ? arg : arg.slice(0, i), i < 0 ? 0 : parseFloat(arg.slice(i + 1))) }
             }
-            Connections {
-                target: root
-                function onSpotlightRequested(q) {
-                    const focused = Hyprland.focusedMonitor
-                    if (!focused || focused.name === perScreen.modelData.name) island.toggleSearch(q)
-                }
-            }
         }
     }
     ControlCenter { id: cc; shell: root }
     Notifications { shell: root }
     NotificationCenter { shell: root }
+    Spotlight {
+        id: spot
+        shell: root
+        clips: { const out = []; for (let i = 0; i < clipboardModel.count; i++) out.push(clipboardModel.get(i).text); return out }
+    }
+    // Clipboard history, shared by the island's Clipboard tab and Spotlight.
+    ClipHistory { id: clipboardModel }
+    readonly property alias clipboard: clipboardModel
     SnapLayouts { id: snaps; shell: root }
     Overview { id: overviewWin }
     Lock { id: lockScreen }
@@ -158,6 +175,7 @@ ShellRoot {
         function timer(seconds: int): void { root.timer(seconds) }
         function record(): void { root.toggleRecording() }
         function notifications(): void { root.notificationCenter() }
+        function menu(name: string): void { root.menuRequested(name) }
         function search(text: string): void { root.spotlight(text) }
         function glass(value: int): void { Theme.glass = value; Theme.save() }
         function arrange(on: bool): void { root.setArrange(on) }
