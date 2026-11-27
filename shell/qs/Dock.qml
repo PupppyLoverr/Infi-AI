@@ -29,8 +29,9 @@ PanelWindow {
 
     readonly property var pinned: ["solyra-files", "firefox", "solyra-term", "org.gnome.TextEditor", "mpv", "solyra-settings"]
     readonly property var bundled: ({ "solyra-files": "Finder", "solyra-term": "Terminal", "solyra-settings": "Settings" })
-    readonly property int cell: 48
-    readonly property int gap: 2
+    // macOS 26/27 proportions: 50 px icons, small even gaps, slim padding.
+    readonly property int cell: 50
+    readonly property int gap: 4
     // Recently used apps that are not pinned (macOS's recent-apps section):
     // remembered as they come to the front, newest first, three kept.
     property var recent: []
@@ -53,9 +54,9 @@ PanelWindow {
     // An item's resting centre along the dock (dividers are narrower than
     // icons), for the magnification curve.
     function centreOf(i) {
-        let x = 12
-        for (let k = 0; k < i; k++) x += (items[k].kind === "sep" ? 9 : cell) + gap
-        return x + (items[i] && items[i].kind === "sep" ? 4.5 : cell / 2)
+        let x = 8
+        for (let k = 0; k < i; k++) x += (items[k].kind === "sep" ? 13 : cell) + gap
+        return x + (items[i] && items[i].kind === "sep" ? 6.5 : cell / 2)
     }
     function entryFor(id) { return DesktopEntries.byId(id) || DesktopEntries.heuristicLookup(id) }
     function windowsOf(appId) { return ToplevelManager.toplevels.values.filter(w => w.appId && (w.appId === appId || w.appId.toLowerCase().indexOf(appId.toLowerCase()) >= 0 || appId.toLowerCase().indexOf(w.appId.toLowerCase()) >= 0)) }
@@ -118,15 +119,15 @@ PanelWindow {
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 6
         anchors.horizontalCenter: parent.horizontalCenter
-        height: 64
-        width: row.width + 24
+        height: 66
+        width: row.width + 16
         Behavior on width { NumberAnimation { duration: Theme.ms(90) } }
 
         Row {
             id: row
-            x: 12
+            x: 8
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: 9
+            anchors.bottomMargin: 8
             spacing: dockWin.gap
             Repeater {
                 model: dockWin.items

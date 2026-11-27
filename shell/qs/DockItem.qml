@@ -15,12 +15,12 @@ Item {
         const d = (dock.mx - centre) / (dock.cell + dock.gap)
         return 1 + 0.75 * Math.exp(-(d * d) / (2 * 1.4 * 1.4))
     }
-    width: sep ? 9 : dock.cell * scaleF
-    height: sep ? 48 : dock.cell * scaleF
+    width: sep ? 13 : dock.cell * scaleF
+    height: sep ? 50 : dock.cell * scaleF
     Behavior on width { NumberAnimation { duration: 80 } }
     Behavior on height { NumberAnimation { duration: 80 } }
 
-    Rectangle { visible: it.sep; anchors.centerIn: parent; width: 1; height: 38; color: Qt.rgba(1, 1, 1, 0.3) }
+    Rectangle { visible: it.sep; anchors.centerIn: parent; width: 1; height: 34; color: Qt.rgba(1, 1, 1, 0.32) }
 
     Item {
         id: iconBox
@@ -56,8 +56,8 @@ Item {
         visible: it.wins.length > 0 || it.item.kind === "bg"
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.top: parent.bottom
-        anchors.topMargin: 3
-        width: 5; height: 5; radius: 2.5
+        anchors.topMargin: 2
+        width: 4; height: 4; radius: 2
         color: it.item.kind === "bg" ? "transparent" : Qt.rgba(1, 1, 1, 0.9)
         border.width: it.item.kind === "bg" ? 1.2 : 0
         border.color: Qt.rgba(1, 1, 1, 0.9)

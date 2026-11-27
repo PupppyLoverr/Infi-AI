@@ -2,7 +2,7 @@
 //! image default and the fallback; this app is the native Solyra alternative.
 //!
 //! The layout follows pearOS/macOS Finder: traffic-light window controls,
-//! a translucent sidebar, icon grid or list view, breadcrumbs, search in the
+//! a translucent sidebar, icon grid or list view, a status line, search in the
 //! current folder, stars, recents, trash and restore. `--self-test` opens the
 //! window for two seconds and exits 0 (CI).
 
@@ -658,7 +658,7 @@ fn sidebar(app: &FilesApp, style: &solyra_ui::Style, lights: View) -> View {
         .pt(14.)
         .pb(10.)
         .gap(4.)
-        .rounded(14.)
+        .rounded(18.)
         .bg(if style.dark() { Color(255, 255, 255, 24) } else { Color(255, 255, 255, 110) })
         .border(1.)
         .border_color(if style.dark() { Color(255, 255, 255, 58) } else { Color(255, 255, 255, 190) })
@@ -1275,15 +1275,36 @@ fn action_bar_for(app: &FilesApp, style: &solyra_ui::Style, location: &Location)
         )
 }
 
-fn action_bar(app: &FilesApp, style: &solyra_ui::Style) -> View {
+/// The bottom of the window, as macOS's Finder: a quiet status line ("12
+/// items") until something is selected, then the actions for it.
+fn status_bar(app: &FilesApp, style: &solyra_ui::Style) -> View {
     let app = app.clone();
     let style = *style;
     switch(
         {
-            let location = app.location.clone();
-            move || location.get()
+            let (location, selected, revision, hidden) =
+                (app.location.clone(), app.selected.clone(), app.revision.clone(), app.show_hidden.clone());
+            move || (location.get(), selected.get().is_some(), revision.get(), hidden.get())
         },
-        move |location, _cx| action_bar_for(&app, &style, &location),
+        move |(location, selected, _, hidden), _cx| {
+            if selected {
+                return action_bar_for(&app, &style, &location);
+            }
+            let label = match &location {
+                Location::Folder(path) => match model::read_entries(path, hidden) {
+                    Ok(entries) if entries.len() == 1 => "1 item".to_string(),
+                    Ok(entries) => format!("{} items", entries.len()),
+                    Err(_) => String::new(),
+                },
+                other => other.title(),
+            };
+            row()
+                .w_full()
+                .h(30.)
+                .justify_center()
+                .items_center()
+                .child(text(label).text_size(12.).text_color(solyra_ui::color(style.theme.text_dim)))
+        },
     )
 }
 
@@ -1437,68 +1458,6 @@ fn content(app: &FilesApp, style: &solyra_ui::Style) -> View {
     )
     .grow()
     .w_full()
-}
-
-fn breadcrumbs_for(app: &FilesApp, style: &solyra_ui::Style, location: Location) -> View {
-    let mut crumbs = row().gap(4.).items_center();
-    if let Location::Folder(path) = &location {
-        let home = model::home_dir();
-        if let Ok(rel) = path.strip_prefix(&home) {
-            let home_button = {
-                let app = app.clone();
-                let home = home.clone();
-                small_button("Home", move || app.navigate(Location::Folder(home.clone())))
-            };
-            crumbs = crumbs.child(home_button);
-            let mut cur = home.clone();
-            for part in rel.components() {
-                cur.push(part.as_os_str());
-                let label = part.as_os_str().to_string_lossy().into_owned();
-                let (app, target) = (app.clone(), cur.clone());
-                crumbs = crumbs
-                    .child(text("›").text_color(solyra_ui::color(style.theme.text_dim)))
-                    .child(small_button(&label, move || {
-                        app.navigate(Location::Folder(target.clone()))
-                    }));
-            }
-        } else {
-            crumbs = crumbs.child(
-                text(path.display().to_string())
-                    .text_size(12.)
-                    .text_color(solyra_ui::color(style.theme.text_dim)),
-            );
-        }
-    } else {
-        crumbs = crumbs.child(
-            text(location.title())
-                .text_size(12.)
-                .text_color(solyra_ui::color(style.theme.text_dim)),
-        );
-    }
-    crumbs
-        .w_full()
-        .h(34.)
-        .px(14.)
-        .bg(Color(0, 0, 0, 0))
-        .border_edges(zgx::scene::Insets {
-            top: 0.,
-            right: 0.,
-            bottom: 1.,
-            left: 0.,
-        })
-        .border_color(style.hairline())
-}
-
-fn breadcrumbs(app: &FilesApp, style: &solyra_ui::Style) -> View {
-    let app = app.clone();
-    let style = *style;
-    switch(
-        {
-            let location = app.location.clone();
-            move || location.get()
-        },
-        move |location, _cx| breadcrumbs_for(&app, &style, location),
-    )
 }
 
 fn start_location() -> Location {
@@ -1658,19 +1617,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let window = cx.window.clone();
 
-            // One clear Liquid Glass surface: Hyprland blurs and refracts the
-            // wallpaper behind the window, and this light tint keeps text
-            // legible while the wallpaper's colour still shows through, so
-            // the Finder sits in the desktop rather than on top of it.
+            // macOS 26's Finder: the window is glass (Hyprland blurs and
+            // lenses the desktop behind it) and the sidebar floats on it as
+            // a translucent card, while the content area is near-solid so
+            // files read cleanly. Corners match the compositor's 24 px.
             let surface = if style.glass {
-                if style.dark() { Color(20, 22, 26, 88) } else { Color(248, 248, 250, 118) }
+                if style.dark() { Color(24, 26, 30, 120) } else { Color(246, 246, 248, 150) }
             } else {
                 style.content_bg()
             };
+            let content_bg = if style.dark() { Color(30, 31, 34, 236) } else { Color(255, 255, 255, 240) };
             let body = row()
                 .w_full()
                 .h_full()
-                .rounded(16.)
+                .rounded(24.)
                 .overflow_hidden()
                 .border(1.)
                 .border_color(Color(255, 255, 255, 56))
@@ -1681,12 +1641,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     column()
                         .grow()
                         .h_full()
+                        .bg(content_bg)
                         .child(toolbar(&app, &style, window))
                         .child(rename_bar(&app, &style))
                         .child(confirm_bar(&app, &style))
-                        .child(breadcrumbs(&app, &style))
                         .child(div().grow().w_full().overflow_hidden().child(content(&app, &style)))
-                        .child(div().w_full().shrink_0().child(action_bar(&app, &style))),
+                        .child(div().w_full().shrink_0().child(status_bar(&app, &style))),
                 )
                 .child(inspector_pane(&app, &style));
 
