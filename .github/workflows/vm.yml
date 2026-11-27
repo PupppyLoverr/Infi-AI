@@ -8,7 +8,9 @@ on:
     branches: [claude/charming-goodall-iuca3o]
     paths: ['shell/qs/**', 'shell/hypr/**', 'tools/vm/**', 'apps/terminal/**', 'tools/qmlcheck.sh', 'apps/solyra-files/**', 'apps/solyra-term/**', 'apps/solyra-ui/**', 'pkg/**', '.github/workflows/vm.yml']
 # One queue per branch: another branch's runs never cancel this one's.
-concurrency: { group: solyra-vm-${{ github.ref }}, cancel-in-progress: false }
+concurrency:
+  group: solyra-vm-${{ github.ref }}
+  cancel-in-progress: false
 permissions:
   contents: write
 jobs:
