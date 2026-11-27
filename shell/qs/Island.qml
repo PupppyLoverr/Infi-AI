@@ -258,8 +258,10 @@ PanelWindow {
             ClippingRectangle {
                 visible: parent.act && parent.act.kind === "media"
                 x: 5; anchors.verticalCenter: parent.verticalCenter
-                width: 16; height: 16; radius: 4; color: "#333"
-                Image { anchors.fill: parent; source: win.player ? win.player.trackArtUrl : ""; fillMode: Image.PreserveAspectCrop }
+                width: 16; height: 16; radius: 4; color: "#2c2c2e"
+                Image { id: compactArt; anchors.fill: parent; source: win.player ? win.player.trackArtUrl : ""; fillMode: Image.PreserveAspectCrop }
+                // No artwork from the player: a music note, never an empty square.
+                Icon { anchors.centerIn: parent; visible: compactArt.status !== Image.Ready; name: "music"; size: 10; color: "#ff9f0a" }
             }
             Icon {
                 visible: parent.act && parent.act.kind !== "media"

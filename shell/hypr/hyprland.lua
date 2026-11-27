@@ -6,11 +6,14 @@ local home = os.getenv("HOME") or ""
 
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 
+-- A real arrow cursor (Adwaita), not Hyprland's fallback.
+hl.env("XCURSOR_THEME", "Adwaita")
 hl.env("XCURSOR_SIZE", "24")
 hl.env("HYPRCURSOR_SIZE", "24")
 hl.env("QT_QPA_PLATFORM", "wayland")
 
 hl.on("hyprland.start", function()
+    hl.exec_cmd("hyprctl setcursor Adwaita 24")
     hl.exec_cmd("quickshell > /tmp/qs.log 2>&1")
 end)
 

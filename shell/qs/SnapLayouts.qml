@@ -12,7 +12,7 @@ PanelWindow {
     property bool open: false
     visible: open
     anchors { top: true }
-    margins.top: 40
+    margins.top: 48
     implicitWidth: 460; implicitHeight: 196
     exclusiveZone: -1
     color: "transparent"

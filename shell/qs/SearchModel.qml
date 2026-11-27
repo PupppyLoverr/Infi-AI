@@ -40,6 +40,16 @@ QtObject {
     }
     function score(q, s) { s = (s || "").toLowerCase(); if (s.startsWith(q)) return 3; if (s.split(/[\s\-_.]/).some(w => w.startsWith(q))) return 2; return s.indexOf(q) >= 0 ? 1 : 0 }
 
+    // System plumbing that ships desktop entries but is not an app a person
+    // looks for (Spotlight on macOS shows none of these).
+    readonly property var hidden: ({
+        "qv4l2": true, "qvidcap": true, "footclient": true, "foot-server": true,
+        "avahi-discover": true, "bssh": true, "bvnc": true, "lstopo": true,
+        "org.freedesktop.IBus.Setup": true, "xgps": true, "xgpsspeed": true,
+        "assistant": true, "designer": true, "linguist": true, "qdbusviewer": true,
+        "cmake-gui": true, "electron36": true, "jconsole-java-openjdk": true,
+        "jshell-java-openjdk": true, "nvtop": true, "htop": true, "btop": true, "vim": true
+    })
     readonly property var actions: [
         { title: "Lock Screen", sub: "Lock this session", icon: "lock", run: () => m.shell.lock() },
         { title: "Control Center", sub: "Wi-Fi, sound, display, glass", icon: "settings", run: () => m.shell.control() },
@@ -58,7 +68,7 @@ QtObject {
         const c = calc(query)
         if (c !== null && filter === "All") out.push({ group: "Calculator", title: c, sub: query.trim() + " =", icon: "calculator", run: () => Quickshell.execDetached(["wl-copy", c]) })
         if (want("Apps")) {
-            let apps = DesktopEntries.applications.values.filter(e => !e.noDisplay)
+            let apps = DesktopEntries.applications.values.filter(e => !e.noDisplay && !m.hidden[e.id])
             if (q) apps = apps.map(e => [Math.max(score(q, e.name) * 2, score(q, e.genericName), score(q, e.comment)), e]).filter(x => x[0] > 0).sort((a, b) => b[0] - a[0]).map(x => x[1])
             for (const e of apps.slice(0, filter === "Apps" ? 14 : (q ? 6 : 6)))
                 out.push({ group: "Applications", title: e.name, sub: e.comment || e.genericName || "Application", entry: e, run: () => e.execute() })

@@ -17,7 +17,8 @@ PanelWindow {
     property bool open: false
     visible: open
     anchors { top: true; right: true }
-    margins { top: 6; right: 10 }
+    // Drops below the menu bar, under its own button, as macOS's does.
+    margins { top: 36; right: 10 }
     implicitWidth: 372
     implicitHeight: grid.height + 24
     exclusiveZone: -1
@@ -91,7 +92,7 @@ PanelWindow {
                     Toggle { anchors.fill: parent; anchors.margins: 12; icon: "stop"; title: "Record Screen"; sub: cc.shell && cc.shell.recording ? "Recording · tap to stop" : "To ~/Videos"; on: cc.shell && cc.shell.recording
                         onClicked: { cc.open = false; cc.shell.toggleRecording() } } }
             }
-            Slider2 { width: 348; label: "Display"; icon: "sun"; value: cc.bright < 0 ? -1 : cc.bright / 100
+            Slider2 { width: 348; label: "Display"; icon: "sun"; visible: cc.bright >= 0; value: cc.bright < 0 ? -1 : cc.bright / 100
                 onMoved: v => { cc.bright = v * 100; Quickshell.execDetached(["brightnessctl", "-q", "set", Math.round(v * 100) + "%"]) } }
             Slider2 { width: 348; label: "Sound"; icon: cc.sink && cc.sink.audio.muted ? "volumeMute" : "volume"; value: cc.sink ? cc.sink.audio.volume : -1
                 onMoved: v => { if (cc.sink) cc.sink.audio.volume = v } }
