@@ -42,20 +42,21 @@ hl.config({
         },
         blur = {
             enabled = true,
-            size = 9,
+            size = 10,
             passes = 3,
-            noise = 0.012,
-            vibrancy = 0.22,
+            noise = 0.01,
+            vibrancy = 0.32,          -- colours behind stay vivid, as Apple's glass
+            vibrancy_darkness = 0.2,
             popups = true,
             -- Liquid Glass: Hyprland's acrylic variant lenses the backdrop
             -- through a curved edge (refraction + bulb), keeps it mostly clear
             -- (clarity) with a faint chromatic fringe, like macOS 26/27.
             variant = 8,
             acrylic = {
-                refraction = 22,     -- edge lensing, px
-                bulb = 22,           -- width of the curved edge, px
-                clarity = 0.88,      -- mostly clear, as Apple's glass
-                aberration = 0.012,  -- the faintest colour fringe
+                refraction = 16,     -- edge lensing, px
+                bulb = 18,           -- width of the curved edge, px
+                clarity = 0.30,      -- frosted: a little sharp backdrop, mostly blur
+                aberration = 0.008,  -- the faintest colour fringe
                 tint = 0x0CF2F6FF,
             },
         },

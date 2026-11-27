@@ -11,7 +11,6 @@ import QtQuick.Effects
 //  - the specular rim: a thin bright edge where light catches the curve,
 //    strongest at the top-left and, fainter, at the bottom-right (Apple's
 //    highlight sits on opposite corners), dim along the sides;
-//  - a soft inner glow just inside the edge (the glass's thickness);
 //  - a light, wide shadow that lifts the card without darkening the desktop.
 // Reduce Transparency swaps all of it for a solid, legible fill.
 Item {
@@ -65,27 +64,14 @@ Item {
             fillRule: ShapePath.OddEvenFill
             fillGradient: LinearGradient {
                 x1: 0; y1: 0; x2: g.width; y2: g.height
-                GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, g.dark ? 0.62 : 0.95) }
-                GradientStop { position: 0.22; color: Qt.rgba(1, 1, 1, g.dark ? 0.20 : 0.45) }
-                GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, g.dark ? 0.07 : 0.22) }
-                GradientStop { position: 0.78; color: Qt.rgba(1, 1, 1, g.dark ? 0.16 : 0.38) }
-                GradientStop { position: 1.0; color: Qt.rgba(1, 1, 1, g.dark ? 0.42 : 0.75) }
+                GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, g.dark ? 0.42 : 0.85) }
+                GradientStop { position: 0.25; color: Qt.rgba(1, 1, 1, g.dark ? 0.16 : 0.40) }
+                GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, g.dark ? 0.09 : 0.25) }
+                GradientStop { position: 0.75; color: Qt.rgba(1, 1, 1, g.dark ? 0.14 : 0.35) }
+                GradientStop { position: 1.0; color: Qt.rgba(1, 1, 1, g.dark ? 0.30 : 0.65) }
             }
             PathRectangle { x: 0; y: 0; width: g.width; height: g.height; radius: g.r }
             PathRectangle { x: 1; y: 1; width: g.width - 2; height: g.height - 2; radius: Math.max(0, g.r - 1) }
-        }
-        // Inner glow: a soft second ring just inside the edge.
-        ShapePath {
-            strokeWidth: 0
-            fillRule: ShapePath.OddEvenFill
-            fillGradient: LinearGradient {
-                x1: 0; y1: 0; x2: g.width; y2: g.height
-                GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, g.dark ? 0.10 : 0.22) }
-                GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, g.dark ? 0.02 : 0.06) }
-                GradientStop { position: 1.0; color: Qt.rgba(1, 1, 1, g.dark ? 0.07 : 0.16) }
-            }
-            PathRectangle { x: 1; y: 1; width: g.width - 2; height: g.height - 2; radius: Math.max(0, g.r - 1) }
-            PathRectangle { x: 3.5; y: 3.5; width: g.width - 7; height: g.height - 7; radius: Math.max(0, g.r - 3.5) }
         }
     }
 
