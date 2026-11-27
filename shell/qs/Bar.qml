@@ -99,6 +99,8 @@ PanelWindow {
             color: Theme.ink; font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Medium
             text: Qt.formatDateTime(clock.date, "ddd MMM d  HH:mm")
             SystemClock { id: clock; precision: SystemClock.Minutes }
+            // The clock opens the Notification Center, as on macOS.
+            TapHandler { onTapped: bar.shell.notificationCenter() }
         }
     }
 }

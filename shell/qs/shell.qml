@@ -14,6 +14,13 @@ ShellRoot {
     property bool dnd: false
     // The island's countdown timer (a live activity), shared by every screen.
     property real timerEnd: 0
+    // Notification Center: open notifications, newest first.
+    property bool centerOpen: false
+    property var history: []
+    function remember(note) { history = [note].concat(history.filter(x => x !== note)).slice(0, 100) }
+    function forget(note) { history = history.filter(x => x !== note) }
+    function clearHistory() { for (const note of history.slice()) note.dismiss(); history = [] }
+    function notificationCenter() { centerOpen = !centerOpen; if (centerOpen) cc.open = false }
     signal spotlightRequested(string query)
 
     // Night Shift: hyprsunset warms the display while it runs.
@@ -116,6 +123,7 @@ ShellRoot {
     }
     ControlCenter { id: cc; shell: shell }
     Notifications { shell: shell }
+    NotificationCenter { shell: shell }
     SnapLayouts { id: snaps; shell: shell }
     Overview { id: overviewWin }
     Lock { id: lockScreen }
@@ -147,6 +155,7 @@ ShellRoot {
         function hud(kind: string, value: real): void { hudRequested(kind + ":" + value) }
         function timer(seconds: int): void { shell.timer(seconds) }
         function record(): void { shell.toggleRecording() }
+        function notifications(): void { shell.notificationCenter() }
         function search(text: string): void { shell.spotlight(text) }
         function glass(value: int): void { Theme.glass = value; Theme.save() }
         function arrange(on: bool): void { shell.setArrange(on) }

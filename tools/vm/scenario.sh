@@ -33,6 +33,9 @@ q spotlight; sleep 0.5
 q control; shot 09-control-center
 q control; sleep 0.5
 notify-send -a "Solyra" "Welcome to Solyra" "Notifications arrive in the corner and respect Focus."; shot 10-notification 1.0
+notify-send -a "Clock" "Timer" "Your 5-minute timer is done."; sleep 0.5
+q notifications; shot 10b-notification-center 1.2
+q notifications; sleep 0.5
 sleep 5
 q snap; shot 11-snap-layouts
 q snap; sleep 0.5
