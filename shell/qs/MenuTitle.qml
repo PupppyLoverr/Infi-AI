@@ -28,7 +28,7 @@ Item {
         visible: !t.icon
         anchors.centerIn: parent
         text: t.label; color: "white"
-        font.family: Theme.font; font.pixelSize: 13.5; font.weight: t.bold ? Font.Bold : Font.Medium
+        font.family: Theme.font; font.pixelSize: 14; font.weight: t.bold ? Font.Bold : Font.Medium
         style: Text.Raised; styleColor: Qt.rgba(0, 0, 0, 0.18)
     }
     Icon { visible: !!t.icon; anchors.centerIn: parent; name: t.icon || "info"; size: 16 }
@@ -57,7 +57,7 @@ Item {
                             visible: modelData[0] !== "-"
                             anchors.fill: parent; radius: 8
                             color: hh.hovered ? Theme.accent : "transparent"
-                            Text { anchors.verticalCenter: parent.verticalCenter; x: 12; text: modelData[0]; color: "white"; font.family: Theme.font; font.pixelSize: 13.5 }
+                            Text { anchors.verticalCenter: parent.verticalCenter; x: 12; text: modelData[0]; color: "white"; font.family: Theme.font; font.pixelSize: 14 }
                             Text { visible: !!modelData[2]; anchors.verticalCenter: parent.verticalCenter; anchors.right: parent.right; anchors.rightMargin: 12; text: modelData[2] || ""; color: hh.hovered ? "white" : Qt.rgba(1, 1, 1, 0.45); font.family: Theme.font; font.pixelSize: 13 }
                             HoverHandler { id: hh }
                             TapHandler { onTapped: { menu.visible = false; t.shell.menuAction(modelData[1]) } }

@@ -11,5 +11,10 @@ for f in "$dir"/*.qml; do
   out=$("$fmt" "$f" 2>&1 >/dev/null | grep -iE "error|invalid")
   [ -n "$out" ] && { echo "$out"; bad=1; }
 done
+# Type slips the parser cannot see but Quickshell refuses: fractional pixel
+# sizes and integer properties given decimals.
+if grep -nE "(pixelSize|spacing|columns|rows|maximumLineCount): *[0-9]+\.[0-9]" "$dir"/*.qml; then
+  echo "qmlcheck: integer properties given fractions (above)"; bad=1
+fi
 [ $bad -eq 0 ] && echo "qmlcheck: all $(ls "$dir"/*.qml | wc -l) files parse"
 exit $bad
