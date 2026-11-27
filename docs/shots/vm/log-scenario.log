@@ -1,21 +1,71 @@
 shot 01-desktop-idle-notch
 shot 02-notch-live-activity
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
 shot 03-island-media
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
 shot 04-island-clipboard
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
 shot 05-island-shelf
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
 shot 06a-island-calendar
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
 shot 06b-island-notchface
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
 shot 06-island-tools
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
 shot 07-hud-volume
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
 shot 07b-tracked-downloads-on-shelf
-shot 08-spotlight
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+shot 07c-live-activities
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+shot 07d-recording-activity
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+shot 08-spotlight-in-island
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
 shot 09-control-center
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+Failed to show notification: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: The name is not activatable
 shot 10-notification
+Failed to show notification: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: The name is not activatable
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+shot 10b-notification-center
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
 shot 11-snap-layouts
-shot 12-terminal-split
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+shot 12-terminal
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
 shot 12b-mission-control
-shot 13-terminal-chat
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
 shot 14-glass-tinted
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
 shot 15-glass-clear
 shot 15b-finder
+shot 15c-dock-minimized
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+shot 15d-dock-downloads-stack
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+shot 17-web-song-playing
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+shot 17b-web-song-notch
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+shot 17e-web-song-notch-lyrics
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+shot 17c-web-song-two-activities
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+shot 17d-web-song-control-center
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
 shot 16-lock-screen
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
