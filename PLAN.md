@@ -193,7 +193,7 @@ Ground rules for every step:
   installed size > 3 GB.
 
 ### M1. Audit and measure ✅ (Plasma 1144–1192 MB). M1b: Hyprland + Quickshell 🟡
-- [ ] 🟡 *Status: with the full shell loaded (Arch + Hyprland 0.57.2 + Quickshell, llvmpipe software GL, 2 vCPU / 4 GiB): **746 MB used**. Largest: quickshell 269 MB, Hyprland 158 MB (both inflated by llvmpipe), mpv 71 MB (test player), Xwayland 58 MB, swaybg 15 MB. **Installed 2426 MB ✅. Boot 16.9 s.** Trims done: Xwayland off, wallpaper drawn by the shell, effect layers only for tinted icons, test player stopped before measuring. **Over the 250 MB budget**; needs a real-GPU measurement to judge.* Record the M1b numbers. If over 250 MB, trim (portals, Xwayland
+- [ ] 🟡 *Status: clean idle with the full shell (llvmpipe software GL, 2 vCPU / 4 GiB): **765 MB used**. The trims landed: no Xwayland, no swaybg, no test player. quickshell 295 MB and Hyprland 158 MB are both inflated by llvmpipe; everything else is under 30 MB each. **Installed 2450 MB ✅. Boot 10.1 s ✅.** Still **over the 250 MB budget**; a real-GPU measurement is needed to judge.* Record the M1b numbers. If over 250 MB, trim (portals, Xwayland
   on demand, PipeWire socket activation) and re-measure before going on.
 
 ### M2. Terminal blur spike (zgx on Hyprland)
@@ -217,7 +217,7 @@ Ground rules for every step:
   PTY echo test. VM screenshot running `htop` and a truecolor test.
 
 ### M4. Glass, theme tokens, transparency slider
-- [ ] 🟡 *Status: replaced by Liquid Glass in QML (`shell/qs/Glass.qml`: clear body, lensing rim ring, specular sheen, inner shade, soft shadow) over Hyprland's real blur and vibrancy. True backdrop refraction (bending the image behind the glass) still needs a compositor plugin, which is not built.* `solyra-glass`: a Hyprland plugin (GPL-3.0, own repo dir and
+- [x] ✅ *Status: no plugin needed. Hyprland 0.57's built-in acrylic blur variant bends the backdrop through a curved edge (refraction + bulb), with high clarity and a faint chromatic fringe. It is enabled in `hyprland.lua` (`variant = 8`). `shell/qs/Glass.qml` adds the rim, sheen and shadow.* `solyra-glass`: a Hyprland plugin (GPL-3.0, own repo dir and
   licence).
   - Port our refraction shader (rim lensing, diffusion, adaptive tint,
     specular rim, shadow) from `comp/`.
@@ -397,7 +397,7 @@ claimed without a VM run.
 | M1 Audit and measure | ✅ Plasma 1144–1192 MB; Hyprland + Quickshell numbers come from the solyra-vm report |
 | M2 Terminal blur spike | ✅ Verified on Hyprland 0.57.2 in the VM |
 | M3 Terminal core | ✅ PTY, alacritty_terminal, truecolor, Unicode, scrollback, selection, copy and paste, search, resize, tabs, splits (zgx-terminal) |
-| M4 Glass and tokens | ✅ One glass slider (0–100), Reduce Transparency, Reduce Motion, Show Borders, one corner radius, two-layer shadows, Hyprland blur with ignore-alpha shapes. ⏳ The refraction (lensing) plugin is not built |
+| M4 Glass and tokens | ✅ One glass slider (0–100), Reduce Transparency, Reduce Motion, Show Borders, one corner radius, two-layer shadows, Hyprland blur with ignore-alpha shapes. ✅ Refraction via Hyprland's acrylic variant |
 | M5 Menu bar and dock | ✅ Written (QML). Global menu: standard menus wired to real actions; DBusMenu export ⏳ |
 | M6 Spotlight, notch, Control Center, notifications | ✅ Written (QML), plus Mission Control and the lock screen |
 | M7 Terminal polish | ✅ One app, exactly recording A plus the chat inside the glass; zeron icons; shell integration (OSC 7/133) |
