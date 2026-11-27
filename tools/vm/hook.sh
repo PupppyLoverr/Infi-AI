@@ -7,9 +7,9 @@ up() { [ -f "$1" ] && curl -fsS -T "$1" "$H/$2" >/dev/null 2>&1; }
 # Hyprland 0.57 reads ~/.config/hypr/hyprland.lua. Install ours and the
 # test scenario before autologin starts it.
 U=/home/solyra
-# The owner is in Australian Eastern Standard Time (UTC+10, no DST):
+# The owner is in Melbourne time (AEST/AEDT, daylight saving handled):
 # screenshots show their local time.
-ln -sf /usr/share/zoneinfo/Australia/Brisbane /etc/localtime
+ln -sf /usr/share/zoneinfo/Australia/Melbourne /etc/localtime
 install -Dm644 -o solyra -g solyra /opt/solyra/hypr/hyprland.lua $U/.config/hypr/hyprland.lua
 printf 'hl.on("hyprland.start", function() hl.exec_cmd("bash /opt/solyra/scenario.sh > /tmp/scenario.log 2>&1") end)\n' > $U/.config/solyra/hypr-local.lua
 chown solyra: $U/.config/solyra/hypr-local.lua
