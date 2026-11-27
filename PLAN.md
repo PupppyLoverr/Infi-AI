@@ -275,7 +275,7 @@ Ground rules for every step:
 - [x] ✅ *Status: done in `iso/` (live Hyprland session, archinstall-based installer, btrfs and snapper).* An archiso profile: our repo, Hyprland, Quickshell, apps, greeter
   (greetd + our QML greeter), Calamares or archinstall config, btrfs and
   snapper.
-- [ ] 🟡 *Status: the ISO builds at **1745 MiB ✅ (< 3 GB)** and the live session boots straight into Hyprland (docs/shots/iso). Rebuilt with the Lua config and shell; the desktop screenshot is pending.* CI builds the ISO (< 3 GB) and boots it in QEMU to the desktop; boot
+- [ ] 🟡 *Status: the ISO builds at **1745 MiB ✅ (< 3 GB)** and the live session boots straight into Hyprland (docs/shots/iso). The live session boots into the full Solyra desktop (menu bar, notch, Liquid Glass dock) with no login: see `docs/shots/iso/boot-240s.jpg`.* CI builds the ISO (< 3 GB) and boots it in QEMU to the desktop; boot
   time, idle RAM and installed size go in the report.
 
 ### M9. Extras (user's)
@@ -401,6 +401,6 @@ claimed without a VM run.
 | M5 Menu bar and dock | ✅ Written (QML). Global menu: standard menus wired to real actions; DBusMenu export ⏳ |
 | M6 Spotlight, notch, Control Center, notifications | ✅ Written (QML), plus Mission Control and the lock screen |
 | M7 Terminal polish | ✅ One app, exactly recording A plus the chat inside the glass; zeron icons; shell integration (OSC 7/133) |
-| M8 ISO | ✅ 1745 MiB, boots to Hyprland live; shell-in-ISO screenshot pending |
+| M8 ISO | ✅ 1745 MiB, live session boots into the Solyra desktop |
 | M9 Extras | ✅ Droppy set (media, shelf, clipboard, HUDs, Bluetooth, caps, battery, calendar, Notchface, High Alert, Termi-Notch, Capture Area, OCR, Tracked Folders, Hide Notch), snap layouts, auto-arrange. Not done: voice transcription (needs a local speech model, over budget) |
 | Finder | ✅ macOS 27 layout: inset glass sidebar, glass toolbar, one frosted surface (live screenshot) |
