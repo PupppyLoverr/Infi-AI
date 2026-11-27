@@ -10,7 +10,9 @@ import Quickshell.Wayland
 // snap layouts, Mission Control and the lock screen once. Keybinds arrive as Hyprland global shortcuts
 // (solyra:spotlight …) and everything is scriptable with `qs ipc call shell …`.
 ShellRoot {
-    id: shell
+    // Called `root`, not `shell`: in `Island { shell: shell }` the right-hand
+    // name would resolve to the island's own (empty) `shell` property.
+    id: root
     property bool dnd: false
     // The island's countdown timer (a live activity), shared by every screen.
     property real timerEnd: 0
@@ -42,9 +44,9 @@ ShellRoot {
     Process {
         id: recProc
         onExited: (code) => {
-            shell.recording = false
+            root.recording = false
             Quickshell.execDetached(["notify-send", "-a", "Screen Recording", code === 0 || code === 130 || code === 2 ? "Recording saved" : "Recording stopped",
-                                     code === 127 ? "wf-recorder is not installed." : shell.recordFile])
+                                     code === 127 ? "wf-recorder is not installed." : root.recordFile])
         }
     }
 
@@ -101,11 +103,11 @@ ShellRoot {
             id: perScreen
             required property var modelData
             Wallpaper { screenModel: perScreen.modelData }
-            Bar { screenModel: perScreen.modelData; shell: shell }
-            Dock { screenModel: perScreen.modelData; shell: shell }
+            Bar { screenModel: perScreen.modelData; shell: root }
+            Dock { screenModel: perScreen.modelData; shell: root }
             DesktopWidgets { screenModel: perScreen.modelData }
-            HotCorners { screenModel: perScreen.modelData; shell: shell }
-            Island { id: island; screenModel: perScreen.modelData; shell: shell }
+            HotCorners { screenModel: perScreen.modelData; shell: root }
+            Island { id: island; screenModel: perScreen.modelData; shell: root }
             Connections {
                 target: ipc
                 function onIslandRequested(tab) { if (tab === "close") island.collapse(); else island.expand(tab) }
@@ -113,7 +115,7 @@ ShellRoot {
                 function onHudRequested(arg) { const i = arg.indexOf(":"); island.hud(i < 0 ? arg : arg.slice(0, i), i < 0 ? 0 : parseFloat(arg.slice(i + 1))) }
             }
             Connections {
-                target: shell
+                target: root
                 function onSpotlightRequested(q) {
                     const focused = Hyprland.focusedMonitor
                     if (!focused || focused.name === perScreen.modelData.name) island.toggleSearch(q)
@@ -121,43 +123,43 @@ ShellRoot {
             }
         }
     }
-    ControlCenter { id: cc; shell: shell }
-    Notifications { shell: shell }
-    NotificationCenter { shell: shell }
-    SnapLayouts { id: snaps; shell: shell }
+    ControlCenter { id: cc; shell: root }
+    Notifications { shell: root }
+    NotificationCenter { shell: root }
+    SnapLayouts { id: snaps; shell: root }
     Overview { id: overviewWin }
     Lock { id: lockScreen }
 
     // After look.json is written: Hyprland re-reads its rules, then the
     // windows already open move to match.
     Timer { id: reloadTimer; interval: 250; onTriggered: { Quickshell.execDetached(["hyprctl", "reload"]); arrangeTimer.restart() } }
-    Timer { id: arrangeTimer; interval: 600; onTriggered: shell.applyArrange() }
+    Timer { id: arrangeTimer; interval: 600; onTriggered: root.applyArrange() }
 
-    GlobalShortcut { appid: "solyra"; name: "spotlight"; onPressed: shell.spotlight() }
-    GlobalShortcut { appid: "solyra"; name: "control"; onPressed: shell.control() }
-    GlobalShortcut { appid: "solyra"; name: "lock"; onPressed: shell.lock() }
-    GlobalShortcut { appid: "solyra"; name: "snap"; onPressed: shell.snap() }
+    GlobalShortcut { appid: "solyra"; name: "spotlight"; onPressed: root.spotlight() }
+    GlobalShortcut { appid: "solyra"; name: "control"; onPressed: root.control() }
+    GlobalShortcut { appid: "solyra"; name: "lock"; onPressed: root.lock() }
+    GlobalShortcut { appid: "solyra"; name: "snap"; onPressed: root.snap() }
     GlobalShortcut { appid: "solyra"; name: "island"; onPressed: ipc.islandRequested("media") }
-    GlobalShortcut { appid: "solyra"; name: "overview"; onPressed: shell.toggleOverview() }
+    GlobalShortcut { appid: "solyra"; name: "overview"; onPressed: root.toggleOverview() }
 
     IpcHandler {
         id: ipc
         target: "shell"
         signal islandRequested(string tab)
         signal hudRequested(string arg)
-        function spotlight(): void { shell.spotlight("") }
-        function query(text: string): void { shell.spotlight(text) }
-        function control(): void { shell.control() }
-        function lock(): void { shell.lock() }
-        function snap(): void { shell.snap() }
-        function overview(): void { shell.toggleOverview() }
+        function spotlight(): void { root.spotlight("") }
+        function query(text: string): void { root.spotlight(text) }
+        function control(): void { root.control() }
+        function lock(): void { root.lock() }
+        function snap(): void { root.snap() }
+        function overview(): void { root.toggleOverview() }
         function island(tab: string): void { islandRequested(tab) }
         function hud(kind: string, value: real): void { hudRequested(kind + ":" + value) }
-        function timer(seconds: int): void { shell.timer(seconds) }
-        function record(): void { shell.toggleRecording() }
-        function notifications(): void { shell.notificationCenter() }
-        function search(text: string): void { shell.spotlight(text) }
+        function timer(seconds: int): void { root.timer(seconds) }
+        function record(): void { root.toggleRecording() }
+        function notifications(): void { root.notificationCenter() }
+        function search(text: string): void { root.spotlight(text) }
         function glass(value: int): void { Theme.glass = value; Theme.save() }
-        function arrange(on: bool): void { shell.setArrange(on) }
+        function arrange(on: bool): void { root.setArrange(on) }
     }
 }

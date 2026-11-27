@@ -35,9 +35,14 @@ tar -C $P -cf payload/payload.tar .
 # artwork, served beside the payload. A public-domain recording when the
 # runner can fetch it, else a synthesised melody.
 mkdir -p payload/web && cp "$here/web/index.html" payload/web/ && cp "$repo/shell/qs/apps/music.png" payload/web/cover.png
-curl -fsSL --max-time 60 -A "Mozilla/5.0 (solyra-ci)" -o payload/web/song.ogg \
+for u in \
+  "https://commons.wikimedia.org/wiki/Special:FilePath/Erik_Satie_-_gymnopedies_-_la_1_ere._lent_et_douloureux.ogg" \
   "https://upload.wikimedia.org/wikipedia/commons/e/e3/Erik_Satie_-_gymnopedies_-_la_1_ere._lent_et_douloureux.ogg" \
-  || rm -f payload/web/song.ogg
+  "https://archive.org/download/ErikSatieGymnopedieNo.1/Erik%20Satie%20-%20Gymnop%C3%A9die%20No.1.mp3"; do
+  curl -fsSL --max-time 60 -A "Mozilla/5.0 (X11; Linux x86_64) solyra-ci" -o payload/web/song.ogg "$u" \
+    && [ "$(stat -c %s payload/web/song.ogg)" -gt 100000 ] && { echo "song: $u"; break; }
+  rm -f payload/web/song.ogg; echo "song: failed $u"
+done
 python3 "$here/web/melody.py" payload/web/song.wav
 ls -la payload/web
 python3 "$here/serve.py" payload shots & SRV=$!

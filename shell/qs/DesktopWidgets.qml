@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
+import Quickshell.Hyprland
 
 // Desktop widgets (macOS Sonoma+): a large clock with the date, a month
 // calendar and the weather, as glass cards on the desktop under the windows.
@@ -20,6 +21,14 @@ PanelWindow {
     color: "transparent"
     WlrLayershell.layer: WlrLayer.Bottom
     WlrLayershell.namespace: "solyra-widgets"
+
+    // As macOS: the widgets step back (fade) while windows are open on this
+    // screen's desktop, and come forward on an empty desktop.
+    readonly property var workspace: {
+        const m = Hyprland.monitorFor(w.screen)
+        return m ? m.activeWorkspace : Hyprland.focusedWorkspace
+    }
+    readonly property bool windowsOpen: workspace ? workspace.toplevels.values.length > 0 : false
 
     property date now: new Date()
     Timer { interval: 1000 * (60 - new Date().getSeconds()); running: true; repeat: true; onTriggered: { w.now = new Date(); interval = 60000 } }
@@ -55,6 +64,8 @@ PanelWindow {
     Column {
         id: col
         width: parent.width
+        opacity: w.windowsOpen ? 0.28 : 1
+        Behavior on opacity { NumberAnimation { duration: Theme.ms(260); easing.type: Easing.OutCubic } }
         spacing: 14
 
         // Clock
