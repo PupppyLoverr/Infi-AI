@@ -16,6 +16,31 @@ ShellRoot {
     property real timerEnd: 0
     signal spotlightRequested(string query)
 
+    // Night Shift: hyprsunset warms the display while it runs.
+    Process { running: Theme.nightShift; command: ["hyprsunset", "-t", "4500"] }
+
+    // Screen recording (wf-recorder): a red live activity in the island while
+    // it runs; the file lands in ~/Videos and a notification says where.
+    property bool recording: false
+    property real recordStart: 0
+    property string recordFile: ""
+    function toggleRecording() {
+        if (recording) { recProc.signal(2); return }
+        recordFile = Theme.home + "/Videos/Recording " + Qt.formatDateTime(new Date(), "yyyy-MM-dd 'at' HH.mm.ss") + ".mp4"
+        recProc.command = ["sh", "-c", "mkdir -p \"$HOME/Videos\" && exec wf-recorder -f \"$1\"", "sh", recordFile]
+        recordStart = Date.now()
+        recording = true
+        recProc.running = true
+    }
+    Process {
+        id: recProc
+        onExited: (code) => {
+            shell.recording = false
+            Quickshell.execDetached(["notify-send", "-a", "Screen Recording", code === 0 || code === 130 || code === 2 ? "Recording saved" : "Recording stopped",
+                                     code === 127 ? "wf-recorder is not installed." : shell.recordFile])
+        }
+    }
+
     // Spotlight is the Dynamic Island: the one on the focused screen morphs
     // into the search field.
     function spotlight(q) { spotlightRequested(q || "") }
@@ -71,6 +96,8 @@ ShellRoot {
             Wallpaper { screenModel: perScreen.modelData }
             Bar { screenModel: perScreen.modelData; shell: shell }
             Dock { screenModel: perScreen.modelData; shell: shell }
+            DesktopWidgets { screenModel: perScreen.modelData }
+            HotCorners { screenModel: perScreen.modelData; shell: shell }
             Island { id: island; screenModel: perScreen.modelData; shell: shell }
             Connections {
                 target: ipc
@@ -119,6 +146,7 @@ ShellRoot {
         function island(tab: string): void { islandRequested(tab) }
         function hud(kind: string, value: real): void { hudRequested(kind + ":" + value) }
         function timer(seconds: int): void { shell.timer(seconds) }
+        function record(): void { shell.toggleRecording() }
         function search(text: string): void { shell.spotlight(text) }
         function glass(value: int): void { Theme.glass = value; Theme.save() }
         function arrange(on: bool): void { shell.setArrange(on) }

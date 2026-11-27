@@ -8,8 +8,9 @@ import Quickshell.Services.Pipewire
 import Quickshell.Services.UPower
 
 // Control Center: a bento of glass modules with real readings only
-// (NetworkManager, BlueZ, PipeWire, brightnessctl, MPRIS, UPower), the
-// system-wide glass slider and the accessibility switches.
+// (NetworkManager, BlueZ, PipeWire, brightnessctl, MPRIS, UPower): Night
+// Shift, screen recording, per-app volume, the system-wide glass slider and
+// the accessibility, hot corner and widget switches.
 PanelWindow {
     id: cc
     property var shell
@@ -29,8 +30,14 @@ PanelWindow {
     property bool wifiOn: false
     property bool btOn: false
     property real bright: -1
-    PwObjectTracker { objects: [Pipewire.defaultAudioSink] }
+    PwObjectTracker { objects: [Pipewire.defaultAudioSink].concat(cc.streams) }
     readonly property var sink: Pipewire.defaultAudioSink
+    // Per-app volume: every app playing sound (a PipeWire output stream).
+    readonly property var streams: Pipewire.nodes.values.filter(n => n.isStream && n.audio && !n.isSink)
+    function appName(n) {
+        const p = n.properties || {}
+        return p["application.name"] || n.description || n.nickname || n.name || "App"
+    }
     readonly property var player: Mpris.players.values.length ? Mpris.players.values[0] : null
 
     function refresh() { wifiProc.running = true; btProc.running = true; brightProc.running = true }
@@ -75,10 +82,31 @@ PanelWindow {
                 }
             }
             }
+            Row {
+                spacing: 10
+                Tile { width: 169; height: 70
+                    Toggle { anchors.fill: parent; anchors.margins: 12; icon: "sun"; title: "Night Shift"; sub: Theme.nightShift ? "On until turned off" : "Off"; on: Theme.nightShift
+                        onClicked: { Theme.nightShift = !Theme.nightShift; Theme.save() } } }
+                Tile { width: 169; height: 70
+                    Toggle { anchors.fill: parent; anchors.margins: 12; icon: "stop"; title: "Record Screen"; sub: cc.shell && cc.shell.recording ? "Recording · tap to stop" : "To ~/Videos"; on: cc.shell && cc.shell.recording
+                        onClicked: { cc.open = false; cc.shell.toggleRecording() } } }
+            }
             Slider2 { width: 348; label: "Display"; icon: "sun"; value: cc.bright < 0 ? -1 : cc.bright / 100
                 onMoved: v => { cc.bright = v * 100; Quickshell.execDetached(["brightnessctl", "-q", "set", Math.round(v * 100) + "%"]) } }
             Slider2 { width: 348; label: "Sound"; icon: cc.sink && cc.sink.audio.muted ? "volumeMute" : "volume"; value: cc.sink ? cc.sink.audio.volume : -1
                 onMoved: v => { if (cc.sink) cc.sink.audio.volume = v } }
+            // Per-app volume.
+            Repeater {
+                model: cc.streams
+                Slider2 {
+                    required property var modelData
+                    width: 348; height: 56
+                    label: cc.appName(modelData)
+                    icon: modelData.audio && modelData.audio.muted ? "volumeMute" : "volume"
+                    value: modelData.audio ? Math.min(1, modelData.audio.volume) : -1
+                    onMoved: v => { if (modelData.audio) modelData.audio.volume = v }
+                }
+            }
             Slider2 { width: 348; label: "Glass  ·  clear → tinted"; icon: "palette"; value: Theme.glass / 100
                 onMoved: v => { Theme.glass = Math.round(v * 100); Theme.save() } }
             Tile {
@@ -105,6 +133,8 @@ PanelWindow {
                     Pill { height: 26; text: "Reduce Transparency"; on: Theme.reduceTransparency; onClicked: { Theme.reduceTransparency = !Theme.reduceTransparency; Theme.save() } }
                     Pill { height: 26; text: "Borders"; on: Theme.showBorders; onClicked: { Theme.showBorders = !Theme.showBorders; Theme.save() } }
                     Pill { height: 26; text: "Hide Notch"; on: Theme.hideNotch; onClicked: { Theme.hideNotch = !Theme.hideNotch; Theme.save() } }
+                    Pill { height: 26; text: "Hot Corners"; on: Theme.hotCorners; onClicked: { Theme.hotCorners = !Theme.hotCorners; Theme.save() } }
+                    Pill { height: 26; text: "Widgets"; on: Theme.widgets; onClicked: { Theme.widgets = !Theme.widgets; Theme.save() } }
                 }
             }
         }

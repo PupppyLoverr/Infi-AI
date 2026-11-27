@@ -3,7 +3,8 @@ import Quickshell
 import Quickshell.Io
 
 // "Search or Ask": the search behind the Dynamic Island's Spotlight. Apps
-// (desktop entries), files under home, a calculator, system actions, and Ask:
+// (desktop entries), files under home, a calculator, clipboard history,
+// system actions, and Ask:
 // the query goes to a signed-in agent CLI (Claude: `claude -p`, ChatGPT:
 // `codex exec`) on the user's own subscription login, streamed back.
 QtObject {
@@ -13,6 +14,7 @@ QtObject {
     property string filter: "All"     // All | Apps | Files | Actions | Ask
     property int sel: 0
     property var files: []
+    property var clips: []                // clipboard history, newest first
     property string provider: "claude"
     property string answer: ""
     property bool asking: false
@@ -63,6 +65,8 @@ QtObject {
         }
         if (want("Files")) for (const f of files.slice(0, filter === "Files" ? 14 : 5))
             out.push({ group: "Files", title: f.split("/").pop(), sub: f, icon: "document", run: () => Qt.openUrlExternally("file://" + f) })
+        if (q && filter === "All") for (const t of clips.filter(t => t.toLowerCase().indexOf(q) >= 0).slice(0, 3))
+            out.push({ group: "Clipboard", title: t.replace(/\s+/g, " ").slice(0, 120), sub: "Copy again", icon: "clipboard", run: () => Quickshell.execDetached(["wl-copy", t]) })
         if (want("Actions")) for (const a of actions.filter(a => !q || score(q, a.title) > 0 || score(q, a.sub) > 0).slice(0, filter === "Actions" ? 10 : (q ? 3 : 0)))
             out.push({ group: "Actions", title: a.title, sub: a.sub, icon: a.icon, run: a.run })
         if (q && filter === "All") out.push({ group: "Ask", title: "Ask " + (provider === "claude" ? "Claude" : "ChatGPT") + ": " + query.trim(), sub: "Uses your signed-in " + (provider === "claude" ? "Claude" : "ChatGPT") + " account", icon: "agent", run: () => m.ask() })

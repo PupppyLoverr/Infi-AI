@@ -95,7 +95,7 @@ hl.animation({ leaf = "specialWorkspace", enabled = true, speed = 4, spring = "s
 -- drawn (ignore_alpha), so rounded cards get rounded blur.
 hl.layer_rule({
     name = "solyra-glass",
-    match = { namespace = "^solyra-(bar|dock|control|notifications|snap|overview|island)$" },
+    match = { namespace = "^solyra-(bar|dock|control|notifications|snap|overview|island|widgets)$" },
     blur = true,
     ignore_alpha = 0.02,
 })

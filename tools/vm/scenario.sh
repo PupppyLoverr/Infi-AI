@@ -26,6 +26,8 @@ sleep 2
 # splits off into its own bubble.
 q timer 300; shot 07c-live-activities 2.0
 q timer 0; sleep 0.8
+q record; shot 07d-recording-activity 3.0
+q record; sleep 1.5
 q query "te"; shot 08-spotlight-in-island 1.6
 q spotlight; sleep 0.5
 q control; shot 09-control-center

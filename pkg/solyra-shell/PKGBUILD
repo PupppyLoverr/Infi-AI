@@ -8,10 +8,10 @@ pkgdesc="Solyra desktop shell for Hyprland (Quickshell QML)"
 arch=(any)
 url="https://github.com/PupppyLoverr/Infi-AI"
 license=(GPL-3.0-only)
-depends=(hyprland quickshell qt6-declarative qt6-svg qt6-5compat swaybg grim slurp wl-clipboard wtype
+depends=(hyprland quickshell qt6-declarative qt6-svg qt6-5compat grim slurp wl-clipboard wtype
          brightnessctl networkmanager bluez-utils pipewire wireplumber playerctl libnotify upower
          inter-font ttf-jetbrains-mono curl inotify-tools)
-optdepends=('qt6-multimedia: Notchface camera preview' 'tesseract: Text from Screen (OCR)'
+optdepends=('hyprsunset: Night Shift' 'wf-recorder: screen recording' 'satty: screenshot markup' 'qt6-multimedia: Notchface camera preview' 'tesseract: Text from Screen (OCR)'
             'claude-code: Ask Claude in Spotlight' 'codex: Ask ChatGPT in Spotlight')
 source=()
 _repo="${SOLYRA_REPO:-$startdir/../..}"

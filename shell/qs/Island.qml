@@ -65,6 +65,7 @@ PanelWindow {
     function mmss(s) { const m = Math.floor(s / 60); return m + ":" + String(s % 60).padStart(2, "0") }
     readonly property var activities: {
         const a = []
+        if (shell && shell.recording) a.push({ kind: "rec", icon: "stop", tint: "#ff453a", label: mmss(Math.max(0, Math.floor((clock.now - shell.recordStart) / 1000))), tab: "tools" })
         if (timerLeft > 0) a.push({ kind: "timer", icon: "timer", tint: "#ff9f0a", label: mmss(timerLeft), tab: "tools" })
         if (playing) a.push({ kind: "media", tint: "#ff9f0a", tab: "media" })
         if (caffeine.enabled) a.push({ kind: "alert", icon: "eye", tint: "#ffd60a", label: Math.ceil(caffeineTimer.left / 60) + "m", tab: "tools" })
@@ -74,7 +75,7 @@ PanelWindow {
     readonly property var primary: activities.length > 0 ? activities[0] : null
     readonly property var secondary: activities.length > 1 ? activities[1] : null
     QtObject { id: clock; property real now: Date.now() }
-    Timer { interval: 1000; repeat: true; running: win.shell && win.shell.timerEnd > 0; onTriggered: { clock.now = Date.now(); if (win.shell.timerEnd > 0 && clock.now >= win.shell.timerEnd) win.timerDone() } }
+    Timer { interval: 1000; repeat: true; running: win.shell && (win.shell.timerEnd > 0 || win.shell.recording); onTriggered: { clock.now = Date.now(); if (win.shell.timerEnd > 0 && clock.now >= win.shell.timerEnd) win.timerDone() } }
     function timerDone() {
         shell.timerEnd = 0
         Quickshell.execDetached(["notify-send", "-a", "Clock", "Timer", "Your timer is done."])
@@ -168,6 +169,7 @@ PanelWindow {
     // search grows with its results.
     readonly property var d: mode === "search" ? { w: 620, h: searchView.implicitHeight + 16, r: 28 }
         : mode === "expanded" && (tab === "media" || tab === "cal") ? { w: 500, h: 164, r: 32 }
+        : mode === "expanded" && tab === "tools" ? { w: 540, h: 236, r: 34 }
         : dims[mode]
 
     Rectangle {
@@ -345,9 +347,10 @@ PanelWindow {
                 visible: win.tab === "tools"
                 Column {
                     anchors.fill: parent
-                    spacing: 12
-                    Row {
-                        spacing: 10
+                    spacing: 10
+                    Flow {
+                        width: parent.width
+                        spacing: 8
                         Pill {
                             text: caffeine.enabled ? "High Alert · " + Math.ceil(caffeineTimer.left / 60) + " min" : "High Alert"
                             on: caffeine.enabled
@@ -358,8 +361,14 @@ PanelWindow {
                             on: win.timerLeft > 0
                             onClicked: if (win.shell) win.shell.timer(win.timerLeft > 0 ? 0 : 300)
                         }
+                        Pill {
+                            text: win.shell && win.shell.recording ? "Stop Recording" : "Record"
+                            on: win.shell && win.shell.recording
+                            onClicked: { win.collapse(); if (win.shell) win.shell.toggleRecording() }
+                        }
                         Pill { text: "Lock"; onClicked: Quickshell.execDetached(["qs", "ipc", "call", "shell", "lock"]) }
                         Pill { text: "Screenshot"; onClicked: Quickshell.execDetached(["sh", "-c", "grim \"$HOME/Pictures/Screenshot-$(date +%F-%H%M%S).png\""]) }
+                        Pill { text: "Markup"; onClicked: { win.collapse(); Quickshell.execDetached(["sh", "-c", "sleep 0.3; mkdir -p \"$HOME/Pictures\"; grim -g \"$(slurp)\" - | satty --filename - --output-filename \"$HOME/Pictures/Markup-$(date +%F-%H%M%S).png\" --copy-command wl-copy"]) } }
                         Pill { text: "Capture Area"; onClicked: { win.collapse(); Quickshell.execDetached(["sh", "-c", "sleep 0.3; grim -g \"$(slurp)\" - | wl-copy --type image/png && notify-send -a Solyra 'Area copied' 'The capture is on the clipboard.'"]) } }
                         Pill { text: "Text from Screen"; onClicked: { win.collapse(); Quickshell.execDetached(["sh", "-c", "sleep 0.3; t=$(grim -g \"$(slurp)\" - | tesseract stdin stdout 2>/dev/null); [ -n \"$t\" ] && printf '%s' \"$t\" | wl-copy && notify-send -a Solyra 'Text copied' \"$t\""]) } }
                     }
@@ -383,9 +392,9 @@ PanelWindow {
                     }
                     Text {
                         id: termOut
-                        width: parent.width; height: 70
+                        width: parent.width; height: 44
                         color: Qt.rgba(1, 1, 1, 0.75); font.family: Theme.mono; font.pixelSize: 11
-                        elide: Text.ElideRight; wrapMode: Text.WrapAnywhere; maximumLineCount: 5
+                        elide: Text.ElideRight; wrapMode: Text.WrapAnywhere; maximumLineCount: 3
                     }
                     Process {
                         id: termProc
@@ -430,6 +439,7 @@ PanelWindow {
     SearchModel {
         id: search
         shell: win.shell
+        clips: { const out = []; for (let i = 0; i < clip.count; i++) out.push(clip.get(i).text); return out }
         onDone: win.closeSearch()
     }
     function openSearch(q) {

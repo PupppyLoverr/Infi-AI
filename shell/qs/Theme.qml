@@ -16,6 +16,9 @@ Singleton {
     property bool dark: true
     property bool autoArrange: false
     property bool hideNotch: false
+    property bool hotCorners: true         // bottom-left: Mission Control; bottom-right: desktop widgets peek
+    property bool widgets: true            // desktop widgets (clock, calendar, weather)
+    property bool nightShift: false        // warm display (hyprsunset)
 
     // Tint alpha over the compositor's blur. Even at "ultra clear" the
     // floor keeps text readable (tested in tools/contrast).
@@ -59,6 +62,9 @@ Singleton {
                 if (j.dark !== undefined) root.dark = j.dark
                 if (j.autoArrange !== undefined) root.autoArrange = j.autoArrange
                 if (j.hideNotch !== undefined) root.hideNotch = j.hideNotch
+                if (j.hotCorners !== undefined) root.hotCorners = j.hotCorners
+                if (j.widgets !== undefined) root.widgets = j.widgets
+                if (j.nightShift !== undefined) root.nightShift = j.nightShift
             } catch (e) {}
         }
     }
@@ -66,7 +72,8 @@ Singleton {
     function save() {
         file.setText(JSON.stringify({
             glass: glass, reduceMotion: reduceMotion, reduceTransparency: reduceTransparency,
-            showBorders: showBorders, dark: dark, autoArrange: autoArrange, hideNotch: hideNotch
+            showBorders: showBorders, dark: dark, autoArrange: autoArrange, hideNotch: hideNotch,
+            hotCorners: hotCorners, widgets: widgets, nightShift: nightShift
         }, null, 2))
     }
 }
