@@ -431,8 +431,9 @@ fn toolbar(app: &FilesApp, style: &solyra_ui::Style, window: zgx_desktop::Window
             app.show_inspector.set(next);
         })
     };
+    // Sized so the toolbar fits a 70%-wide window without clipping it.
     let search = row()
-        .w(200.)
+        .w(150.)
         .h(32.)
         .px(12.)
         .gap(6.)
@@ -451,7 +452,7 @@ fn toolbar(app: &FilesApp, style: &solyra_ui::Style, window: zgx_desktop::Window
         .gap(10.)
         .items_center()
         .child(nav)
-        .child(drag_area(title.w(150.), window.clone()))
+        .child(drag_area(title.w(110.), window.clone()))
         .child(drag_area(row().grow(), window.clone()))
         .child(capsule(row().gap(2.).child(hidden).child(refresh).child(inspector_btn)))
         .child(capsule(view_modes(app)))
@@ -497,7 +498,8 @@ fn sidebar_button(
             row()
                 .gap(8.)
                 .items_center()
-                .child(solyra_ui::glyphs::icon(icon, 16., solyra_ui::color(theme.accent)))
+                // Monochrome sidebar symbols, as macOS 26: legible on any glass.
+                .child(solyra_ui::glyphs::icon(icon, 16., solyra_ui::color(theme.text_med)))
                 .child(text(label.to_string()).text_size(13.).truncate()),
         )
 }

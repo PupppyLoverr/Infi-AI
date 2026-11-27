@@ -432,8 +432,9 @@ PanelWindow {
         readonly property var act: win.secondary
         ClippingRectangle {
             visible: bubble.act && bubble.act.kind === "media"
-            anchors.centerIn: parent; width: 16; height: 16; radius: 8; color: "#333"
-            Image { anchors.fill: parent; source: win.player ? win.player.trackArtUrl : ""; fillMode: Image.PreserveAspectCrop }
+            anchors.centerIn: parent; width: 16; height: 16; radius: 8; color: "#2c2c2e"
+            Image { id: bubbleArt; anchors.fill: parent; source: win.player ? win.player.trackArtUrl : ""; fillMode: Image.PreserveAspectCrop }
+            Icon { anchors.centerIn: parent; visible: bubbleArt.status !== Image.Ready; name: "music"; size: 9; color: "#ff9f0a" }
         }
         Icon {
             visible: bubble.act && bubble.act.kind !== "media"
