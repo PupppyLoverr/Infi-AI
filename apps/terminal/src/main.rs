@@ -70,8 +70,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             height: HEIGHT,
             decorations: cfg!(target_os = "macos"),
             min_size: Some((520., 360.)),
-            // Frosted glass, content under inset traffic lights.
-            titlebar: Titlebar::Inset,
+            // Frosted glass to the window's edges. On macOS the system's
+            // traffic lights sit inset over it; on Linux the app draws its
+            // own macOS-style lights (ui/components/lights.luau) instead of
+            // zgx's GNOME-style buttons.
+            titlebar: if cfg!(target_os = "macos") { Titlebar::Inset } else { Titlebar::Hidden },
             glass: Some(Glass::default()),
             ..Default::default()
         })
@@ -192,6 +195,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
             let window = cx.window.clone();
             host.action("close_window", move |_| window.close());
+            let window = cx.window.clone();
+            host.action("minimize_window", move |_| window.set_minimized(true));
             let window = cx.window.clone();
             host.action("set_title", move |title| {
                 if let Value::Str(title) = title {

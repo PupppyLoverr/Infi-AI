@@ -61,7 +61,7 @@ PanelWindow {
     // Everything running at once, most important first. The island shows the
     // first; the second gets its own bubble.
     readonly property real timerLeft: shell && shell.timerEnd > 0 ? Math.max(0, Math.ceil((shell.timerEnd - clock.now) / 1000)) : 0
-    readonly property bool charging: battery && battery.isLaptopBattery && battery.state === UPowerDeviceState.Charging
+    readonly property bool charging: !!(battery && battery.isLaptopBattery && battery.state === UPowerDeviceState.Charging)
     function mmss(s) { const m = Math.floor(s / 60); return m + ":" + String(s % 60).padStart(2, "0") }
     readonly property var activities: {
         const a = []
@@ -93,7 +93,10 @@ PanelWindow {
         if (mode !== "expanded" && mode !== "search") { mode = "hud" }
         hudTimer.restart()
     }
-    onActivitiesChanged: if (mode === "idle" || mode === "compact") settle()
+    onActivitiesChanged: {
+        console.info("island: live activities", JSON.stringify(activities.map(x => x.kind)))
+        if (mode === "idle" || mode === "compact") settle()
+    }
     Timer { id: hudTimer; interval: 1600; onTriggered: win.settle() }
     Timer { id: openTimer; interval: 160; onTriggered: { win.hovering = true; win.mode = "expanded" } }
     Timer { id: closeTimer; interval: 380; onTriggered: { win.hovering = false; win.settle() } }

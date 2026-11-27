@@ -5,7 +5,7 @@ H=http://10.0.2.2:8088
 T0=$(date +%s)
 up() { curl -fsS -T "$1" "$H/$(basename "$1")" >/dev/null 2>&1; }
 shot() { sleep "${2:-1.2}"; grim "/tmp/$1.png" && up "/tmp/$1.png"; echo "shot $1"; }
-q() { qs ipc call shell "$@"; }
+q() { echo "ipc $*" >> /tmp/ipc.log; qs ipc call shell "$@" >> /tmp/ipc.log 2>&1 || echo "  failed: $?" >> /tmp/ipc.log; }
 sleep 14
 shot 01-desktop-idle-notch 0
 mpv --no-video --idle=no --loop=inf --force-media-title="Harbour Lights" "av://lavfi:sine=frequency=220" >/dev/null 2>&1 &
@@ -97,5 +97,5 @@ while [ $(( $(date +%s) - T0 + 14 )) -lt 180 ]; do sleep 5; done
   qs --version 2>/dev/null | head -1
 } > /tmp/report.txt 2>&1
 up /tmp/report.txt
-for f in /tmp/qs.log /tmp/hypr.log /tmp/scenario.log /tmp/term1.log /tmp/firefox.log; do [ -f "$f" ] && cp "$f" "/tmp/log-$(basename $f)" && up "/tmp/log-$(basename $f)"; done
+for f in /tmp/qs.log /tmp/hypr.log /tmp/scenario.log /tmp/term1.log /tmp/firefox.log /tmp/ipc.log; do [ -f "$f" ] && cp "$f" "/tmp/log-$(basename $f)" && up "/tmp/log-$(basename $f)"; done
 touch /tmp/solyra-done

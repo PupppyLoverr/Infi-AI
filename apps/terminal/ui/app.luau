@@ -29,6 +29,7 @@ local content = require("@components/content")
 local confirm = require("@components/confirm")
 local palette = require("@components/palette")
 local consent = require("@components/consent")
+local lights = require("@components/lights")
 
 -- Open the last layout (or a first tab), keep it saved, declare the menus.
 saved.start()
@@ -58,6 +59,8 @@ return ui.row {
 		tabs.Titlebar(),
 		content(),
 	},
+	-- Solyra: macOS traffic lights, drawn by the app (components/lights.luau).
+	lights.Lights(),
 	-- Over the sidebar's header and the titlebar, past the traffic lights.
 	sidebar.Toggle(),
 	confirm.Sheet(),
