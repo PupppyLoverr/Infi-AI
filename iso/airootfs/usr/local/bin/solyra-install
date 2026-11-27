@@ -11,6 +11,7 @@ cat > /tmp/solyra-archinstall.json <<J
   "packages": [$(printf '"%s",' $pkgs | sed 's/,$//')],
   "profile_config": { "profile": { "main": "Minimal" } },
   "network_config": { "type": "nm" },
+  "timezone": "${SOLYRA_TZ:-Australia/Brisbane}",
   "audio_config": { "audio": "pipewire" },
   "custom_commands": [
     "systemctl enable greetd NetworkManager bluetooth upower power-profiles-daemon",
