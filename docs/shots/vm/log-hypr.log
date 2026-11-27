@@ -44,7 +44,10 @@ DEBUG ]: [Config::initConfigManager] [cfg] Regular config at /home/solyra/.confi
 DEBUG ]: [CCompositor::initManagers] Creating the Error Overlay!
 DEBUG ]: [CCompositor::initManagers] Creating the LayoutManager!
 DEBUG ]: [CCompositor::initManagers] Creating the TokenManager!
-DEBUG ]: [Config::Lua::CConfigManager::postConfigReload] Disabling stdout logs (debug.enable_stdout_logs = 0). Further logs will be written to /run/user/1001/hypr/11cbc6c577b84ffb1edf4df3fc5b6128c3ae6947_1795748621_1979201566/hyprland.log
+DEBUG ]: [Config::Lua::CConfigManager::postConfigReload] Disabling stdout logs (debug.enable_stdout_logs = 0). Further logs will be written to /run/user/1001/hypr/11cbc6c577b84ffb1edf4df3fc5b6128c3ae6947_1795749725_882670174/hyprland.log
 DEBUG ]: [CCompositor::initManagers] Creating the PointerManager!
 DEBUG ]: [CCompositor::initManagers] Creating the AsyncResourceGatherer!
+MESA-EGL: warning: egl: failed to create dri2 screen
+MESA-EGL: warning: egl: failed to create dri2 screen
+MESA-EGL: warning: NEEDS EXTENSION: falling back to kms_swrast
 [1;32mDEBUG [0mfrom start-hyprland ]: got an event from hyprland

@@ -2,8 +2,11 @@
 
 [32m  INFO[0m: Launching config: "/home/solyra/.config/quickshell/shell.qml"
 [32m  INFO[0m: Shell ID: "1f23d0f74c6cc23f920c90fb6c35d007" Path ID "1f23d0f74c6cc23f920c90fb6c35d007"
-[32m  INFO[0m: Saving logs to "/run/user/1001/quickshell/by-id/qe6i45pt/log.qslog"
+[32m  INFO[0m: Saving logs to "/run/user/1001/quickshell/by-id/getc55pt/log.qslog"
+MESA-EGL: warning: egl: failed to create dri2 screen
+MESA-EGL: warning: egl: failed to create dri2 screen
 [31m ERROR[0m: Failed to load configuration
-[31m ERROR[0m:   caused by @shell.qml[107:13]: Type Dock unavailable
-[31m ERROR[0m:   caused by @Dock.qml[112:17]: Type DockItem unavailable
-[31m ERROR[0m:   caused by @DockItem.qml[125:58]: Invalid property assignment: int expected
+[31m ERROR[0m:   caused by @shell.qml[132:5]: Type NotificationCenter unavailable
+[31m ERROR[0m:   caused by @NotificationCenter.qml[73:56]: Unexpected token `for'
+[31m ERROR[0m:   caused by @NotificationCenter.qml[73:61]: Unexpected token `const'
+[31m ERROR[0m:   caused by @NotificationCenter.qml[73:72]: Expected token `,'
