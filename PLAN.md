@@ -184,7 +184,7 @@ Ground rules for every step:
   screenshot, and limits are stated plainly.
 
 ### M0. Infrastructure (prerequisite)
-- [ ] 🟡 *Status: PKGBUILDs for solyra-term (the new zgx terminal), solyra-files and solyra-shell (`pkg/`); CI builds them with makepkg, reusing its warm-cache binaries (`solyra-packages` artifact); a green run with the new terminal is pending.* `pkg/` holds PKGBUILDs for every Solyra component; CI builds them in an
+- [x] ✅ *Status: done. PKGBUILDs for solyra-term (the zgx terminal app), solyra-files and solyra-shell (`pkg/`); CI builds all three with makepkg (green, 2026-11-27), reusing its warm-cache binaries, and uploads them as the `solyra-packages` artifact.* `pkg/` holds PKGBUILDs for every Solyra component; CI builds them in an
   `archlinux` container into a local pacman repo artifact.
 - [x] ✅ *Status: done and verified; the full scenario runs on Hyprland 0.57.2 and publishes 20+ shots plus logs to `docs/shots/vm/`.* `solyra-vm` workflow: install the repo into the VM, run the session,
   then a scenario script (e.g. `hyprctl dispatch exec`, `qs ipc call`) and
