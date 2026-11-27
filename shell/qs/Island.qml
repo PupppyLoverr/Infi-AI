@@ -35,7 +35,7 @@ PanelWindow {
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.namespace: "solyra-island"
     WlrLayershell.keyboardFocus: mode === "search" ? WlrKeyboardFocus.Exclusive
-        : (termField.activeFocus ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None)
+        : ((termField.activeFocus || noteField.activeFocus) ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None)
     mask: Region {
         Region { item: shape }
         Region { item: bubble }
@@ -163,19 +163,19 @@ PanelWindow {
     // search and the expanded tabs pull down past it.
     readonly property int barH: 30
     readonly property var dims: ({
-        idle:     { w: 112, h: 24, r: 12 },
-        compact:  { w: 238, h: 24, r: 12 },
-        hud:      { w: 280, h: 24, r: 12 },
+        idle:     { w: hoverIdle.hovered ? 124 : 116, h: 25, r: 12 },
+        compact:  { w: 242, h: 25, r: 12 },
+        hud:      { w: 284, h: 25, r: 12 },
         expanded: { w: 500, h: 200, r: 28 }
     })
-    // Exact Droppy notch proportions per mode: jewel-like compact media (380x164),
+    // Exact Droppy notch proportions per mode: jewel-like compact media (384x164),
     // sleek vertical lyrics drawer (356x320), wide 4-card clipboard (660x226).
-    readonly property var d: mode === "search" ? { w: 620, h: searchView.implicitHeight + 16, r: 28 }
+    readonly property var d: mode === "search" ? { w: 636, h: searchView.implicitHeight + 16, r: 26 }
         : mode === "expanded" && tab === "media" ? { w: mediaView.lyricsOpen ? 356 : 384, h: mediaView.lyricsOpen ? 320 : 164, r: 28 }
         : mode === "expanded" && tab === "clip" ? { w: 660, h: 226, r: 26 }
         : mode === "expanded" && tab === "shelf" ? { w: 520, h: 196, r: 28 }
         : mode === "expanded" && tab === "cal" ? { w: 480, h: 168, r: 28 }
-        : mode === "expanded" && tab === "tools" ? { w: 540, h: 236, r: 28 }
+        : mode === "expanded" && tab === "tools" ? { w: 540, h: 254, r: 28 }
         : dims[mode]
 
     Rectangle {
@@ -259,7 +259,8 @@ PanelWindow {
             ClippingRectangle {
                 visible: parent.act && parent.act.kind === "media"
                 x: 5; anchors.verticalCenter: parent.verticalCenter
-                width: 16; height: 16; radius: 4; color: "#333"
+                width: 17; height: 17; radius: 4; color: "#25252b"
+                Icon { visible: !win.player || !win.player.trackArtUrl; anchors.centerIn: parent; name: "music"; size: 11; color: "#ff7a45" }
                 Image { anchors.fill: parent; source: win.player ? win.player.trackArtUrl : ""; fillMode: Image.PreserveAspectCrop }
             }
             Icon {
@@ -320,8 +321,8 @@ PanelWindow {
             id: searchView
             model: search
             x: 16; y: 8
-            width: 620 - 32
-            opacity: win.mode === "search" && shape.width > 560 ? 1 : 0
+            width: 636 - 32
+            opacity: win.mode === "search" && shape.width > 580 ? 1 : 0
             visible: opacity > 0
             Behavior on opacity { NumberAnimation { duration: Theme.ms(160); easing.type: Easing.OutCubic } }
         }
@@ -404,11 +405,34 @@ PanelWindow {
                             }
                         }
                     }
+                    // Droppy Quick Note: persistent scratchpad saved to ~/.local/share/solyra/quicknote.txt
+                    Rectangle {
+                        width: parent.width; height: 32; radius: 10; color: Qt.rgba(1, 0.84, 0.35, 0.10)
+                        border.width: 1; border.color: Qt.rgba(1, 0.84, 0.35, 0.22)
+                        Row {
+                            anchors.fill: parent; anchors.leftMargin: 10; spacing: 8
+                            Icon { anchors.verticalCenter: parent.verticalCenter; name: "document"; size: 13; color: "#ffd60a" }
+                            TextField {
+                                id: noteField
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: parent.width - 34
+                                placeholderText: "Quick note…"
+                                color: "white"; placeholderTextColor: Qt.rgba(1, 1, 1, 0.42)
+                                font.family: Theme.font; font.pixelSize: 12
+                                background: null
+                                onEditingFinished: Quickshell.execDetached(["sh", "-c", "mkdir -p \"$HOME/.local/share/solyra\" && printf '%s' \"$1\" > \"$HOME/.local/share/solyra/quicknote.txt\"", "sh", text])
+                            }
+                        }
+                        FileView {
+                            path: Theme.home + "/.local/share/solyra/quicknote.txt"
+                            onLoaded: if (noteField.text === "") noteField.text = text()
+                        }
+                    }
                     Text {
                         id: termOut
-                        width: parent.width; height: 44
+                        width: parent.width; height: 28
                         color: Qt.rgba(1, 1, 1, 0.75); font.family: Theme.mono; font.pixelSize: 11
-                        elide: Text.ElideRight; wrapMode: Text.WrapAnywhere; maximumLineCount: 3
+                        elide: Text.ElideRight; wrapMode: Text.WrapAnywhere; maximumLineCount: 2
                     }
                     Process {
                         id: termProc
@@ -438,7 +462,8 @@ PanelWindow {
         readonly property var act: win.secondary
         ClippingRectangle {
             visible: bubble.act && bubble.act.kind === "media"
-            anchors.centerIn: parent; width: 16; height: 16; radius: 8; color: "#333"
+            anchors.centerIn: parent; width: 17; height: 17; radius: 8; color: "#25252b"
+            Icon { visible: !win.player || !win.player.trackArtUrl; anchors.centerIn: parent; name: "music"; size: 11; color: "#ff7a45" }
             Image { anchors.fill: parent; source: win.player ? win.player.trackArtUrl : ""; fillMode: Image.PreserveAspectCrop }
         }
         Icon {

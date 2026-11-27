@@ -114,6 +114,7 @@ PanelWindow {
                 DockItem {
                     required property var modelData
                     required property int index
+                    anchors.bottom: parent.bottom
                     item: modelData
                     dock: dockWin
                     centre: 10 + index * (dockWin.cell + dockWin.gap) + dockWin.cell / 2

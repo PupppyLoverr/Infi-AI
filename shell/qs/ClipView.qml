@@ -123,7 +123,7 @@ Item {
             readonly property color fg: isColor ? (brightSwatch ? "#16161a" : "#ffffff") : "#ffffff"
             readonly property color fgSub: isColor ? (brightSwatch ? Qt.rgba(0.08, 0.08, 0.1, 0.65) : Qt.rgba(1, 1, 1, 0.72)) : Qt.rgba(1, 1, 1, 0.48)
 
-            width: 152; height: ListView.view.height; radius: 15
+            width: 148; height: ListView.view.height; radius: 15
             color: isColor ? (v.history ? v.history.normalizeHex(modelData.text) : modelData.text)
                  : isVideo ? "#231a3d"
                  : "#111216"

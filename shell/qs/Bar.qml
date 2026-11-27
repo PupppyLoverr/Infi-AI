@@ -7,11 +7,12 @@ import Quickshell.Services.SystemTray
 import Quickshell.Services.UPower
 import Quickshell.Widgets
 
-// The menu bar: logo menu, the active app's name and menus, status items,
-// Control Center and the clock ("Thu Nov 26  11:40"). As in macOS 27 it is
-// fully see-through over the desktop (no fill, no divider); once a window is
-// open on this screen's workspace a glass strip and a hairline divider fade in
-// so the menus stay readable over it.
+// macOS 27 Golden Gate Menu Bar:
+// Fully see-through floating bar over the desktop with pill hover highlights,
+// fading into a crisp Liquid Glass strip + hairline divider when windows open.
+// Left: Solyra emblem, bold active app, File / Edit / View / Go / Window / Help
+// with shortcut hints. Right: tray, battery, Wi-Fi, Spotlight, authentic
+// Control Center toggle glyph, and clock (opens Notification Center).
 PanelWindow {
     id: bar
     property var screenModel
@@ -37,13 +38,22 @@ PanelWindow {
     readonly property bool windowsOpen: workspace ? workspace.toplevels.values.length > 0 : ToplevelManager.toplevels.values.length > 0
     readonly property bool solid: windowsOpen || Theme.reduceTransparency
 
+    // Subtle readability gradient when floating over bright galaxy/sky areas
+    Rectangle {
+        anchors.fill: parent
+        visible: !bar.solid
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.24) }
+            GradientStop { position: 1.0; color: "transparent" }
+        }
+    }
+
     Rectangle {
         anchors.fill: parent
         color: Theme.glassFill
-        opacity: bar.solid ? (Theme.reduceTransparency ? 1 : 0.55) : 0
+        opacity: bar.solid ? (Theme.reduceTransparency ? 1 : 0.56) : 0
         Behavior on opacity { NumberAnimation { duration: Theme.ms(220); easing.type: Easing.OutCubic } }
     }
-    // The divider: only over windows.
     Rectangle {
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
         height: 1
@@ -53,27 +63,94 @@ PanelWindow {
     }
 
     Row {
-        anchors { left: parent.left; leftMargin: 14; verticalCenter: parent.verticalCenter }
-        spacing: 20
-        MenuTitle { label: "◉"; bold: true; items: [["About Solyra", "about"], ["System Settings…", "settings"], ["-"], ["Lock Screen", "lock"], ["Log Out…", "logout"]]; shell: bar.shell }
-        MenuTitle { label: bar.appName; bold: true; items: [["Hide " + bar.appName, "hide"], ["Quit " + bar.appName, "close"]]; shell: bar.shell }
-        MenuTitle { label: "File"; items: [["New Window", "new"], ["Close Window", "close"]]; shell: bar.shell }
-        MenuTitle { label: "Edit"; items: [["Undo", "key:ctrl+z"], ["Cut", "key:ctrl+x"], ["Copy", "key:ctrl+c"], ["Paste", "key:ctrl+v"], ["Select All", "key:ctrl+a"]]; shell: bar.shell }
-        MenuTitle { label: "View"; items: [["Enter Full Screen", "fullscreen"], ["Mission Control", "overview"]]; shell: bar.shell }
-        MenuTitle { label: "Window"; items: [["Minimise", "minimize"], ["Zoom", "maximize"], ["Float / Tile", "float"], ["Snap Layouts…", "snap"], ["-"], ["Auto-arrange Windows", "arrange"]]; shell: bar.shell }
-        MenuTitle { label: "Help"; items: [["Keyboard Shortcuts", "help"]]; shell: bar.shell }
+        anchors { left: parent.left; leftMargin: 8; verticalCenter: parent.verticalCenter }
+        spacing: 2
+        MenuTitle {
+            label: "◉"; bold: true; shell: bar.shell
+            items: [
+                ["About Solyra", "about", ""],
+                ["System Settings…", "settings", "⌘,"],
+                ["-"],
+                ["Lock Screen", "lock", "⌃⌘Q"],
+                ["Log Out…", "logout", "⇧⌘Q"]
+            ]
+        }
+        MenuTitle {
+            label: bar.appName; bold: true; shell: bar.shell
+            items: [
+                ["Hide " + bar.appName, "hide", "⌘H"],
+                ["Quit " + bar.appName, "close", "⌘Q"]
+            ]
+        }
+        MenuTitle {
+            label: "File"; shell: bar.shell
+            items: [
+                ["New Window", "new", "⌘N"],
+                ["Close Window", "close", "⌘W"]
+            ]
+        }
+        MenuTitle {
+            label: "Edit"; shell: bar.shell
+            items: [
+                ["Undo", "key:ctrl+z", "⌘Z"],
+                ["-"],
+                ["Cut", "key:ctrl+x", "⌘X"],
+                ["Copy", "key:ctrl+c", "⌘C"],
+                ["Paste", "key:ctrl+v", "⌘V"],
+                ["Select All", "key:ctrl+a", "⌘A"]
+            ]
+        }
+        MenuTitle {
+            label: "View"; shell: bar.shell
+            items: [
+                ["Enter Full Screen", "fullscreen", "⌃⌘F"],
+                ["Mission Control", "overview", "⌃↑"]
+            ]
+        }
+        MenuTitle {
+            label: "Go"; shell: bar.shell
+            items: [
+                ["Home", "go:home", "⇧⌘H"],
+                ["Documents", "go:docs", "⇧⌘O"],
+                ["Downloads", "go:downloads", "⌥⌘L"],
+                ["Applications", "spotlight", "⌘Space"]
+            ]
+        }
+        MenuTitle {
+            label: "Window"; shell: bar.shell
+            items: [
+                ["Minimise", "minimize", "⌘M"],
+                ["Zoom", "maximize", ""],
+                ["Float / Tile", "float", ""],
+                ["Snap Layouts…", "snap", "⌘Z"],
+                ["-"],
+                ["Auto-arrange Windows", "arrange", ""]
+            ]
+        }
+        MenuTitle {
+            label: "Help"; shell: bar.shell
+            items: [
+                ["Keyboard Shortcuts", "help", "⌘?"]
+            ]
+        }
     }
 
     Row {
-        anchors { right: parent.right; rightMargin: 14; verticalCenter: parent.verticalCenter }
-        spacing: 14
+        anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
+        spacing: 4
         Repeater {
             model: SystemTray.items
-            IconImage {
+            Rectangle {
                 required property SystemTrayItem modelData
+                width: 24; height: 22; radius: 6
                 anchors.verticalCenter: parent.verticalCenter
-                implicitSize: 16
-                source: modelData.icon
+                color: trayH.hovered ? Qt.rgba(1, 1, 1, 0.14) : "transparent"
+                IconImage {
+                    anchors.centerIn: parent
+                    implicitSize: 15
+                    source: modelData.icon
+                }
+                HoverHandler { id: trayH }
                 TapHandler { onTapped: modelData.activate() }
                 TapHandler { acceptedButtons: Qt.RightButton; onTapped: if (modelData.hasMenu) modelData.display(bar, x, 30) }
             }
@@ -82,25 +159,47 @@ PanelWindow {
             visible: UPower.displayDevice.isLaptopBattery
             spacing: 4
             anchors.verticalCenter: parent.verticalCenter
-            Text { text: Math.round(UPower.displayDevice.percentage * (UPower.displayDevice.percentage > 1 ? 1 : 100)) + "%"; color: Theme.ink; font.family: Theme.font; font.pixelSize: 12 }
-            Icon { name: "battery"; size: 18; color: Theme.ink }
+            leftPadding: 4; rightPadding: 4
+            Text { text: Math.round(UPower.displayDevice.percentage * (UPower.displayDevice.percentage > 1 ? 1 : 100)) + "%"; color: Theme.ink; font.family: Theme.font; font.pixelSize: 12; font.weight: Font.Medium }
+            Icon { name: "battery"; size: 17; color: Theme.ink }
         }
-        Icon { anchors.verticalCenter: parent.verticalCenter; name: "wifi"; size: 16; color: Theme.ink }
-        Icon {
-            anchors.verticalCenter: parent.verticalCenter; name: "search"; size: 16; color: Theme.ink
-            TapHandler { onTapped: bar.shell.spotlight() }
-        }
-        Icon {
-            anchors.verticalCenter: parent.verticalCenter; name: "settings"; size: 16; color: Theme.ink
-            TapHandler { onTapped: bar.shell.control() }
-        }
-        Text {
+        Rectangle {
+            width: 26; height: 22; radius: 6
             anchors.verticalCenter: parent.verticalCenter
-            color: Theme.ink; font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Medium
-            text: Qt.formatDateTime(clock.date, "ddd MMM d  HH:mm")
-            SystemClock { id: clock; precision: SystemClock.Minutes }
-            // The clock opens the Notification Center, as on macOS.
-            TapHandler { onTapped: bar.shell.notificationCenter() }
+            color: wifiH.hovered ? Qt.rgba(1, 1, 1, 0.14) : "transparent"
+            Icon { anchors.centerIn: parent; name: "wifi"; size: 15; color: Theme.ink }
+            HoverHandler { id: wifiH }
+            TapHandler { onTapped: if (bar.shell) bar.shell.control() }
+        }
+        Rectangle {
+            width: 26; height: 22; radius: 6
+            anchors.verticalCenter: parent.verticalCenter
+            color: searchH.hovered ? Qt.rgba(1, 1, 1, 0.14) : "transparent"
+            Icon { anchors.centerIn: parent; name: "search"; size: 15; color: Theme.ink }
+            HoverHandler { id: searchH }
+            TapHandler { onTapped: if (bar.shell) bar.shell.spotlight() }
+        }
+        Rectangle {
+            width: 28; height: 22; radius: 6
+            anchors.verticalCenter: parent.verticalCenter
+            color: ccH.hovered ? Qt.rgba(1, 1, 1, 0.14) : "transparent"
+            Icon { anchors.centerIn: parent; name: "controlcenter"; size: 16; color: Theme.ink }
+            HoverHandler { id: ccH }
+            TapHandler { onTapped: if (bar.shell) bar.shell.control() }
+        }
+        Rectangle {
+            height: 22; width: clkTxt.implicitWidth + 14; radius: 6
+            anchors.verticalCenter: parent.verticalCenter
+            color: clkH.hovered ? Qt.rgba(1, 1, 1, 0.14) : "transparent"
+            Text {
+                id: clkTxt
+                anchors.centerIn: parent
+                color: Theme.ink; font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Medium
+                text: Qt.formatDateTime(clock.date, "ddd MMM d  HH:mm")
+                SystemClock { id: clock; precision: SystemClock.Minutes }
+            }
+            HoverHandler { id: clkH }
+            TapHandler { onTapped: if (bar.shell) bar.shell.notificationCenter() }
         }
     }
 }

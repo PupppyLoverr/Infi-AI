@@ -91,7 +91,7 @@ PanelWindow {
                     Toggle { anchors.fill: parent; anchors.margins: 12; icon: "stop"; title: "Record Screen"; sub: cc.shell && cc.shell.recording ? "Recording · tap to stop" : "To ~/Videos"; on: cc.shell && cc.shell.recording
                         onClicked: { cc.open = false; cc.shell.toggleRecording() } } }
             }
-            Slider2 { width: 348; label: "Display"; icon: "sun"; value: cc.bright < 0 ? -1 : cc.bright / 100
+            Slider2 { visible: cc.bright >= 0; width: 348; label: "Display"; icon: "sun"; value: cc.bright / 100
                 onMoved: v => { cc.bright = v * 100; Quickshell.execDetached(["brightnessctl", "-q", "set", Math.round(v * 100) + "%"]) } }
             Slider2 { width: 348; label: "Sound"; icon: cc.sink && cc.sink.audio.muted ? "volumeMute" : "volume"; value: cc.sink ? cc.sink.audio.volume : -1
                 onMoved: v => { if (cc.sink) cc.sink.audio.volume = v } }

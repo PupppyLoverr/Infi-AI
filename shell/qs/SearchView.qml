@@ -48,11 +48,13 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             spacing: 4
             Repeater {
-                model: ["Apps", "Files", "Actions", "Ask"]
+                model: ["Apps", "Files", "Clipboard", "Actions", "Ask"]
                 Rectangle {
                     required property string modelData
-                    height: 24; width: lbl.implicitWidth + 18; radius: 12
+                    height: 24; width: lbl.implicitWidth + 16; radius: 12
                     color: v.model.filter === modelData ? Theme.accent : v.fill
+                    border.width: 1
+                    border.color: v.model.filter === modelData ? Qt.rgba(1, 1, 1, 0.24) : Qt.rgba(1, 1, 1, 0.08)
                     Text { id: lbl; anchors.centerIn: parent; text: modelData; color: v.model.filter === modelData ? "white" : v.ink2; font.family: Theme.font; font.pixelSize: 11; font.weight: Font.DemiBold }
                     TapHandler { onTapped: { v.model.filter = v.model.filter === modelData ? "All" : modelData; field.forceActiveFocus() } }
                 }

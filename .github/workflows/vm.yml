@@ -6,8 +6,11 @@ on:
   workflow_dispatch:
   push:
     branches: [claude/charming-goodall-iuca3o]
-    paths: ['shell/qs/**', 'shell/hypr/**', 'tools/vm/**', 'apps/terminal/**', 'apps/solyra-files/**', 'apps/solyra-term/**', 'apps/solyra-ui/**', 'pkg/**', '.github/workflows/vm.yml']
-concurrency: { group: solyra-vm, cancel-in-progress: false }
+    paths: ['shell/qs/**', 'shell/hypr/**', 'tools/vm/**', 'apps/terminal/**', 'tools/qmlcheck.sh', 'apps/solyra-files/**', 'apps/solyra-term/**', 'apps/solyra-ui/**', 'pkg/**', '.github/workflows/vm.yml']
+# One queue per branch: another branch's runs never cancel this one's.
+concurrency:
+  group: solyra-vm-${{ github.ref }}
+  cancel-in-progress: false
 permissions:
   contents: write
 jobs:
@@ -19,6 +22,12 @@ jobs:
       - name: Toolchain
         run: pacman -Syu --noconfirm --needed base-devel rust git pkgconf cmake clang dbus wayland libxkbcommon fontconfig >/dev/null
       - uses: actions/checkout@v4
+      # Seconds, not a 20-minute VM run: every shell QML file must parse
+      # (Quickshell refuses the whole shell on one syntax error).
+      - name: QML syntax gate
+        run: |
+          pacman -S --noconfirm --needed qt6-declarative >/dev/null
+          PATH=/usr/lib/qt6/bin:$PATH tools/qmlcheck.sh
       # Warm builds: the cargo registry, git checkouts and both target
       # directories survive between runs. An exact key per lockfile, and a
       # prefix fallback so a changed lockfile still starts from the last

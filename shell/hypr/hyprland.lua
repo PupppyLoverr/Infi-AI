@@ -6,7 +6,9 @@ local home = os.getenv("HOME") or ""
 
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 
+hl.env("XCURSOR_THEME", "Adwaita")
 hl.env("XCURSOR_SIZE", "24")
+hl.env("HYPRCURSOR_THEME", "Adwaita")
 hl.env("HYPRCURSOR_SIZE", "24")
 hl.env("QT_QPA_PLATFORM", "wayland")
 hl.env("ELECTRON_OZONE_PLATFORM_HINT", "auto")

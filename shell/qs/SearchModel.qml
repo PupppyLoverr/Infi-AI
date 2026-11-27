@@ -11,7 +11,7 @@ QtObject {
     id: m
     property var shell
     property string query: ""
-    property string filter: "All"     // All | Apps | Files | Actions | Ask
+    property string filter: "All"     // All | Apps | Files | Clipboard | Actions | Ask
     property int sel: 0
     property var files: []
     property var clips: []                // clipboard history, newest first
@@ -22,7 +22,7 @@ QtObject {
 
     function reset(q) { query = q || ""; filter = "All"; sel = 0; answer = ""; asking = false }
     function stop() { m.askProc.running = false }
-    function cycleFilter() { const f = ["All", "Apps", "Files", "Actions", "Ask"]; filter = f[(f.indexOf(filter) + 1) % f.length] }
+    function cycleFilter() { const f = ["All", "Apps", "Files", "Clipboard", "Actions", "Ask"]; filter = f[(f.indexOf(filter) + 1) % f.length] }
     function move(d) { sel = Math.max(0, Math.min(results.length - 1, sel + d)) }
     // Return: Ask asks; anything else runs and the island closes.
     function activate(i) {
@@ -40,6 +40,15 @@ QtObject {
     }
     function score(q, s) { s = (s || "").toLowerCase(); if (s.startsWith(q)) return 3; if (s.split(/[\s\-_.]/).some(w => w.startsWith(q))) return 2; return s.indexOf(q) >= 0 ? 1 : 0 }
 
+    // System plumbing entries hidden from macOS 27 Spotlight
+    readonly property var hidden: ({
+        "qv4l2": true, "qvidcap": true, "footclient": true, "foot-server": true,
+        "avahi-discover": true, "bssh": true, "bvnc": true, "lstopo": true,
+        "org.freedesktop.IBus.Setup": true, "xgps": true, "xgpsspeed": true,
+        "assistant": true, "designer": true, "linguist": true, "qdbusviewer": true,
+        "cmake-gui": true, "electron36": true, "jconsole-java-openjdk": true,
+        "jshell-java-openjdk": true, "nvtop": true, "htop": true, "btop": true, "vim": true
+    })
     readonly property var actions: [
         { title: "Lock Screen", sub: "Lock this session", icon: "lock", run: () => m.shell.lock() },
         { title: "Control Center", sub: "Wi-Fi, sound, display, glass", icon: "settings", run: () => m.shell.control() },
@@ -58,15 +67,18 @@ QtObject {
         const c = calc(query)
         if (c !== null && filter === "All") out.push({ group: "Calculator", title: c, sub: query.trim() + " =", icon: "calculator", run: () => Quickshell.execDetached(["wl-copy", c]) })
         if (want("Apps")) {
-            let apps = DesktopEntries.applications.values.filter(e => !e.noDisplay)
+            let apps = DesktopEntries.applications.values.filter(e => !e.noDisplay && !m.hidden[e.id])
             if (q) apps = apps.map(e => [Math.max(score(q, e.name) * 2, score(q, e.genericName), score(q, e.comment)), e]).filter(x => x[0] > 0).sort((a, b) => b[0] - a[0]).map(x => x[1])
             for (const e of apps.slice(0, filter === "Apps" ? 14 : (q ? 6 : 6)))
                 out.push({ group: "Applications", title: e.name, sub: e.comment || e.genericName || "Application", entry: e, run: () => e.execute() })
         }
         if (want("Files")) for (const f of files.slice(0, filter === "Files" ? 14 : 5))
             out.push({ group: "Files", title: f.split("/").pop(), sub: f, icon: "document", run: () => Qt.openUrlExternally("file://" + f) })
-        if (q && filter === "All") for (const t of clips.filter(t => t.toLowerCase().indexOf(q) >= 0).slice(0, 3))
-            out.push({ group: "Clipboard", title: t.replace(/\s+/g, " ").slice(0, 120), sub: "Copy again", icon: "clipboard", run: () => Quickshell.execDetached(["wl-copy", t]) })
+        if ((q && filter === "All") || filter === "Clipboard") {
+            const matched = q ? clips.filter(t => t.toLowerCase().indexOf(q) >= 0) : clips
+            for (const t of matched.slice(0, filter === "Clipboard" ? 12 : 3))
+                out.push({ group: "Clipboard", title: t.replace(/\s+/g, " ").slice(0, 120), sub: "Press Return to copy again", icon: "clipboard", run: () => Quickshell.execDetached(["wl-copy", t]) })
+        }
         if (want("Actions")) for (const a of actions.filter(a => !q || score(q, a.title) > 0 || score(q, a.sub) > 0).slice(0, filter === "Actions" ? 10 : (q ? 3 : 0)))
             out.push({ group: "Actions", title: a.title, sub: a.sub, icon: a.icon, run: a.run })
         if (q && filter === "All") out.push({ group: "Ask", title: "Ask " + (provider === "claude" ? "Claude" : "ChatGPT") + ": " + query.trim(), sub: "Uses your signed-in " + (provider === "claude" ? "Claude" : "ChatGPT") + " account", icon: "agent", run: () => m.ask() })
