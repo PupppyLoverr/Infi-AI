@@ -2,7 +2,7 @@
 
 [32m  INFO[0m: Launching config: "/home/solyra/.config/quickshell/shell.qml"
 [32m  INFO[0m: Shell ID: "1f23d0f74c6cc23f920c90fb6c35d007" Path ID "1f23d0f74c6cc23f920c90fb6c35d007"
-[32m  INFO[0m: Saving logs to "/run/user/1001/quickshell/by-id/iens25pt/log.qslog"
+[32m  INFO[0m: Saving logs to "/run/user/1001/quickshell/by-id/lepg35pt/log.qslog"
 MESA-EGL: warning: egl: failed to create dri2 screen
 MESA-EGL: warning: egl: failed to create dri2 screen
 [31m ERROR[0m: Failed to load configuration
