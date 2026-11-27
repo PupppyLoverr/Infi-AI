@@ -3,19 +3,21 @@ import Quickshell
 import Quickshell.Services.Mpris
 import Quickshell.Widgets
 
-// Exact getdroppy.app Notch Media Player & Live Synced Lyrics Drawer on pure
-// OLED black: compact 48x48 art, bold title + clickable white [L] badge, coral
-// equalizer, seekable scrubber, 5-button Droppy transport row (Queue/Shuffle,
-// Prev, Play/Pause, Next, AirPlay/Repeat), and sleek vertical synced lyrics
-// drawer with circular expand-to-ambient-lock button.
+// Exact getdroppy.app Notch Media Player + Live Synced Lyrics Drawer + Playing Next Queue:
+// - 44x44 rounded art, bold title + solid white [L] lyrics badge, coral 6-bar EQ
+// - Seekable rounded scrubber (`0:04` — track + thumb — `-3:20`)
+// - 5-button Droppy transport row: Queue (highlighted rounded square when open),
+//   Prev, Play/Pause, Next, Output Device (cycles PipeWire audio sinks)
+// - Mutually exclusive Live Synced Lyrics Drawer ([L]) & Playing Next Queue Drawer (≡)
 Item {
     id: m
     property MprisPlayer player
     property var lyrics
+    property var shell
     property bool lyricsOpen: false
-    property bool shuffleOn: false
-    property string loopMode: "None"
+    property bool queueOpen: false
     signal expandLock()
+    signal toast(string title, string detail)
 
     function fmt(s) {
         if (!(s >= 0)) return "--:--"
@@ -23,18 +25,31 @@ Item {
         return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0")
     }
 
-    function toggleShuffle() {
-        shuffleOn = !shuffleOn
-        Quickshell.execDetached(["playerctl", "shuffle", shuffleOn ? "On" : "Off"])
+    function toggleLyrics() {
+        lyricsOpen = !lyricsOpen
+        if (lyricsOpen) queueOpen = false
     }
 
-    function cycleLoop() {
-        loopMode = loopMode === "None" ? "Playlist" : (loopMode === "Playlist" ? "Track" : "None")
-        Quickshell.execDetached(["playerctl", "loop", loopMode])
+    function toggleQueue() {
+        queueOpen = !queueOpen
+        if (queueOpen) lyricsOpen = false
+    }
+
+    function cycleOutput() {
+        Quickshell.execDetached([
+            "sh", "-c",
+            "sinks=$(pactl list short sinks 2>/dev/null | awk '{print $2}'); " +
+            "cur=$(pactl get-default-sink 2>/dev/null); " +
+            "next=$(printf '%s\\n' \"$sinks\" | awk -v c=\"$cur\" 'f{print;exit} $0==c{f=1}'); " +
+            "[ -z \"$next\" ] && next=$(printf '%s\\n' \"$sinks\" | head -1); " +
+            "[ -n \"$next\" ] && pactl set-default-sink \"$next\""
+        ])
+        m.toast("Audio Output", "Switched output device")
     }
 
     readonly property int lyricCur: m.player && m.lyrics ? m.lyrics.indexAt(m.player.position) : -1
     readonly property var lyricLines: m.lyrics ? m.lyrics.lines : []
+    readonly property var queueItems: m.shell ? m.shell.mediaQueue : []
     onLyricsOpenChanged: if (lyricsOpen && m.lyrics) m.lyrics.refresh()
 
     Timer {
@@ -58,12 +73,12 @@ Item {
         anchors.fill: parent
         spacing: 11
 
-        // Header: 48x48 album art, title + [L] badge, artist, warm coral equaliser.
+        // Header: 44x44 album art, bold title + crisp white [L] badge, artist, coral 6-bar EQ
         Row {
             spacing: 12
             width: parent.width
             ClippingRectangle {
-                width: 48; height: 48; radius: 11
+                width: 44; height: 44; radius: 10
                 color: "#1a1a22"
                 Rectangle {
                     anchors.fill: parent
@@ -81,14 +96,14 @@ Item {
                 }
             }
             Column {
-                width: parent.width - 48 - 12 - 36
+                width: parent.width - 44 - 12 - 36
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 2
                 Row {
                     width: parent.width
                     spacing: 6
                     Text {
-                        width: Math.min(implicitWidth, parent.width - 26)
+                        width: Math.min(implicitWidth, parent.width - 24)
                         elide: Text.ElideRight
                         text: m.player ? (m.player.trackTitle || "Unknown title") : ""
                         color: "white"
@@ -96,12 +111,11 @@ Item {
                         font.pixelSize: 15
                         font.weight: Font.Bold
                     }
-                    // Droppy signature white [L] badge toggling synced lyrics
+                    // Droppy signature solid white [L] badge toggling synced lyrics
                     Rectangle {
-                        width: 19; height: 17; radius: 4
+                        width: 18; height: 17; radius: 4
                         anchors.verticalCenter: parent.verticalCenter
-                        color: m.lyricsOpen ? "white" : Qt.rgba(1, 1, 1, 0.85)
-                        opacity: m.lyricsOpen ? 1.0 : 0.72
+                        color: m.lyricsOpen ? "#ffffff" : Qt.rgba(1, 1, 1, 0.88)
                         Text {
                             anchors.centerIn: parent
                             text: "L"
@@ -110,14 +124,14 @@ Item {
                             font.pixelSize: 10
                             font.weight: Font.Bold
                         }
-                        TapHandler { onTapped: m.lyricsOpen = !m.lyricsOpen }
+                        TapHandler { onTapped: m.toggleLyrics() }
                     }
                 }
                 Text {
                     width: parent.width
                     elide: Text.ElideRight
                     text: m.player ? (m.player.trackArtist || m.player.identity) : ""
-                    color: Qt.rgba(1, 1, 1, 0.56)
+                    color: Qt.rgba(1, 1, 1, 0.58)
                     font.family: Theme.font
                     font.pixelSize: 12
                 }
@@ -125,18 +139,18 @@ Item {
             Equaliser {
                 anchors.verticalCenter: parent.verticalCenter
                 active: m.player && m.player.isPlaying
-                tint: "#ff7a45"
+                tint: "#d95b63"
             }
         }
 
-        // Scrubber row: elapsed, smooth white progress bar + thumb, remaining.
+        // Scrubber row: elapsed, smooth rounded bar + thumb, remaining
         Row {
             width: parent.width
             spacing: 8
             Text {
                 width: 30
                 text: m.fmt(m.player ? m.player.position : -1)
-                color: Qt.rgba(1, 1, 1, 0.50)
+                color: Qt.rgba(1, 1, 1, 0.52)
                 font.family: Theme.font
                 font.pixelSize: 10
                 font.features: { "tnum": 1 }
@@ -148,10 +162,10 @@ Item {
                 readonly property real frac: m.player && m.player.length > 0 ? Math.min(1, Math.max(0, m.player.position / m.player.length)) : 0
                 Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width; height: 5; radius: 2.5
-                    color: Qt.rgba(1, 1, 1, 0.22)
+                    width: parent.width; height: 6; radius: 3
+                    color: Qt.rgba(1, 1, 1, 0.20)
                     Rectangle {
-                        height: parent.height; radius: 2.5; color: Qt.rgba(1, 1, 1, 0.88)
+                        height: parent.height; radius: 3; color: Qt.rgba(1, 1, 1, 0.82)
                         width: parent.width * track.frac
                     }
                 }
@@ -172,22 +186,28 @@ Item {
                 width: 32
                 horizontalAlignment: Text.AlignRight
                 text: m.player && m.player.length > 0 ? "-" + m.fmt(Math.max(0, m.player.length - m.player.position)) : "--:--"
-                color: Qt.rgba(1, 1, 1, 0.50)
+                color: Qt.rgba(1, 1, 1, 0.52)
                 font.family: Theme.font
                 font.pixelSize: 10
                 font.features: { "tnum": 1 }
             }
         }
 
-        // Droppy 5-button transport row: Queue/Shuffle, Prev, Play/Pause, Next, Output/Repeat
+        // Droppy 5-button transport row: Queue (rounded highlight box when active), Prev, Play/Pause, Next, Output Device
         Item {
             width: parent.width
             height: 36
-            Icon {
-                anchors.left: parent.left; anchors.leftMargin: 6; anchors.verticalCenter: parent.verticalCenter
-                name: m.lyricsOpen ? "queue" : "shuffle"; size: 17
-                color: m.shuffleOn ? Theme.accent : Qt.rgba(1, 1, 1, 0.56)
-                TapHandler { onTapped: m.toggleShuffle() }
+            Rectangle {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                width: 38; height: 32; radius: 10
+                color: m.queueOpen ? Qt.rgba(1, 1, 1, 0.14) : "transparent"
+                Icon {
+                    anchors.centerIn: parent
+                    name: "queue"; size: 18
+                    color: m.queueOpen ? "white" : Qt.rgba(1, 1, 1, 0.66)
+                }
+                TapHandler { onTapped: m.toggleQueue() }
             }
             Row {
                 anchors.centerIn: parent
@@ -209,19 +229,25 @@ Item {
                     TapHandler { onTapped: if (m.player && m.player.canGoNext) m.player.next() }
                 }
             }
-            Icon {
-                anchors.right: parent.right; anchors.rightMargin: 6; anchors.verticalCenter: parent.verticalCenter
-                name: m.loopMode !== "None" ? "repeat" : "airplay"; size: 18
-                color: m.loopMode !== "None" ? Theme.accent : Qt.rgba(1, 1, 1, 0.62)
-                TapHandler { onTapped: m.cycleLoop() }
+            Rectangle {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                width: 38; height: 32; radius: 10
+                color: "transparent"
+                Icon {
+                    anchors.centerIn: parent
+                    name: "airpods"; size: 19
+                    color: Qt.rgba(1, 1, 1, 0.72)
+                }
+                TapHandler { onTapped: m.cycleOutput() }
             }
         }
 
-        // Droppy Live Synced Lyrics Drawer on pure pitch black (exact parity!)
+        // Droppy Live Synced Lyrics Drawer ([L])
         Item {
             visible: m.lyricsOpen
             width: parent.width
-            height: 140
+            height: 146
             clip: true
 
             Text {
@@ -269,15 +295,74 @@ Item {
                 }
             }
 
-            // Bottom-right circular expand-to-ambient-lock button (exact Droppy match)
             Rectangle {
-                id: expandBtn
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 width: 26; height: 26; radius: 13
                 color: Qt.rgba(1, 1, 1, 0.14)
                 Icon { anchors.centerIn: parent; name: "expand"; size: 13; color: Qt.rgba(1, 1, 1, 0.85) }
                 TapHandler { onTapped: m.expandLock() }
+            }
+        }
+
+        // Droppy Playing Next Queue Drawer (exact match to 17_droppy_notch_playing_next_queue.png!)
+        Column {
+            visible: m.queueOpen
+            width: parent.width
+            spacing: 10
+
+            Rectangle {
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: 72; height: 1; color: Qt.rgba(1, 1, 1, 0.12)
+            }
+
+            Text {
+                text: "Playing Next"
+                color: Qt.rgba(1, 1, 1, 0.56)
+                font.family: Theme.font; font.pixelSize: 12; font.weight: Font.Medium
+            }
+
+            Column {
+                width: parent.width
+                spacing: 8
+                Repeater {
+                    model: m.queueItems.slice(0, 4)
+                    Item {
+                        required property var modelData
+                        required property int index
+                        width: parent.width
+                        height: 40
+                        Row {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.rightMargin: 28
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 11
+                            Rectangle {
+                                width: 36; height: 36; radius: 8
+                                gradient: Gradient {
+                                    GradientStop { position: 0; color: modelData.c1 || "#2563eb" }
+                                    GradientStop { position: 1; color: modelData.c2 || "#06b6d4" }
+                                }
+                                Icon { anchors.centerIn: parent; name: "music"; size: 15; color: Qt.rgba(1, 1, 1, 0.88) }
+                            }
+                            Column {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: parent.width - 48
+                                spacing: 1
+                                Text { width: parent.width; elide: Text.ElideRight; text: modelData.title; color: "white"; font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Bold }
+                                Text { width: parent.width; elide: Text.ElideRight; text: modelData.artist; color: Qt.rgba(1, 1, 1, 0.52); font.family: Theme.font; font.pixelSize: 11 }
+                            }
+                        }
+                        Icon {
+                            visible: index > 0
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            name: "list"; size: 15; color: Qt.rgba(1, 1, 1, 0.42)
+                        }
+                        TapHandler { onTapped: if (m.shell) m.shell.playQueueItem(index) }
+                    }
+                }
             }
         }
     }

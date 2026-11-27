@@ -34,6 +34,10 @@ PanelWindow {
             note.closed.connect(() => { n.drop(note); if (n.shell) n.shell.forget(note) })
             if (n.shell && n.shell.dnd && note.urgency !== NotificationUrgency.Critical) return
             n.popups = [note].concat(n.popups).slice(0, n.maxBanners)
+            // Forward messaging / replyable notifications into the Dynamic Island for inline quick-reply
+            if (n.shell && /^(messages|signal|telegram|discord|slack|element|whatsapp|thunderbird|mail)/i.test(note.appName || "")) {
+                n.shell.triggerReplyBanner(note.summary || note.appName, note.body || "", note.appName || "Messages")
+            }
         }
     }
     Column {

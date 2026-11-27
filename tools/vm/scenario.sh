@@ -1,6 +1,7 @@
 #!/bin/bash
-# Runs inside the Hyprland session: open every surface, screenshot it to the
-# host, then measure idle RAM 5 minutes after login and report.
+# Runs inside the Hyprland session: exercises EVERY macOS 27 Golden Gate &
+# Droppy Dynamic Island / Lock Screen surface, captures screenshots to the
+# host, and measures idle RAM after login.
 H=http://10.0.2.2:8088
 T0=$(date +%s)
 up() { curl -fsS -T "$1" "$H/$(basename "$1")" >/dev/null 2>&1; }
@@ -8,27 +9,72 @@ shot() { sleep "${2:-1.2}"; grim "/tmp/$1.png" && up "/tmp/$1.png"; echo "shot $
 q() { qs ipc call shell "$@"; }
 sleep 14
 shot 01-desktop-idle-notch 0
+
+# Start real audio stream via mpv so Media, Audio Mixer, and Live Activities have live MPRIS & PipeWire streams
 mpv --no-video --idle=no --loop=inf --force-media-title="Harbour Lights" "av://lavfi:sine=frequency=220" >/dev/null 2>&1 &
 sleep 3; shot 02-notch-live-activity 0
 q island media; shot 03-island-media
-for t in "Launch review moved to 10:00. Same room." "https://github.com/PupppyLoverr/Infi-AI" "#FF9F43" "showcase-clip.mp4"; do printf '%s' "$t" | wl-copy; sleep 1.4; done
+q island queue; shot 03b-island-media-queue 1.5
+
+# Rich Clipboard Manager (Text, Link, Color #FF9F43, Video) + persistence check
+for t in "Launch review moved to 10:00. Same room." "https://getdroppy.app/blog" "#FF9F43" "showcase-clip.mp4"; do printf '%s' "$t" | wl-copy; sleep 1.4; done
 q island clip; shot 04-island-clipboard 1.5
 [ -f "$HOME/.local/share/solyra/clipboard.json" ] && cp "$HOME/.local/share/solyra/clipboard.json" /tmp/clipboard-persisted.json && up /tmp/clipboard-persisted.json
-q island shelf; shot 05-island-shelf
-q island cal; shot 06a-island-calendar
-q island face; shot 06b-island-notchface 2
-q island tools; shot 06-island-tools
-q island close; sleep 0.8
-q hud volume 0.62; shot 07-hud-volume 0.5
-sleep 2; touch "$HOME/Downloads/report.pdf"; q island shelf; shot 07b-tracked-downloads-on-shelf
-q island close; sleep 1
+
+# Populate real rich files in ~/Downloads so File Tray shows folder, real galaxy image with dims, PDF, and live markdown preview!
+mkdir -p "$HOME/Downloads/Brand_Assets"
+touch "$HOME/Downloads/Brand_Assets/logo.svg" "$HOME/Downloads/Brand_Assets/palette.json"
+cp "$HOME/.config/solyra/wallpaper.png" "$HOME/Downloads/Coast.png" 2>/dev/null || true
+printf '%%PDF-1.4\n%% Droppy Keynote Deck sample\n1 0 obj << /Type /Catalog >> endobj\n' > "$HOME/Downloads/Keynote_Deck.pdf"
+dd if=/dev/zero bs=1024 count=64 2>/dev/null >> "$HOME/Downloads/Keynote_Deck.pdf"
+printf '# Launch Notes\n- Liquid Glass optics verified\n- 3-mode Lock Screen live\n- File Tray compression ready\n' > "$HOME/Downloads/Notes.md"
+q shelfAdd "$HOME/Downloads/Brand_Assets/"
+q shelfAdd "$HOME/Downloads/Coast.png"
+q shelfAdd "$HOME/Downloads/Keynote_Deck.pdf"
+q shelfAdd "$HOME/Downloads/Notes.md"
 sleep 2
-# Two live activities at once: the timer rides in the island, the music
-# splits off into its own bubble.
-q timer 300; shot 07c-live-activities 2.0
-q timer 0; sleep 0.8
-q record; shot 07d-recording-activity 3.0
-q record; sleep 1.5
+q island shelf; sleep 1.4
+q shelfSelect; shot 05-island-shelf 1.5
+q shelfCompress; shot 05b-island-shelf-compressed-toast 2.0
+
+# Two-Column Calendar Glance (frosted dark-to-glass fade + events + month grid)
+q island cal; shot 06a-island-calendar 1.4
+
+# 3-Column Multi-Widget Dashboard & Widget Customizer Mode
+q island widgets; shot 06c-island-widgets-3col 1.6
+q island customize; shot 06d-island-widgets-customizer 1.4
+
+# Specialized Droppy Widgets: Pomodoro Tick Dial, Storage Cleaner (Dot-Matrix LED), Per-App Audio Mixer, AI Usage Rings
+q island pomodoro; shot 06e-island-pomodoro 1.4
+q island cleaner; shot 06f-island-storage-cleaner 2.0
+q island mixer; shot 06g-island-audio-mixer 1.6
+q island usage; shot 06h-island-ai-usage 1.4
+
+# Notchface & Tools
+q island face; shot 06b-island-notchface 1.6
+q island tools; shot 06-island-tools 1.2
+q island close; sleep 0.8
+
+# Slim Volume HUD + Concave-Ear AirPods Pro Connected Battery Ring HUD (80%)
+q hud volume 0.62; shot 07-hud-volume 0.5
+sleep 2.4
+q hudLabel bluetooth 80 "AirPods Pro"; shot 07e-hud-airpods-battery-ring 0.6
+sleep 2.6
+
+# Three Things At Once: Tri-Island Live Activities (Left Calendar Ring + Center Coding Agent Spinner + Right Focus Timer Ring) + 2-Row Hover Peek
+q triActivity true; shot 07c-tri-island-three-activities 1.6
+q hoverPeek true; shot 07f-tri-island-hover-peek 1.2
+q hoverPeek false; q triActivity false; sleep 0.8
+
+# Reply from the Island (inline quick-reply directly inside the notch)
+q reply "Alex Rivera" "Ready for the launch review in 5 mins?"; shot 07g-reply-from-island 1.4
+q island close; sleep 0.6
+
+# Screen Recording live activity
+q record; shot 07d-recording-activity 2.6
+q record; sleep 1.2
+
+# Spotlight Search in the Island + Control Center + Notifications
 q query "te"; shot 08-spotlight-in-island 1.6
 q spotlight; sleep 0.5
 q control; shot 09-control-center
@@ -37,7 +83,9 @@ notify-send -a "Solyra" "Welcome to Solyra" "Notifications arrive in the corner 
 notify-send -a "Clock" "Timer" "Your 5-minute timer is done."; sleep 0.5
 q notifications; shot 10b-notification-center 1.2
 q notifications; sleep 0.5
-sleep 5
+sleep 4
+
+# Snap Layouts, Terminal, Mission Control, Glass slider, Finder, Dock Stack & Magnified Hover
 q snap; shot 11-snap-layouts
 q snap; sleep 0.5
 solyra-term >/tmp/term1.log 2>&1 &
@@ -53,26 +101,22 @@ hyprctl dispatch "hl.dsp.window.move({ workspace = 'special:minimized', follow =
 shot 15c-dock-minimized 1.5
 pkill -x solyra-files; sleep 1
 q glass 35
-# Populate Downloads with real files and verify the interactive macOS 27 Downloads Stack popover.
-mkdir -p "$HOME/Downloads"
-for f in "Solyra-0.1.iso" "Design-Spec.pdf" "wallpaper-4k.png" "release-notes.txt" "assets.zip"; do touch "$HOME/Downloads/$f"; done
+
+# Interactive macOS 27 Downloads Stack + spring-damped Dock wave magnification
 q downloads; shot 15d-dock-downloads-stack 1.4
 q downloads; sleep 0.5
-# Capture live spring-damped macOS 27 Dock magnification + Liquid Glass caret tooltip over the galaxy horizon.
 q dockHover 145; shot 15e-dock-magnified-hover 1.0
 q dockHover -1; sleep 0.4
 q island close; sleep 0.5
 
-# Verify solyra-app universal installer CLI + live LRCLIB synced lyrics API reachability.
+# Verify solyra-app universal installer CLI + live LRCLIB synced lyrics API
 solyra-app help > /tmp/solyra-app-check.txt 2>&1; up /tmp/solyra-app-check.txt
 curl -fsSL --max-time 6 -G -H 'User-Agent: SolyraOS/0.1' 'https://lrclib.net/api/get' \
   --data-urlencode 'artist_name=Daft Punk' --data-urlencode 'track_name=Around the World' \
   > /tmp/lrclib-live-check.txt 2>&1 || true
 up /tmp/lrclib-live-check.txt
 
-# Seed a local .lrc for the public-domain Erik Satie track played in Firefox so
-# both the Notch Live Synced Lyrics drawer and the Droppy Ambient Lock Screen
-# exercise real-time timestamped line tracking alongside live Firefox MPRIS playback.
+# Seed timestamped .lrc for Firefox real web song playback
 mkdir -p "$HOME/.local/share/solyra/lyrics"
 cat > "$HOME/.local/share/solyra/lyrics/Erik Satie - Gymnopédie No. 1.lrc" <<'LRC'
 [00:00.00] Lent et douloureux — Three Gymnopédies (1888)
@@ -83,9 +127,6 @@ cat > "$HOME/.local/share/solyra/lyrics/Erik Satie - Gymnopédie No. 1.lrc" <<'L
 [01:00.00] Fading slowly into stillness along the final cadence
 LRC
 
-# A real song on the web: Firefox plays it from a page with Media Session
-# metadata; the notch, its live activities, synced lyrics drawer, Control Center
-# and the Droppy Ambient Lock Screen pick it up over MPRIS like YouTube or Spotify web.
 pkill -x mpv; sleep 1
 mkdir -p /tmp/ffp
 cat > /tmp/ffp/user.js <<'JS'
@@ -105,13 +146,16 @@ playerctl -l > /tmp/players.txt 2>&1; playerctl -p firefox metadata >> /tmp/play
 shot 17-web-song-playing 0
 q island media; shot 17b-web-song-notch 2.0
 q island lyrics; shot 17e-web-song-notch-lyrics 2.0
+q island queue; shot 17f-web-song-notch-queue 2.0
 q island close; sleep 0.8
-q timer 300; shot 17c-web-song-two-activities 2.0
 q control; shot 17d-web-song-control-center 1.2
-q control; q timer 0; sleep 0.6
-q lock; shot 16-lock-screen 3.0
-# The test media player is part of the scenario, not the desktop: stop it,
-# then idle until 3 minutes after login and measure (nothing excluded).
+q control; sleep 0.6
+
+# Capture ALL THREE Droppy Fullscreen Lock Screen Modes on real Firefox Media Session playback!
+q lockMode depth; q lock; shot 16a-lock-screen-full-art-depth 2.5
+q lockMode lyrics; shot 16b-lock-screen-live-lyrics 1.8
+q lockMode queue; shot 16c-lock-screen-playing-next 1.8
+
 pkill -x mpv; pkill -x firefox; qs ipc call shell island close
 while [ $(( $(date +%s) - T0 + 14 )) -lt 180 ]; do sleep 5; done
 {
