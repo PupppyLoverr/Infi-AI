@@ -36,8 +36,8 @@ Item {
         // glass slider moves toward "tinted".
         color: Theme.reduceTransparency
             ? (g.dark ? "#ee1c1c20" : "#f4f6f6f8")
-            : (g.dark ? Qt.rgba(0.12, 0.12, 0.14, 0.10 + Theme.glass / 100 * 0.72)
-                      : Qt.rgba(1, 1, 1, 0.18 + Theme.glass / 100 * 0.62))
+            : (g.dark ? Qt.rgba(0.11, 0.11, 0.13, 0.06 + Theme.glass / 100 * 0.58)
+                      : Qt.rgba(1, 1, 1, 0.14 + Theme.glass / 100 * 0.56))
         border.width: Theme.showBorders ? 1.5 : 0
         border.color: Theme.rim
     }

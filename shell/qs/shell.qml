@@ -24,6 +24,13 @@ ShellRoot {
     function lock() { lockScreen.lock() }
     function snap() { snaps.open = !snaps.open }
     function toggleOverview() { overviewWin.open = !overviewWin.open }
+    // Auto-arrange is a Hyprland window rule (hyprland.lua reads look.json):
+    // save, reload Hyprland so new windows follow it, re-arrange open ones.
+    function setArrange(on) {
+        Theme.autoArrange = on
+        Theme.save()
+        reloadTimer.restart()
+    }
     function applyArrange() {
         // Auto-arrange on: windows tile (dwindle) as they open; off: they float
         // like macOS and are centred.
@@ -48,24 +55,12 @@ ShellRoot {
         if (d[a]) Hyprland.dispatch(d[a])
         else if (a === "lock") lock()
         else if (a === "snap") snap()
-        else if (a === "arrange") { Theme.autoArrange = !Theme.autoArrange; Theme.save(); applyArrange() }
+        else if (a === "arrange") setArrange(!Theme.autoArrange)
         else if (a === "settings") Quickshell.execDetached(["solyra-settings"])
         else if (a === "new") Quickshell.execDetached(["solyra-term"])
         else if (a === "logout") Hyprland.dispatch("hl.dsp.exit()")
         else if (a === "about") Quickshell.execDetached(["notify-send", "Solyra", "A macOS-style desktop on Hyprland"])
         else if (a === "help") Quickshell.execDetached(["notify-send", "Shortcuts", "Super+Space Spotlight (in the island) · Super+Z Snap · Super+L Lock · Super+C Control Center"])
-    }
-
-    // New windows float and centre unless auto-arrange is on.
-    Connections {
-        target: Hyprland
-        function onRawEvent(ev) {
-            if (ev.name === "openwindow" && !Theme.autoArrange) {
-                const addr = "address:0x" + ev.data.split(",")[0]
-                Hyprland.dispatch("hl.dsp.window.float({ action = 'enable', window = '" + addr + "' })")
-                Hyprland.dispatch("hl.dsp.window.center({ window = '" + addr + "' })")
-            }
-        }
     }
 
     Variants {
@@ -98,6 +93,11 @@ ShellRoot {
     Overview { id: overviewWin }
     Lock { id: lockScreen }
 
+    // After look.json is written: Hyprland re-reads its rules, then the
+    // windows already open move to match.
+    Timer { id: reloadTimer; interval: 250; onTriggered: { Quickshell.execDetached(["hyprctl", "reload"]); arrangeTimer.restart() } }
+    Timer { id: arrangeTimer; interval: 600; onTriggered: shell.applyArrange() }
+
     GlobalShortcut { appid: "solyra"; name: "spotlight"; onPressed: shell.spotlight() }
     GlobalShortcut { appid: "solyra"; name: "control"; onPressed: shell.control() }
     GlobalShortcut { appid: "solyra"; name: "lock"; onPressed: shell.lock() }
@@ -121,6 +121,6 @@ ShellRoot {
         function timer(seconds: int): void { shell.timer(seconds) }
         function search(text: string): void { shell.spotlight(text) }
         function glass(value: int): void { Theme.glass = value; Theme.save() }
-        function arrange(on: bool): void { Theme.autoArrange = on; Theme.save(); shell.applyArrange() }
+        function arrange(on: bool): void { shell.setArrange(on) }
     }
 }

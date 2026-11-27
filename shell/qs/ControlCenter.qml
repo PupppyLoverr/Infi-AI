@@ -67,7 +67,7 @@ PanelWindow {
                 spacing: 10
                 Tile { width: 169; height: 70
                     Toggle { anchors.fill: parent; anchors.margins: 12; icon: "focus"; title: "Auto-arrange"; sub: Theme.autoArrange ? "On" : "Off"; on: Theme.autoArrange
-                        onClicked: { Theme.autoArrange = !Theme.autoArrange; Theme.save(); cc.shell.applyArrange() } } }
+                        onClicked: cc.shell.setArrange(!Theme.autoArrange) } }
                 Row {
                     spacing: 10
                     Tile { width: 80; height: 70; Icon { anchors.centerIn: parent; name: "lock"; size: 22; TapHandler { onTapped: { cc.open = false; cc.shell.lock() } } } }

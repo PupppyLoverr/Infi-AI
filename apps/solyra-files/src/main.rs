@@ -21,7 +21,6 @@ use zgx::{
     reactive::Signal,
     scene::Color,
 };
-use zgx_components::segmented;
 use zgx_desktop::{Application, WindowOptions};
 
 mod model;
@@ -233,18 +232,6 @@ fn small_button(label: &str, on_click: impl FnMut() + 'static) -> View {
         .justify_center()
         .border(0.)
         .child(text(label.to_string()).text_size(12.))
-        .on_click(on_click)
-}
-
-fn icon_button(label: &str, on_click: impl FnMut() + 'static) -> View {
-    button()
-        .w(30.)
-        .h(28.)
-        .rounded(7.)
-        .items_center()
-        .justify_center()
-        .border(0.)
-        .child(text(label.to_string()).text_size(15.))
         .on_click(on_click)
 }
 
@@ -670,9 +657,9 @@ fn sidebar(app: &FilesApp, style: &solyra_ui::Style, lights: View) -> View {
         .pb(10.)
         .gap(4.)
         .rounded(14.)
-        .bg(if style.dark() { Color(255, 255, 255, 20) } else { Color(255, 255, 255, 120) })
+        .bg(if style.dark() { Color(255, 255, 255, 24) } else { Color(255, 255, 255, 110) })
         .border(1.)
-        .border_color(if style.dark() { Color(255, 255, 255, 46) } else { Color(255, 255, 255, 160) })
+        .border_color(if style.dark() { Color(255, 255, 255, 58) } else { Color(255, 255, 255, 190) })
         .window_drag()
         .child(row().pl(4.).pb(14.).child(lights))
         .child(sidebar_section("Favourites", style, favourites))
@@ -1669,10 +1656,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let window = cx.window.clone();
 
-            // One frosted surface: the compositor blurs behind the window,
-            // this single tint lies under sidebar, toolbar and content.
+            // One clear Liquid Glass surface: Hyprland blurs and refracts the
+            // wallpaper behind the window, and this light tint keeps text
+            // legible while the wallpaper's colour still shows through, so
+            // the Finder sits in the desktop rather than on top of it.
             let surface = if style.glass {
-                if style.dark() { Color(26, 28, 32, 132) } else { Color(246, 246, 248, 165) }
+                if style.dark() { Color(20, 22, 26, 88) } else { Color(248, 248, 250, 118) }
             } else {
                 style.content_bg()
             };
@@ -1682,7 +1671,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .rounded(16.)
                 .overflow_hidden()
                 .border(1.)
-                .border_color(Color(255, 255, 255, 44))
+                .border_color(Color(255, 255, 255, 56))
                 .text_color(solyra_ui::color(theme.text))
                 .bg(surface)
                 .child(sidebar(&app, &style, window_lights(window.clone())))

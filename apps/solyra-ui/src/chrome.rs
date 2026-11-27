@@ -235,7 +235,6 @@ pub fn titlebar(rt: &Runtime, style: &Style, title: &str, ctl: WindowCtl, tools:
     } else {
         Color(246, 246, 248, if style.glass { 150 } else { 255 })
     };
-    let rim = if style.dark() { Color(255, 255, 255, 26) } else { Color(0, 0, 0, 22) };
     let mut bar = row()
         .h(BAR_H)
         .w_full()

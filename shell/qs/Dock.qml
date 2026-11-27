@@ -74,7 +74,7 @@ PanelWindow {
 
     Glass {
         id: card
-        r: 24
+        r: 26
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 4
         anchors.horizontalCenter: parent.horizontalCenter
