@@ -18,11 +18,12 @@ PanelWindow {
     property var shell
     screen: screenModel
     anchors.bottom: true
-    // The surface is exactly the card (plus the gap under it), so the
-    // compositor's lens bends the backdrop along the dock's own edges.
-    // Magnification is off, as Apple ships it; tooltips are popups.
-    implicitWidth: card.width
-    implicitHeight: card.height + 6
+    // Resting: surface is exactly the glass card so Hyprland's acrylic lens
+    // bends the backdrop right along the dock's own edges. Expanding on hover
+    // gives room for wave magnification and tooltips when enabled.
+    readonly property bool activeHover: mx >= 0 && Theme.dockMagnify && !Theme.reduceMotion
+    implicitWidth: activeHover ? card.width + 140 : card.width
+    implicitHeight: activeHover ? 136 : card.height + 6
     exclusiveZone: card.height + 10
     color: "transparent"
     WlrLayershell.namespace: "solyra-dock"
@@ -43,7 +44,10 @@ PanelWindow {
             dockWin.recent = [w.appId].concat(dockWin.recent.filter(x => x !== w.appId)).slice(0, 3)
         }
     }
-    property real mx: -1
+    property real pointerMx: -1
+    property real forcedMx: -1
+    readonly property real mx: forcedMx >= 0 ? forcedMx : pointerMx
+    signal downloadsStackToggled()
 
     // Bring a minimised window back to the focused desktop and focus it.
     function restore(address) {
@@ -121,7 +125,14 @@ PanelWindow {
         anchors.horizontalCenter: parent.horizontalCenter
         height: 66
         width: row.width + 16
-        Behavior on width { NumberAnimation { duration: Theme.ms(90) } }
+        Behavior on width {
+            enabled: !Theme.reduceMotion
+            SpringAnimation { spring: 4.8; damping: 0.48; epsilon: 0.3 }
+        }
+        HoverHandler {
+            onPointChanged: dockWin.pointerMx = point.position.x
+            onHoveredChanged: if (!hovered) dockWin.pointerMx = -1
+        }
 
         Row {
             id: row

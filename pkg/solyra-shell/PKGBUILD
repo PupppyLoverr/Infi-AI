@@ -12,6 +12,7 @@ depends=(hyprland quickshell qt6-declarative qt6-svg qt6-5compat grim slurp wl-c
          brightnessctl networkmanager bluez-utils pipewire wireplumber playerctl libnotify upower
          inter-font ttf-jetbrains-mono curl inotify-tools adwaita-cursors)
 optdepends=('power-profiles-daemon: Energy Mode in the Battery menu' 'hyprsunset: Night Shift' 'wf-recorder: screen recording' 'satty: screenshot markup' 'qt6-multimedia: Notchface camera preview' 'tesseract: Text from Screen (OCR)'
+            'flatpak: install Flathub apps via solyra-app' 'distrobox: run Ubuntu/Fedora/Arch containers' 'fuse2: run AppImages'
             'claude-code: Ask Claude in Spotlight' 'codex: Ask ChatGPT in Spotlight')
 source=()
 _repo="${SOLYRA_REPO:-$startdir/../..}"
@@ -29,7 +30,9 @@ package() {
   cp -r "$_repo/shell/qs/." "$pkgdir/etc/xdg/quickshell/"
   install -Dm644 "$_repo/shell/hypr/hyprland.lua" "$pkgdir/etc/skel/.config/hypr/hyprland.lua"
   install -Dm644 /dev/null "$pkgdir/etc/skel/.config/solyra/hypr-local.lua"
-  install -Dm644 "$_repo"/assets/wallpapers/*-1920x1080.png "$_repo"/assets/wallpapers/solyra-dusk-1920x1200.png -t "$pkgdir/usr/share/backgrounds/solyra/"
+  install -Dm644 "$_repo"/assets/wallpapers/*-1920x1080.png "$_repo"/assets/wallpapers/solyra-dusk-1920x1200.png "$_repo"/assets/wallpapers/*-4k.jpg -t "$pkgdir/usr/share/backgrounds/solyra/"
+  install -Dm644 "$_repo/assets/wallpapers/twilight-skyline-4k.jpg" "$pkgdir/etc/skel/.config/solyra/wallpaper.jpg"
   install -Dm644 "$_repo/assets/wallpapers/solyra-dusk-1920x1200.png" "$pkgdir/etc/skel/.config/solyra/wallpaper.png"
+  install -Dm755 "$_repo/iso/airootfs/usr/local/bin/solyra-app" "$pkgdir/usr/bin/solyra-app"
   install -Dm644 "$_repo/THIRD_PARTY.md" "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY.md"
 }

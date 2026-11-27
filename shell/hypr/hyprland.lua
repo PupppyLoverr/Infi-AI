@@ -11,6 +11,9 @@ hl.env("XCURSOR_THEME", "Adwaita")
 hl.env("XCURSOR_SIZE", "24")
 hl.env("HYPRCURSOR_SIZE", "24")
 hl.env("QT_QPA_PLATFORM", "wayland")
+hl.env("ELECTRON_OZONE_PLATFORM_HINT", "auto")
+hl.env("NIXOS_OZONE_WL", "1")
+hl.env("MOZ_ENABLE_WAYLAND", "1")
 
 hl.on("hyprland.start", function()
     hl.exec_cmd("hyprctl setcursor Adwaita 24")
@@ -50,19 +53,19 @@ hl.config({
             size = 14,
             passes = 4,
             noise = 0.01,
-            vibrancy = 0.32,          -- colours behind stay vivid, as Apple's glass
-            vibrancy_darkness = 0.2,
+            vibrancy = 0.38,          -- vivid refracted colour behind glass (macOS 27 Golden Gate)
+            vibrancy_darkness = 0.18,
             popups = true,
             popups_ignorealpha = 0.16, -- menus and tooltips: blur the card, not its corners
             -- Liquid Glass: Hyprland's acrylic variant lenses the backdrop
-            -- through a curved edge (refraction + bulb), keeps it mostly clear
-            -- (clarity) with a faint chromatic fringe, like macOS 26/27.
+            -- through a curved edge (refraction + bulb), keeps it crystal clear
+            -- (clarity) with a delicate chromatic fringe, matching macOS 27 Golden Gate.
             variant = 8,
             acrylic = {
-                refraction = 30,     -- edge lensing, px: the backdrop bends at the rim
-                bulb = 22,           -- width of the curved edge, px
-                clarity = 0.55,      -- clear glass: the backdrop shows through, softened
-                aberration = 0.020,  -- a faint colour fringe along the edge
+                refraction = 32,     -- edge lensing, px: the backdrop bends cleanly at the rim
+                bulb = 24,           -- width of the curved optical rim, px
+                clarity = 0.58,      -- clear glass: vivid backdrop shows through, softened
+                aberration = 0.022,  -- subtle prismatic colour fringe along the curved edge
                 tint = 0x0CF2F6FF,
             },
         },
@@ -104,7 +107,7 @@ hl.animation({ leaf = "specialWorkspace", enabled = true, speed = 4, spring = "s
 -- gets rounded blur and its shadow never turns into a blurred box.
 hl.layer_rule({
     name = "solyra-glass",
-    match = { namespace = "^solyra-(bar|dock|glass|notifications|notifcenter|snap|overview|island|widgets)$" },
+    match = { namespace = "^solyra-(bar|dock|glass|notifications|notifcenter|snap|overview|island|widgets|basket)$" },
     blur = true,
     ignore_alpha = 0.16,
 })

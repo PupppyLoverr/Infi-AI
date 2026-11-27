@@ -22,19 +22,22 @@ if [ ! -f base.qcow2 ]; then
   tail -2 setup.log
 fi
 # Payload: binaries, desktop entries, the QML shell, Hyprland config, wallpaper, scenario.
-P=payload/stage; rm -rf $P; mkdir -p $P/bin $P/share/applications
+P=payload/stage; rm -rf $P; mkdir -p $P/bin $P/share/applications $P/wallpapers
 cp "${TERM_BIN:-$repo/apps/terminal/target/release/solyra-term}" $P/bin/solyra-term
 files_bin="${FILES_BIN:-$repo/apps/target/release/solyra-files}"; [ -f "$files_bin" ] && cp "$files_bin" $P/bin/solyra-files
+cp "$repo/iso/airootfs/usr/local/bin/solyra-app" $P/bin/solyra-app
 printf '[Desktop Entry]\nName=Terminal\nComment=Solyra Terminal\nExec=solyra-term\nIcon=utilities-terminal\nType=Application\nStartupWMClass=solyra-term\n' > $P/share/applications/solyra-term.desktop
 printf '[Desktop Entry]\nName=Finder\nComment=Solyra Files\nExec=solyra-files\nIcon=system-file-manager\nType=Application\n' > $P/share/applications/solyra-files.desktop
 cp -r "$repo/shell/qs" $P/qs; cp -r "$repo/shell/hypr" $P/hypr
+cp "$repo/assets/wallpapers/twilight-skyline-4k.jpg" $P/wallpaper.jpg
 cp "$repo/assets/wallpapers/solyra-dusk-1920x1200.png" $P/wallpaper.png
+cp "$repo"/assets/wallpapers/*-4k.jpg "$repo/assets/wallpapers/galaxy-1920x1080.png" "$repo/assets/wallpapers/solyra-dusk-1920x1200.png" $P/wallpapers/
 cp "$here/scenario.sh" "$here/hook.sh" $P/
 tar -C $P -cf payload/payload.tar .
 # "Play a song on the web": a page Firefox opens in the VM, the song and its
 # artwork, served beside the payload. A public-domain recording when the
 # runner can fetch it, else a synthesised melody.
-mkdir -p payload/web && cp "$here/web/index.html" payload/web/ && cp "$repo/shell/qs/apps/music.png" payload/web/cover.png
+mkdir -p payload/web && cp "$here/web/index.html" payload/web/ && cp "$here/web/cover.png" payload/web/cover.png
 for u in \
   "https://commons.wikimedia.org/wiki/Special:FilePath/Erik_Satie_-_gymnopedies_-_la_1_ere._lent_et_douloureux.ogg" \
   "https://upload.wikimedia.org/wikipedia/commons/e/e3/Erik_Satie_-_gymnopedies_-_la_1_ere._lent_et_douloureux.ogg" \

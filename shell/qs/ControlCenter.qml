@@ -107,7 +107,8 @@ Scope {
         Icon { anchors.centerIn: parent; name: rb.icon; size: 24; color: rb.on ? "#1c1c1e" : "white" }
         TapHandler { onTapped: rb.clicked() }
     }
-    // A slider module: title, a thin track with a symbol at each end.
+    // A slider module: title + Cupertino/macOS 27 thick glass-pill slider with
+    // low/high symbols and optional output button.
     component Track: GlassWindow {
         id: tr
         property string title; property string lowIcon; property string highIcon
@@ -116,28 +117,37 @@ Scope {
         signal moved(real v)
         signal extraClicked()
         fromRight: true
-        r: 26; kind: "clear"
+        r: 24; kind: "clear"
         implicitWidth: 348; implicitHeight: 70
-        Text { x: 18; y: 10; text: tr.title; color: "white"; font.family: Theme.font; font.pixelSize: 15; font.weight: Font.Bold }
-        Icon { id: lowI; x: 16; y: 38; name: tr.lowIcon; size: 16 }
+        Text { x: 18; y: 10; text: tr.title; color: "white"; font.family: Theme.font; font.pixelSize: 14; font.weight: Font.Bold }
+        Icon { id: lowI; x: 16; y: 39; name: tr.lowIcon; size: 15 }
         Item {
             id: track
             anchors { left: lowI.right; leftMargin: 10; right: highI.left; rightMargin: 10 }
-            y: 38; height: 16
-            Rectangle { anchors.verticalCenter: parent.verticalCenter; width: parent.width; height: 4; radius: 2; color: Qt.rgba(1, 1, 1, 0.22) }
-            Rectangle { anchors.verticalCenter: parent.verticalCenter; width: Math.max(4, parent.width * Math.max(0, Math.min(1, tr.value))); height: 4; radius: 2; color: "white" }
+            y: 36; height: 22
+            Rectangle {
+                anchors.fill: parent; radius: 11
+                color: Qt.rgba(1, 1, 1, 0.16)
+                border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.18)
+                clip: true
+                Rectangle {
+                    height: parent.height; radius: 11
+                    width: Math.max(22, parent.width * Math.max(0, Math.min(1, tr.value)))
+                    color: "white"
+                }
+            }
             MouseArea {
-                anchors.fill: parent; anchors.margins: -8
-                function set(x) { tr.moved(Math.max(0, Math.min(1, (x - 8) / track.width))) }
+                anchors.fill: parent; anchors.margins: -6
+                function set(x) { tr.moved(Math.max(0, Math.min(1, (x - 6) / track.width))) }
                 onPressed: ev => set(ev.x)
                 onPositionChanged: ev => { if (pressed) set(ev.x) }
             }
         }
-        Icon { id: highI; anchors.right: extraBtn.visible ? extraBtn.left : parent.right; anchors.rightMargin: extraBtn.visible ? 10 : 16; y: 36; name: tr.highIcon; size: 20 }
+        Icon { id: highI; anchors.right: extraBtn.visible ? extraBtn.left : parent.right; anchors.rightMargin: extraBtn.visible ? 10 : 16; y: 38; name: tr.highIcon; size: 18 }
         Rectangle {
             id: extraBtn
             visible: tr.extra
-            anchors.right: parent.right; anchors.rightMargin: 12; y: 33
+            anchors.right: parent.right; anchors.rightMargin: 12; y: 34
             width: 26; height: 26; radius: 13; color: Qt.rgba(1, 1, 1, 0.16)
             Icon { anchors.centerIn: parent; name: "airplay"; size: 14 }
             TapHandler { onTapped: tr.extraClicked() }
@@ -277,6 +287,8 @@ Scope {
                 Pill { height: 28; text: "Hide Notch"; on: Theme.hideNotch; onClicked: { Theme.hideNotch = !Theme.hideNotch; Theme.save() } }
                 Pill { height: 28; text: "Hot Corners"; on: Theme.hotCorners; onClicked: { Theme.hotCorners = !Theme.hotCorners; Theme.save() } }
                 Pill { height: 28; text: "Widgets"; on: Theme.widgets; onClicked: { Theme.widgets = !Theme.widgets; Theme.save() } }
+                Pill { height: 28; text: "Dock Magnify"; on: Theme.dockMagnify; onClicked: { Theme.dockMagnify = !Theme.dockMagnify; Theme.save() } }
+                Pill { height: 28; text: "Dock Autohide"; on: Theme.dockAutohide; onClicked: { Theme.dockAutohide = !Theme.dockAutohide; Theme.save() } }
             }
             Text { text: "Glass  ·  clear → tinted"; color: Qt.rgba(1, 1, 1, 0.6); font.family: Theme.font; font.pixelSize: 12; font.weight: Font.DemiBold }
             Item {

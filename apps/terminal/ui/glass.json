@@ -6,28 +6,29 @@
 	"type": "dark",
 	"extends": "zgx-dark",
 	"tokens": {
-		"glass.tint": "#1314184d",
+		"glass.tint": "#0c0f13a6",
 		"text": {
-			"primary": "#ffffffeb",
-			"secondary": "#ffffffa6",
-			"tertiary": "#ffffff66",
-			"disabled": "#ffffff38"
+			"primary": "#fffffff2",
+			"secondary": "#ffffffb3",
+			"tertiary": "#ffffff73",
+			"disabled": "#ffffff40"
 		},
-		"hover": "#ffffff0a",
-		"border.subtle": "#ffffff0d",
-		"border.strong": "#ffffff26",
-		"accent": "#a99cff",
+		"hover": "#ffffff10",
+		"border.subtle": "#ffffff18",
+		"border.strong": "#ffffff2e",
+		"accent": "#0a84ff",
 		"warning": "#f5c46b",
 		"danger": "#ff7a6b",
 		// The interface's typeface (the host registers it).
 		"font.sans": "Geist",
-		// Each terminal's card: a little darker than the window, still glass.
-		"terminal.pane": "#0a0b0e4d",
-		"terminal.wash": "#ffffff0f",
+		// Each terminal's card: deep smoky obsidian glass for crisp contrast on
+		// any wallpaper while letting Hyprland's acrylic backdrop glow through.
+		"terminal.pane": "#070a0ec4",
+		"terminal.wash": "#ffffff14",
 		// Frosted glass under the active tab and agent, clearer than the
 		// wash; a faint one under the pointer.
-		"terminal.glass": "#ffffff1c",
-		"terminal.glass_hover": "#ffffff0d",
+		"terminal.glass": "#ffffff22",
+		"terminal.glass_hover": "#ffffff12",
 		// A tab's icon tiles, and the strip's drop and slot highlights.
 		"terminal.tile_bg": "#ffffff17",
 		"terminal.tile_dim": "#ffffff0d",

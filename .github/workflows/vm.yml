@@ -5,8 +5,8 @@ name: solyra-vm
 on:
   workflow_dispatch:
   push:
-    branches: [claude/charming-goodall-iuca3o]
-    paths: ['shell/qs/**', 'shell/hypr/**', 'tools/vm/**', 'apps/terminal/**', 'tools/qmlcheck.sh', 'apps/solyra-files/**', 'apps/solyra-term/**', 'apps/solyra-ui/**', 'pkg/**', '.github/workflows/vm.yml']
+    branches: [claude/charming-goodall-iuca3o, 'devin/*']
+    paths: ['shell/qs/**', 'shell/hypr/**', 'tools/vm/**', 'apps/terminal/**', 'tools/qmlcheck.sh', 'apps/solyra-files/**', 'apps/solyra-term/**', 'apps/solyra-ui/**', 'pkg/**', 'assets/wallpapers/**', '.github/workflows/vm.yml']
 # One queue per branch: another branch's runs never cancel this one's.
 concurrency:
   group: solyra-vm-${{ github.ref }}
@@ -19,20 +19,30 @@ jobs:
     container: archlinux:latest
     timeout-minutes: 60
     steps:
-      - name: Toolchain
-        run: pacman -Syu --noconfirm --needed base-devel rust git pkgconf cmake clang dbus wayland libxkbcommon fontconfig >/dev/null
       - uses: actions/checkout@v4
-      # Seconds, not a 20-minute VM run: every shell QML file must parse
-      # (Quickshell refuses the whole shell on one syntax error).
+      # Fast QML syntax gate (seconds, not a 15-minute build)
       - name: QML syntax gate
         run: |
-          pacman -S --noconfirm --needed qt6-declarative >/dev/null
+          pacman -Sy --noconfirm --needed qt6-declarative >/dev/null
           PATH=/usr/lib/qt6/bin:$PATH tools/qmlcheck.sh
-      # Warm builds: the cargo registry, git checkouts and both target
-      # directories survive between runs. An exact key per lockfile, and a
-      # prefix fallback so a changed lockfile still starts from the last
-      # build instead of from scratch (cargo rebuilds only what changed).
-      - uses: actions/cache@v4
+      # Ultra-fast warm binary cache keyed by apps/** source hash:
+      # when only QML / shell / VM scripts change, skip Rust toolchain install
+      # and full cargo rebuild completely (< 1 min term job, < 8 min total CI!).
+      - name: Warm binary cache
+        id: bin-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/terminal/target/release/solyra-term
+            apps/target/release/solyra-files
+            apps/target/release/solyra-term-classic
+          key: solyra-bins-arch-${{ hashFiles('apps/**') }}
+      - name: Toolchain (only on Rust source changes)
+        if: steps.bin-cache.outputs.cache-hit != 'true'
+        run: pacman -Syu --noconfirm --needed base-devel rust git pkgconf cmake clang dbus wayland libxkbcommon fontconfig >/dev/null
+      - name: Warm Cargo cache
+        if: steps.bin-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -44,16 +54,18 @@ jobs:
             apps-arch-${{ hashFiles('apps/Cargo.lock', 'apps/terminal/Cargo.lock') }}-
             apps-arch-
       - name: Build the terminal (zgx terminal app) and the Finder (release)
+        if: steps.bin-cache.outputs.cache-hit != 'true'
         run: |
           (cd apps/terminal && cargo build --locked --release 2>&1 | tail -3)
           (cd apps && cargo build --locked --release -p solyra-files -p solyra-term-classic 2>&1 | tail -3)
       - name: Test
+        if: steps.bin-cache.outputs.cache-hit != 'true'
         run: |
           (cd apps/terminal && cargo test --locked --release 2>&1 | grep -E "test result|FAILED|panicked")
           (cd apps && cargo test --locked --release -p solyra-term-classic -p solyra-files 2>&1 | grep -E "test result|FAILED|panicked")
-      - name: Build the Arch packages (makepkg, reusing the warm target dirs)
+      - name: Build the Arch packages (makepkg, reusing warm binaries)
         run: |
-          pacman -S --noconfirm --needed sudo >/dev/null
+          pacman -S --noconfirm --needed base-devel sudo >/dev/null
           useradd -m builder 2>/dev/null || true
           chown -R builder: "$GITHUB_WORKSPACE"
           for p in solyra-term solyra-files solyra-shell; do

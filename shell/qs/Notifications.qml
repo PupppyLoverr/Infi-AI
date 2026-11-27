@@ -19,7 +19,7 @@ PanelWindow {
     color: "transparent"
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.namespace: "solyra-notifications"
-    visible: popups.length > 0 && !(shell && (shell.centerOpen || shell.spotlightOpen))
+    visible: popups.length > 0 && !(shell && (shell.centerOpen || shell.spotlightOpen || shell.controlOpen || shell.islandExpanded))
 
     readonly property int maxBanners: 4
     // Live notification objects (a ListModel cannot hold QObjects).

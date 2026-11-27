@@ -54,7 +54,7 @@ local M = {}
 -- What the host (terminal.rs) publishes.
 M.home = ui.shared("home", ""):peek()
 M.launch_dir = ui.shared("launch_dir", ""):peek()
-M.window_radius = ui.shared("window_radius", 10)
+M.window_radius = ui.shared("window_radius", 24)
 -- The session server's client command: a pane's terminal runs it attached
 -- to its own session.
 M.attach = ui.shared("attach", ""):peek()
@@ -91,8 +91,9 @@ M.tab_slot = ui.state("tab_slot", {} :: Slot)
 M.lifted = ui.state("lifted", "")
 -- Browser panes waiting to have their address bar focused.
 M.address_focus = ui.state("address_focus", "")
--- The agents sidebar is open.
-M.sidebar = ui.state("sidebar", true)
+-- The agents sidebar starts closed (toggleable from the titlebar button),
+-- matching the clean edge-to-edge macOS 27 Terminal reference.
+M.sidebar = ui.state("sidebar", false)
 -- The panel palette (⌘K) is open; what is typed in it, and the row chosen.
 M.palette = ui.state("palette", false)
 M.palette_query = ui.state("palette_query", "")

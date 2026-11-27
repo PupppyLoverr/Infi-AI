@@ -89,8 +89,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let host = host.storage(session::dir().join("script-state"));
             host.on_error(|message| eprintln!("solyra-term: {message}"));
             // The script's view of the window: its corner radius (panes
-            // stay concentric with it) and where the app was started.
-            let radius = host.shared("window_radius", 10.);
+            // stay concentric with Hyprland's macOS 27 24px rounding) and
+            // where the app was started.
+            let radius = host.shared("window_radius", 24.);
             let corner = cx.window_info.corner_radius.clone();
             let follow_radius = cx.ui.runtime.effect(move || {
                 let r = corner.get();
