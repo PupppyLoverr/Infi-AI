@@ -34,6 +34,7 @@ Item {
 
     readonly property int lyricCur: m.player && m.lyrics ? m.lyrics.indexAt(m.player.position) : -1
     readonly property var lyricLines: m.lyrics ? m.lyrics.lines : []
+    onLyricsOpenChanged: if (lyricsOpen && m.lyrics) m.lyrics.refresh()
 
     Timer {
         interval: 450
@@ -254,7 +255,7 @@ Item {
                 }
                 Text {
                     width: parent.width; wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
-                    text: m.lyricCur >= 0 && m.lyricCur < m.lyricLines.length ? m.lyricLines[m.lyricCur].line : m.lyricLines[0].line
+                    text: m.lyricLines.length > 0 ? m.lyricLines[m.lyricCur >= 0 && m.lyricCur < m.lyricLines.length ? m.lyricCur : 0].line : ""
                     color: "white"
                     font.family: Theme.font; font.pixelSize: 16; font.weight: Font.Bold
                 }

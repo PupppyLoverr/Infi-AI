@@ -91,16 +91,18 @@ Scope {
                     onTriggered: if (root.player) root.player.positionChanged()
                 }
 
-                // Full-bleed blurred album art (or wallpaper) backdrop
+                // Full-bleed edge-to-edge blurred album art (oversized by 64 px so
+                // MultiEffect blur never pulls black borders into the viewport edges)
                 Image {
                     id: bg
                     anchors.fill: parent
+                    anchors.margins: -64
                     fillMode: Image.PreserveAspectCrop
                     source: root.player && root.player.trackArtUrl ? root.player.trackArtUrl : "file://" + root.wallpaper
                     visible: false
                 }
                 MultiEffect {
-                    anchors.fill: parent; source: bg
+                    anchors.fill: bg; source: bg
                     blurEnabled: true; blur: 1.0; blurMax: 64; brightness: -0.22; saturation: 0.35
                 }
                 // Warm ambient vignette matching Droppy fullscreen media mode
