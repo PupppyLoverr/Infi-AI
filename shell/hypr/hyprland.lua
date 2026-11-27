@@ -47,6 +47,17 @@ hl.config({
             noise = 0.012,
             vibrancy = 0.22,
             popups = true,
+            -- Liquid Glass: Hyprland's acrylic variant lenses the backdrop
+            -- through a curved edge (refraction + bulb), keeps it mostly clear
+            -- (clarity) with a faint chromatic fringe, like macOS 26/27.
+            variant = 8,
+            acrylic = {
+                refraction = 18,
+                bulb = 30,
+                clarity = 0.80,
+                aberration = 0.018,
+                tint = 0x12EEF5FF,
+            },
         },
     },
     animations = { enabled = true },
@@ -95,6 +106,15 @@ hl.layer_rule({
 })
 
 -- Our translucent apps get the same frosted glass.
+-- macOS-style windows: our document apps open floating and centred at a
+-- comfortable size instead of tiling the whole screen.
+hl.window_rule({
+    name = "solyra-apps-float",
+    match = { class = "^(solyra-files|solyra-settings)$" },
+    float = true,
+    size = "monitor_w*0.70 monitor_h*0.74",
+    center = true,
+})
 hl.window_rule({
     name = "solyra-apps-glass",
     match = { class = "^(solyra-term|solyra-files|solyra-settings)$" },

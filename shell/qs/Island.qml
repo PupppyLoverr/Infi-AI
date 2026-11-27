@@ -129,7 +129,9 @@ PanelWindow {
         hud:      { w: 330, h: 37, r: 18.5 },
         expanded: { w: 520, h: 214, r: 44 }
     })
-    readonly property var d: dims[mode]
+    // Media and the calendar glance are shorter than the card tabs: fit them.
+    readonly property var d: mode === "expanded" && (tab === "media" || tab === "cal")
+        ? { w: 520, h: 172, r: 40 } : dims[mode]
 
     Rectangle {
         id: shape
@@ -250,7 +252,7 @@ PanelWindow {
             anchors.fill: parent
             anchors.margins: 18
             anchors.topMargin: 16
-            opacity: win.mode === "expanded" && shape.height > 150 ? 1 : 0
+            opacity: win.mode === "expanded" && shape.height > 130 ? 1 : 0
             scale: opacity > 0 ? 1 : 0.96
             Behavior on opacity { NumberAnimation { duration: Theme.ms(200); easing.type: Easing.OutCubic } }
             Behavior on scale { NumberAnimation { duration: Theme.ms(240); easing.type: Easing.OutCubic } }
