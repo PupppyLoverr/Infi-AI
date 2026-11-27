@@ -15,15 +15,11 @@ shot 08b-spotlight-results
 shot 18-wifi-menu
 shot 18b-focus-menu
 shot 09-control-center
-Failed to show notification: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: The name is not activatable
 shot 10-notification
-Failed to show notification: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: The name is not activatable
 shot 10b-notification-center
 shot 11-snap-layouts
 shot 12-terminal
-No running instances for "/home/solyra/.config/quickshell/shell.qml"
 shot 12b-mission-control
-No running instances for "/home/solyra/.config/quickshell/shell.qml"
 shot 14-glass-tinted
 shot 15-glass-clear
 shot 15b-finder
@@ -33,4 +29,3 @@ shot 17b-web-song-notch
 shot 17c-web-song-two-activities
 shot 17d-web-song-control-center
 shot 16-lock-screen
-No running instances for "/home/solyra/.config/quickshell/shell.qml"
