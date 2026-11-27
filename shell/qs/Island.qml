@@ -171,7 +171,9 @@ PanelWindow {
     // Media and the calendar glance are shorter than the card tabs: fit them;
     // search grows with its results.
     readonly property var d: mode === "search" ? { w: 620, h: searchView.implicitHeight + 16, r: 28 }
-        : mode === "expanded" && (tab === "media" || tab === "cal") ? { w: 500, h: 164, r: 32 }
+        : mode === "expanded" && tab === "media" ? { w: 500, h: mediaView.lyricsOpen ? 316 : 172, r: 32 }
+        : mode === "expanded" && tab === "cal" ? { w: 500, h: 164, r: 32 }
+        : mode === "expanded" && tab === "clip" ? { w: 560, h: 224, r: 32 }
         : mode === "expanded" && tab === "tools" ? { w: 540, h: 236, r: 34 }
         : dims[mode]
 
@@ -333,7 +335,14 @@ PanelWindow {
             Behavior on opacity { NumberAnimation { duration: Theme.ms(200); easing.type: Easing.OutCubic } }
             Behavior on scale { NumberAnimation { duration: Theme.ms(240); easing.type: Easing.OutCubic } }
 
-            MediaView { anchors.fill: parent; visible: win.tab === "media"; player: win.player }
+            MediaView {
+                id: mediaView
+                anchors.fill: parent
+                visible: win.tab === "media"
+                player: win.player
+                lyrics: win.shell ? win.shell.lyrics : null
+                onExpandLock: { win.collapse(); if (win.shell) win.shell.lock() }
+            }
             ShelfView { id: shelfView; anchors.fill: parent; visible: win.tab === "shelf"; model: shelf; dropping: win.dropping }
             ClipView { anchors.fill: parent; visible: win.tab === "clip"; history: clip }
             CalendarGlance { anchors.fill: parent; visible: win.tab === "cal" }
@@ -504,6 +513,15 @@ PanelWindow {
         onTriggered: { left -= 1; if (left <= 0) { caffeine.enabled = false; stop() } }
     }
 
-    function expand(which) { tab = which; hovering = true; mode = "expanded"; closeTimer.stop() }
+    function expand(which) {
+        if (which === "lyrics") {
+            tab = "media"
+            mediaView.lyricsOpen = true
+        } else {
+            tab = which
+            if (which === "media") mediaView.lyricsOpen = false
+        }
+        hovering = true; mode = "expanded"; closeTimer.stop()
+    }
     function collapse() { if (mode === "search") closeSearch(); hovering = false; settle() }
 }

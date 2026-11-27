@@ -19,6 +19,8 @@ Singleton {
     property bool hotCorners: true         // bottom-left: Mission Control; bottom-right: desktop widgets peek
     property bool widgets: true            // desktop widgets (clock, calendar, weather)
     property bool nightShift: false        // warm display (hyprsunset)
+    property bool dockMagnify: true        // macOS spring-damped Dock wave magnification
+    property bool dockAutohide: false      // auto-hide Dock when pointer leaves
 
     // Tint alpha over the compositor's blur. Even at "ultra clear" the
     // floor keeps text readable (tested in tools/contrast).
@@ -65,6 +67,8 @@ Singleton {
                 if (j.hotCorners !== undefined) root.hotCorners = j.hotCorners
                 if (j.widgets !== undefined) root.widgets = j.widgets
                 if (j.nightShift !== undefined) root.nightShift = j.nightShift
+                if (j.dockMagnify !== undefined) root.dockMagnify = j.dockMagnify
+                if (j.dockAutohide !== undefined) root.dockAutohide = j.dockAutohide
             } catch (e) {}
         }
     }
@@ -73,7 +77,8 @@ Singleton {
         file.setText(JSON.stringify({
             glass: glass, reduceMotion: reduceMotion, reduceTransparency: reduceTransparency,
             showBorders: showBorders, dark: dark, autoArrange: autoArrange, hideNotch: hideNotch,
-            hotCorners: hotCorners, widgets: widgets, nightShift: nightShift
+            hotCorners: hotCorners, widgets: widgets, nightShift: nightShift,
+            dockMagnify: dockMagnify, dockAutohide: dockAutohide
         }, null, 2))
     }
 }

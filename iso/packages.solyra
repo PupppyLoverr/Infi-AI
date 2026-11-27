@@ -7,6 +7,12 @@ qt6-5compat
 mesa
 vulkan-swrast
 xdg-desktop-portal-hyprland
+xdg-desktop-portal-gtk
+flatpak
+podman
+distrobox
+fuse2
+fuse3
 swaybg
 grim
 wl-clipboard

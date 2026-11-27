@@ -9,6 +9,8 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 hl.env("XCURSOR_SIZE", "24")
 hl.env("HYPRCURSOR_SIZE", "24")
 hl.env("QT_QPA_PLATFORM", "wayland")
+hl.env("ELECTRON_OZONE_PLATFORM_HINT", "auto")
+hl.env("XDG_DATA_DIRS", (home ~= "" and (home .. "/.local/share/flatpak/exports/share:") or "") .. "/var/lib/flatpak/exports/share:/usr/local/share:/usr/share")
 
 hl.on("hyprland.start", function()
     hl.exec_cmd("quickshell > /tmp/qs.log 2>&1")

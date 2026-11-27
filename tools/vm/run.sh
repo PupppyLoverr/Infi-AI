@@ -25,6 +25,7 @@ fi
 P=payload/stage; rm -rf $P; mkdir -p $P/bin $P/share/applications
 cp "${TERM_BIN:-$repo/apps/terminal/target/release/solyra-term}" $P/bin/solyra-term
 files_bin="${FILES_BIN:-$repo/apps/target/release/solyra-files}"; [ -f "$files_bin" ] && cp "$files_bin" $P/bin/solyra-files
+cp "$repo/iso/airootfs/usr/local/bin/solyra-app" $P/bin/solyra-app
 printf '[Desktop Entry]\nName=Terminal\nComment=Solyra Terminal\nExec=solyra-term\nIcon=utilities-terminal\nType=Application\nStartupWMClass=solyra-term\n' > $P/share/applications/solyra-term.desktop
 printf '[Desktop Entry]\nName=Finder\nComment=Solyra Files\nExec=solyra-files\nIcon=system-file-manager\nType=Application\n' > $P/share/applications/solyra-files.desktop
 cp -r "$repo/shell/qs" $P/qs; cp -r "$repo/shell/hypr" $P/hypr

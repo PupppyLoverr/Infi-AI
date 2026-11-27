@@ -11,8 +11,9 @@ shot 01-desktop-idle-notch 0
 mpv --no-video --idle=no --loop=inf --force-media-title="Harbour Lights" "av://lavfi:sine=frequency=220" >/dev/null 2>&1 &
 sleep 3; shot 02-notch-live-activity 0
 q island media; shot 03-island-media
-for t in "https://github.com/PupppyLoverr/Infi-AI" "#0a84ff" "cargo build --release"; do printf '%s' "$t" | wl-copy; sleep 1.6; done
-q island clip; shot 04-island-clipboard
+for t in "Launch review moved to 10:00. Same room." "https://github.com/PupppyLoverr/Infi-AI" "#FF9F43" "showcase-clip.mp4"; do printf '%s' "$t" | wl-copy; sleep 1.4; done
+q island clip; shot 04-island-clipboard 1.5
+[ -f "$HOME/.local/share/solyra/clipboard.json" ] && cp "$HOME/.local/share/solyra/clipboard.json" /tmp/clipboard-persisted.json && up /tmp/clipboard-persisted.json
 q island shelf; shot 05-island-shelf
 q island cal; shot 06a-island-calendar
 q island face; shot 06b-island-notchface 2
@@ -52,11 +53,36 @@ hyprctl dispatch "hl.dsp.window.move({ workspace = 'special:minimized', follow =
 shot 15c-dock-minimized 1.5
 pkill -x solyra-files; sleep 1
 q glass 35
+# Populate Downloads with real files and verify the interactive macOS 27 Downloads Stack popover.
+mkdir -p "$HOME/Downloads"
+for f in "Solyra-0.1.iso" "Design-Spec.pdf" "wallpaper-4k.png" "release-notes.txt" "assets.zip"; do touch "$HOME/Downloads/$f"; done
+q downloads; shot 15d-dock-downloads-stack 1.4
+q downloads; sleep 0.5
 q island close; sleep 0.5
 
+# Verify solyra-app universal installer CLI + live LRCLIB synced lyrics API reachability.
+solyra-app help > /tmp/solyra-app-check.txt 2>&1; up /tmp/solyra-app-check.txt
+curl -fsSL --max-time 6 -G -H 'User-Agent: SolyraOS/0.1' 'https://lrclib.net/api/get' \
+  --data-urlencode 'artist_name=Daft Punk' --data-urlencode 'track_name=Around the World' \
+  > /tmp/lrclib-live-check.txt 2>&1 || true
+up /tmp/lrclib-live-check.txt
+
+# Seed a local .lrc for the public-domain Erik Satie track played in Firefox so
+# both the Notch Live Synced Lyrics drawer and the Droppy Ambient Lock Screen
+# exercise real-time timestamped line tracking alongside live Firefox MPRIS playback.
+mkdir -p "$HOME/.local/share/solyra/lyrics"
+cat > "$HOME/.local/share/solyra/lyrics/Erik Satie - Gymnopédie No. 1.lrc" <<'LRC'
+[00:00.00] Lent et douloureux — Three Gymnopédies (1888)
+[00:08.00] Gentle alternating seventh chords open in D major
+[00:18.00] A quiet waltz melody rises over a steady left-hand pulse
+[00:30.00] Soft modal harmonies drift across the piano register
+[00:45.00] The theme returns, suspended and calm in half-light
+[01:00.00] Fading slowly into stillness along the final cadence
+LRC
+
 # A real song on the web: Firefox plays it from a page with Media Session
-# metadata; the notch, its live activities, Control Center and the lock
-# screen pick it up over MPRIS like any site (YouTube, Spotify web).
+# metadata; the notch, its live activities, synced lyrics drawer, Control Center
+# and the Droppy Ambient Lock Screen pick it up over MPRIS like YouTube or Spotify web.
 pkill -x mpv; sleep 1
 mkdir -p /tmp/ffp
 cat > /tmp/ffp/user.js <<'JS'
@@ -75,6 +101,7 @@ sleep 20
 playerctl -l > /tmp/players.txt 2>&1; playerctl -p firefox metadata >> /tmp/players.txt 2>&1; up /tmp/players.txt
 shot 17-web-song-playing 0
 q island media; shot 17b-web-song-notch 2.0
+q island lyrics; shot 17e-web-song-notch-lyrics 2.0
 q island close; sleep 0.8
 q timer 300; shot 17c-web-song-two-activities 2.0
 q control; shot 17d-web-song-control-center 1.2

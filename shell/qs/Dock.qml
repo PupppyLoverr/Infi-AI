@@ -30,6 +30,7 @@ PanelWindow {
     readonly property int cell: 48
     readonly property int gap: 8
     property real mx: -1
+    signal downloadsStackToggled()
 
     // Bring a minimised window back to the focused desktop and focus it.
     function restore(address) {
@@ -88,20 +89,23 @@ PanelWindow {
 
     Glass {
         id: card
-        r: 26
+        r: 23
         anchors.bottom: parent.bottom
-        anchors.bottomMargin: 4
+        anchors.bottomMargin: 5
         anchors.horizontalCenter: parent.horizontalCenter
-        height: 66
-        width: row.width + 24
-        Behavior on width { NumberAnimation { duration: Theme.ms(90) } }
+        height: 68
+        width: row.width + 22
+        Behavior on width {
+            enabled: !Theme.reduceMotion
+            SpringAnimation { spring: 4.8; damping: 0.48; epsilon: 0.3 }
+        }
         HoverHandler { onPointChanged: dockWin.mx = point.position.x; onHoveredChanged: if (!hovered) dockWin.mx = -1 }
 
         Row {
             id: row
-            x: 12
+            x: 11
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: 9
+            anchors.bottomMargin: 11
             spacing: dockWin.gap
             Repeater {
                 model: dockWin.items

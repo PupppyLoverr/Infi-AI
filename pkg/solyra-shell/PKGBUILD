@@ -12,6 +12,7 @@ depends=(hyprland quickshell qt6-declarative qt6-svg qt6-5compat grim slurp wl-c
          brightnessctl networkmanager bluez-utils pipewire wireplumber playerctl libnotify upower
          inter-font ttf-jetbrains-mono curl inotify-tools)
 optdepends=('hyprsunset: Night Shift' 'wf-recorder: screen recording' 'satty: screenshot markup' 'qt6-multimedia: Notchface camera preview' 'tesseract: Text from Screen (OCR)'
+            'flatpak: install Flathub apps via solyra-app' 'distrobox: run Ubuntu/Fedora/Arch containers' 'fuse2: run AppImages'
             'claude-code: Ask Claude in Spotlight' 'codex: Ask ChatGPT in Spotlight')
 source=()
 _repo="${SOLYRA_REPO:-$startdir/../..}"
@@ -31,5 +32,6 @@ package() {
   install -Dm644 /dev/null "$pkgdir/etc/skel/.config/solyra/hypr-local.lua"
   install -Dm644 "$_repo"/assets/wallpapers/*-1920x1080.png -t "$pkgdir/usr/share/backgrounds/solyra/"
   install -Dm644 "$_repo/assets/wallpapers/forest-1920x1080.png" "$pkgdir/etc/skel/.config/solyra/wallpaper.png"
+  install -Dm755 "$_repo/iso/airootfs/usr/local/bin/solyra-app" "$pkgdir/usr/bin/solyra-app"
   install -Dm644 "$_repo/THIRD_PARTY.md" "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY.md"
 }

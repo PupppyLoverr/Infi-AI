@@ -17,6 +17,8 @@ ShellRoot {
     // Notification Center: open notifications, newest first.
     property bool centerOpen: false
     property var history: []
+    property alias lyrics: lyricsSvc
+    LyricsService { id: lyricsSvc }
     function remember(note) { history = [note].concat(history.filter(x => x !== note)).slice(0, 100) }
     function forget(note) { history = history.filter(x => x !== note) }
     function clearHistory() { for (const note of history.slice()) note.dismiss(); history = [] }
@@ -102,7 +104,7 @@ ShellRoot {
             required property var modelData
             Wallpaper { screenModel: perScreen.modelData }
             Bar { screenModel: perScreen.modelData; shell: shell }
-            Dock { screenModel: perScreen.modelData; shell: shell }
+            Dock { id: dock; screenModel: perScreen.modelData; shell: shell }
             DesktopWidgets { screenModel: perScreen.modelData }
             HotCorners { screenModel: perScreen.modelData; shell: shell }
             Island { id: island; screenModel: perScreen.modelData; shell: shell }
@@ -111,6 +113,10 @@ ShellRoot {
                 function onIslandRequested(tab) { if (tab === "close") island.collapse(); else island.expand(tab) }
                 // "kind:value" (IPC signals carry one argument).
                 function onHudRequested(arg) { const i = arg.indexOf(":"); island.hud(i < 0 ? arg : arg.slice(0, i), i < 0 ? 0 : parseFloat(arg.slice(i + 1))) }
+                function onDownloadsRequested() {
+                    const focused = Hyprland.focusedMonitor
+                    if (!focused || focused.name === perScreen.modelData.name) dock.downloadsStackToggled()
+                }
             }
             Connections {
                 target: shell
@@ -126,7 +132,7 @@ ShellRoot {
     NotificationCenter { shell: shell }
     SnapLayouts { id: snaps; shell: shell }
     Overview { id: overviewWin }
-    Lock { id: lockScreen }
+    Lock { id: lockScreen; lyrics: shell.lyrics }
 
     // After look.json is written: Hyprland re-reads its rules, then the
     // windows already open move to match.
@@ -145,6 +151,7 @@ ShellRoot {
         target: "shell"
         signal islandRequested(string tab)
         signal hudRequested(string arg)
+        signal downloadsRequested()
         function spotlight(): void { shell.spotlight("") }
         function query(text: string): void { shell.spotlight(text) }
         function control(): void { shell.control() }
@@ -152,6 +159,7 @@ ShellRoot {
         function snap(): void { shell.snap() }
         function overview(): void { shell.toggleOverview() }
         function island(tab: string): void { islandRequested(tab) }
+        function downloads(): void { downloadsRequested() }
         function hud(kind: string, value: real): void { hudRequested(kind + ":" + value) }
         function timer(seconds: int): void { shell.timer(seconds) }
         function record(): void { shell.toggleRecording() }
