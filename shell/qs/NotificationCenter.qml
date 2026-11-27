@@ -70,7 +70,7 @@ PanelWindow {
                             Text { width: parent.width - 20; anchors.verticalCenter: parent.verticalCenter
                                 text: modelData.app; color: Theme.ink2; font.family: Theme.font; font.pixelSize: 12; font.weight: Font.DemiBold }
                             Icon { anchors.verticalCenter: parent.verticalCenter; name: "x"; size: 12; color: Theme.ink2
-                                TapHandler { onTapped: for (const note of modelData.notes) note.dismiss() } }
+                                TapHandler { onTapped: { for (const note of modelData.notes) note.dismiss() } } }
                         }
                         Repeater {
                             model: modelData.notes
