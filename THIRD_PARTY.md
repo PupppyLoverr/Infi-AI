@@ -33,6 +33,15 @@ vendors' logos.
   glue (`alacritty_terminal` Apache-2.0, `portable-pty` MIT). Pinned at
   `699ae02e`. The chat engine follows zeron's (MIT) documented stream-json
   recipe; no zeron UI (GPUI) code is used.
+- **zgx terminal example** (MIT, Copyright (c) 2026 zgx contributors):
+  `apps/terminal/` (Solyra Terminal) is zgx's
+  `crates/zgx-desktop/examples/terminal` at `3218e80e` (its Luau interface in
+  `ui/`, session server, activity, plugins and the example plugins), adapted
+  for Linux by us: XDG data directory, `/proc` in place of macOS's
+  `proc_listchildpids`/`KERN_PROCARGS2`/`proc_name`, and a foreground watcher
+  in place of kqueue. The MIT notice applies to those files.
+- **Geist and Geist Mono** (SIL OFL 1.1, Vercel): the terminal's typeface,
+  `apps/terminal/fonts/` with its licence `Geist-OFL.txt`.
 - **lrclib.net**: the lock screen fetches synced lyrics from its public API
   at runtime. No lyrics are stored in the repository.
 - **Droppy** (getdroppy.app): design reference for the notch and lock screen.

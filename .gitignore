@@ -24,3 +24,5 @@ Thumbs.db
 
 # Shell build artifact copied into the image
 shell/out/
+apps/target-term/
+apps/terminal/target/

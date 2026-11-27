@@ -1,30 +1,36 @@
-# Solyra Terminal: zgx terminal with tabs, splits, an Agents sidebar and the
-# Claude Code chat view. Built from this repository's checkout.
+# Solyra Terminal: zgx's terminal app (MIT, zeronsh/zgx examples/terminal)
+# adopted for Solyra: tabs in the titlebar, split panes you drag and resize,
+# an agents sidebar, a command palette, in-pane web pages and plugins, on
+# frosted glass. Shells live in a session server and survive the window.
+# Built from this repository's checkout (apps/terminal).
 pkgname=solyra-term
-pkgver=0.1.0
+pkgver=0.3.0
 pkgrel=1
-pkgdesc="Solyra Terminal (zgx): tabs, splits, agents sidebar, harness chat"
+pkgdesc="Solyra Terminal: tabs, splits, agents sidebar and palette on frosted glass (zgx)"
 arch=(x86_64)
 url="https://github.com/PupppyLoverr/Infi-AI"
-license=(GPL-3.0-only)
+license=(GPL-3.0-only MIT)
 depends=(dbus gcc-libs glibc wayland libxkbcommon fontconfig vulkan-icd-loader)
-optdepends=('claude-code: chat view and agent TUI' 'webkit2gtk-4.1: in-pane browser')
-makedepends=(rust git pkgconf)
+optdepends=('webkit2gtk-4.1: web pages in panes' 'claude-code: agents in panes' 'xdg-utils: open links and folders')
+makedepends=(rust git pkgconf cmake clang)
 source=()
 _repo="${SOLYRA_REPO:-$startdir/../..}"
+_bin="$_repo/apps/terminal/target/release/solyra-term"
 
 build() {
-  cd "$_repo/apps"
-  cargo build --locked --release -p solyra-term
+  # CI already built it in the warm target dir: reuse that binary.
+  [ -n "${SOLYRA_PREBUILT:-}" ] && [ -x "$_bin" ] && return 0
+  cd "$_repo/apps/terminal"
+  cargo build --locked --release
 }
 
 check() {
-  cd "$_repo/apps"
-  cargo test --locked --release -p solyra-term
+  cd "$_repo/apps/terminal"
+  cargo test --locked --release
 }
 
 package() {
-  install -Dm755 "$_repo/apps/target/release/solyra-term" "$pkgdir/usr/bin/solyra-term"
+  install -Dm755 "$_bin" "$pkgdir/usr/bin/solyra-term"
   install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/solyra-term.desktop" <<D
 [Desktop Entry]
 Name=Terminal
@@ -33,6 +39,12 @@ Exec=solyra-term
 Icon=utilities-terminal
 Type=Application
 Categories=System;TerminalEmulator;
+StartupWMClass=solyra-term
 D
+  # Example plugins (editor, Hacker News, notes): copy one into
+  # ~/.local/share/solyra-term/plugins to offer it.
+  mkdir -p "$pkgdir/usr/share/solyra-term"
+  cp -r "$_repo/apps/terminal/plugins" "$pkgdir/usr/share/solyra-term/plugins"
   install -Dm644 "$_repo/THIRD_PARTY.md" "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY.md"
+  install -Dm644 "$_repo/apps/terminal/fonts/Geist-OFL.txt" "$pkgdir/usr/share/licenses/$pkgname/Geist-OFL.txt"
 }

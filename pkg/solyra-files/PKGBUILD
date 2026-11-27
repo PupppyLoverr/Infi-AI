@@ -13,6 +13,8 @@ source=()
 _repo="${SOLYRA_REPO:-$startdir/../..}"
 
 build() {
+  # CI already built it in the warm target dir: reuse that binary.
+  [ -n "${SOLYRA_PREBUILT:-}" ] && [ -x "$_repo/apps/target/release/solyra-files" ] && return 0
   cd "$_repo/apps"
   cargo build --locked --release -p solyra-files
 }
@@ -26,8 +28,8 @@ package() {
   install -Dm755 "$_repo/apps/target/release/solyra-files" "$pkgdir/usr/bin/solyra-files"
   install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/solyra-files.desktop" <<D
 [Desktop Entry]
-Name=Files
-Comment=Solyra Terminal
+Name=Finder
+Comment=Solyra Files
 Exec=solyra-files
 Icon=system-file-manager
 Type=Application

@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
   push:
     branches: [claude/charming-goodall-iuca3o]
-    paths: ['iso/**', 'shell/**', 'apps/solyra-term/**', '.github/workflows/iso.yml']
+    paths: ['iso/**', 'shell/**', 'apps/terminal/**', '.github/workflows/iso.yml']
 concurrency: { group: solyra-iso, cancel-in-progress: false }
 permissions:
   contents: write
@@ -21,15 +21,18 @@ jobs:
         with:
           path: |
             .cargo-home
-            apps/target
-          key: iso-term-${{ hashFiles('apps/Cargo.lock') }}
+            apps/terminal/target
+          key: iso-term-${{ hashFiles('apps/terminal/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            iso-term-${{ hashFiles('apps/terminal/Cargo.lock') }}-
+            iso-term-
       - name: Build solyra-term and the ISO (Arch container)
         run: |
           mkdir -p out
           docker run --rm --privileged -v "$PWD:/repo" -w /repo -e CARGO_HOME=/repo/.cargo-home archlinux:latest bash -ec '
-            pacman -Syu --noconfirm --needed base-devel rust git pkgconf dbus wayland libxkbcommon fontconfig >/dev/null
-            (cd apps && cargo build --locked --release -p solyra-term 2>&1 | tail -3)
-            bash iso/build.sh apps/target/release/solyra-term /repo/out'
+            pacman -Syu --noconfirm --needed base-devel rust git pkgconf cmake clang dbus wayland libxkbcommon fontconfig >/dev/null
+            (cd apps/terminal && cargo build --locked --release 2>&1 | tail -3)
+            bash iso/build.sh apps/terminal/target/release/solyra-term /repo/out'
           ls -la out
       - name: Size budget (< 3 GB)
         run: |

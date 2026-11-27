@@ -6,7 +6,7 @@ members = [
     "solyra-browse",
     "solyra-files",
     "solyra-setup",
-    "solyra-term",
+    "solyra-term",  # solyra-term-classic: the earlier terminal (chat engine), kept as a fallback
 ]
 
 [workspace.package]

@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   push:
     branches: [claude/charming-goodall-iuca3o]
-    paths: ['shell/qs/**', 'shell/hypr/**', 'tools/vm/**', 'apps/solyra-term/**', 'apps/solyra-ui/**', '.github/workflows/vm.yml']
+    paths: ['shell/qs/**', 'shell/hypr/**', 'tools/vm/**', 'apps/terminal/**', 'apps/solyra-files/**', 'apps/solyra-term/**', 'apps/solyra-ui/**', 'pkg/**', '.github/workflows/vm.yml']
 concurrency: { group: solyra-vm, cancel-in-progress: false }
 permissions:
   contents: write
@@ -17,29 +17,40 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Toolchain
-        run: pacman -Syu --noconfirm --needed base-devel rust git pkgconf dbus wayland libxkbcommon fontconfig >/dev/null
+        run: pacman -Syu --noconfirm --needed base-devel rust git pkgconf cmake clang dbus wayland libxkbcommon fontconfig >/dev/null
       - uses: actions/checkout@v4
+      # Warm builds: the cargo registry, git checkouts and both target
+      # directories survive between runs. An exact key per lockfile, and a
+      # prefix fallback so a changed lockfile still starts from the last
+      # build instead of from scratch (cargo rebuilds only what changed).
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             apps/target
-          key: term-arch-${{ hashFiles('apps/Cargo.lock') }}
-      - name: Build solyra-term (release)
-        working-directory: apps
-        run: cargo build --locked --release -p solyra-term -p solyra-files 2>&1 | tail -5
-      - name: Test solyra-term
-        working-directory: apps
-        run: cargo test --locked --release -p solyra-term 2>&1 | grep -E "test result|FAILED|panicked"
-      - name: Build the Arch packages (makepkg)
+            apps/terminal/target
+          key: apps-arch-${{ hashFiles('apps/Cargo.lock', 'apps/terminal/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            apps-arch-${{ hashFiles('apps/Cargo.lock', 'apps/terminal/Cargo.lock') }}-
+            apps-arch-
+      - name: Build the terminal (zgx terminal app) and the Finder (release)
+        run: |
+          (cd apps/terminal && cargo build --locked --release 2>&1 | tail -3)
+          (cd apps && cargo build --locked --release -p solyra-files -p solyra-term-classic 2>&1 | tail -3)
+      - name: Test
+        run: |
+          (cd apps/terminal && cargo test --locked --release 2>&1 | grep -E "test result|FAILED|panicked")
+          (cd apps && cargo test --locked --release -p solyra-term-classic -p solyra-files 2>&1 | grep -E "test result|FAILED|panicked")
+      - name: Build the Arch packages (makepkg, reusing the warm target dirs)
         run: |
           pacman -S --noconfirm --needed sudo >/dev/null
           useradd -m builder 2>/dev/null || true
           chown -R builder: "$GITHUB_WORKSPACE"
           for p in solyra-term solyra-files solyra-shell; do
-            (cd pkg/$p && sudo -u builder env SOLYRA_REPO="$GITHUB_WORKSPACE" CARGO_HOME=/home/builder/.cargo makepkg -f --nodeps --nocheck --noconfirm 2>&1 | tail -3)
+            (cd pkg/$p && sudo -u builder env SOLYRA_REPO="$GITHUB_WORKSPACE" CARGO_HOME=/home/builder/.cargo SOLYRA_PREBUILT=1 makepkg -f --nodeps --nocheck --noconfirm 2>&1 | tail -3)
           done
+          chown -R root: "$GITHUB_WORKSPACE"
           ls -la pkg/*/*.pkg.tar.zst
       - uses: actions/upload-artifact@v4
         with:
@@ -49,7 +60,7 @@ jobs:
         with:
           name: solyra-term
           path: |
-            apps/target/release/solyra-term
+            apps/terminal/target/release/solyra-term
             apps/target/release/solyra-files
   vm:
     needs: term
@@ -69,7 +80,7 @@ jobs:
           path: out/base.qcow2
           key: solyra-vm-base-${{ hashFiles('tools/vm/setup.sh', 'tools/vm/sync.sh') }}
       - name: Boot, scenario, measure
-        run: chmod +x bin/* && TERM_BIN=$PWD/bin/solyra-term OUT=$PWD/out tools/vm/run.sh
+        run: chmod -R +x bin && TERM_BIN=$(find $PWD/bin -name solyra-term -type f | head -1) FILES_BIN=$(find $PWD/bin -name solyra-files -type f | head -1) OUT=$PWD/out tools/vm/run.sh
       - name: Budget gate (idle RAM <= 250 MB, installed <= 3 GB)
         run: |
           r=out/shots/report.txt

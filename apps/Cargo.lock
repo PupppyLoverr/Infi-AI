@@ -3151,7 +3151,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "solyra-term"
+name = "solyra-term-classic"
 version = "0.1.0"
 dependencies = [
  "serde_json",

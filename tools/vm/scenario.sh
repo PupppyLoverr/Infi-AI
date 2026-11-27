@@ -11,7 +11,7 @@ shot 01-desktop-idle-notch 0
 mpv --no-video --idle=no --loop=inf --force-media-title="Harbour Lights" "av://lavfi:sine=frequency=220" >/dev/null 2>&1 &
 sleep 3; shot 02-notch-live-activity 0
 q island media; shot 03-island-media
-for t in "https://github.com/PupppyLoverr/Infi-AI" "#0a84ff" "cargo build --release -p solyra-term"; do printf '%s' "$t" | wl-copy; sleep 1.6; done
+for t in "https://github.com/PupppyLoverr/Infi-AI" "#0a84ff" "cargo build --release"; do printf '%s' "$t" | wl-copy; sleep 1.6; done
 q island clip; shot 04-island-clipboard
 q island shelf; shot 05-island-shelf
 q island cal; shot 06a-island-calendar
@@ -30,13 +30,10 @@ notify-send -a "Solyra" "Welcome to Solyra" "Notifications arrive in the corner 
 sleep 5
 q snap; shot 11-snap-layouts
 q snap; sleep 0.5
-SOLYRA_TERM_LAYOUT=agents solyra-term >/tmp/term1.log 2>&1 &
-shot 12-terminal-split 5
+solyra-term >/tmp/term1.log 2>&1 &
+shot 12-terminal 6
 qs ipc call shell overview; shot 12b-mission-control 1.5
 qs ipc call shell overview; sleep 0.6
-hyprctl dispatch 'hl.dsp.window.close()' >/dev/null; sleep 1
-SOLYRA_TERM_CHAT=1 solyra-term >/tmp/term2.log 2>&1 &
-shot 13-terminal-chat 5
 hyprctl dispatch 'hl.dsp.window.close()' >/dev/null; sleep 1
 q glass 90; shot 14-glass-tinted 1.0
 q glass 0; shot 15-glass-clear 1.0
