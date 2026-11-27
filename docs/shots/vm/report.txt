@@ -1,35 +1,35 @@
 === solyra-vm report ===
 VM: 2 vCPU, 4 GiB RAM, virtio-vga (llvmpipe)
                total        used        free      shared  buff/cache   available
-Mem:            3906         754        2326         133        1168        3151
+Mem:            3906         774        2464         138        1015        3131
 Swap:            511           0         511
-Startup finished in 329ms (kernel) + 2.431s (initrd) + 11.011s (userspace) = 13.771s 
-graphical.target reached after 11.009s in userspace.
-root_used_mb= 2455
+Startup finished in 318ms (kernel) + 2.279s (initrd) + 6.812s (userspace) = 9.410s 
+graphical.target reached after 6.807s in userspace.
+root_used_mb= 2459
 packages=467
 --- top RSS (KiB)
   RSS COMMAND
-295704 quickshell
-158400 Hyprland
-26984 NetworkManager
-18312 wireplumber
-16972 systemd
-13692 systemd-journal
-13156 systemd
-12556 systemd-udevd
-11012 pipewire
-10856 systemd-network
+297740 quickshell
+158648 Hyprland
+27356 NetworkManager
+18152 wireplumber
+17436 systemd
+13672 systemd-journal
+13100 systemd
+12572 systemd-udevd
+11124 pipewire
+10928 systemd-network
 10788 upowerd
- 9164 pipewire-pulse
- 8464 systemd-homed
- 8408 login
- 8304 polkitd
- 8116 systemd-resolve
- 7608 systemd-logind
+ 9188 pipewire-pulse
+ 8468 systemd-homed
+ 8324 login
+ 8320 polkitd
+ 8112 systemd-resolve
+ 7620 systemd-logind
  7592 sshd
- 7316 systemd-nsresou
-total_rss_kib=801652
+ 7296 systemd-nsresou
+total_rss_kib=804552
 Hyprland 0.57.2 built from branch v0.57.2 at commit 11cbc6c577b84ffb1edf4df3fc5b6128c3ae6947 clean (VERSION: bump to 0.57.2).
 Date: Mon Nov 9 11:05:46 2026
 Quickshell 0.3.2 (revision , distributed by Arch Linux)
-budget_ram_mb=754 budget_disk_mb= 2455
+budget_ram_mb=774 budget_disk_mb= 2459
