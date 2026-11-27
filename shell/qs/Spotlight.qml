@@ -137,7 +137,7 @@ Scope {
         id: panel
         readonly property int rowsH: sp.browsing ? 4 * 58 + 20
                                     : search.filter === "Ask" ? Math.min(360, answer.implicitHeight + 72)
-                                    : Math.min(420, list.contentHeight + 20)
+                                    : Math.min(500, list.contentHeight + 20)
         visible: sp.open && (sp.browsing || search.filter === "Ask" || search.results.length > 0)
         kind: "frosted"
         r: 26

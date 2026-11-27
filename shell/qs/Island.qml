@@ -176,9 +176,10 @@ PanelWindow {
         id: shape
         // Idle, compact and HUD: solid black, the camera housing. Expanded:
         // dark Liquid Glass over Hyprland's refracting blur, with the
-        // lensing rim; clear enough that the wallpaper shows through.
+        // lensing rim; near-black like Apple's expanded island, so menu titles
+        // underneath never show through.
         readonly property bool glassy: win.mode === "expanded" && !Theme.reduceTransparency
-        color: glassy ? Qt.rgba(0.07, 0.07, 0.09, 0.30 + Theme.glass / 100 * 0.45) : "black"
+        color: glassy ? Qt.rgba(0.02, 0.02, 0.03, 0.82 + Theme.glass / 100 * 0.14) : "black"
         Behavior on color { ColorAnimation { duration: Theme.ms(220) } }
         // Spotlight opens over the notch: the island steps aside meanwhile.
         opacity: (win.shell && win.shell.spotlightOpen) || (Theme.hideNotch && win.mode === "idle" && !hoverIdle.hovered) ? 0 : 1
