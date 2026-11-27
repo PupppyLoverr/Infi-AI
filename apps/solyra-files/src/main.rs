@@ -1290,13 +1290,11 @@ fn status_bar(app: &FilesApp, style: &solyra_ui::Style) -> View {
             if selected {
                 return action_bar_for(&app, &style, &location);
             }
-            let label = match &location {
-                Location::Folder(path) => match model::read_entries(path, hidden) {
-                    Ok(entries) if entries.len() == 1 => "1 item".to_string(),
-                    Ok(entries) => format!("{} items", entries.len()),
-                    Err(_) => String::new(),
-                },
-                other => other.title(),
+            // "5 items", as Finder's status bar says, for every place.
+            let label = match load_entries(&location, hidden) {
+                Ok(entries) if entries.len() == 1 => "1 item".to_string(),
+                Ok(entries) => format!("{} items", entries.len()),
+                Err(_) => location.title(),
             };
             row()
                 .w_full()
