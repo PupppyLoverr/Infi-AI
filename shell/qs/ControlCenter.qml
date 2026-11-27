@@ -89,9 +89,9 @@ Scope {
             Icon { anchors.centerIn: parent; name: p.icon; size: 20; color: p.on ? p.tint : "white" }
         }
         Column {
-            anchors { left: disc.right; leftMargin: 10; right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter }
-            Text { width: parent.width; elide: Text.ElideRight; text: p.title; color: "white"; font.family: Theme.font; font.pixelSize: 15; font.weight: Font.Bold }
-            Text { width: parent.width; elide: Text.ElideRight; text: p.sub; color: Qt.rgba(1, 1, 1, 0.75); font.family: Theme.font; font.pixelSize: 13 }
+            anchors { left: disc.right; leftMargin: 8; right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
+            Text { width: parent.width; elide: Text.ElideRight; text: p.title; color: "white"; font.family: Theme.font; font.pixelSize: 14; font.weight: Font.Bold }
+            Text { width: parent.width; elide: Text.ElideRight; text: p.sub; color: Qt.rgba(1, 1, 1, 0.75); font.family: Theme.font; font.pixelSize: 12 }
         }
         TapHandler { onTapped: p.clicked() }
     }

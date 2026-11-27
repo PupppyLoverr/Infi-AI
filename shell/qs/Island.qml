@@ -356,27 +356,6 @@ PanelWindow {
             onDropped: drop => { win.dropping = false; for (const u of drop.urls) if (win.shelf) win.shelf.add(u.toString(), false) }
         }
 
-        // Spotlight Liquid Glass specular rim
-        Shape {
-            anchors.fill: parent
-            visible: shape.glassy
-            opacity: shape.glassy ? 1 : 0
-            Behavior on opacity { NumberAnimation { duration: Theme.ms(220) } }
-            preferredRendererType: Shape.CurveRenderer
-            ShapePath {
-                strokeWidth: 0
-                fillRule: ShapePath.OddEvenFill
-                fillGradient: LinearGradient {
-                    x1: 0; y1: 0; x2: shape.width; y2: shape.height
-                    GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0.45) }
-                    GradientStop { position: 0.4; color: Qt.rgba(1, 1, 1, 0.10) }
-                    GradientStop { position: 1.0; color: Qt.rgba(1, 1, 1, 0.28) }
-                }
-                PathRectangle { x: 0; y: 0; width: shape.width; height: shape.height; radius: shape.radius }
-                PathRectangle { x: 1.2; y: 1.2; width: shape.width - 2.4; height: shape.height - 2.4; radius: Math.max(0, shape.radius - 1.2) }
-            }
-        }
-
         // ------------------------------------------------ COMPACT LIVE ACTIVITY (Normal, Tri-Island Center, or 2-Row Hover Peek)
         Item {
             anchors.fill: parent
