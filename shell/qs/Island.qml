@@ -179,7 +179,7 @@ PanelWindow {
         // lensing rim; near-black like Apple's expanded island, so menu titles
         // underneath never show through.
         readonly property bool glassy: win.mode === "expanded" && !Theme.reduceTransparency
-        color: glassy ? Qt.rgba(0.02, 0.02, 0.03, 0.82 + Theme.glass / 100 * 0.14) : "black"
+        color: glassy ? Qt.rgba(0.02, 0.02, 0.03, 1) : "black"
         Behavior on color { ColorAnimation { duration: Theme.ms(220) } }
         // Spotlight opens over the notch: the island steps aside meanwhile.
         opacity: (win.shell && win.shell.spotlightOpen) || (Theme.hideNotch && win.mode === "idle" && !hoverIdle.hovered) ? 0 : 1
