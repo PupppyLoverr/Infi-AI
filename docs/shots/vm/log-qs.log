@@ -2,12 +2,13 @@
 
 [32m  INFO[0m: Launching config: "/home/solyra/.config/quickshell/shell.qml"
 [32m  INFO[0m: Shell ID: "1f23d0f74c6cc23f920c90fb6c35d007" Path ID "1f23d0f74c6cc23f920c90fb6c35d007"
-[32m  INFO[0m: Saving logs to "/run/user/1001/quickshell/by-id/eej875pt/log.qslog"
+[32m  INFO[0m: Saving logs to "/run/user/1001/quickshell/by-id/ne5tc5pt/log.qslog"
 MESA-EGL: warning: egl: failed to create dri2 screen
 MESA-EGL: warning: egl: failed to create dri2 screen
-[33m  WARN[97m scene[0m: QML IpcHandler at @shell.qml[149:5]: Signal detected: "islandRequested"
-[33m  WARN[97m scene[0m: QML IpcHandler at @shell.qml[149:5]: Signal detected: "hudRequested"
-[33m  WARN[97m scene[0m: QML IpcHandler at @shell.qml[149:5]: Signal detected: "downloadsRequested"
+[33m  WARN[97m scene[0m: QML IpcHandler at @shell.qml[153:5]: Signal detected: "islandRequested"
+[33m  WARN[97m scene[0m: QML IpcHandler at @shell.qml[153:5]: Signal detected: "hudRequested"
+[33m  WARN[97m scene[0m: QML IpcHandler at @shell.qml[153:5]: Signal detected: "downloadsRequested"
+[33m  WARN[97m scene[0m: QML IpcHandler at @shell.qml[153:5]: Signal detected: "dockHoverRequested"
 [32m  INFO[0m: Configuration Loaded
 [33m  WARN[97m scene[0m: QML FileView at @Theme.qml[52:5]: Read of /home/solyra/.config/solyra/look.json failed: File does not exist.
 [33m  WARN[97m scene[0m: QML FileView at @ClipHistory.qml[150:29]: Read of /home/solyra/.local/share/solyra/clipboard.json failed: File does not exist.
@@ -20,7 +21,7 @@ MESA-EGL: warning: egl: failed to create dri2 screen
 [32m  INFO[97m qt.multimedia.ffmpeg[0m: Using Qt multimedia with FFmpeg version n9.1 GPL version 3 or later
 [31m ERROR[97m quickshell.wayland.buffer.dmabuf[0m: Failed to find render device: no render or primary node found.
 [33m  WARN[97m quickshell.wayland.buffer[0m: Render format initialization failed. All buffers will fall back to SHM.
-[33m  WARN[97m quickshell.dbus.properties[0m: Error updating property org.mpris.MediaPlayer2.mpv.instance-nhXpqEcY/org/mpris/MediaPlayer2/org.mpris.MediaPlayer2.Player:Position
+[33m  WARN[97m quickshell.dbus.properties[0m: Error updating property org.mpris.MediaPlayer2.mpv.instance-dAIzjAit/org/mpris/MediaPlayer2/org.mpris.MediaPlayer2.Player:Position
 [33m  WARN[97m quickshell.dbus.properties[0m: QDBusError("org.freedesktop.DBus.Error.ServiceUnknown", "The name is not activatable")
-[33m  WARN[97m quickshell.dbus.properties[0m: Error updating property org.mpris.MediaPlayer2.mpv.instance-nhXpqEcY/org/mpris/MediaPlayer2/org.mpris.MediaPlayer2.Player:Position
+[33m  WARN[97m quickshell.dbus.properties[0m: Error updating property org.mpris.MediaPlayer2.mpv.instance-dAIzjAit/org/mpris/MediaPlayer2/org.mpris.MediaPlayer2.Player:Position
 [33m  WARN[97m quickshell.dbus.properties[0m: QDBusError("org.freedesktop.DBus.Error.ServiceUnknown", "The name is not activatable")
