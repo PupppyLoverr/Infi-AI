@@ -36,7 +36,8 @@ Item {
                 const k = it.item.kind
                 if (k === "downloads" || k === "trash") return Qt.resolvedUrl("apps/" + k + ".png")
                 const known = { "solyra-files": "files", "firefox": "browser", "solyra-term": "terminal", "org.gnome.TextEditor": "editor", "mpv": "music", "solyra-settings": "settings" }
-                if (known[it.item.id]) return Qt.resolvedUrl("apps/" + known[it.item.id] + ".png")
+                const key = it.item.appId || it.item.id
+                if (known[key]) return Qt.resolvedUrl("apps/" + known[key] + ".png")
                 const e = it.item.entry
                 const p = e && e.icon ? Quickshell.iconPath(e.icon, true) : ""
                 return p !== "" ? p : Qt.resolvedUrl("apps/overview.png")
@@ -72,7 +73,7 @@ Item {
         width: tip.implicitWidth + 24; height: 28
         Text {
             id: tip; anchors.centerIn: parent; color: Theme.ink; font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Medium
-            text: it.item.kind === "downloads" ? "Downloads" : it.item.kind === "trash" ? "Trash" : (it.item.entry ? it.item.entry.name : (it.dock.bundled[it.item.id] || it.item.id)) + (it.item.kind === "bg" ? " (background)" : "")
+            text: it.item.kind === "downloads" ? "Downloads" : it.item.kind === "trash" ? "Trash" : it.item.kind === "min" ? (it.item.title || "Window") : (it.item.entry ? it.item.entry.name : (it.dock.bundled[it.item.id] || it.item.id)) + (it.item.kind === "bg" ? " (background)" : "")
         }
     }
 
@@ -84,13 +85,14 @@ Item {
             if (k === "downloads") Quickshell.execDetached(["xdg-open", Theme.home + "/Downloads"])
             else if (k === "trash") Quickshell.execDetached(["xdg-open", "trash:///"])
             else if (k === "bg") { if (it.item.tray) it.item.tray.activate() }
+            else if (k === "min") it.dock.restore(it.item.address)
             else if (it.wins.length) it.wins[0].activate()
             else if (it.item.entry) { bounceAnim.restart(); it.item.entry.execute() }
             else { bounceAnim.restart(); Quickshell.execDetached([it.item.id]) }
         }
     }
     TapHandler {
-        enabled: !it.sep && it.item.kind !== "downloads" && it.item.kind !== "trash"
+        enabled: !it.sep && it.item.kind !== "downloads" && it.item.kind !== "trash" && it.item.kind !== "min"
         acceptedButtons: Qt.RightButton
         onTapped: ctx.visible = true
     }

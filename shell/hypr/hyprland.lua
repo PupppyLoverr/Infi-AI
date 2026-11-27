@@ -153,6 +153,15 @@ hl.bind(mod .. " + E", hl.dsp.exec_cmd("solyra-files"))
 hl.bind(mod .. " + Q", hl.dsp.window.close())
 hl.bind(mod .. " + F", hl.dsp.window.fullscreen())
 hl.bind(mod .. " + V", hl.dsp.window.float({ action = "toggle" }))
+-- macOS-style: minimise to the dock (it shows minimised windows), screenshots
+-- (⇧3 whole screen, ⇧4 an area, both to ~/Pictures and the clipboard),
+-- ⇧5 starts or stops a screen recording (a live activity in the island),
+-- Super+, opens the Notification Center.
+hl.bind(mod .. " + M", hl.dsp.window.move({ workspace = "special:minimized", follow = false }))
+hl.bind(mod .. " + SHIFT + 3", hl.dsp.exec_cmd("sh -c 'mkdir -p \"$HOME/Pictures\"; f=\"$HOME/Pictures/Screenshot $(date +%F\\ at\\ %H.%M.%S).png\"; grim \"$f\" && wl-copy < \"$f\" && notify-send -a Screenshot \"Screenshot saved\" \"$f\"'"))
+hl.bind(mod .. " + SHIFT + 4", hl.dsp.exec_cmd("sh -c 'mkdir -p \"$HOME/Pictures\"; f=\"$HOME/Pictures/Screenshot $(date +%F\\ at\\ %H.%M.%S).png\"; grim -g \"$(slurp)\" \"$f\" && wl-copy < \"$f\" && notify-send -a Screenshot \"Screenshot saved\" \"$f\"'"))
+hl.bind(mod .. " + SHIFT + 5", hl.dsp.exec_cmd("qs ipc call shell record"))
+hl.bind(mod .. " + COMMA", hl.dsp.exec_cmd("qs ipc call shell notifications"))
 for i = 1, 9 do
     hl.bind(mod .. " + " .. i, hl.dsp.focus({ workspace = i }))
     hl.bind(mod .. " + SHIFT + " .. i, hl.dsp.window.move({ workspace = i }))

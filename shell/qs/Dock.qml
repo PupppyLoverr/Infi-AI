@@ -2,13 +2,16 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
+import Quickshell.Hyprland
 import Quickshell.Services.SystemTray
 import Quickshell.Widgets
 
 // The dock: pinned apps, running apps, a divider, Downloads and Trash.
 // Gaussian magnification (max 1.75x, sigma 1.4 cells), launch bounce, a dot
 // under running apps and a hollow dot for apps running in the background
-// (a tray item but no window) with "Stop Running in Background".
+// (a tray item but no window) with "Stop Running in Background". Minimised
+// windows (Window ▸ Minimise) sit on the right before Downloads and Trash,
+// as on macOS; a click brings one back to the current desktop.
 PanelWindow {
     id: dockWin
     property var screenModel
@@ -28,6 +31,12 @@ PanelWindow {
     readonly property int gap: 8
     property real mx: -1
 
+    // Bring a minimised window back to the focused desktop and focus it.
+    function restore(address) {
+        const ws = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : 1
+        Hyprland.dispatch("hl.dsp.window.move({ workspace = " + ws + ", window = 'address:0x" + address + "' })")
+        Hyprland.dispatch("hl.dsp.focus({ window = 'address:0x" + address + "' })")
+    }
     function entryFor(id) { return DesktopEntries.byId(id) || DesktopEntries.heuristicLookup(id) }
     function windowsOf(appId) { return ToplevelManager.toplevels.values.filter(w => w.appId && (w.appId === appId || w.appId.toLowerCase().indexOf(appId.toLowerCase()) >= 0 || appId.toLowerCase().indexOf(w.appId.toLowerCase()) >= 0)) }
 
@@ -60,6 +69,11 @@ PanelWindow {
             out.push({ kind: "bg", id: id, entry: entryFor(id), appId: id, tray: t })
         }
         out.push({ kind: "sep" })
+        for (const t of Hyprland.toplevels.values) {
+            if (!t.workspace || t.workspace.name !== "special:minimized") continue
+            const appId = t.wayland ? t.wayland.appId : ""
+            out.push({ kind: "min", id: "min-" + t.address, appId: appId, entry: entryFor(appId), title: t.title, address: t.address })
+        }
         out.push({ kind: "downloads", id: "downloads" })
         out.push({ kind: "trash", id: "trash" })
         return out

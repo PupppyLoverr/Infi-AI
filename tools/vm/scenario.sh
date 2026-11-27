@@ -48,7 +48,9 @@ q glass 90; shot 14-glass-tinted 1.0
 q glass 0; shot 15-glass-clear 1.0
 solyra-files >/tmp/files.log 2>&1 &
 shot 15b-finder 4
-hyprctl dispatch 'hl.dsp.window.close()' >/dev/null; sleep 1
+hyprctl dispatch "hl.dsp.window.move({ workspace = 'special:minimized', follow = false })" >/dev/null
+shot 15c-dock-minimized 1.5
+pkill -x solyra-files; sleep 1
 q glass 35
 q island close; q lock; shot 16-lock-screen 2.5
 # The test media player is part of the scenario, not the desktop: stop it,
