@@ -193,7 +193,7 @@ Ground rules for every step:
   installed size > 3 GB.
 
 ### M1. Audit and measure ✅ (Plasma 1144–1192 MB). M1b: Hyprland + Quickshell 🟡
-- [ ] 🟡 *Status: clean idle with the full shell (llvmpipe software GL, 2 vCPU / 4 GiB): **765 MB used**. The trims landed: no Xwayland, no swaybg, no test player. quickshell 295 MB and Hyprland 158 MB are both inflated by llvmpipe; everything else is under 30 MB each. **Installed 2450 MB ✅. Boot 10.1 s ✅.** Still **over the 250 MB budget**; a real-GPU measurement is needed to judge.* Record the M1b numbers. If over 250 MB, trim (portals, Xwayland
+- [ ] 🟡 *Status (2026-11-27, full scenario incl. Firefox playing a song): quickshell **339 MB**, Hyprland **157 MB** (both on llvmpipe software GL, which keeps full-size buffers in RAM); `free` reports 995 MB used with Firefox's leftovers and caches. **Installed 2.9 GB ✅ (with Firefox). Boot ~10 s ✅.** Still over the 250 MB budget; needs a real-GPU measurement.* Record the M1b numbers. If over 250 MB, trim (portals, Xwayland
   on demand, PipeWire socket activation) and re-measure before going on.
 
 ### M2. Terminal blur spike (zgx on Hyprland)
