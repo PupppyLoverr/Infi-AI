@@ -45,14 +45,6 @@ DEBUG ]: [Config::initConfigManager] [cfg] Regular config at /home/solyra/.confi
 DEBUG ]: [CCompositor::initManagers] Creating the Error Overlay!
 DEBUG ]: [CCompositor::initManagers] Creating the LayoutManager!
 DEBUG ]: [CCompositor::initManagers] Creating the TokenManager!
-DEBUG ]: [Config::Lua::CConfigManager::postConfigReload] Disabling stdout logs (debug.enable_stdout_logs = 0). Further logs will be written to /run/user/1001/hypr/11cbc6c577b84ffb1edf4df3fc5b6128c3ae6947_1795736210_1469799448/hyprland.log
+DEBUG ]: [Config::Lua::CConfigManager::postConfigReload] Disabling stdout logs (debug.enable_stdout_logs = 0). Further logs will be written to /run/user/1001/hypr/11cbc6c577b84ffb1edf4df3fc5b6128c3ae6947_1795739919_447147123/hyprland.log
 DEBUG ]: [CCompositor::initManagers] Creating the PointerManager!
 DEBUG ]: [CCompositor::initManagers] Creating the AsyncResourceGatherer!
-The XKEYBOARD keymap compiler (xkbcomp) reports:
-> Warning:          Unsupported maximum keycode 709, clipping.
->                   X11 cannot support keycodes above 255.
-> Warning:          Virtual modifier Hyper multiply defined
->                   Using 0, ignoring 0
-> Warning:          Virtual modifier ScrollLock multiply defined
->                   Using 0, ignoring 0
-Errors from xkbcomp are not fatal to the X server
