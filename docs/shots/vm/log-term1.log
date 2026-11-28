@@ -1,1 +1,0 @@
-warning: Luau was built with its asserts, which slow scripts by about a fifth: build with LUAU_CXXFLAGS=-DNDEBUG (docs/scripting.md, Cost)
