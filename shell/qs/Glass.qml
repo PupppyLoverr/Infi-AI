@@ -38,14 +38,12 @@ Item {
         if (Theme.reduceTransparency) return dark ? "#f21c1c1f" : "#f6f6f6f8"
         if (isSmoke) return Qt.rgba(0.02, 0.02, 0.04, 0.78 + slider * 0.16)
         if (isModule) {
-            // Cupertino Control Center modules: smoky-clear dark-adaptive glass
-            // so white text/icons pop cleanly over both bright sky and dark water.
-            return Qt.rgba(0.08, 0.09, 0.11, 0.28 + slider * 0.14)
+            // Calm Cupertino Control Center modules: clean smoky frosted glass
+            return Qt.rgba(0.10, 0.11, 0.14, 0.42 + slider * 0.12)
         }
         if (isDock) {
-            // Real macOS 27 Golden Gate Dock (references/xnu/desktop.jpg):
-            // ultra-clear liquid glass body (9% white) so ocean/rocks bend right through.
-            return Qt.rgba(1, 1, 1, 0.09)
+            // Exact xnulinux / macOS 27 Golden Gate Dock: soft frosted translucent glass
+            return Qt.rgba(0.92, 0.94, 0.97, 0.22)
         }
         if (isFrosted) {
             return dark
@@ -87,7 +85,7 @@ Item {
         gradient: Gradient {
             GradientStop {
                 position: 0.0
-                color: Qt.rgba(1, 1, 1, g.isSmoke ? 0.07 : (g.isModule ? 0.14 : (g.isDock ? 0.15 : (g.dark ? 0.10 : 0.14))))
+                color: Qt.rgba(1, 1, 1, g.isSmoke ? 0.06 : (g.isModule ? 0.06 : (g.isDock ? 0.08 : (g.dark ? 0.08 : 0.10))))
             }
             GradientStop {
                 position: Math.min(0.24, (g.isDock ? 9 : 7) / Math.max(1, g.height))
@@ -99,7 +97,7 @@ Item {
             }
             GradientStop {
                 position: 1.0
-                color: Qt.rgba(1, 1, 1, g.isSmoke ? 0.06 : (g.isModule ? 0.10 : (g.isDock ? 0.09 : (g.dark ? 0.06 : 0.08))))
+                color: Qt.rgba(1, 1, 1, g.isSmoke ? 0.04 : (g.isModule ? 0.04 : (g.isDock ? 0.05 : (g.dark ? 0.05 : 0.06))))
             }
         }
     }
@@ -124,7 +122,7 @@ Item {
         anchors.fill: parent
         visible: !Theme.reduceTransparency
         preferredRendererType: Shape.CurveRenderer
-        readonly property real rimW: g.isDock ? 1.4 : 1.15
+        readonly property real rimW: 1.0
         ShapePath {
             strokeWidth: 0
             fillRule: ShapePath.OddEvenFill
@@ -132,23 +130,23 @@ Item {
                 x1: 0; y1: 0; x2: 0; y2: g.height
                 GradientStop {
                     position: 0.0
-                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.46 : (g.isDock ? 0.52 : 0.24))
+                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.22 : (g.isDock ? 0.28 : 0.18))
                 }
                 GradientStop {
                     position: Math.min(0.38, 18 / Math.max(1, g.height))
-                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.20 : (g.isDock ? 0.22 : (g.dark ? 0.12 : 0.20)))
+                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.10 : (g.isDock ? 0.14 : (g.dark ? 0.09 : 0.14)))
                 }
                 GradientStop {
                     position: 0.5
-                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.06 : (g.isDock ? 0.08 : (g.dark ? 0.05 : 0.10)))
+                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.04 : (g.isDock ? 0.06 : (g.dark ? 0.04 : 0.07)))
                 }
                 GradientStop {
                     position: Math.max(0.62, 1 - 18 / Math.max(1, g.height))
-                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.16 : (g.isDock ? 0.18 : (g.dark ? 0.09 : 0.15)))
+                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.08 : (g.isDock ? 0.10 : (g.dark ? 0.07 : 0.11)))
                 }
                 GradientStop {
                     position: 1.0
-                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.26 : (g.isDock ? 0.30 : 0.16))
+                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.12 : (g.isDock ? 0.16 : 0.10))
                 }
             }
             PathRectangle { x: 0; y: 0; width: g.width; height: g.height; radius: g.r }

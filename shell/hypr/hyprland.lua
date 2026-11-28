@@ -50,23 +50,21 @@ hl.config({
         },
         blur = {
             enabled = true,
-            size = 14,
-            passes = 4,
+            size = 12,
+            passes = 3,
             noise = 0.01,
-            vibrancy = 0.28,          -- vibrant colour through crystal-clear Liquid Glass
-            vibrancy_darkness = 0.10,
+            vibrancy = 0.20,          -- subtle colour through clean frosted glass
+            vibrancy_darkness = 0.14,
             popups = true,
             popups_ignorealpha = 0.08, -- menus and tooltips: blur the card, not its corners
-            -- Liquid Glass: Hyprland's acrylic variant lenses the backdrop
-            -- through a curved edge (refraction + bulb), tuned to macOS 27 Golden Gate
-            -- and Cupertino optical lensing and clarity.
+            -- Subtle Liquid Glass: gentle frosted optical edge without fish-eye distortion
             variant = 8,
             acrylic = {
-                refraction = 24,     -- crisp inward edge lensing matching macOS 27 & Cupertino
-                bulb = 18,           -- width of the curved optical rim, px
-                clarity = 0.72,      -- crystal-clear backdrop with clean glass lensing
-                aberration = 0.0,    -- no visible chromatic fringe
-                tint = 0x06F8FAFF,
+                refraction = 6,      -- minimal gentle edge lensing (no heavy warp)
+                bulb = 6,            -- narrow subtle rim, px
+                clarity = 0.84,      -- clean frosted backdrop
+                aberration = 0.0,    -- no chromatic fringe
+                tint = 0x05F4F6FA,
             },
         },
     },

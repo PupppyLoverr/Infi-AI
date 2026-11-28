@@ -304,8 +304,8 @@ PanelWindow {
         Behavior on opacity { NumberAnimation { duration: Theme.ms(220) } }
         HoverHandler { id: hoverIdle }
         anchors.horizontalCenter: parent.horizontalCenter
-        y: win.flushNotch ? 0 : (win.mode === "expanded" || win.mode === "reply" ? 32 : 4)
-        Behavior on y { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.ms(220); easing.type: Easing.OutCubic } }
+        y: (win.flushNotch || win.mode === "expanded" || win.mode === "reply") ? 0 : 4
+        Behavior on y { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.ms(200); easing.type: Easing.OutCubic } }
         width: win.d.w
         height: win.d.h
         radius: win.d.r
