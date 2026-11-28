@@ -421,23 +421,35 @@ Scope {
             TapHandler { onTapped: level.detailsClicked() }
         }
         Icon {
-            x: 12; y: 33; size: 15
+            x: 13; y: 34; size: 14
             name: level.outputButton ? "volume" : "sun"
-            opacity: 0.85
+            opacity: 0.88
         }
         Rectangle {
-            x: level.trackX + 8; y: 30; width: level.trackWidth - 8; height: 22; radius: 11
+            x: 34; y: 32; width: level.outputButton ? 198 : 222; height: 18; radius: 9
             color: Qt.rgba(1, 1, 1, 0.16)
             border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.18)
             Rectangle {
-                width: Math.max(22, parent.width * Math.max(0, Math.min(1, level.value)))
-                height: parent.height; radius: 11
+                width: Math.max(18, parent.width * Math.max(0, Math.min(1, level.value)))
+                height: parent.height; radius: 9
                 color: "white"
             }
         }
+        Icon {
+            visible: !level.outputButton
+            x: 263; y: 34; size: 16
+            name: "sun"
+            opacity: 0.92
+        }
+        Icon {
+            visible: level.outputButton
+            x: 238; y: 34; size: 15
+            name: "volume"
+            opacity: 0.92
+        }
         MouseArea {
-            x: level.trackX; y: 28
-            width: level.trackWidth + 8; height: 26
+            x: 30; y: 28
+            width: level.outputButton ? 206 : 230; height: 26
             acceptedButtons: Qt.LeftButton
             onPressed: event => { level.forceActiveFocus(); level.setAt(event.x + x) }
             onPositionChanged: event => { if (pressed) level.setAt(event.x + x) }
@@ -448,9 +460,9 @@ Scope {
         }
         Rectangle {
             visible: level.outputButton
-            x: 244; y: 29; width: 26; height: 26; radius: 13
-            color: Qt.rgba(1, 1, 1, 0.18)
-            Icon { anchors.centerIn: parent; name: "airplay"; size: 14 }
+            x: 260; y: 30; width: 22; height: 22; radius: 11
+            color: Qt.rgba(1, 1, 1, 0.14)
+            Icon { anchors.centerIn: parent; name: "airplay"; size: 13 }
             TapHandler { onTapped: level.outputClicked() }
         }
         Keys.onPressed: event => {

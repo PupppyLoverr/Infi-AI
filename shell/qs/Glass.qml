@@ -38,8 +38,9 @@ Item {
         if (Theme.reduceTransparency) return dark ? "#f21c1c1f" : "#f6f6f6f8"
         if (isSmoke) return Qt.rgba(0.02, 0.02, 0.04, 0.78 + slider * 0.16)
         if (isModule) {
-            // Calm Cupertino Control Center modules: clean smoky frosted glass
-            return Qt.rgba(0.10, 0.11, 0.14, 0.42 + slider * 0.12)
+            // Exact Cupertino Control Panel (Image 1): crystal-clear dark-adaptive glass
+            // letting wallpaper colour shine vividly through every rounded tile.
+            return Qt.rgba(0.10, 0.11, 0.15, 0.18 + slider * 0.06)
         }
         if (isDock) {
             // Exact xnulinux / macOS 27 Golden Gate Dock: soft frosted translucent glass
@@ -122,7 +123,7 @@ Item {
         anchors.fill: parent
         visible: !Theme.reduceTransparency
         preferredRendererType: Shape.CurveRenderer
-        readonly property real rimW: 1.0
+        readonly property real rimW: g.isModule ? 1.25 : 1.0
         ShapePath {
             strokeWidth: 0
             fillRule: ShapePath.OddEvenFill
@@ -130,23 +131,23 @@ Item {
                 x1: 0; y1: 0; x2: 0; y2: g.height
                 GradientStop {
                     position: 0.0
-                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.22 : (g.isDock ? 0.28 : 0.18))
+                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.55 : (g.isDock ? 0.28 : 0.18))
                 }
                 GradientStop {
                     position: Math.min(0.38, 18 / Math.max(1, g.height))
-                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.10 : (g.isDock ? 0.14 : (g.dark ? 0.09 : 0.14)))
+                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.22 : (g.isDock ? 0.14 : (g.dark ? 0.09 : 0.14)))
                 }
                 GradientStop {
                     position: 0.5
-                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.04 : (g.isDock ? 0.06 : (g.dark ? 0.04 : 0.07)))
+                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.08 : (g.isDock ? 0.06 : (g.dark ? 0.04 : 0.07)))
                 }
                 GradientStop {
                     position: Math.max(0.62, 1 - 18 / Math.max(1, g.height))
-                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.08 : (g.isDock ? 0.10 : (g.dark ? 0.07 : 0.11)))
+                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.20 : (g.isDock ? 0.10 : (g.dark ? 0.07 : 0.11)))
                 }
                 GradientStop {
                     position: 1.0
-                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.12 : (g.isDock ? 0.16 : 0.10))
+                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.34 : (g.isDock ? 0.16 : 0.10))
                 }
             }
             PathRectangle { x: 0; y: 0; width: g.width; height: g.height; radius: g.r }

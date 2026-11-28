@@ -244,8 +244,10 @@ PanelWindow {
 
     // ------------------------------------------------------------ geometry
     readonly property bool isAirpodsHud: mode === "hud" && (hudKind === "bluetooth" || hudKind === "airpods")
-    readonly property bool flushNotch: isAirpodsHud || (mode === "expanded" && (tab === "usage" || tab === "pomodoro"))
-    readonly property bool frostedBottom: mode === "expanded" && (tab === "cal" || tab === "shelf") && !Theme.reduceTransparency
+    // Floating Dynamic Island pill with neat top gap in both idle and expanded
+    // states (matching Image 2: clean floating rounded black island with top gap).
+    readonly property bool flushNotch: false
+    readonly property bool frostedBottom: mode === "expanded" && tab === "cal" && !Theme.reduceTransparency
 
     readonly property var d: mode === "reply" ? { w: 432, h: 98, r: 24 }
         : isAirpodsHud ? { w: 308, h: 64, r: 22 }
@@ -304,7 +306,7 @@ PanelWindow {
         Behavior on opacity { NumberAnimation { duration: Theme.ms(220) } }
         HoverHandler { id: hoverIdle }
         anchors.horizontalCenter: parent.horizontalCenter
-        y: (win.flushNotch || win.mode === "expanded" || win.mode === "reply") ? 0 : 4
+        y: (win.mode === "expanded" || win.mode === "reply") ? 10 : 8
         Behavior on y { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.ms(200); easing.type: Easing.OutCubic } }
         width: win.d.w
         height: win.d.h

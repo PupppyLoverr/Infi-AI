@@ -53,16 +53,16 @@ hl.config({
             size = 12,
             passes = 3,
             noise = 0.01,
-            vibrancy = 0.20,          -- subtle colour through clean frosted glass
-            vibrancy_darkness = 0.14,
+            vibrancy = 0.30,          -- vivid colour through crystal-clear Cupertino glass
+            vibrancy_darkness = 0.08,
             popups = true,
             popups_ignorealpha = 0.08, -- menus and tooltips: blur the card, not its corners
-            -- Subtle Liquid Glass: gentle frosted optical edge without fish-eye distortion
+            -- Cupertino Liquid Glass: crisp edge lensing with high clarity
             variant = 8,
             acrylic = {
-                refraction = 6,      -- minimal gentle edge lensing (no heavy warp)
-                bulb = 6,            -- narrow subtle rim, px
-                clarity = 0.84,      -- clean frosted backdrop
+                refraction = 18,     -- clean Cupertino curved-edge lensing
+                bulb = 14,           -- optical rim width, px
+                clarity = 0.78,      -- vivid backdrop detail through glass
                 aberration = 0.0,    -- no chromatic fringe
                 tint = 0x05F4F6FA,
             },
