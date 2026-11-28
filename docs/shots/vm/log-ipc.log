@@ -75,6 +75,9 @@ ipc switcher true
 ipc switcher false
 ipc screenshot true
 ipc screenshot false
+ipc layout unity
+ipc layout taskbar
+ipc layout macos
 ipc island media
 ipc island lyrics
 ipc island queue
