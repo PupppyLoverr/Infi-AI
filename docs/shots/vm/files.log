@@ -1,0 +1,3 @@
+renderer: cpu (warming up)
+renderer: cpu (a software rasterizer)
+renderer: fell back to the CPU (process): a software rasterizer

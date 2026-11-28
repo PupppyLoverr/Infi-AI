@@ -211,6 +211,24 @@ No running instances for "/home/solyra/.config/quickshell/shell.qml"
 ipc wallpaper 
 No running instances for "/home/solyra/.config/quickshell/shell.qml"
   failed: 255
+ipc sessionDialog shutdown
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+  failed: 255
+ipc sessionDialog 
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+  failed: 255
+ipc switcher true
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+  failed: 255
+ipc switcher false
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+  failed: 255
+ipc screenshot true
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+  failed: 255
+ipc screenshot false
+No running instances for "/home/solyra/.config/quickshell/shell.qml"
+  failed: 255
 ipc island media
 No running instances for "/home/solyra/.config/quickshell/shell.qml"
   failed: 255

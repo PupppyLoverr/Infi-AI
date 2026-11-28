@@ -39,6 +39,7 @@ No running instances for "/home/solyra/.config/quickshell/shell.qml"
 shot 14-glass-tinted
 shot 15-glass-clear
 shot 15b-finder
+shot 22b-finder-list
 shot 15c-dock-minimized
 shot 15d-dock-downloads-stack
 shot 15e-dock-magnified-hover
@@ -47,6 +48,10 @@ shot 19b-glass-liquid-4k
 shot 19c-glass-golden-4k
 shot 19d-glass-light-arch-4k
 shot 19e-glass-galaxy
+shot 24a-logout-panel
+shot 24b-switcher
+shot 24c-screenshot-tool
+shot 23b-terminal-agent
 shot 17-web-song-playing
 shot 17b-web-song-notch
 shot 17e-web-song-notch-lyrics

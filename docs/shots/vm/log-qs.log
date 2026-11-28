@@ -2,9 +2,9 @@
 
 [32m  INFO[0m: Launching config: "/home/solyra/.config/quickshell/shell.qml"
 [32m  INFO[0m: Shell ID: "1f23d0f74c6cc23f920c90fb6c35d007" Path ID "1f23d0f74c6cc23f920c90fb6c35d007"
-[32m  INFO[0m: Saving logs to "/run/user/1001/quickshell/by-id/vexp77pt/log.qslog"
+[32m  INFO[0m: Saving logs to "/run/user/1001/quickshell/by-id/4ft8a7pt/log.qslog"
 MESA-EGL: warning: egl: failed to create dri2 screen
 MESA-EGL: warning: egl: failed to create dri2 screen
 [31m ERROR[0m: Failed to load configuration
 [31m ERROR[0m:   caused by @shell.qml[331:5]: Type ControlCenter unavailable
-[31m ERROR[0m:   caused by @ControlCenter.qml[482:17]: Expected token `)'
+[31m ERROR[0m:   caused by @ControlCenter.qml[508:21]: Cannot assign to non-existent property "opacity"
