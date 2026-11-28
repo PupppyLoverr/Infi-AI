@@ -478,7 +478,7 @@ Scope {
             onPressed: event => setValue(event.x)
             onPositionChanged: event => { if (pressed) setValue(event.x) }
             onWheel: event => {
-                dl.moved(Math.max(0, Math.min(1, dl.value + (event.angleDelta.y > 0 ? 1 / 16 : -1 / 16)))
+                dl.moved(Math.max(0, Math.min(1, dl.value + (event.angleDelta.y > 0 ? 1 / 16 : -1 / 16))))
                 event.accepted = true
             }
         }

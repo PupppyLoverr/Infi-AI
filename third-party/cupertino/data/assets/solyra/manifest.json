@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "name": "Solyra typography",
+  "fonts": {
+    "ui": {
+      "family": "Geist",
+      "files": ["fonts/Geist.ttf"]
+    }
+  }
+}

@@ -102,5 +102,19 @@ M.palette_row = ui.state("palette_row", 1)
 M.consent_later = ui.state("consent_later", {} :: { [string]: boolean })
 -- A panel pane waiting to take keyboard focus.
 M.panel_focus = ui.state("panel_focus", "")
+-- Merged Agent Mode (terminal-b): chat-style coding agent view toggled in-place
+-- with the `>_` / Agent button in the titlebar.
+M.start_agent_mode = ui.shared("start_agent_mode", false)
+M.agent_reply = ui.shared("agent_reply", "")
+M.agent_mode = ui.state("agent_mode", false)
+M.agent_title = ui.state("agent_title", "write a 500 word story")
+M.agent_workspace = ui.state("agent_workspace", "work")
+M.agent_model = ui.state("agent_model", "Opus 5.5")
+M.agent_effort = ui.state("agent_effort", "Medium")
+M.agent_auto = ui.state("agent_auto", true)
+M.agent_thinking = ui.state("agent_thinking", false)
+M.agent_draft = ui.state("agent_draft", "")
+export type AgentMessage = { role: string, text: string }
+M.agent_messages = ui.state("agent_messages", {} :: { AgentMessage })
 
 return M

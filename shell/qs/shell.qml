@@ -342,6 +342,10 @@ ShellRoot {
     Overview { id: overviewWin }
     FloatingBasket { id: basket; shell: root; model: sharedShelf }
     Lock { id: lockScreen; shell: root; lyrics: root.lyrics }
+    SessionAgent { id: sessionAgent; shell: root }
+    AppSwitcher { id: appSwitcher; shell: root }
+    ScreenshotTool { id: screenshotTool; shell: root }
+    OsdOverlay { id: osdOverlay }
 
     Timer { id: reloadTimer; interval: 250; onTriggered: { Quickshell.execDetached(["hyprctl", "reload"]); arrangeTimer.restart() } }
     Timer { id: arrangeTimer; interval: 600; onTriggered: root.applyArrange() }
@@ -397,6 +401,10 @@ ShellRoot {
         function notifications(): void { root.notificationCenter() }
         function menu(name: string): void { root.menuRequested(name) }
         function search(text: string): void { root.spotlight(text) }
+        function sessionDialog(kind: string): void { sessionAgent.open(kind) }
+        function switcher(open: bool): void { appSwitcher.show(open) }
+        function screenshot(open: bool): void { screenshotTool.toggle(open) }
+        function osd(kind: string, value: real): void { osdOverlay.show(kind, value) }
         function glass(value: int): void { Theme.glass = value; Theme.save() }
         function dark(on: bool): void { Theme.dark = on; Theme.save() }
         function wallpaper(path: string): void { Theme.wallpaperPath = path; Theme.save() }

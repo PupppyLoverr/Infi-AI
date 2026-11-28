@@ -1,0 +1,555 @@
+//! The CupertinoKit runtime. An [`Application`] keeps its state in a model, describes its windows as [`Element`]
+//! trees after every update, and changes the model only through messages. Core reconciles each description with the
+//! retained node tree, routes events to [`Widget`]s, lays out, paints and keeps the accessibility tree.
+
+mod accessibility;
+mod clock;
+mod command;
+mod cx;
+mod damage;
+mod drop_target;
+mod focus;
+mod frame_timing;
+mod glass;
+mod icons;
+pub mod kinetic;
+pub mod layout;
+mod layout_view;
+mod opaque;
+mod paint;
+mod personal;
+pub mod platform;
+mod pointer;
+pub mod pool;
+mod route;
+mod runtime;
+mod scroll;
+mod scroll_timing;
+mod semantics;
+mod task;
+mod tree;
+mod widget;
+
+pub use crate::platform::{GlassModifiers, GlassSize, GlassStyle, GlassVariant, RendererClass};
+pub use accessibility::{
+    AccessibilityAdapter, AccessibilityNode, AccessibilityUpdate, AccessibleStates,
+    AccessibleValue, Action, ActionData, ActionRequest, Checked, Live, Relation, Role, SortOrder,
+    TextSemantics,
+};
+pub use clock::MonotonicClock;
+pub use command::CommandRegistry;
+pub use cupertino_defaults::appearance::{ScrollClick, SidebarIcons, TitlebarAction};
+pub use cx::{
+    glass_outline, EventCx, FocusTarget, IdleCx, MeasureCx, OverlayCx, OwnedWindows, PaintCx,
+    SemanticsCx, GLASS_CORNER_EXPONENT, GLASS_CORNER_REACH,
+};
+pub use drop_target::{
+    DropHandler, DropOver, DropPlace, DropTarget, Dropped, HoverHandler, PlaceHandler,
+};
+pub use frame_timing::{FrameTiming, FrameTimingSink};
+pub use glass::{Glass, GlassCorners};
+pub use icons::{next_resource_id, IconImage, Icons, PlaceholderIcons};
+pub use paint::{overlay_id, MAX_MATERIALS};
+pub use personal::{personal, set_personal, Personal};
+pub use pointer::SCROLL_IDLE_NS;
+pub use runtime::{
+    EachTurn, ExitWhen, PersonalRefresh, RendererFactory, Runtime, RuntimeOptions,
+    SurfaceLayerMark, ThemeForAppearance, WindowErrorHandler,
+};
+pub use scroll::session_scroll_bars;
+pub use scroll_timing::{ScrollLatency, ScrollTiming, ScrollTimingSink};
+pub use widget::{Change, Element, Propagation, Widget};
+
+use crate::layout::{LayoutDirection, LayoutError, LayoutStats};
+use crate::platform::{
+    ClipboardData, DragProgress, DropAction, DropToken, KeyEvent, Keysym, Mods, PlatformError,
+    PointerEvent, Timestamp, TouchEvent, WindowId, WindowRequest, WindowSpec,
+};
+use cupertino_geometry::{Point, Rect, Size};
+use cupertino_menu_model::{ActionName, MenuBar};
+use cupertino_theme::ui::{Color, Surface, ThemeTokens};
+use cupertino_ui_render::{DisplayList, RenderError};
+use cupertino_ui_text::{ImeEvent, TextSystem};
+use std::borrow::Cow;
+use std::collections::BTreeSet;
+use std::fmt;
+use std::future::Future;
+use std::num::{NonZeroU32, NonZeroU64};
+use std::pin::Pin;
+use std::sync::Arc;
+
+pub trait Application: 'static {
+    type Model: 'static;
+    type Message: Clone + Send + 'static;
+    /// Keeps running with no window open, until [`Command::Exit`].
+    const RESIDENT: bool = false;
+    /// The renderer the application's windows belong on, by what they draw. One that declares none takes the size and
+    /// repaint rule ([`RendererClass::ByUse`]).
+    const RENDERER: RendererClass = RendererClass::ByUse;
+
+    fn init() -> (Self::Model, Vec<Command<Self::Message>>);
+    fn update(model: &mut Self::Model, message: Self::Message) -> Vec<Command<Self::Message>>;
+    /// The application's windows; a window whose key disappears closes.
+    fn view(model: &Self::Model) -> Vec<Window<Self::Message>>;
+}
+
+/// Identifies an element among its siblings, or a window among the application's windows, across updates.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Key {
+    Int(u64),
+    Str(Cow<'static, str>),
+}
+
+impl From<u64> for Key {
+    fn from(k: u64) -> Self {
+        Key::Int(k)
+    }
+}
+
+impl From<&'static str> for Key {
+    fn from(k: &'static str) -> Self {
+        Key::Str(Cow::Borrowed(k))
+    }
+}
+
+impl From<String> for Key {
+    fn from(k: String) -> Self {
+        Key::Str(Cow::Owned(k))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct WindowKey(pub Key);
+
+pub struct Window<M> {
+    pub key: WindowKey,
+    pub spec: WindowSpec,
+    pub shortcuts: CommandRegistry<M>,
+    /// Sent when the user asks to close the window; without it the request ends the application.
+    pub on_close: Option<M>,
+    pub background: WindowBackground,
+    pub content: Element<M>,
+    /// Opens the window as a popup of another window instead of as a toplevel.
+    pub popup: Option<Popup<M>>,
+    /// A toplevel's menus, published to the desktop's menu bar; a popup's are ignored.
+    pub menus: Option<Menus<M>>,
+}
+
+/// A toplevel's menus. Their chords are not shortcuts of the window: `shortcuts` takes those.
+pub struct Menus<M> {
+    pub bar: MenuBar,
+    /// Items shown but not available now.
+    pub disabled: BTreeSet<ActionName>,
+    /// The message for the item the user chose.
+    pub on_activate: Box<dyn Fn(ActionName) -> M>,
+}
+
+/// Where a popup opens and what tells the application it closed. The window's `spec.size` is the most the popup
+/// may take; it opens at the size its content measures within that.
+pub struct Popup<M> {
+    /// A toplevel or another popup, declared anywhere in the view.
+    pub parent: WindowKey,
+    pub anchor: PopupAnchor,
+    /// Takes the keyboard and closes on a press outside, as a menu or a transient popover does; a tooltip does not.
+    pub grab: bool,
+    /// Sent when the compositor dismisses the popup; the application then stops declaring it.
+    pub on_dismiss: M,
+}
+
+/// A popup window a control opens for itself ([`EventCx::open_popup`]), such as a text field's menu: a popup of the
+/// control's window that takes the keyboard and closes on a press outside when `grab` is set. The application does
+/// not declare it and hears nothing of it: what it holds answers the control ([`EventCx::answer_popup`]) and ends it
+/// ([`EventCx::close_popup`]). `key` is unlike any window key of the application's.
+pub struct OwnedWindow<M> {
+    pub key: WindowKey,
+    /// Its `size` is the most the popup may take, as a declared popup's.
+    pub spec: WindowSpec,
+    pub background: WindowBackground,
+    pub content: Element<M>,
+    pub anchor: PopupAnchor,
+    pub grab: bool,
+}
+
+/// Text from the clipboard on its way into the control that asked for it. It may be going into a password field: its
+/// `Debug` shows only how long it is, and its block is zeroed when it drops, as is each copy's.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Pasted(pub String);
+
+impl Drop for Pasted {
+    fn drop(&mut self) {
+        cupertino_ui_text::wipe_text(&mut self.0);
+    }
+}
+
+impl std::fmt::Debug for Pasted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Pasted({} bytes)", self.0.len())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PopupAnchor {
+    /// Centred below the parent's node with this key, `gap` apart, flipping above it when there is no room. The popup
+    /// opens once that node has been laid out.
+    Below { key: Key, gap: f64 },
+    /// At a point of the parent, opening down and to the trailing side, flipping when there is no room: a context
+    /// menu.
+    At(Point),
+    /// Beside the parent's node with this key, on its trailing side with their tops aligned (`offset` moves it toward
+    /// the trailing side and down), flipping to the leading side when there is no room: a submenu.
+    Beside { key: Key, offset: Point },
+    /// Over the parent's node with this key: its top-leading corner at the middle of the node's leading edge, moved by
+    /// `offset` (`x` toward the trailing side), sliding to fit and never flipping: a pop-up button's menu, its chosen
+    /// item over the button.
+    Over { key: Key, offset: Point },
+    /// Above the parent's node with this key, `gap` apart, with the popup's leading edge at the middle of the node's
+    /// top edge moved by `dx` toward the trailing side: a callout that stands off to one side of what it points at.
+    /// It flips below the node when there is no room above.
+    Above { key: Key, gap: f64, dx: f64 },
+    /// Centred above the parent's node with this key, its bottom edge `gap` above the node's top edge, flipping below
+    /// the node when there is no room above: a label over what it names.
+    CentredAbove { key: Key, gap: f64 },
+    /// Centred over the parent's node `over`, its top edge never above the parent's, sliding to fit and shrinking where
+    /// sliding is not enough (its content then lays out at the size it is given): a panel that
+    /// shows something of what lies under it. A popup whose root grows out of its anchor
+    /// ([`Widget::grows_from_anchor`]) grows out of the node `from` instead, and shrinks back into wherever that node
+    /// is when it closes: the part of it in view, or the middle of `over` while `from` is not laid out.
+    Panel { over: Key, from: Key },
+}
+
+/// What a window paints under its content.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum WindowBackground {
+    /// The theme's window background, full size and opaque: an ordinary window.
+    #[default]
+    Theme,
+    /// Nothing: the content paints its own surface, shaped or translucent.
+    None,
+    /// The compositor material of `surface` under the whole window, its corners rounded by `radius` points, where the
+    /// desktop's effects offer it and the theme asks for one ([`ThemeTokens::surface`]); otherwise the theme's opaque
+    /// fill for the surface in the same shape. Either shows at `alpha`, from 0 (hidden) to 1 (opaque), so a window can
+    /// fade its background with its content; an alpha that is not finite shows opaque.
+    ///
+    /// With `glass`, where the theme keeps the surface's material, the compositor draws that glass under the window in
+    /// its place: its system variant, size class, modifiers and tint (or its style, without a variant), which follow
+    /// the window's activation as a node's glass does. The window's shape and `alpha` stand for the glass's corners,
+    /// container and alpha; a window system without glass draws the surface's material, and the opaque fill stays
+    /// where the theme keeps none.
+    Surface {
+        surface: Surface,
+        radius: f64,
+        alpha: f64,
+        glass: Option<Glass>,
+    },
+    /// One colour all over, transparent for a window that only takes input (a catcher of presses around a panel) or
+    /// translucent for one that dims what is under it. The content still lays out and takes input, but paints nothing:
+    /// the window system shows the colour without a frame of the window's size ([`WindowSystem::present_solid`]), so the
+    /// window costs nothing to show however large it is. Where it cannot, the window is drawn like any other, filled
+    /// with the colour under its content.
+    ///
+    /// [`WindowSystem::present_solid`]: crate::platform::WindowSystem::present_solid
+    Solid(Color),
+}
+
+impl WindowBackground {
+    /// [`WindowBackground::Solid`] in a transparent colour: a window that shows nothing and only takes input, such as
+    /// one over the whole output that catches the presses around a panel.
+    pub const INPUT_ONLY: WindowBackground =
+        WindowBackground::Solid(Color::new(0.0, 0.0, 0.0, 0.0));
+}
+
+/// The opacity [`WindowBackground::Surface`] shows at `alpha`.
+pub(crate) fn surface_alpha(alpha: f64) -> f64 {
+    if !alpha.is_finite() {
+        1.0
+    } else {
+        alpha.clamp(0.0, 1.0)
+    }
+}
+
+/// A node of the retained tree: a 32-bit slot index and the slot's 32-bit generation, so a stale id never matches
+/// the node that reused its slot.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NodeId(NonZeroU64);
+
+impl NodeId {
+    pub fn new(index: u32, generation: NonZeroU32) -> Self {
+        let raw = u64::from(generation.get()) << 32 | u64::from(index);
+        Self(NonZeroU64::new(raw).expect("a non-zero generation makes a non-zero id"))
+    }
+
+    pub fn index(self) -> u32 {
+        self.0.get() as u32
+    }
+
+    pub fn generation(self) -> NonZeroU32 {
+        NonZeroU32::new((self.0.get() >> 32) as u32).expect("a node id's generation is never zero")
+    }
+}
+
+impl fmt::Debug for NodeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "NodeId({}v{})", self.index(), self.generation())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Phase {
+    Capture,
+    Target,
+    Bubble,
+}
+
+/// What a widget receives.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Event {
+    Pointer(PointerEvent, Timestamp),
+    Touch(TouchEvent, Timestamp),
+    Key(KeyEvent, Timestamp),
+    Ime(ImeEvent),
+    /// `visible` when the focus came from the keyboard or assistive technology, so the ring shows.
+    Focus {
+        gained: bool,
+        visible: bool,
+    },
+    /// The focus came into (`gained`) or left this node's subtree, below the node itself, or the window holding it
+    /// became active or inactive; it is not sent when the ring of the same focused node shows or hides.
+    FocusWithin {
+        gained: bool,
+        visible: bool,
+    },
+    Action(ActionRequest),
+    /// The frame a node asked for with [`EventCx::request_animation_frame`] is being prepared.
+    AnimationFrame(Timestamp),
+    /// The time a node asked for with [`EventCx::wake_at`] has come; it carries the clock's time now.
+    Wake(Timestamp),
+    /// A scroll container's size or its content's size changed since it last heard, or it was laid out for the
+    /// first time. `content` counts from the start edge, as the offset does.
+    ScrollGeometry {
+        viewport: Size,
+        content: Size,
+    },
+    /// Keyboard or programmatic focus moved to a node this scroll container hides; scrolling to this offset shows it.
+    Reveal(Point),
+    /// The window of the focused node became active (`true`) or inactive; only that node hears it.
+    WindowActive(bool),
+    /// Escape was pressed while this node was dismissible; returning [`Propagation::Stop`] takes the key from the focus
+    /// path.
+    Dismiss,
+    /// A press, drag or composition in progress ends without effect: focus, pointer capture or the surface was lost.
+    Cancel,
+    /// The last running animation of the window's surface layers ended in the compositor
+    /// ([`WindowEvent::LayersSettled`](crate::platform::WindowEvent)); only the window's root hears it.
+    LayersSettled,
+    /// The clipboard's text, for the node that asked for it ([`EventCx::request_paste`]).
+    Paste(Pasted),
+    /// The popup this node opened for itself ([`EventCx::open_popup`]) answers with this number
+    /// ([`EventCx::answer_popup`]): the row chosen in its menu.
+    PopupAnswer(u32),
+}
+
+/// The state every interactive control resolves its look from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct ControlState {
+    pub enabled: bool,
+    pub hovered: bool,
+    pub pressed: bool,
+    pub focused: bool,
+    pub focus_visible: bool,
+    pub selected: bool,
+    pub window_active: bool,
+    pub busy: bool,
+    pub read_only: bool,
+    /// Holds a secret: never exposed as text to accessibility, the inspector or the input method.
+    pub protected: bool,
+}
+
+/// What activated a control.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ActivationSource {
+    Pointer,
+    Touch,
+    Keyboard,
+    Accessibility,
+}
+
+pub type Task<M> = Pin<Box<dyn Future<Output = M> + Send>>;
+/// What an activation token, or `None`, becomes in the application.
+pub type TokenHandler<M> = Box<dyn FnOnce(Option<String>) -> M + Send>;
+
+/// What each step of a drag the application started becomes in it.
+pub type DragHandler<M> = Box<dyn FnMut(DragProgress) -> M + Send>;
+
+/// A drag of data out of `window`, from the pointer button held in it: the data in each of its MIME types, what a
+/// drop may do with it, and the image that follows the pointer. Every step arrives through `on_progress`, which hears
+/// [`DragProgress::Finished`] or [`DragProgress::Cancelled`] last; a drag that cannot start (no such window, no button
+/// held, a platform without drag and drop) hears `Cancelled` at once.
+pub struct Drag<M> {
+    pub window: WindowKey,
+    pub data: Vec<ClipboardData>,
+    pub actions: BTreeSet<DropAction>,
+    pub image: Option<DragPreview<M>>,
+    pub on_progress: DragHandler<M>,
+}
+
+/// The image of a drag: `content` laid out at `size` points, rounded up to whole points, and painted over nothing at
+/// the window's scale, rounded up to whole pixels per point; the pointer is at `hotspot`, in points from its top-left
+/// corner, as where the press grabbed what is dragged. The content is drawn once, when the drag starts; it gets no
+/// events.
+pub struct DragPreview<M> {
+    pub content: Element<M>,
+    pub size: Size,
+    pub hotspot: Point,
+}
+
+/// Work an update asks the runtime to do.
+pub enum Command<M> {
+    /// Runs a future on the runtime's executor and sends its output as a message.
+    Perform(Task<M>),
+    Focus(Key),
+    /// Moves the focus to the node keyed `key` as [`Command::Focus`] does, its ring showing only when it showed before:
+    /// the keyboard follows a click to another part of the window without the ring a click never shows.
+    MoveFocus(Key),
+    CloseWindow(WindowKey),
+    /// Sends `request` to the window keyed so; to a window the view that follows this command opens, before its first
+    /// frame (a [`WindowRequest::Present`] then starts with the window). Nowhere when the view has no such window.
+    Window(WindowKey, WindowRequest),
+    SetClipboard(String),
+    /// Puts `data` on the clipboard, one entry per MIME type a reader may ask for (a picture as `image/png` bytes, a
+    /// name for it as `text/plain;charset=utf-8`), in place of what it held. `replaced` is sent once another client's
+    /// selection takes its place, or the system drops it; never when the application puts something else on the
+    /// clipboard first.
+    SetClipboardData {
+        data: Vec<ClipboardData>,
+        replaced: Option<M>,
+    },
+    /// Asks for an activation token for `window`, to hand to the application `app_id` names when it is started; the
+    /// token is `None` when the window is gone or the compositor gives none.
+    ActivationToken {
+        window: WindowKey,
+        app_id: Option<String>,
+        on_token: TokenHandler<M>,
+    },
+    StartDrag(Drag<M>),
+    /// Ends the drop `token` of a [`Dropped`] with what the application did with its data, given by the update that
+    /// handles it: `Some(action)` took it so (after a move the source removes its own copy), `None` took none of it and
+    /// the source keeps it all. A drop the update does not end so finishes with its agreed action; given later, it is
+    /// ignored unless the update held the drop ([`Command::HoldDrop`]).
+    FinishDrop(DropToken, Option<DropAction>),
+    /// Keeps the drop `token` of a [`Dropped`] open past the turn that hands it over, for work that ends later: its
+    /// source learns nothing until a later [`Command::FinishDrop`] with `token` says what was done. Given in the
+    /// update that handles the drop; later, or for a drop already finished, it is ignored.
+    HoldDrop(DropToken),
+    /// Sends `message` once `window` has presented its first frame: the compositor configured it, a frame of its
+    /// content was committed, and the compositor answered that frame's callback. At once when it already has; never
+    /// when the window closes first, when the view that follows this command has no such window, or while the
+    /// compositor sends the window no frame callback (a window it does not show).
+    OnPresented {
+        window: WindowKey,
+        message: M,
+    },
+    /// Sends `message` once `delay` has passed on the runtime's clock, after the messages of earlier `After`s due at
+    /// the same time. Nothing cancels it: an application that may no longer want it tells so in the message.
+    After {
+        delay: std::time::Duration,
+        message: M,
+    },
+    Exit,
+}
+
+/// What a subtree is laid out and painted with.
+#[derive(Clone, Debug)]
+pub struct Environment {
+    pub theme: Arc<ThemeTokens>,
+    /// Shapes and measures every label and field; shared by all the app's windows.
+    pub text: Arc<TextSystem>,
+    pub direction: LayoutDirection,
+    /// Physical pixels per logical point; layout never reads it.
+    pub scale: f64,
+    /// The system's symbols; shared by all the app's windows.
+    pub icons: Arc<dyn Icons>,
+}
+
+/// The text system compares by identity: two environments with the same fonts shape alike only if they share one.
+impl PartialEq for Environment {
+    fn eq(&self, other: &Self) -> bool {
+        self.theme == other.theme
+            && Arc::ptr_eq(&self.text, &other.text)
+            && Arc::ptr_eq(&self.icons, &other.icons)
+            && self.direction == other.direction
+            && self.scale == other.scale
+    }
+}
+
+/// The runtime's time source; tests inject one.
+pub trait Clock: Send + Sync {
+    fn now(&self) -> Timestamp;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Shortcut {
+    pub mods: Mods,
+    pub keysym: Keysym,
+}
+
+/// Work a runtime step left for later, so a test can tell a settled runtime from one that is waiting.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Pending {
+    pub messages: usize,
+    pub tasks: usize,
+    pub frames: usize,
+    pub animating: bool,
+    /// The earliest time a node asked to be woken at.
+    pub next_wake: Option<Timestamp>,
+}
+
+/// What a bounded runtime step ended with. Steps never advance time on their own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StepStatus {
+    /// Nothing is left to do at the current time.
+    Idle,
+    /// Work waits for time, a task, a frame or a buffer release.
+    Waiting(Pending),
+    /// The turn budget ran out with work still ready.
+    BudgetExhausted(Pending),
+}
+
+/// A read-only view of one node after a frame.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NodeSnapshot {
+    pub id: NodeId,
+    pub parent: Option<NodeId>,
+    pub children: Vec<NodeId>,
+    pub widget: &'static str,
+    pub key: Option<Key>,
+    /// In window coordinates.
+    pub rect: Rect,
+    pub clip: Option<Rect>,
+}
+
+/// A read-only view of one window after a frame: the input of every inspector and test snapshot.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FrameSnapshot {
+    pub window: WindowId,
+    pub nodes: Vec<NodeSnapshot>,
+    pub focus: Option<NodeId>,
+    pub pointer_capture: Option<NodeId>,
+    pub text_input: Option<NodeId>,
+    pub accessibility: Vec<(NodeId, AccessibilityNode)>,
+    /// The node of `accessibility` assistive technology is told holds the focus: `focus`, or its nearest ancestor in
+    /// `accessibility` when `focus` has no role of its own.
+    pub accessibility_focus: Option<NodeId>,
+    pub display_list: DisplayList,
+    pub pending: Pending,
+    /// What the window's last layout did.
+    pub layout: LayoutStats,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UiError {
+    Platform(PlatformError),
+    Layout(LayoutError),
+    Render(RenderError),
+    /// The tree reached its node ceiling.
+    NodeLimit(usize),
+}

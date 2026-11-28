@@ -14,6 +14,13 @@ install -Dm644 -o solyra -g solyra /opt/solyra/hypr/hyprland.lua $U/.config/hypr
 [ -f /opt/solyra/wallpaper.jpg ] && install -Dm644 -o solyra -g solyra /opt/solyra/wallpaper.jpg $U/.config/solyra/wallpaper.jpg
 [ -d /opt/solyra/wallpapers ] && { mkdir -p /usr/share/backgrounds/solyra; cp /opt/solyra/wallpapers/* /usr/share/backgrounds/solyra/; }
 [ -d /opt/solyra/fonts ] && { mkdir -p /usr/share/fonts/TTF /etc/fonts/conf.d; cp /opt/solyra/fonts/Geist*.ttf /usr/share/fonts/TTF/; cp /opt/solyra/fonts/60-solyra-geist.conf /etc/fonts/conf.d/; }
+[ -f /opt/solyra/lib/cupertino/cupertino-files ] && {
+  install -Dm755 /opt/solyra/lib/cupertino/cupertino-files /usr/lib/solyra/cupertino/cupertino-files
+  mkdir -p /usr/share/solyra/cupertino/assets /usr/share/solyra/cupertino/theme /usr/share/dbus-1/services
+  cp -r /opt/solyra/share/cupertino/assets/. /usr/share/solyra/cupertino/assets/
+  cp -r /opt/solyra/share/cupertino/theme/. /usr/share/solyra/cupertino/theme/
+  [ -f /opt/solyra/share/dbus-1/services/org.cupertino.Files.FileManager1.service ] && cp /opt/solyra/share/dbus-1/services/org.cupertino.Files.FileManager1.service /usr/share/dbus-1/services/
+}
 printf 'hl.on("hyprland.start", function() hl.exec_cmd("bash /opt/solyra/scenario.sh > /tmp/scenario.log 2>&1") end)\n' > $U/.config/solyra/hypr-local.lua
 chown solyra: $U/.config/solyra/hypr-local.lua
 echo '[ "$(tty)" = /dev/tty1 ] && exec $(command -v start-hyprland || echo Hyprland) > /tmp/hypr.log 2>&1' > $U/.bash_profile

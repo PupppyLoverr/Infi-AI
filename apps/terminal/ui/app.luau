@@ -26,6 +26,7 @@ local commands = require("./commands")
 local tabs = require("@components/tabs")
 local sidebar = require("@components/sidebar")
 local content = require("@components/content")
+local agent_mode = require("@components/agent_mode")
 local confirm = require("@components/confirm")
 local palette = require("@components/palette")
 local consent = require("@components/consent")
@@ -56,8 +57,21 @@ return ui.row {
 		shrink = 1,
 		min_w = 0,
 		items = "stretch",
+		hidden = function()
+			return state.agent_mode:get()
+		end,
 		tabs.Titlebar(),
 		content(),
+	},
+	ui.column {
+		grow = 1,
+		shrink = 1,
+		min_w = 0,
+		items = "stretch",
+		hidden = function()
+			return not state.agent_mode:get()
+		end,
+		agent_mode.View(),
 	},
 	-- Solyra: macOS traffic lights, drawn by the app (components/lights.luau).
 	lights.Lights(),

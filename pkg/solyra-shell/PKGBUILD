@@ -37,5 +37,6 @@ package() {
   install -Dm644 "$_repo/assets/wallpapers/twilight-skyline-4k.jpg" "$pkgdir/etc/skel/.config/solyra/wallpaper.jpg"
   install -Dm644 "$_repo/assets/wallpapers/solyra-dusk-1920x1200.png" "$pkgdir/etc/skel/.config/solyra/wallpaper.png"
   install -Dm755 "$_repo/iso/airootfs/usr/local/bin/solyra-app" "$pkgdir/usr/bin/solyra-app"
+  install -Dm755 "$_repo/iso/airootfs/usr/local/bin/solyra-control" "$pkgdir/usr/bin/solyra-control"
   install -Dm644 "$_repo/THIRD_PARTY.md" "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY.md"
 }

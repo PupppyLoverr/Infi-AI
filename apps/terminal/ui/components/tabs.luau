@@ -656,6 +656,9 @@ function M.Titlebar(): Node
 				actions.commit_slot()
 			end,
 		},
+		controls.tool(icons.claude, function()
+			state.agent_mode:set(true)
+		end),
 		controls.tool(icons.split_right, function()
 			actions.split("row")
 		end),

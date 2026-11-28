@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""solyra-control: Cupertino-compatible desktop-control service for Solyra OS.
+
+Modes:
+  solyra-control --serve              Serve local Unix socket ($XDG_RUNTIME_DIR/solyra-control.sock)
+  solyra-control --session [DISPLAY]  Send newline-delimited JSON requests to the socket
+  solyra-control --mcp [DISPLAY]      Serve MCP (JSON-RPC 2.0 over stdio) for AI agents
+"""
+import base64
+import json
+import os
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+
+SOCK_PATH = os.path.join(
+    os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "solyra-control.sock"
+)
+
+
+def run_cmd(cmd, timeout=5):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, p.stdout, p.stderr
+    except Exception as exc:
+        return 1, "", str(exc)
+
+
+def handle_action(method, params):
+    params = params or {}
+    if method == "desktop_observe":
+        _, wins_raw, _ = run_cmd(["hyprctl", "-j", "clients"])
+        _, active_raw, _ = run_cmd(["hyprctl", "-j", "activewindow"])
+        _, mons_raw, _ = run_cmd(["hyprctl", "-j", "monitors"])
+        return {
+            "windows": json.loads(wins_raw) if wins_raw.strip() else [],
+            "active": json.loads(active_raw) if active_raw.strip() else {},
+            "monitors": json.loads(mons_raw) if mons_raw.strip() else [],
+        }
+    if method == "desktop_capture":
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
+            out_path = tf.name
+        try:
+            cmd = ["grim"]
+            if params.get("geometry"):
+                cmd += ["-g", str(params["geometry"])]
+            cmd.append(out_path)
+            rc, _, err = run_cmd(cmd)
+            if rc != 0:
+                return {"error": err or "grim failed"}
+            with open(out_path, "rb") as fh:
+                b64 = base64.b64encode(fh.read()).decode("ascii")
+            return {"mime": "image/png", "base64": b64}
+        finally:
+            try:
+                os.unlink(out_path)
+            except OSError:
+                pass
+    if method == "desktop_type":
+        text = str(params.get("text", ""))
+        rc, _, err = run_cmd(["wtype", "--", text])
+        return {"ok": rc == 0, "error": err if rc != 0 else ""}
+    if method == "desktop_click":
+        x = int(params.get("x", 0))
+        y = int(params.get("y", 0))
+        run_cmd(["hyprctl", "dispatch", "movecursor", str(x), str(y)])
+        return {"ok": True, "x": x, "y": y}
+    if method == "desktop_focus":
+        addr = str(params.get("address", ""))
+        cls = str(params.get("class", ""))
+        sel = f"address:{addr}" if addr else f"class:{cls}"
+        rc, _, err = run_cmd(["hyprctl", "dispatch", "focuswindow", sel])
+        return {"ok": rc == 0, "error": err if rc != 0 else ""}
+    return {"error": f"unknown method: {method}"}
+
+
+MCP_TOOLS = [
+    {
+        "name": "desktop_observe",
+        "description": "Inspect open Wayland windows, active window, and monitors.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "desktop_capture",
+        "description": "Capture the screen (or optional WxH+X+Y geometry) as PNG.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"geometry": {"type": "string"}},
+        },
+    },
+    {
+        "name": "desktop_type",
+        "description": "Type literal UTF-8 text into the focused window.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"text": {"type": "string"}},
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "desktop_click",
+        "description": "Move the pointer to (x, y) on the active output.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}},
+            "required": ["x", "y"],
+        },
+    },
+    {
+        "name": "desktop_focus",
+        "description": "Focus a window by Hyprland address or class.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"address": {"type": "string"}, "class": {"type": "string"}},
+        },
+    },
+]
+
+
+def serve_socket():
+    try:
+        os.unlink(SOCK_PATH)
+    except OSError:
+        pass
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(SOCK_PATH)
+    os.chmod(SOCK_PATH, 0o600)
+    srv.listen(8)
+    while True:
+        conn, _ = srv.accept()
+        with conn:
+            data = conn.recv(65536).decode("utf-8", errors="replace").strip()
+            if not data:
+                continue
+            try:
+                req = json.loads(data)
+                res = handle_action(req.get("method", ""), req.get("params", {}))
+            except Exception as exc:
+                res = {"error": str(exc)}
+            conn.sendall((json.dumps(res) + "\n").encode("utf-8"))
+
+
+def serve_mcp():
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        mid = msg.get("id")
+        method = msg.get("method", "")
+        if method == "initialize":
+            reply = {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "solyra-control", "version": "0.1.0"},
+                },
+            }
+        elif method == "tools/list":
+            reply = {"jsonrpc": "2.0", "id": mid, "result": {"tools": MCP_TOOLS}}
+        elif method == "tools/call":
+            p = msg.get("params") or {}
+            res = handle_action(p.get("name", ""), p.get("arguments") or {})
+            reply = {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "result": {
+                    "content": [{"type": "text", "text": json.dumps(res)}]
+                },
+            }
+        elif mid is not None:
+            reply = {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "error": {"code": -32601, "message": f"Method not found: {method}"},
+            }
+        else:
+            continue
+        sys.stdout.write(json.dumps(reply) + "\n")
+        sys.stdout.flush()
+
+
+def main():
+    args = sys.argv[1:]
+    if "--serve" in args:
+        serve_socket()
+    elif "--mcp" in args:
+        serve_mcp()
+    elif "--session" in args:
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            req = json.loads(line)
+            print(json.dumps(handle_action(req.get("method", ""), req.get("params", {}))), flush=True)
+    else:
+        print(json.dumps(handle_action("desktop_observe", {})))
+
+
+if __name__ == "__main__":
+    main()

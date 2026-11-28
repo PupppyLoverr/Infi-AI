@@ -205,6 +205,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             });
 
+            // Merged Agent Mode (terminal-b): toggled in-place via the titlebar
+            // or launched directly with SOLYRA_TERM_AGENT=1.
+            host.shared(
+                "start_agent_mode",
+                std::env::var("SOLYRA_TERM_AGENT").as_deref() == Ok("1"),
+            );
+            let agent_reply = host.shared("agent_reply", "");
+            host.action("agent_run", move |req| {
+                let prompt = match req.field("prompt") {
+                    Some(Value::Str(s)) => s.to_string(),
+                    _ => return,
+                };
+                let reply = agent_reply.clone();
+                std::thread::spawn(move || {
+                    let out = std::process::Command::new("sh")
+                        .arg("-lc")
+                        .arg(
+                            "if command -v claude >/dev/null 2>&1; then claude -p \"$1\"; \
+                             elif command -v codex >/dev/null 2>&1; then codex exec \"$1\"; \
+                             else printf 'Ready in local mode (install claude or codex CLI for live model replies). Prompt: %s\\n' \"$1\"; fi",
+                        )
+                        .arg("_")
+                        .arg(&prompt)
+                        .output();
+                    let text = match out {
+                        Ok(o) => {
+                            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                            if s.is_empty() {
+                                String::from_utf8_lossy(&o.stderr).trim().to_string()
+                            } else {
+                                s
+                            }
+                        }
+                        Err(e) => format!("Agent error: {e}"),
+                    };
+                    reply.set(if text.is_empty() {
+                        "Done.".to_string()
+                    } else {
+                        text
+                    });
+                });
+            });
+
             // Plugins (terminal/plugins.rs): found in the plugins directory
             // when the app starts and when ⌘K opens, and run once the user
             // allows what they ask for. The interface lists them

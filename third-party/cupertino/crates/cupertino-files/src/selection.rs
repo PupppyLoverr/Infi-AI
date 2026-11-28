@@ -1,0 +1,235 @@
+//! Selection model: click, toggle and range semantics, deferred collapse on mouse-up, keyboard
+//! extension, and index maintenance under model changes. The window's rubber band works on the toolkit's selection.
+//!
+//! The semantics are the behaviour of the design: plain click replaces,
+//! the primary modifier toggles, shift selects the range from the anchor, shift+primary adds the
+//! range; clicking an already selected item keeps the selection until the button is released
+//! without dragging.
+
+use std::collections::BTreeSet;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    pub shift: bool,
+    /// Command on the design, `Ctrl` on Linux.
+    pub primary: bool,
+}
+
+impl Modifiers {
+    pub const NONE: Modifiers = Modifiers {
+        shift: false,
+        primary: false,
+    };
+    pub const SHIFT: Modifiers = Modifiers {
+        shift: true,
+        primary: false,
+    };
+    pub const PRIMARY: Modifiers = Modifiers {
+        shift: false,
+        primary: true,
+    };
+    pub const BOTH: Modifiers = Modifiers {
+        shift: true,
+        primary: true,
+    };
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseDown {
+    /// Selection changed immediately.
+    Changed,
+    /// Item was already selected: selection kept so that a drag can start; call `mouse_up`.
+    Deferred,
+    /// Nothing changed.
+    Unchanged,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Selection {
+    selected: BTreeSet<usize>,
+    anchor: Option<usize>,
+    focus: Option<usize>,
+    pending_collapse: Option<usize>,
+}
+
+impl Selection {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn contains(&self, i: usize) -> bool {
+        self.selected.contains(&i)
+    }
+    pub fn len(&self) -> usize {
+        self.selected.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.selected.is_empty()
+    }
+    pub fn indices(&self) -> impl Iterator<Item = usize> + '_ {
+        self.selected.iter().copied()
+    }
+    pub fn anchor(&self) -> Option<usize> {
+        self.anchor
+    }
+    pub fn focus(&self) -> Option<usize> {
+        self.focus
+    }
+
+    pub fn clear(&mut self) {
+        self.selected.clear();
+        self.anchor = None;
+        self.focus = None;
+        self.pending_collapse = None;
+    }
+
+    pub fn set_single(&mut self, i: usize) {
+        self.selected.clear();
+        self.selected.insert(i);
+        self.anchor = Some(i);
+        self.focus = Some(i);
+        self.pending_collapse = None;
+    }
+
+    fn range(a: usize, b: usize) -> impl Iterator<Item = usize> {
+        a.min(b)..=a.max(b)
+    }
+
+    /// Mouse press on item `i` of a list with `len` items.
+    pub fn mouse_down(&mut self, i: usize, mods: Modifiers) -> MouseDown {
+        self.pending_collapse = None;
+        match (mods.shift, mods.primary) {
+            (false, false) => {
+                if self.selected.contains(&i) && self.selected.len() > 1 {
+                    self.pending_collapse = Some(i);
+                    self.focus = Some(i);
+                    MouseDown::Deferred
+                } else if self.selected.len() == 1 && self.selected.contains(&i) {
+                    self.anchor = Some(i);
+                    self.focus = Some(i);
+                    MouseDown::Unchanged
+                } else {
+                    self.set_single(i);
+                    MouseDown::Changed
+                }
+            }
+            (false, true) => {
+                if !self.selected.remove(&i) {
+                    self.selected.insert(i);
+                    self.anchor = Some(i);
+                }
+                self.focus = Some(i);
+                MouseDown::Changed
+            }
+            (true, primary) => {
+                let a = self.anchor.unwrap_or(i);
+                if !primary {
+                    self.selected.clear();
+                }
+                self.selected.extend(Self::range(a, i));
+                self.anchor = Some(a);
+                self.focus = Some(i);
+                MouseDown::Changed
+            }
+        }
+    }
+
+    /// Mouse release; `dragged` tells whether a drag happened. Returns true if the selection changed.
+    pub fn mouse_up(&mut self, dragged: bool) -> bool {
+        match self.pending_collapse.take() {
+            Some(i) if !dragged => {
+                self.set_single(i);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Click on empty space: clears unless a modifier is held (so a missed toggle does not lose the selection).
+    pub fn click_empty(&mut self, mods: Modifiers) -> bool {
+        if mods.shift || mods.primary || self.selected.is_empty() {
+            return false;
+        }
+        self.clear();
+        true
+    }
+
+    /// Keyboard navigation to `to`; `extend` is shift. Without extension the selection becomes `{to}`.
+    pub fn move_focus(&mut self, to: usize, extend: bool) {
+        if extend {
+            let a = self.anchor.unwrap_or(to);
+            self.selected = Self::range(a, to).collect();
+            self.anchor = Some(a);
+        } else {
+            self.selected.clear();
+            self.selected.insert(to);
+            self.anchor = Some(to);
+        }
+        self.focus = Some(to);
+        self.pending_collapse = None;
+    }
+
+    /// Replace the whole state, for example with the indexes the same items have after the list was
+    /// rebuilt. A collapse deferred to mouse-up is dropped.
+    pub fn restore(
+        &mut self,
+        selected: impl IntoIterator<Item = usize>,
+        anchor: Option<usize>,
+        focus: Option<usize>,
+    ) {
+        self.selected = selected.into_iter().collect();
+        self.anchor = anchor;
+        self.focus = focus;
+        self.pending_collapse = None;
+    }
+
+    pub fn select_all(&mut self, len: usize) {
+        self.selected = (0..len).collect();
+        self.anchor = if len > 0 { Some(0) } else { None };
+        self.focus = if len > 0 { Some(len - 1) } else { None };
+    }
+
+    /// Keep indexes valid after an item was inserted at `at`.
+    pub fn on_insert(&mut self, at: usize) {
+        let shift = |i: usize| if i >= at { i + 1 } else { i };
+        self.selected = self.selected.iter().map(|i| shift(*i)).collect();
+        self.anchor = self.anchor.map(shift);
+        self.focus = self.focus.map(shift);
+        self.pending_collapse = self.pending_collapse.map(shift);
+    }
+
+    /// Keep indexes valid after the item at `at` was removed (it leaves the selection).
+    pub fn on_remove(&mut self, at: usize) {
+        self.selected = self
+            .selected
+            .iter()
+            .filter(|i| **i != at)
+            .map(|i| if *i > at { i - 1 } else { *i })
+            .collect();
+        let fix = |o: Option<usize>| match o {
+            Some(i) if i == at => None,
+            Some(i) if i > at => Some(i - 1),
+            o => o,
+        };
+        self.anchor = fix(self.anchor);
+        self.focus = fix(self.focus);
+        self.pending_collapse = fix(self.pending_collapse);
+    }
+
+    /// An item moved from `from` to `to` (re-sorted after a change): the selection follows the item.
+    pub fn on_move(&mut self, from: usize, to: usize) {
+        let was = self.selected.contains(&from);
+        let (anchor, focus) = (self.anchor == Some(from), self.focus == Some(from));
+        self.on_remove(from);
+        self.on_insert(to);
+        if was {
+            self.selected.insert(to);
+        }
+        if anchor {
+            self.anchor = Some(to);
+        }
+        if focus {
+            self.focus = Some(to);
+        }
+    }
+}

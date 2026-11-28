@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Finder
+Comment=Browse files and folders
+Exec=solyra-files %U
+Icon=solyra-files
+Categories=System;FileManager;
+MimeType=inode/directory;x-scheme-handler/trash;
+StartupWMClass=solyra-files

@@ -1,0 +1,59 @@
+[package]
+name = "cupertino-files"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "The file manager: directory model with batched enumeration and watching, grouping, per-folder view settings, selection and type-select logic, trash, thumbnails, the list layout engine with the measured metrics, and the window on CupertinoKit"
+autotests = false
+[package.metadata.cupertino]
+layer = "apps"
+
+[lib]
+test = false
+
+[features]
+# the `cupertino-files` process: a browser window as a client of the server
+app = [
+    "dep:async-channel",
+    "dep:cupertino-assets",
+    "dep:zbus",
+    "dep:zeroize",
+    "dep:cupertino-diagnostic-events",
+]
+
+[dependencies]
+cupertino-diagnostic-events = { path = "../cupertino-diagnostic-events", optional = true }
+cupertino-menu-model = { path = "../cupertino-menu-model" }
+cupertino-keyboard = { path = "../cupertino-keyboard" }
+cupertino-apps = { path = "../cupertino-apps" }
+cupertino-defaults = { path = "../cupertino-defaults" }
+cupertino-geometry = { path = "../cupertino-geometry" }
+cupertino-trash = { path = "../cupertino-trash" }
+cupertino-kit = { path = "../cupertino-kit" }
+cupertino-assets = { path = "../cupertino-assets", optional = true }
+cupertino-icons = { path = "../cupertino-icons" }
+async-channel = { version = "2", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+percent-encoding = "2"
+libc = "0.2"
+zbus = { version = "5", default-features = false, features = ["async-io"], optional = true }
+zeroize = { version = "1", optional = true }
+
+# Solyra: Dev-only dependencies are excluded from this runtime workspace.
+
+[[bin]]
+name = "cupertino-files"
+path = "src/main.rs"
+required-features = ["app"]
+test = false
+
+[[example]]
+name = "files_capture"
+required-features = ["app"]
+test = true
+
+[[test]]
+# Every file of `tests/` is a module of this one binary (`tests/main.rs`).
+name = "tests"
+path = "tests/main.rs"

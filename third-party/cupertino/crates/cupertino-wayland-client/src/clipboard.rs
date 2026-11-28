@@ -1,0 +1,1110 @@
+//! The clipboard and drag and drop (`wl_data_device`): the selection another client offers, read in a MIME type the
+//! reader names, and the selection this client set, served to whoever reads it until another one replaces it; a drag
+//! over this client's surfaces, read only once it was accepted in that type and dropped, and a drag this client
+//! started, served like its selection. No type is converted into another.
+
+use std::fs::File;
+use std::io::{ErrorKind, PipeReader, Read, Write};
+use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use cupertino_geometry::Point;
+use rustix::event::{poll, PollFd, PollFlags, Timespec};
+use rustix::fs::{fcntl_setfl, OFlags};
+use rustix::fs::{memfd_create, MemfdFlags};
+use rustix::io::Errno;
+use wayland_client::protocol::wl_buffer::WlBuffer;
+use wayland_client::protocol::wl_compositor::WlCompositor;
+use wayland_client::protocol::wl_data_device::{self, WlDataDevice};
+use wayland_client::protocol::wl_data_device_manager::{DndAction, WlDataDeviceManager};
+use wayland_client::protocol::wl_data_offer::{self, WlDataOffer};
+use wayland_client::protocol::wl_data_source::{self, WlDataSource};
+use wayland_client::protocol::wl_seat::WlSeat;
+use wayland_client::protocol::wl_shm::{self, WlShm};
+use wayland_client::protocol::wl_surface::WlSurface;
+use wayland_client::{
+    delegate_noop, event_created_child, Connection, Dispatch, Proxy, QueueHandle,
+};
+
+use crate::connection::State;
+use crate::{Error, Event, SurfaceId};
+
+/// How long a blocking read waits for the offering client, and how long a read of [`Clipboard::receive_async`] waits for
+/// its next bytes.
+const READ_TIMEOUT: Duration = Duration::from_secs(1);
+/// The longest a read of [`Clipboard::receive_async`] takes, however steadily its bytes come.
+const READ_CAP: Duration = Duration::from_secs(10);
+/// The most MIME types kept of one offer, and the longest; the rest are dropped.
+const MAX_OFFER_TYPES: usize = 64;
+const MAX_MIME_LEN: usize = 255;
+/// The most reads of [`Clipboard::receive_async`] running at once.
+const MAX_READS: usize = 8;
+/// The most a read takes; a longer selection is cut there.
+const READ_LIMIT: usize = 16 << 20;
+/// How long serving our selection to a reading client may take before the descriptor is dropped.
+const SERVE_TIMEOUT: Duration = Duration::from_secs(1);
+/// The most reads served at once; a read beyond them gets its descriptor closed at once.
+const MAX_SERVES: usize = 8;
+/// The most drops kept while they are read, before they are finished or refused; a drop past them refuses the oldest.
+const MAX_LANDED: usize = 8;
+
+/// The current selection of another client, with the MIME types it is offered in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClipboardOffer {
+    id: u64,
+    mime_types: Vec<String>,
+}
+
+impl ClipboardOffer {
+    pub fn mime_types(&self) -> &[String] {
+        &self.mime_types
+    }
+}
+
+/// Names one read of [`crate::Connection::receive_async`]; its data arrives as [`Event::Received`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ReadId(u64);
+
+/// What a read reads: a selection, cancelled when another replaces it, or a drop, read until it finishes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Source {
+    Selection(u64),
+    Drop(u64),
+}
+
+/// A read of another client's selection or drop, in progress in the connection's loop.
+#[derive(Debug)]
+struct PendingRead {
+    id: ReadId,
+    source: Source,
+    reader: PipeReader,
+    bytes: Vec<u8>,
+    /// When the read gives up without new bytes; each byte read moves it on, up to `cap`.
+    idle: Instant,
+    cap: Instant,
+}
+
+impl PendingRead {
+    fn deadline(&self) -> Instant {
+        self.idle.min(self.cap)
+    }
+}
+
+/// The types an offer announced, and for a drag the actions its source allows.
+#[derive(Debug)]
+pub(crate) struct OfferTypes {
+    types: Mutex<Vec<String>>,
+    actions: Mutex<DndAction>,
+}
+
+impl Default for OfferTypes {
+    fn default() -> Self {
+        OfferTypes {
+            types: Mutex::new(Vec::new()),
+            actions: Mutex::new(DndAction::empty()),
+        }
+    }
+}
+
+/// Another client's drag over one of this client's surfaces (`wl_data_device.enter`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DragOffer {
+    id: u64,
+    mime_types: Vec<String>,
+    actions: DndAction,
+}
+
+impl DragOffer {
+    pub fn mime_types(&self) -> &[String] {
+        &self.mime_types
+    }
+
+    /// What the dragging client allows done with the data. A compositor older than drag actions (`wl_data_offer`
+    /// before version 3) only copies, so its drags allow a copy alone.
+    pub fn source_actions(&self) -> DndAction {
+        self.actions
+    }
+}
+
+/// A drag over one of this client's surfaces, as it goes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DragEvent {
+    /// The drag entered the surface at `point`, in its logical points.
+    Enter { offer: DragOffer, point: Point },
+    /// `time` is the compositor's input timestamp in milliseconds, as for the pointer's events.
+    Motion { point: Point, time: u32 },
+    /// The action the compositor chose from the source's and the ones [`crate::Connection::set_drag_actions`] named;
+    /// it can still change after the drop, until the drop is finished. A compositor older than drag actions sends none.
+    Action(DndAction),
+    /// The drag left the surface, or ended without a drop on it.
+    Leave,
+    /// The data was dropped on the surface: read it with [`crate::Connection::receive_drop`], then
+    /// [`crate::Connection::finish_drag`], or refuse it with [`crate::Connection::refuse_drop`]. A drag that drops
+    /// has no leave; another drag may enter while this one is still read.
+    Drop,
+}
+
+/// A drag this client started with [`crate::Connection::start_drag`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DragSource(u64);
+
+/// How a drag this client started goes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DragSourceEvent {
+    /// The type the client under the pointer accepts; `None` when it takes none.
+    Target(Option<String>),
+    /// The action the compositor chose.
+    Action(DndAction),
+    /// The data was dropped; the target reads it now.
+    Dropped,
+    /// The target finished with the data; with a move, the source deletes it.
+    Finished,
+    /// The drag ended without a drop, or the target refused it.
+    Cancelled,
+}
+
+#[derive(Debug)]
+struct IncomingDrag {
+    id: u64,
+    offer: WlDataOffer,
+    surface: SurfaceId,
+    serial: u32,
+    accepted: Option<String>,
+    dropped: bool,
+}
+
+/// The image that follows the pointer during a drag this client starts: premultiplied pixels in `wl_shm`'s
+/// `argb8888` (a little-endian 32-bit word, bytes B, G, R, A in memory), drawn at a whole-number buffer scale, and its
+/// hotspot, the point of the image under the pointer in the image's logical points.
+#[derive(Clone, PartialEq, Eq)]
+pub struct DragIcon {
+    width: u32,
+    height: u32,
+    scale: u32,
+    pixels: Arc<[u8]>,
+    hotspot: (i32, i32),
+}
+
+impl DragIcon {
+    /// The widest or tallest icon in pixels: a drag image is a thumbnail of what is dragged, at most 4 MiB.
+    pub const MAX_EXTENT: u32 = 1024;
+
+    /// `width` × `height` pixels in rows of `width * 4` bytes, drawn at `scale` pixels per point, with the pointer at
+    /// `hotspot` (logical points from the image's top-left corner, rounded to whole points). `None` for an empty image,
+    /// a side over [`Self::MAX_EXTENT`], a scale of 0 or one that does not divide both sides (the protocol requires
+    /// a buffer to be a whole number of points), pixels of another length, or a hotspot that is not finite.
+    pub fn new(
+        width: u32,
+        height: u32,
+        scale: u32,
+        pixels: Vec<u8>,
+        hotspot: Point,
+    ) -> Option<DragIcon> {
+        let extent = 1..=Self::MAX_EXTENT;
+        let fits = extent.contains(&width)
+            && extent.contains(&height)
+            && scale >= 1
+            && width.is_multiple_of(scale)
+            && height.is_multiple_of(scale)
+            && pixels.len() == width as usize * height as usize * 4
+            && hotspot.x.is_finite()
+            && hotspot.y.is_finite();
+        let point = |v: f64| {
+            v.round()
+                .clamp(-f64::from(Self::MAX_EXTENT), f64::from(Self::MAX_EXTENT)) as i32
+        };
+        fits.then(|| DragIcon {
+            width,
+            height,
+            scale,
+            pixels: pixels.into(),
+            hotspot: (point(hotspot.x), point(hotspot.y)),
+        })
+    }
+
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub fn scale(&self) -> u32 {
+        self.scale
+    }
+
+    /// The point under the pointer, in whole logical points from the top-left corner.
+    pub fn hotspot(&self) -> (i32, i32) {
+        self.hotspot
+    }
+
+    pub fn pixels(&self) -> &[u8] {
+        &self.pixels
+    }
+}
+
+/// Sizes and hotspot only: the pixels are an image of what is dragged.
+impl std::fmt::Debug for DragIcon {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DragIcon")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("scale", &self.scale)
+            .field("hotspot", &self.hotspot)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The surface (role `dnd_icon`) and buffer a drag's icon is drawn with; they live until the drag drops, is
+/// cancelled, is refused or is replaced.
+#[derive(Debug)]
+struct IconSurface {
+    surface: WlSurface,
+    buffer: WlBuffer,
+}
+
+impl IconSurface {
+    /// A surface showing `icon`, not committed yet: it takes the `dnd_icon` role with `start_drag`, and
+    /// [`IconSurface::show`] commits it after that, so the compositor applies the hotspot to the icon.
+    fn new(
+        compositor: &WlCompositor,
+        shm: &WlShm,
+        icon: &DragIcon,
+        qh: &QueueHandle<State>,
+    ) -> Result<IconSurface, Error> {
+        let len = icon.pixels.len();
+        let pool_len =
+            i32::try_from(len).map_err(|_| Error::Protocol("a drag icon too large to share"))?;
+        let mut file = File::from(
+            memfd_create("cupertino-drag-icon", MemfdFlags::CLOEXEC)
+                .map_err(|e| Error::Io(e.into()))?,
+        );
+        file.write_all(&icon.pixels).map_err(Error::Io)?;
+        let pool = shm.create_pool(file.as_fd(), pool_len, qh, ());
+        let buffer = pool.create_buffer(
+            0,
+            icon.width as i32,
+            icon.height as i32,
+            (icon.width * 4) as i32,
+            wl_shm::Format::Argb8888,
+            qh,
+            (),
+        );
+        pool.destroy();
+        let surface = compositor.create_surface(qh, ());
+        Ok(IconSurface { surface, buffer })
+    }
+
+    /// Attach the buffer with the pointer at the icon's hotspot (`wl_surface.offset` from version 5, the attach offset
+    /// before) and commit.
+    fn show(&self, icon: &DragIcon) {
+        let (x, y) = icon.hotspot;
+        self.surface.set_buffer_scale(icon.scale as i32);
+        if self.surface.version() >= 5 {
+            self.surface.offset(-x, -y);
+            self.surface.attach(Some(&self.buffer), 0, 0);
+        } else {
+            self.surface.attach(Some(&self.buffer), -x, -y);
+        }
+        self.surface
+            .damage_buffer(0, 0, icon.width as i32, icon.height as i32);
+        self.surface.commit();
+    }
+
+    fn destroy(self) {
+        self.surface.destroy();
+        self.buffer.destroy();
+    }
+}
+
+#[derive(Debug)]
+struct OutgoingDrag {
+    source: DragSource,
+    wire: WlDataSource,
+    contents: Contents,
+    icon: Option<IconSurface>,
+    /// The compositor took the drag: it moved the pointer's focus off this client's surface. Until then a release of
+    /// the press it answers means the compositor ignored it, as it does a drag that came after the release.
+    granted: bool,
+}
+
+impl OutgoingDrag {
+    fn end(self) {
+        self.wire.destroy();
+        if let Some(icon) = self.icon {
+            icon.destroy();
+        }
+    }
+}
+
+/// Contents of a selection this client set, one byte string per MIME type.
+type Contents = Arc<[(String, Arc<[u8]>)]>;
+
+#[derive(Debug, Default)]
+pub(crate) struct Clipboard {
+    device: Option<WlDataDevice>,
+    selection: Option<(u64, WlDataOffer)>,
+    next_offer: u64,
+    own: Option<(WlDataSource, Contents)>,
+    serving: Arc<AtomicUsize>,
+    reads: Vec<PendingRead>,
+    /// The drag over this client's surfaces, until it leaves or drops.
+    drag: Option<IncomingDrag>,
+    /// Drags dropped on this client's surfaces and not yet finished or refused, oldest first.
+    landed: Vec<IncomingDrag>,
+    outgoing: Option<OutgoingDrag>,
+    next_drag_source: u64,
+    /// Reads answered without a pipe, reported with the next pump.
+    answered: Vec<(ReadId, Option<Vec<u8>>)>,
+    next_read: u64,
+}
+
+impl Clipboard {
+    pub(crate) fn new(
+        manager: Option<&WlDataDeviceManager>,
+        seat: Option<&WlSeat>,
+        qh: &QueueHandle<State>,
+    ) -> Self {
+        Clipboard {
+            device: manager.zip(seat).map(|(m, s)| m.get_data_device(s, qh, ())),
+            ..Clipboard::default()
+        }
+    }
+
+    /// Set the selection to `contents`; `serial` is that of the input event that asked for it.
+    pub(crate) fn set(
+        &mut self,
+        manager: &WlDataDeviceManager,
+        contents: Vec<(String, Vec<u8>)>,
+        serial: u32,
+        qh: &QueueHandle<State>,
+    ) {
+        let Some(device) = &self.device else {
+            return;
+        };
+        let source = manager.create_data_source(qh, ());
+        for (mime, _) in &contents {
+            source.offer(mime.clone());
+        }
+        device.set_selection(Some(&source), serial);
+        let contents = contents
+            .into_iter()
+            .map(|(mime, bytes)| (mime, Arc::from(bytes)))
+            .collect();
+        if let Some((old, _)) = self.own.replace((source, contents)) {
+            old.destroy();
+        }
+    }
+
+    /// Start reading the selection in `mime`, like [`Clipboard::receive`] without waiting: the data arrives as
+    /// [`Event::Received`] from [`Clipboard::pump`], `None` when the offer was replaced, the reader sent nothing for
+    /// [`READ_TIMEOUT`] or did not finish within [`READ_CAP`], or the pipe failed. At most [`MAX_READS`] run at once.
+    pub(crate) fn receive_async(
+        &mut self,
+        conn: &Connection,
+        offer: &ClipboardOffer,
+        mime: &str,
+    ) -> Result<ReadId, Error> {
+        if self.reads.len() >= MAX_READS {
+            return Err(Error::PermissionDenied("more clipboard reads at once"));
+        }
+        self.next_read += 1;
+        let id = ReadId(self.next_read);
+        if let Some((_, contents)) = &self.own {
+            let bytes = contents
+                .iter()
+                .find(|(m, _)| m == mime)
+                .map(|(_, bytes)| bytes.to_vec())
+                .ok_or_else(|| Error::UnsupportedFormat(mime.to_string()))?;
+            self.answered.push((id, Some(bytes)));
+            return Ok(id);
+        }
+        let Some((_, current)) = self.selection.as_ref().filter(|(id, _)| *id == offer.id) else {
+            return Err(Error::Cancelled);
+        };
+        if !offer.mime_types.iter().any(|m| m == mime) {
+            return Err(Error::UnsupportedFormat(mime.to_string()));
+        }
+        let current = current.clone();
+        self.start_read(conn, id, &current, mime, Source::Selection(offer.id))?;
+        Ok(id)
+    }
+
+    fn start_read(
+        &mut self,
+        conn: &Connection,
+        id: ReadId,
+        offer: &WlDataOffer,
+        mime: &str,
+        source: Source,
+    ) -> Result<(), Error> {
+        let (reader, writer) = std::io::pipe().map_err(Error::Io)?;
+        fcntl_setfl(&reader, OFlags::NONBLOCK).map_err(|e| Error::Io(e.into()))?;
+        offer.receive(mime.to_string(), writer.as_fd());
+        drop(writer);
+        conn.flush()?;
+        let now = Instant::now();
+        self.reads.push(PendingRead {
+            id,
+            source,
+            reader,
+            bytes: Vec::new(),
+            idle: now + READ_TIMEOUT,
+            cap: now + READ_CAP,
+        });
+        Ok(())
+    }
+
+    /// Accept the drag `offer` in `mime`, one of its types, or with `None` refuse it; may change until the drop.
+    pub(crate) fn accept_drag(
+        &mut self,
+        offer: &DragOffer,
+        mime: Option<&str>,
+    ) -> Result<(), Error> {
+        let drag = self.current_drag(offer)?;
+        if drag.dropped {
+            return Err(Error::Protocol("a drop is accepted before it lands"));
+        }
+        if mime.is_some_and(|m| !offer.mime_types.iter().any(|t| t == m)) {
+            return Err(Error::UnsupportedFormat(
+                mime.unwrap_or_default().to_string(),
+            ));
+        }
+        drag.offer.accept(drag.serial, mime.map(str::to_string));
+        drag.accepted = mime.map(str::to_string);
+        Ok(())
+    }
+
+    /// The actions this client takes for the drag `offer`, and the one it prefers (`wl_data_offer` version 3).
+    pub(crate) fn set_drag_actions(
+        &mut self,
+        offer: &DragOffer,
+        actions: DndAction,
+        preferred: DndAction,
+    ) -> Result<(), Error> {
+        let drag = self.current_drag(offer)?;
+        if drag.offer.version() >= 3 {
+            drag.offer.set_actions(actions, preferred);
+        }
+        Ok(())
+    }
+
+    /// Start reading what was dropped in `mime`, the type it was accepted in, like [`Clipboard::receive_async`], except
+    /// that a drop longer than [`READ_LIMIT`] gives nothing rather than its start; a drag that was not dropped, or not
+    /// accepted in `mime`, can't be read.
+    pub(crate) fn receive_drop(
+        &mut self,
+        conn: &Connection,
+        offer: &DragOffer,
+        mime: &str,
+    ) -> Result<ReadId, Error> {
+        if self.reads.len() >= MAX_READS {
+            return Err(Error::PermissionDenied("more clipboard reads at once"));
+        }
+        let drag = self.current_drag(offer)?;
+        if !drag.dropped || drag.accepted.as_deref() != Some(mime) {
+            return Err(Error::PermissionDenied(
+                "a drop read before it was accepted in that type and dropped",
+            ));
+        }
+        let wire = drag.offer.clone();
+        self.next_read += 1;
+        let id = ReadId(self.next_read);
+        self.start_read(conn, id, &wire, mime, Source::Drop(offer.id))?;
+        Ok(id)
+    }
+
+    /// Tell the dragging client the drop's data was taken (`wl_data_offer.finish`, from version 3), and let the offer
+    /// go.
+    pub(crate) fn finish_drag(&mut self, offer: &DragOffer) -> Result<(), Error> {
+        let drag = self.take_landed(offer)?;
+        if drag.offer.version() >= 3 {
+            drag.offer.finish();
+        }
+        drag.offer.destroy();
+        Ok(())
+    }
+
+    /// Let a drop go without taking it: the offer is destroyed unfinished, which the compositor tells the dragging client
+    /// as a cancel (from version 3). Its running reads end with nothing.
+    pub(crate) fn refuse_drop(&mut self, offer: &DragOffer) -> Result<(), Error> {
+        self.take_landed(offer)?.offer.destroy();
+        Ok(())
+    }
+
+    /// The dropped drag `offer` names, taken out of those kept; an error for one that is still dragged or gone.
+    fn take_landed(&mut self, offer: &DragOffer) -> Result<IncomingDrag, Error> {
+        if self.drag.as_ref().is_some_and(|d| d.id == offer.id) {
+            return Err(Error::Protocol("a drag finishes after its drop"));
+        }
+        let at = self
+            .landed
+            .iter()
+            .position(|d| d.id == offer.id)
+            .ok_or(Error::Cancelled)?;
+        Ok(self.landed.remove(at))
+    }
+
+    fn current_drag(&mut self, offer: &DragOffer) -> Result<&mut IncomingDrag, Error> {
+        self.drag
+            .iter_mut()
+            .chain(self.landed.iter_mut())
+            .find(|d| d.id == offer.id)
+            .ok_or(Error::Cancelled)
+    }
+
+    /// Forget the drags over and dropped on `surface`, which is going away.
+    pub(crate) fn forget_surface(&mut self, surface: SurfaceId) {
+        if let Some(drag) = self.drag.take_if(|d| d.surface == surface) {
+            drag.offer.destroy();
+        }
+        self.landed.retain(|drag| {
+            let keep = drag.surface != surface;
+            if !keep {
+                drag.offer.destroy();
+            }
+            keep
+        });
+    }
+
+    /// Start dragging `contents` from `origin`, with the `actions` it allows and `icon` following the pointer;
+    /// `serial` is that of the button press. `surfaces` makes the icon's surface and buffer.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn start_drag(
+        &mut self,
+        manager: &WlDataDeviceManager,
+        surfaces: (&WlCompositor, &WlShm),
+        origin: &WlSurface,
+        contents: Vec<(String, Vec<u8>)>,
+        actions: DndAction,
+        icon: Option<&DragIcon>,
+        serial: u32,
+        qh: &QueueHandle<State>,
+    ) -> Result<DragSource, Error> {
+        let Some(device) = &self.device else {
+            return Err(Error::Unsupported(crate::Capability::Clipboard));
+        };
+        let icon_surface = icon
+            .map(|icon| IconSurface::new(surfaces.0, surfaces.1, icon, qh))
+            .transpose()?;
+        // the drag this one replaces goes first, with its icon
+        if let Some(old) = self.outgoing.take() {
+            old.end();
+        }
+        let wire = manager.create_data_source(qh, ());
+        for (mime, _) in &contents {
+            wire.offer(mime.clone());
+        }
+        if wire.version() >= 3 {
+            wire.set_actions(actions);
+        }
+        device.start_drag(
+            Some(&wire),
+            origin,
+            icon_surface.as_ref().map(|i| &i.surface),
+            serial,
+        );
+        if let Some((surface, icon)) = icon_surface.as_ref().zip(icon) {
+            surface.show(icon);
+        }
+        self.next_drag_source += 1;
+        let source = DragSource(self.next_drag_source);
+        let contents = contents
+            .into_iter()
+            .map(|(mime, bytes)| (mime, Arc::from(bytes)))
+            .collect();
+        self.outgoing = Some(OutgoingDrag {
+            source,
+            wire,
+            contents,
+            icon: icon_surface,
+            granted: false,
+        });
+        Ok(source)
+    }
+
+    /// The pointer left this client's surfaces: a drag started before was taken by the compositor.
+    pub(crate) fn pointer_left(&mut self) {
+        if let Some(drag) = &mut self.outgoing {
+            drag.granted = true;
+        }
+    }
+
+    /// The last held button went up on this client's surface. A drag the compositor never took is over: it ignored
+    /// it, so it ends here as cancelled, its source, surface and buffer destroyed.
+    pub(crate) fn buttons_released(&mut self, events: &mut Vec<Event>) {
+        if let Some(drag) = self.outgoing.take_if(|d| !d.granted) {
+            let source = drag.source;
+            drag.end();
+            events.push(Event::DragSource {
+                source,
+                event: DragSourceEvent::Cancelled,
+            });
+        }
+    }
+
+    /// Read what the pipes of running reads hold now, and report each read that ended at `now` to `events`.
+    pub(crate) fn pump(&mut self, now: Instant, events: &mut Vec<Event>) {
+        events.extend(
+            self.answered
+                .drain(..)
+                .map(|(id, data)| Event::Received { id, data }),
+        );
+        let selection = self.selection.as_ref().map(|(id, _)| *id);
+        let drops: Vec<u64> = self.drag.iter().chain(&self.landed).map(|d| d.id).collect();
+        self.reads.retain_mut(|read| {
+            let alive = match read.source {
+                Source::Selection(id) => Some(id) == selection,
+                Source::Drop(id) => drops.contains(&id),
+            };
+            let data = if alive {
+                let before = read.bytes.len();
+                let drained = drain(read);
+                if read.bytes.len() > before {
+                    read.idle = now + READ_TIMEOUT;
+                }
+                match drained {
+                    Drained::Open if now < read.deadline() => return true,
+                    Drained::Open | Drained::Failed => None,
+                    // a cut selection still pastes; a cut drop would hand over a list that ends anywhere
+                    Drained::Full if matches!(read.source, Source::Drop(_)) => None,
+                    Drained::Done | Drained::Full => Some(std::mem::take(&mut read.bytes)),
+                }
+            } else {
+                None
+            };
+            events.push(Event::Received { id: read.id, data });
+            false
+        });
+    }
+
+    /// The pipes of running reads, to wait on with the display.
+    pub(crate) fn read_fds(&self) -> impl Iterator<Item = BorrowedFd<'_>> {
+        self.reads.iter().map(|r| r.reader.as_fd())
+    }
+
+    /// When the first running read gives up.
+    pub(crate) fn read_deadline(&self) -> Option<Instant> {
+        self.reads.iter().map(PendingRead::deadline).min()
+    }
+
+    /// The selection in `mime`: this client's own directly, another client's read through a pipe. The caller waits up to
+    /// [`READ_TIMEOUT`]; a replaced offer or a reader that does not finish in time is [`Error::Cancelled`].
+    pub(crate) fn receive(
+        &self,
+        conn: &Connection,
+        offer: &ClipboardOffer,
+        mime: &str,
+    ) -> Result<Vec<u8>, Error> {
+        if let Some((_, contents)) = &self.own {
+            return contents
+                .iter()
+                .find(|(m, _)| m == mime)
+                .map(|(_, bytes)| bytes.to_vec())
+                .ok_or_else(|| Error::UnsupportedFormat(mime.to_string()));
+        }
+        let Some((_, current)) = self.selection.as_ref().filter(|(id, _)| *id == offer.id) else {
+            return Err(Error::Cancelled);
+        };
+        if !offer.mime_types.iter().any(|m| m == mime) {
+            return Err(Error::UnsupportedFormat(mime.to_string()));
+        }
+        let (mut reader, writer) = std::io::pipe().map_err(Error::Io)?;
+        current.receive(mime.to_string(), writer.as_fd());
+        drop(writer);
+        conn.flush()?;
+        read_limited(&mut reader, Instant::now() + READ_TIMEOUT, READ_LIMIT)
+            .map_err(Error::Io)?
+            .ok_or(Error::Cancelled)
+    }
+}
+
+enum Drained {
+    /// The writer may send more.
+    Open,
+    /// The writer closed the pipe.
+    Done,
+    /// The read reached [`READ_LIMIT`] and the rest is cut.
+    Full,
+    Failed,
+}
+
+/// Read what `read`'s pipe holds now without waiting.
+fn drain(read: &mut PendingRead) -> Drained {
+    let mut chunk = [0u8; 4096];
+    while read.bytes.len() < READ_LIMIT {
+        match read.reader.read(&mut chunk) {
+            Ok(0) => return Drained::Done,
+            Ok(n) => {
+                let room = READ_LIMIT - read.bytes.len();
+                read.bytes.extend_from_slice(&chunk[..n.min(room)]);
+            }
+            Err(e) if e.kind() == ErrorKind::WouldBlock => return Drained::Open,
+            Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(_) => return Drained::Failed,
+        }
+    }
+    Drained::Full
+}
+
+/// What `reader` gives until it closes, at most `limit` bytes; `None` when `deadline` passes first.
+fn read_limited(
+    reader: &mut (impl Read + AsFd),
+    deadline: Instant,
+    limit: usize,
+) -> std::io::Result<Option<Vec<u8>>> {
+    let mut bytes = Vec::new();
+    let mut chunk = [0u8; 4096];
+    while bytes.len() < limit {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Ok(None);
+        }
+        let timeout = Timespec::try_from(left).expect("a deadline fits a timespec");
+        let mut fds = [PollFd::new(&*reader, PollFlags::IN)];
+        match poll(&mut fds, Some(&timeout)) {
+            Ok(0) => return Ok(None),
+            Ok(_) | Err(Errno::INTR) => {}
+            Err(e) => return Err(e.into()),
+        }
+        match reader.read(&mut chunk) {
+            Ok(0) => return Ok(Some(bytes)),
+            Ok(n) => bytes.extend_from_slice(&chunk[..n.min(limit - bytes.len())]),
+            Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(Some(bytes))
+}
+
+/// Serve `bytes` to `fd` on a thread of its own when fewer than `max` serves run (counted in `serving`); else close
+/// `fd` at once. Whether it is served.
+fn spawn_serve(
+    serving: &Arc<AtomicUsize>,
+    max: usize,
+    fd: OwnedFd,
+    bytes: Arc<[u8]>,
+    timeout: Duration,
+) -> bool {
+    if serving
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+            (n < max).then_some(n + 1)
+        })
+        .is_err()
+    {
+        return false;
+    }
+    let slot = ServeSlot(Arc::clone(serving));
+    std::thread::spawn(move || {
+        // released when the thread ends, also by a panic
+        let _slot = slot;
+        serve(fd, &bytes, Instant::now() + timeout);
+    });
+    true
+}
+
+/// A claimed place among the reads served at once; dropping it frees it.
+struct ServeSlot(Arc<AtomicUsize>);
+
+impl Drop for ServeSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Write `bytes` to a reading client's `fd` without blocking, until done or `deadline`, then close it.
+fn serve(fd: OwnedFd, bytes: &[u8], deadline: Instant) {
+    if fcntl_setfl(&fd, OFlags::NONBLOCK).is_err() {
+        return;
+    }
+    let mut file = File::from(fd);
+    let mut rest = bytes;
+    while !rest.is_empty() {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let Ok(timeout) = Timespec::try_from(left) else {
+            return;
+        };
+        let mut fds = [PollFd::new(&file, PollFlags::OUT)];
+        if left.is_zero() || !matches!(poll(&mut fds, Some(&timeout)), Ok(n) if n > 0) {
+            return;
+        }
+        match file.write(rest) {
+            Ok(n) => rest = &rest[n..],
+            Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted => {}
+            Err(_) => return,
+        }
+    }
+}
+
+delegate_noop!(State: ignore WlDataDeviceManager);
+
+impl Dispatch<WlDataDevice, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &WlDataDevice,
+        event: wl_data_device::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_data_device::Event::Selection { id } => {
+                let clipboard = &mut state.clipboard;
+                let offer = id.map(|offer| {
+                    clipboard.next_offer += 1;
+                    let mime_types = offer
+                        .data::<OfferTypes>()
+                        .map(|t| t.types.lock().expect("offer types").clone())
+                        .unwrap_or_default();
+                    let id = clipboard.next_offer;
+                    (ClipboardOffer { id, mime_types }, offer)
+                });
+                let (public, wire) = match offer {
+                    Some((public, wire)) => (Some(public.clone()), Some((public.id, wire))),
+                    None => (None, None),
+                };
+                if let Some((_, old)) = std::mem::replace(&mut clipboard.selection, wire) {
+                    old.destroy();
+                }
+                state.events.push(Event::Selection(public));
+            }
+            wl_data_device::Event::Enter {
+                serial,
+                surface,
+                x,
+                y,
+                id,
+            } => {
+                let on = state.surface_of(&surface);
+                let clipboard = &mut state.clipboard;
+                // the compositor leaves before it enters again; a drag still kept here is one it never left
+                if let Some(old) = clipboard.drag.take() {
+                    old.offer.destroy();
+                }
+                // a drag of this client's own that offers no data (a null source) has nothing to read
+                let Some(offer) = id else {
+                    return;
+                };
+                let Some(on) = on else {
+                    return offer.destroy();
+                };
+                let types = offer.data::<OfferTypes>();
+                let mime_types = types.map(|t| t.types.lock().expect("offer types").clone());
+                // before version 3 a drag has no actions: it copies
+                let actions = match offer.version() {
+                    ..3 => Some(DndAction::Copy),
+                    _ => types.map(|t| *t.actions.lock().expect("offer actions")),
+                };
+                clipboard.next_offer += 1;
+                let public = DragOffer {
+                    id: clipboard.next_offer,
+                    mime_types: mime_types.unwrap_or_default(),
+                    actions: actions.unwrap_or(DndAction::empty()),
+                };
+                clipboard.drag = Some(IncomingDrag {
+                    id: public.id,
+                    offer,
+                    surface: on,
+                    serial,
+                    accepted: None,
+                    dropped: false,
+                });
+                state.events.push(Event::Drag {
+                    surface: on,
+                    event: DragEvent::Enter {
+                        offer: public,
+                        point: Point::new(x, y),
+                    },
+                });
+            }
+            wl_data_device::Event::Motion { time, x, y } => {
+                if let Some(drag) = &state.clipboard.drag {
+                    state.events.push(Event::Drag {
+                        surface: drag.surface,
+                        event: DragEvent::Motion {
+                            point: Point::new(x, y),
+                            time,
+                        },
+                    });
+                }
+            }
+            wl_data_device::Event::Leave => {
+                let clipboard = &mut state.clipboard;
+                // a dropped offer is kept apart until the drop is read and finished or refused
+                let surface = match clipboard.drag.take() {
+                    Some(drag) => {
+                        drag.offer.destroy();
+                        Some(drag.surface)
+                    }
+                    None => None,
+                };
+                if let Some(surface) = surface {
+                    state.events.push(Event::Drag {
+                        surface,
+                        event: DragEvent::Leave,
+                    });
+                }
+            }
+            wl_data_device::Event::Drop => {
+                let clipboard = &mut state.clipboard;
+                if let Some(mut drag) = clipboard.drag.take() {
+                    drag.dropped = true;
+                    let surface = drag.surface;
+                    if clipboard.landed.len() >= MAX_LANDED {
+                        // a client that never finishes its drops does not hold every offer
+                        clipboard.landed.remove(0).offer.destroy();
+                    }
+                    clipboard.landed.push(drag);
+                    state.events.push(Event::Drag {
+                        surface,
+                        event: DragEvent::Drop,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    event_created_child!(State, WlDataDevice, [
+        wl_data_device::EVT_DATA_OFFER_OPCODE => (WlDataOffer, OfferTypes::default()),
+    ]);
+}
+
+impl Dispatch<WlDataOffer, OfferTypes> for State {
+    fn event(
+        state: &mut Self,
+        offer: &WlDataOffer,
+        event: wl_data_offer::Event,
+        types: &OfferTypes,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_data_offer::Event::Offer { mime_type } => {
+                let mut offered = types.types.lock().expect("offer types");
+                // another client chooses how many types it offers and how long they are
+                if offered.len() < MAX_OFFER_TYPES && mime_type.len() <= MAX_MIME_LEN {
+                    offered.push(mime_type);
+                }
+            }
+            wl_data_offer::Event::SourceActions {
+                source_actions: wayland_client::WEnum::Value(actions),
+            } => *types.actions.lock().expect("offer actions") = actions,
+            wl_data_offer::Event::Action {
+                dnd_action: wayland_client::WEnum::Value(action),
+            } => {
+                let clipboard = &state.clipboard;
+                if let Some(drag) = clipboard
+                    .drag
+                    .iter()
+                    .chain(&clipboard.landed)
+                    .find(|d| d.offer == *offer)
+                {
+                    state.events.push(Event::Drag {
+                        surface: drag.surface,
+                        event: DragEvent::Action(action),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<WlDataSource, ()> for State {
+    fn event(
+        state: &mut Self,
+        source: &WlDataSource,
+        event: wl_data_source::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let dragged = state
+            .clipboard
+            .outgoing
+            .as_mut()
+            .filter(|d| d.wire == *source)
+            .map(|d| {
+                // only a drag the compositor took hears from it
+                d.granted = true;
+                (d.source, Arc::clone(&d.contents))
+            });
+        if let Some((drag, contents)) = dragged {
+            let event = match event {
+                wl_data_source::Event::Send { mime_type, fd } => {
+                    if let Some((_, bytes)) = contents.iter().find(|(m, _)| *m == mime_type) {
+                        spawn_serve(
+                            &state.clipboard.serving,
+                            MAX_SERVES,
+                            fd,
+                            Arc::clone(bytes),
+                            SERVE_TIMEOUT,
+                        );
+                    }
+                    return;
+                }
+                wl_data_source::Event::Target { mime_type } => DragSourceEvent::Target(mime_type),
+                wl_data_source::Event::Action {
+                    dnd_action: wayland_client::WEnum::Value(action),
+                } => DragSourceEvent::Action(action),
+                wl_data_source::Event::DndDropPerformed => DragSourceEvent::Dropped,
+                wl_data_source::Event::DndFinished => DragSourceEvent::Finished,
+                wl_data_source::Event::Cancelled => DragSourceEvent::Cancelled,
+                _ => return,
+            };
+            match event {
+                DragSourceEvent::Finished | DragSourceEvent::Cancelled => {
+                    if let Some(drag) = state.clipboard.outgoing.take() {
+                        drag.end();
+                    }
+                }
+                // the drop ends the pointer's drag: the compositor no longer shows the icon
+                DragSourceEvent::Dropped => {
+                    if let Some(icon) = state
+                        .clipboard
+                        .outgoing
+                        .as_mut()
+                        .and_then(|d| d.icon.take())
+                    {
+                        icon.destroy();
+                    }
+                }
+                _ => {}
+            }
+            state.events.push(Event::DragSource {
+                source: drag,
+                event,
+            });
+            return;
+        }
+        let own = state.clipboard.own.as_ref().filter(|(s, _)| s == source);
+        match event {
+            wl_data_source::Event::Send { mime_type, fd } => {
+                let bytes =
+                    own.and_then(|(_, contents)| contents.iter().find(|(m, _)| *m == mime_type));
+                if let Some((_, bytes)) = bytes {
+                    // off the event loop: a reader that is slow or never reads does not hold up this client
+                    spawn_serve(
+                        &state.clipboard.serving,
+                        MAX_SERVES,
+                        fd,
+                        Arc::clone(bytes),
+                        SERVE_TIMEOUT,
+                    );
+                }
+            }
+            wl_data_source::Event::Cancelled => {
+                if own.is_some() {
+                    state.clipboard.own = None;
+                    state.events.push(Event::SelectionLost);
+                }
+                source.destroy();
+            }
+            _ => {}
+        }
+    }
+}

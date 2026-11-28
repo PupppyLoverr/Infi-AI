@@ -107,7 +107,7 @@ hl.animation({ leaf = "specialWorkspace", enabled = true, speed = 4, spring = "s
 -- gets rounded blur and its shadow never turns into a blurred box.
 hl.layer_rule({
     name = "solyra-glass",
-    match = { namespace = "^solyra-(bar|dock|glass|controlcenter|notifications|notifcenter|snap|overview|island|widgets|basket)$" },
+    match = { namespace = "^solyra-(bar|dock|glass|controlcenter|notifications|notifcenter|snap|overview|island|widgets|basket|session-agent|switcher|screenshot|osd)$" },
     blur = true,
     ignore_alpha = 0.16,
 })
@@ -150,6 +150,11 @@ hl.window_rule({
     name = "solyra-apps-glass",
     match = { class = "^(solyra-term|solyra-files|solyra-settings)$" },
     opacity = "0.999 override",
+})
+hl.window_rule({
+    name = "solyra-files-blur",
+    match = { class = "^solyra-files$" },
+    blur = true,
 })
 
 local mod = "SUPER"

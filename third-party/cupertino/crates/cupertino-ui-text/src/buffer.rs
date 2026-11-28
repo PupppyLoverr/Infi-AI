@@ -1,0 +1,1037 @@
+//! The editable text of a field or a multi-line editor: text, caret, selection, undo, clicks, blink and scroll.
+
+use std::ops::Range;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
+
+use unicode_segmentation::UnicodeSegmentation;
+
+use crate::{bidi, Affinity, Direction, ImeBatch, Surrounding, TextPosition};
+
+/// How long the caret shows and hides while it blinks; it shows for a whole period after every edit, move or click.
+/// Both are approximate: design values, not measured.
+pub const CARET_BLINK_ON: Duration = Duration::from_millis(500);
+pub const CARET_BLINK_OFF: Duration = Duration::from_millis(500);
+/// Presses closer together than this at the same place count as a double or triple click.
+pub const MULTI_CLICK_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Text and caret positions undo returns to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Snapshot {
+    text: String,
+    caret: usize,
+    anchor: usize,
+}
+
+/// Edits that undo as one while they follow each other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Group {
+    Typing,
+    Deleting,
+    /// The updates of one composition: it undoes as one step of its own.
+    Composing,
+}
+
+/// What a drag extends: characters, words (after a double click), paragraphs (after a triple click in a multi-line
+/// buffer) or nothing (a triple click in a field selects all of its one line).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Granularity {
+    Character,
+    Word,
+    Paragraph,
+    All,
+}
+
+/// `now` as time since one origin for the process, so presses timed by an `Instant` and by an application's clock
+/// (with [`TextBuffer::press_at`]) share one scale.
+fn since_origin(now: Instant) -> Duration {
+    static ORIGIN: OnceLock<Instant> = OnceLock::new();
+    now.saturating_duration_since(*ORIGIN.get_or_init(|| now))
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Press {
+    at: Duration,
+    index: usize,
+    count: u8,
+}
+
+/// The editable text of a field, with its selection and undo history.
+///
+/// Its `Debug` output shows the text, the undo snapshots and the kill buffer, so protected input never enters a
+/// `TextBuffer`: a password field uses [`SecureBuffer`](crate::SecureBuffer) only. A field's buffer strips line breaks;
+/// a [`TextBuffer::multiline`] one keeps them and tabs.
+#[derive(Clone, Debug, Default)]
+pub struct TextBuffer {
+    text: String,
+    caret: usize,
+    anchor: usize,
+    composition: Option<Range<usize>>,
+    /// The input method's cursor in the composition, in bytes of the composed text: a caret when empty, the clause
+    /// being converted otherwise; `None` hides it.
+    composition_cursor: Option<Range<usize>>,
+    undo: Vec<Snapshot>,
+    redo: Vec<Snapshot>,
+    group: Option<Group>,
+    kill: String,
+    last_press: Option<Press>,
+    /// The range the drag started from and how it extends, while the button is held.
+    drag: Option<(Range<usize>, Granularity)>,
+    /// When the caret last moved; the blink counts from it.
+    activity: Option<Duration>,
+    scroll: f64,
+    /// The most bytes the text holds; `None` for no limit.
+    max_len: Option<usize>,
+    /// The caret's byte when a visual move put it on the end edge of the grapheme before it, at a direction change.
+    upstream: Option<usize>,
+    /// The base direction the text is laid out in; `None` takes it from the first strong character.
+    direction: Option<Direction>,
+    multiline: bool,
+    /// The x a run of vertical moves aims for, so a short line in between does not pull the caret to its end.
+    goal: Option<f64>,
+}
+
+/// The visual lines of a multi-line text as it is laid out, for the caret moves that depend on them.
+pub trait LineLayout {
+    fn line_count(&self) -> usize;
+    /// The visual line `at` is drawn on, and its x in points.
+    fn locate(&self, at: TextPosition) -> (usize, f64);
+    /// The caret position on visual line `line` nearest to `x`.
+    fn position_on(&self, line: usize, x: f64) -> TextPosition;
+    /// The caret positions at the logical start and end of visual line `line`.
+    fn line_edges(&self, line: usize) -> (TextPosition, TextPosition);
+    /// How many visual lines a page up or down moves.
+    fn page_lines(&self) -> usize;
+}
+
+impl TextBuffer {
+    pub fn new() -> Self {
+        TextBuffer::default()
+    }
+
+    /// The buffer of a multi-line editor: line breaks and tabs stay.
+    pub fn multiline() -> Self {
+        TextBuffer {
+            multiline: true,
+            ..TextBuffer::default()
+        }
+    }
+
+    /// A field whose text holds at most `max_len` bytes: typing, a paste or a composition past it is cut at a grapheme
+    /// boundary.
+    pub fn with_max_len(max_len: usize) -> Self {
+        TextBuffer {
+            max_len: Some(max_len),
+            ..TextBuffer::default()
+        }
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Sets the base direction the field lays its text out in, the `ParagraphStyle::direction` it paints with, so Left
+    /// and Right walk the carets as they are drawn.
+    pub fn set_direction(&mut self, direction: Option<Direction>) {
+        if self.direction != direction {
+            self.direction = direction;
+            self.upstream = None;
+        }
+    }
+
+    /// The caret with the side of a direction change it is drawn on, for `ParagraphLayout::caret_rect`.
+    pub fn caret_position(&self) -> TextPosition {
+        TextPosition {
+            byte: self.caret,
+            affinity: if self.upstream == Some(self.caret) {
+                Affinity::Upstream
+            } else {
+                Affinity::Downstream
+            },
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.text.is_empty()
+    }
+
+    /// The caret: the end of the selection that moves.
+    pub fn caret(&self) -> usize {
+        self.caret
+    }
+
+    /// The selected bytes, empty when there is only a caret.
+    pub fn selection(&self) -> Range<usize> {
+        self.caret.min(self.anchor)..self.caret.max(self.anchor)
+    }
+
+    pub fn selected_text(&self) -> &str {
+        &self.text[self.selection()]
+    }
+
+    /// The text an input method is composing (drawn underlined), if any.
+    pub fn composition(&self) -> Option<Range<usize>> {
+        self.composition.clone()
+    }
+
+    /// Where the input method puts its cursor in the composition, in bytes of the text: an empty range is the caret,
+    /// a longer one the clause being converted (drawn with a heavier underline, without a caret). `None` while nothing
+    /// is composed, or when the input method hides the cursor.
+    pub fn composition_cursor(&self) -> Option<Range<usize>> {
+        let composition = self.composition.as_ref()?;
+        let cursor = self.composition_cursor.as_ref()?;
+        Some(composition.start + cursor.start..composition.start + cursor.end)
+    }
+
+    /// The text without what an input method is still composing: what the field holds.
+    pub fn committed(&self) -> String {
+        match &self.composition {
+            Some(range) => format!("{}{}", &self.text[..range.start], &self.text[range.end..]),
+            None => self.text.clone(),
+        }
+    }
+
+    /// The bounded window of the committed text around the caret that the input method is told, at most `max_bytes`
+    /// long: without the composition, with the caret where the composition is inserted while there is one.
+    pub fn surrounding(&self, max_bytes: usize) -> Surrounding {
+        match &self.composition {
+            Some(range) => {
+                Surrounding::around(&self.committed(), range.start, range.start, max_bytes)
+            }
+            None => Surrounding::around(&self.text, self.caret, self.anchor, max_bytes),
+        }
+    }
+
+    /// How far the text is scrolled left, in points ([`TextBuffer::follow_caret`]).
+    pub fn scroll(&self) -> f64 {
+        self.scroll
+    }
+
+    /// Replace the whole text (not an edit: undo starts over); the caret goes to the end.
+    pub fn set_text(&mut self, text: &str) {
+        self.text = self.cleaned(text);
+        self.set_caret(self.text.len());
+        self.anchor = self.caret;
+        self.composition = None;
+        self.undo.clear();
+        self.redo.clear();
+        self.group = None;
+        self.scroll = 0.0;
+    }
+
+    /// Select `range` (clamped to the text and to grapheme boundaries), the caret at its end.
+    pub fn select(&mut self, range: Range<usize>) {
+        self.anchor = self.boundary_at_or_before(range.start.min(self.text.len()));
+        self.set_caret(self.boundary_at_or_before(range.end.min(self.text.len())));
+        self.group = None;
+    }
+
+    pub fn select_all(&mut self) {
+        self.select(0..self.text.len());
+    }
+
+    /// The field lost the keyboard: the composition is committed, the selection collapses to the caret and a drag
+    /// ends.
+    pub fn blur(&mut self) {
+        self.composition = None;
+        self.settle();
+        self.anchor = self.caret;
+        self.drag = None;
+        self.group = None;
+    }
+
+    /// Byte offsets of the caret positions, the grapheme boundaries from 0 to the text's length.
+    pub fn boundaries(&self) -> Vec<usize> {
+        self.text
+            .grapheme_indices(true)
+            .map(|(i, _)| i)
+            .chain([self.text.len()])
+            .collect()
+    }
+
+    /// The caret position nearest to `x`, given the x of each of [`TextBuffer::boundaries`] in the same order.
+    pub fn index_at(&self, offsets: &[f64], x: f64) -> usize {
+        let boundaries = self.boundaries();
+        offsets
+            .iter()
+            .zip(&boundaries)
+            .min_by(|(a, _), (b, _)| (*a - x).abs().total_cmp(&(*b - x).abs()))
+            .map_or(0, |(_, i)| *i)
+    }
+
+    /// Scroll so that the caret at `caret_x` (unscrolled points from the text's start) is inside a field `width`
+    /// points wide, and no further than the text's width `text_width` needs.
+    pub fn follow_caret(&mut self, caret_x: f64, text_width: f64, width: f64) {
+        self.scroll = self.scroll_for(caret_x, text_width, width);
+    }
+
+    /// The scroll [`TextBuffer::follow_caret`] would set, without setting it (for drawing before the field is updated).
+    pub fn scroll_for(&self, caret_x: f64, text_width: f64, width: f64) -> f64 {
+        let scroll = if caret_x < self.scroll {
+            caret_x
+        } else if caret_x > self.scroll + width {
+            caret_x - width
+        } else {
+            self.scroll
+        };
+        scroll.min((text_width - width).max(0.0)).max(0.0)
+    }
+
+    /// Whether the caret shows at `now`: never while text is selected, else in the blink's on phase.
+    pub fn caret_visible(&self, now: Instant) -> bool {
+        if !self.selection().is_empty() {
+            return false;
+        }
+        let Some(since) = self.activity else {
+            return true;
+        };
+        let period = CARET_BLINK_ON + CARET_BLINK_OFF;
+        let phase = since_origin(now).saturating_sub(since).as_nanos() % period.as_nanos();
+        phase < CARET_BLINK_ON.as_nanos()
+    }
+
+    /// How long from `now` until the caret shows or hides next; `None` while text is selected (no caret).
+    pub fn next_blink(&self, now: Instant) -> Option<Duration> {
+        if !self.selection().is_empty() {
+            return None;
+        }
+        let now = since_origin(now);
+        let since = self.activity.unwrap_or(now);
+        let period = (CARET_BLINK_ON + CARET_BLINK_OFF).as_nanos();
+        let phase = now.saturating_sub(since).as_nanos() % period;
+        let on = CARET_BLINK_ON.as_nanos();
+        let left = if phase < on {
+            on - phase
+        } else {
+            period - phase
+        };
+        Some(Duration::from_nanos(left as u64))
+    }
+
+    /// Insert typed text in place of the selection (or the composition); consecutive typing undoes as one.
+    pub fn insert(&mut self, s: &str) {
+        self.composition = None;
+        self.replace_selection(&self.clean(s), Some(Group::Typing));
+    }
+
+    /// Insert the clipboard's text in place of the selection; in a field line breaks become spaces.
+    pub fn paste(&mut self, s: &str) {
+        self.composition = None;
+        self.replace_selection(&self.clean(s), None);
+    }
+
+    /// Show `preedit` as the text being composed, in place of the earlier composition or else the selection, with the
+    /// input method's caret after it.
+    pub fn set_composition(&mut self, preedit: &str) {
+        self.set_composition_with_cursor(preedit, Some(preedit.len()..preedit.len()));
+    }
+
+    /// [`TextBuffer::set_composition`] with the input method's cursor at `cursor`, in bytes of `preedit` (see
+    /// [`TextBuffer::composition_cursor`]). A cursor past the text that ends up composed, or inside a character, is put
+    /// at the nearest character boundary before it.
+    pub fn set_composition_with_cursor(&mut self, preedit: &str, cursor: Option<Range<usize>>) {
+        let preedit = single_line(preedit);
+        if preedit.is_empty() {
+            self.cancel_composition();
+            return;
+        }
+        let composing = match self.composition.take() {
+            Some(range) => {
+                self.anchor = range.start;
+                self.set_caret(range.end);
+                true
+            }
+            // a composition starts an undo step of its own
+            None => {
+                self.group = None;
+                false
+            }
+        };
+        let start = self.selection().start;
+        let undo = self.undo.len();
+        self.replace_selection(&preedit, Some(Group::Composing));
+        if self.caret == start {
+            // no room under the length limit: nothing is composed, and the field is as it was before
+            if composing || self.undo.len() > undo {
+                self.composition = Some(start..start);
+                self.cancel_composition();
+            }
+            return;
+        }
+        self.composition = Some(start..self.caret);
+        let composed = &self.text[start..self.caret];
+        let floor = |at: usize| {
+            let at = at.min(composed.len());
+            (0..=at)
+                .rev()
+                .find(|i| composed.is_char_boundary(*i))
+                .unwrap_or(0)
+        };
+        self.composition_cursor =
+            cursor.map(|c| floor(c.start.min(c.end))..floor(c.end.max(c.start)));
+    }
+
+    /// Applies one input method batch as the text input protocol orders it: the shown composition goes, the bytes
+    /// `batch.delete` names before and after the selection go (cut inward to character boundaries), `batch.commit`
+    /// replaces the selection with the caret after it, and `batch.preedit` shows at the caret. The deletion and the
+    /// commit undo as one step with the typing around them. A batch that answers an older state applies all the same;
+    /// [`ImeBatch::current`] only says whether to answer it with the field's new state.
+    pub fn apply_ime(&mut self, batch: &ImeBatch) {
+        if self.composition.is_some() {
+            self.cancel_composition();
+        }
+        let (before, after) = (batch.delete.0 as usize, batch.delete.1 as usize);
+        let commit = batch
+            .commit
+            .as_deref()
+            .map(|c| self.clean(c))
+            .filter(|c| !c.is_empty());
+        if before > 0 || after > 0 {
+            self.delete_surrounding(before, after);
+        }
+        if let Some(commit) = commit {
+            self.replace_selection(&commit, Some(Group::Typing));
+            self.settle();
+        }
+        match &batch.preedit {
+            Some(preedit) if !preedit.text.is_empty() => {
+                self.set_composition_with_cursor(&preedit.text, preedit.cursor.clone())
+            }
+            _ => {}
+        }
+    }
+
+    /// Deletes up to `before` bytes before the selection and `after` bytes after it, the selection kept; each end is
+    /// cut inward to a character boundary, so a count that ends inside a character deletes less, never part of one.
+    /// It undoes with the typing around it.
+    pub fn delete_surrounding(&mut self, before: usize, after: usize) {
+        let selection = self.selection();
+        let char_floor = |at: usize| {
+            (0..=at)
+                .rev()
+                .find(|i| self.text.is_char_boundary(*i))
+                .unwrap_or(0)
+        };
+        let char_ceil = |at: usize| {
+            (at..=self.text.len())
+                .find(|i| self.text.is_char_boundary(*i))
+                .unwrap_or(self.text.len())
+        };
+        let tail = selection.end..char_floor((selection.end + after).min(self.text.len()));
+        let head = char_ceil(selection.start.saturating_sub(before))..selection.start;
+        if tail.is_empty() && head.is_empty() {
+            return;
+        }
+        if self.group != Some(Group::Typing) {
+            self.undo.push(self.snapshot());
+        }
+        self.redo.clear();
+        self.group = Some(Group::Typing);
+        self.composition = None;
+        self.text.replace_range(tail, "");
+        self.text.replace_range(head.clone(), "");
+        let shift = |at: usize| at - head.len();
+        let (caret, anchor) = (shift(self.caret), shift(self.anchor));
+        // a deletion that splits a cluster (half a flag pair) leaves the ends on the boundaries before them
+        self.set_caret(self.boundary_at_or_before(caret));
+        self.anchor = self.boundary_at_or_before(anchor);
+    }
+
+    /// Keep the composed text as typed text; what is typed next is a new undo step.
+    pub fn commit_composition(&mut self) {
+        self.composition = None;
+        self.settle();
+        self.group = None;
+    }
+
+    /// Remove the composed text: the field is as it was before the composition, with no undo step left for it.
+    pub fn cancel_composition(&mut self) {
+        if self.composition.take().is_some() {
+            if let Some(before) = self.undo.pop() {
+                self.text = before.text;
+                self.set_caret(before.caret);
+                self.anchor = before.anchor;
+            }
+            self.group = None;
+        }
+    }
+
+    pub fn undo(&mut self) -> bool {
+        self.step_history(true)
+    }
+
+    pub fn redo(&mut self) -> bool {
+        self.step_history(false)
+    }
+
+    /// The primary button went down at caret position `at` (from [`TextBuffer::index_at`], or a layout's `index_at`
+    /// with the side of a direction change it hit); `extend` (Shift) extends the selection to it. A second and third
+    /// press within [`MULTI_CLICK_INTERVAL`] at the same place select the word and then the paragraph (the hard line,
+    /// with its line break) in a multi-line buffer, the whole text in a field. A press while composing keeps the
+    /// composed text as typed.
+    pub fn press(&mut self, at: impl Into<TextPosition>, extend: bool, now: Instant) {
+        self.press_at(at, extend, since_origin(now));
+    }
+
+    /// [`TextBuffer::press`] at `now`, a time on the caller's own clock; every press of one buffer must use one clock.
+    pub fn press_at(&mut self, at: impl Into<TextPosition>, extend: bool, now: Duration) {
+        let at = at.into();
+        let index = self.boundary_at_or_before(at.byte.min(self.text.len()));
+        let count = match self.last_press {
+            Some(p)
+                if !extend
+                    && p.index == index
+                    && now.saturating_sub(p.at) <= MULTI_CLICK_INTERVAL =>
+            {
+                p.count % 3 + 1
+            }
+            _ => 1,
+        };
+        self.last_press = Some(Press {
+            at: now,
+            index,
+            count,
+        });
+        if self.composition.take().is_some() {
+            self.settle();
+        }
+        self.group = None;
+        self.activity = Some(now);
+        let granularity = match count {
+            1 => Granularity::Character,
+            2 => Granularity::Word,
+            _ if self.multiline => Granularity::Paragraph,
+            _ => Granularity::All,
+        };
+        let origin = match granularity {
+            Granularity::Character if extend => self.anchor..self.anchor,
+            Granularity::Character => index..index,
+            Granularity::Word => self.word_at(index),
+            Granularity::Paragraph => self.paragraph_at(index),
+            Granularity::All => 0..self.text.len(),
+        };
+        self.drag = Some((origin, granularity));
+        self.drag_to(TextPosition { byte: index, ..at });
+    }
+
+    /// The pointer moved to caret position `at` with the button held.
+    pub fn drag_to(&mut self, at: impl Into<TextPosition>) {
+        let Some((origin, granularity)) = self.drag.clone() else {
+            return;
+        };
+        let at = at.into();
+        let index = self.boundary_at_or_before(at.byte.min(self.text.len()));
+        let reach = match granularity {
+            Granularity::Character => index..index,
+            Granularity::Word => self.word_at(index),
+            Granularity::Paragraph => self.paragraph_at(index),
+            Granularity::All => origin.clone(),
+        };
+        if reach.start < origin.start {
+            self.anchor = origin.end;
+            self.set_caret(reach.start);
+        } else {
+            self.anchor = origin.start;
+            self.set_caret(reach.end.max(origin.end));
+        }
+        if self.caret == at.byte && at.affinity == Affinity::Upstream {
+            self.upstream = Some(self.caret);
+        }
+    }
+
+    /// The button went up.
+    pub fn release(&mut self) {
+        self.drag = None;
+    }
+
+    /// Whether a press is being dragged.
+    pub fn is_dragging(&self) -> bool {
+        self.drag.is_some()
+    }
+
+    /// Remember that the caret moved at `now`: the blink counts from it.
+    pub fn touch(&mut self, now: Instant) {
+        self.activity = Some(since_origin(now));
+    }
+
+    /// One word left or right. Without `extend` a selection collapses to the word boundary beyond its start or end.
+    pub fn move_word(&mut self, forward: bool, extend: bool) {
+        let to = match (forward, extend) {
+            (false, false) => self.word_left(self.selection().start.min(self.caret)),
+            (true, false) => self.word_right(self.selection().end.max(self.caret)),
+            (false, true) => self.word_left(self.caret),
+            (true, true) => self.word_right(self.caret),
+        };
+        self.move_to(to, extend);
+    }
+
+    /// Move by a word in the direction the text is drawn: rightward ends right of the next word on screen, whichever
+    /// way that word reads. A plain move starts from the selection's edge on that side.
+    pub fn move_word_visual(&mut self, rightward: bool, extend: bool) {
+        let selection = self.selection();
+        let from = if extend || selection.is_empty() {
+            self.caret_position()
+        } else {
+            let [start, end] = [selection.start, selection.end].map(|byte| TextPosition {
+                byte,
+                affinity: Affinity::Downstream,
+            });
+            let place = |at| bidi::place_of(&self.text, self.direction, at);
+            let start_is_right = place(start) > place(end);
+            if start_is_right == rightward {
+                start
+            } else {
+                end
+            }
+        };
+        let lines = bidi::caret_lines_around(&self.text, self.direction, from.byte);
+        let to = bidi::visual_word_neighbour_in(
+            &self.text,
+            &lines,
+            |line| words_in(line).collect(),
+            from,
+            rightward,
+        )
+        .unwrap_or(from);
+        self.move_to(to.byte, extend);
+        self.upstream = (to.affinity == Affinity::Upstream).then_some(to.byte);
+    }
+
+    pub fn move_to_start(&mut self, extend: bool) {
+        self.move_to(0, extend);
+    }
+
+    pub fn move_to_end(&mut self, extend: bool) {
+        self.move_to(self.text.len(), extend);
+    }
+
+    /// Delete the selection, or the grapheme before the caret.
+    pub fn delete_backward(&mut self) {
+        self.delete_toward(|f| f.prev_boundary(f.caret));
+    }
+
+    /// Delete the selection, or the grapheme after the caret.
+    pub fn delete_forward(&mut self) {
+        self.delete_toward(|f| f.next_boundary(f.caret));
+    }
+
+    pub fn delete_word_backward(&mut self) {
+        self.delete_toward(|f| f.word_left(f.caret));
+    }
+
+    pub fn delete_word_forward(&mut self) {
+        self.delete_toward(|f| f.word_right(f.caret));
+    }
+
+    pub fn delete_to_line_start(&mut self) {
+        self.delete_toward(|f| f.line_start(f.caret));
+    }
+
+    /// Delete the selection; with only a caret nothing happens.
+    pub fn delete_selection(&mut self) {
+        if !self.selection().is_empty() {
+            self.replace_selection("", None);
+        }
+    }
+
+    /// Delete the selection and return it, for the clipboard.
+    pub fn cut(&mut self) -> String {
+        let cut = self.selected_text().to_string();
+        self.replace_selection("", None);
+        cut
+    }
+
+    /// Delete the selection, or from the caret to the end of its line (at the end, the line break), and keep it in the
+    /// kill buffer.
+    pub fn kill_to_end(&mut self) {
+        let range = if self.selection().is_empty() {
+            let end = self.line_end(self.caret);
+            self.caret..if end == self.caret {
+                self.next_boundary(end)
+            } else {
+                end
+            }
+        } else {
+            self.selection()
+        };
+        if !range.is_empty() {
+            self.kill = self.text[range.clone()].to_string();
+            self.anchor = range.start;
+            self.set_caret(range.end);
+            self.replace_selection("", None);
+        }
+    }
+
+    /// Insert the kill buffer in place of the selection.
+    pub fn yank(&mut self) {
+        let kill = self.kill.clone();
+        self.replace_selection(&kill, None);
+    }
+
+    /// To the start of the caret's line: in a multi-line buffer the line after the last line break before it.
+    pub fn move_to_line_start(&mut self, extend: bool) {
+        self.move_to(self.line_start(self.caret), extend);
+    }
+
+    pub fn move_to_line_end(&mut self, extend: bool) {
+        self.move_to(self.line_end(self.caret), extend);
+    }
+
+    /// `lines` visual lines down (up when negative), toward the x the run of vertical moves started at; past the first
+    /// or last line the caret goes to the text's start or end. Without `extend` it moves from the selection's start
+    /// going up and its end going down.
+    pub fn move_vertical(&mut self, layout: &impl LineLayout, lines: isize, extend: bool) {
+        let selection = self.selection();
+        let from = match (extend || selection.is_empty(), lines < 0) {
+            (true, _) => self.caret_position(),
+            (false, true) => downstream(selection.start),
+            (false, false) => downstream(selection.end),
+        };
+        let (line, x) = layout.locate(from);
+        let goal = self.goal.unwrap_or(x);
+        let to = match line.checked_add_signed(lines) {
+            None => downstream(0),
+            Some(line) if line >= layout.line_count() => downstream(self.text.len()),
+            Some(line) => layout.position_on(line, goal),
+        };
+        self.move_to_position(to, extend);
+        self.goal = Some(goal);
+    }
+
+    /// One page of visual lines down or up, as [`TextBuffer::move_vertical`].
+    pub fn move_page(&mut self, layout: &impl LineLayout, down: bool, extend: bool) {
+        let lines = isize::try_from(layout.page_lines().max(1)).unwrap_or(isize::MAX);
+        self.move_vertical(layout, if down { lines } else { -lines }, extend);
+    }
+
+    /// To the start or end of the caret's visual line.
+    pub fn move_to_visual_line_edge(&mut self, layout: &impl LineLayout, end: bool, extend: bool) {
+        let (line, _) = layout.locate(self.caret_position());
+        let (start, stop) = layout.line_edges(line);
+        self.move_to_position(if end { stop } else { start }, extend);
+    }
+
+    fn move_to_position(&mut self, to: TextPosition, extend: bool) {
+        self.move_to(to.byte.min(self.text.len()), extend);
+        self.upstream = (to.affinity == Affinity::Upstream).then_some(self.caret);
+    }
+
+    fn set_caret(&mut self, to: usize) {
+        self.caret = to;
+        self.upstream = None;
+        self.goal = None;
+    }
+
+    fn move_to(&mut self, to: usize, extend: bool) {
+        self.set_caret(to);
+        if !extend {
+            self.anchor = to;
+        }
+        self.group = None;
+        self.composition = None;
+    }
+
+    /// One grapheme left or right; without `extend` a selection collapses to its start or end instead.
+    pub fn move_char(&mut self, forward: bool, extend: bool) {
+        let selection = self.selection();
+        let to = match (extend || selection.is_empty(), forward) {
+            (true, false) => self.prev_boundary(self.caret),
+            (true, true) => self.next_boundary(self.caret),
+            (false, false) => selection.start,
+            (false, true) => selection.end,
+        };
+        self.move_to(to, extend);
+    }
+
+    /// One caret stop left or right on screen, through text of either direction; without `extend` a selection
+    /// collapses to its side in that direction instead.
+    pub fn move_visual(&mut self, rightward: bool, extend: bool) {
+        let selection = self.selection();
+        if extend || selection.is_empty() {
+            let lines = bidi::caret_lines_around(&self.text, self.direction, self.caret);
+            let to = bidi::visual_neighbour_in(&lines, self.caret_position(), rightward)
+                .unwrap_or_else(|| self.caret_position());
+            self.move_to(to.byte, extend);
+            self.upstream = (to.affinity == Affinity::Upstream).then_some(to.byte);
+        } else {
+            let place = |byte| {
+                bidi::place_of(
+                    &self.text,
+                    self.direction,
+                    TextPosition {
+                        byte,
+                        affinity: Affinity::Downstream,
+                    },
+                )
+            };
+            let to = if (place(selection.end) > place(selection.start)) == rightward {
+                selection.end
+            } else {
+                selection.start
+            };
+            self.move_to(to, extend);
+        }
+    }
+
+    /// Delete the selection, or from the caret to `target(self)`.
+    fn delete_toward(&mut self, target: impl Fn(&Self) -> usize) {
+        if self.selection().is_empty() {
+            self.anchor = target(self);
+        }
+        if !self.selection().is_empty() {
+            self.replace_selection("", Some(Group::Deleting));
+        }
+    }
+
+    /// Swap the graphemes around the caret (at the end: the last two) and move past them.
+    pub fn transpose(&mut self) {
+        if !self.selection().is_empty() {
+            return;
+        }
+        let at = if self.caret == self.text.len() {
+            self.prev_boundary(self.caret)
+        } else {
+            self.caret
+        };
+        let start = self.prev_boundary(at);
+        let end = self.next_boundary(at);
+        if start == at || at == end {
+            return;
+        }
+        let swapped = format!("{}{}", &self.text[at..end], &self.text[start..at]);
+        self.anchor = start;
+        self.set_caret(end);
+        self.replace_selection(&swapped, None);
+    }
+
+    /// The longest grapheme prefix of `s` that fits with `kept` bytes of the text staying.
+    fn fit<'a>(&self, s: &'a str, kept: usize) -> &'a str {
+        let Some(room) = self.max_len.map(|max| max.saturating_sub(kept)) else {
+            return s;
+        };
+        if s.len() <= room {
+            return s;
+        }
+        let end = s
+            .grapheme_indices(true)
+            .map(|(i, g)| i + g.len())
+            .take_while(|end| *end <= room)
+            .last()
+            .unwrap_or(0);
+        &s[..end]
+    }
+
+    fn replace_selection(&mut self, s: &str, group: Option<Group>) {
+        let s = self.fit(s, self.text.len() - self.selection().len());
+        if s.is_empty() && self.selection().is_empty() {
+            return;
+        }
+        if group.is_none() || group != self.group {
+            self.undo.push(self.snapshot());
+        }
+        self.redo.clear();
+        self.group = group;
+        let range = self.selection();
+        self.text.replace_range(range.clone(), s);
+        self.set_caret(range.start + s.len());
+        self.anchor = self.caret;
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            text: self.text.clone(),
+            caret: self.caret,
+            anchor: self.anchor,
+        }
+    }
+
+    fn step_history(&mut self, back: bool) -> bool {
+        let (from, to) = if back {
+            (&mut self.undo, &mut self.redo)
+        } else {
+            (&mut self.redo, &mut self.undo)
+        };
+        let Some(state) = from.pop() else {
+            return false;
+        };
+        to.push(Snapshot {
+            text: std::mem::take(&mut self.text),
+            caret: self.caret,
+            anchor: self.anchor,
+        });
+        self.text = state.text;
+        self.set_caret(state.caret);
+        self.anchor = state.anchor;
+        self.group = None;
+        self.composition = None;
+        true
+    }
+
+    /// `text` as [`TextBuffer::set_text`] keeps it: without the characters this buffer drops or converts, cut to its
+    /// length limit. A model value that differs from the buffer's text only in those is the same text.
+    pub fn cleaned(&self, text: &str) -> String {
+        self.fit(&self.clean(text), 0).to_string()
+    }
+
+    fn clean(&self, s: &str) -> String {
+        if self.multiline {
+            multi_line(s)
+        } else {
+            single_line(s)
+        }
+    }
+
+    fn line_start(&self, at: usize) -> usize {
+        self.text[..at].rfind('\n').map_or(0, |i| i + 1)
+    }
+
+    fn line_end(&self, at: usize) -> usize {
+        self.text[at..]
+            .find('\n')
+            .map_or(self.text.len(), |i| at + i)
+    }
+
+    fn prev_boundary(&self, at: usize) -> usize {
+        self.text[..at]
+            .grapheme_indices(true)
+            .next_back()
+            .map_or(0, |(i, _)| i)
+    }
+
+    fn next_boundary(&self, at: usize) -> usize {
+        self.text[at..]
+            .graphemes(true)
+            .next()
+            .map_or(at, |g| at + g.len())
+    }
+
+    /// Moves the caret and the anchor on to the end of the cluster each lies inside, as when committed text joins the
+    /// combining marks or joiners after it.
+    fn settle(&mut self) {
+        let boundaries = self.boundaries();
+        let after = |at: usize| {
+            boundaries
+                .iter()
+                .copied()
+                .find(|b| *b >= at)
+                .unwrap_or(self.text.len())
+        };
+        let (caret, anchor) = (after(self.caret), after(self.anchor));
+        if caret != self.caret {
+            self.set_caret(caret);
+        }
+        self.anchor = anchor;
+    }
+
+    fn boundary_at_or_before(&self, at: usize) -> usize {
+        self.boundaries()
+            .into_iter()
+            .rev()
+            .find(|b| *b <= at)
+            .unwrap_or(0)
+    }
+
+    /// The word segments of the text (runs that contain a letter or a digit).
+    fn words(&self) -> impl Iterator<Item = Range<usize>> + '_ {
+        words_in(&self.text)
+    }
+
+    /// The start of the word before `at` (or of the word `at` is inside).
+    fn word_left(&self, at: usize) -> usize {
+        self.words()
+            .filter(|w| w.start < at)
+            .last()
+            .map_or(0, |w| w.start)
+    }
+
+    /// The end of the word after `at` (or of the word `at` is inside).
+    fn word_right(&self, at: usize) -> usize {
+        self.words()
+            .find(|w| w.end > at)
+            .map_or(self.text.len(), |w| w.end)
+    }
+
+    /// The hard line a triple click at `at` selects, with the line break that ends it.
+    fn paragraph_at(&self, at: usize) -> Range<usize> {
+        let end = self.line_end(at);
+        let end = if end < self.text.len() { end + 1 } else { end };
+        self.line_start(at)..end
+    }
+
+    /// The segment a double click at `at` selects: the word, or the run of spaces or the punctuation, under it.
+    fn word_at(&self, at: usize) -> Range<usize> {
+        let mut last = 0..0;
+        for (i, w) in self.text.split_word_bound_indices() {
+            let range = i..i + w.len();
+            if range.contains(&at) {
+                return self.whole_clusters(range);
+            }
+            last = range;
+        }
+        self.whole_clusters(last)
+    }
+
+    /// `range` widened out to the grapheme boundaries around it: a word bound can fall inside a cluster (a flag pair
+    /// after a lone regional indicator with a mark).
+    fn whole_clusters(&self, range: Range<usize>) -> Range<usize> {
+        let end = self
+            .boundaries()
+            .into_iter()
+            .find(|b| *b >= range.end)
+            .unwrap_or(self.text.len());
+        self.boundary_at_or_before(range.start)..end
+    }
+}
+
+fn downstream(byte: usize) -> TextPosition {
+    TextPosition {
+        byte,
+        affinity: Affinity::Downstream,
+    }
+}
+
+/// `s` as typing could have produced it in an editor: line breaks become `\n`, tabs stay; other control characters and
+/// the bidi embedding, override and isolate controls are dropped.
+fn multi_line(s: &str) -> String {
+    s.replace("\r\n", "\n")
+        .chars()
+        .filter_map(|c| match c {
+            '\r' | '\u{2028}' | '\u{2029}' => Some('\n'),
+            '\n' | '\t' => Some(c),
+            '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' => None,
+            c if c.is_control() => None,
+            c => Some(c),
+        })
+        .collect()
+}
+
+/// `s` as typing could have produced it: line breaks and tabs become spaces; other control characters and the bidi
+/// embedding, override and isolate controls are dropped.
+fn single_line(s: &str) -> String {
+    s.replace("\r\n", " ")
+        .chars()
+        .filter_map(|c| match c {
+            '\n' | '\r' | '\t' => Some(' '),
+            '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' => None,
+            c if c.is_control() => None,
+            c => Some(c),
+        })
+        .collect()
+}
+
+/// The byte ranges of the words of `text`, in order.
+fn words_in(text: &str) -> impl Iterator<Item = Range<usize>> + '_ {
+    text.split_word_bound_indices()
+        .filter(|(_, w)| w.chars().any(char::is_alphanumeric))
+        .map(|(i, w)| i..i + w.len())
+}
+
+/// A position on the downstream side: a byte offset alone.
+impl From<usize> for TextPosition {
+    fn from(byte: usize) -> Self {
+        TextPosition {
+            byte,
+            affinity: Affinity::Downstream,
+        }
+    }
+}

@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/cupertino-animation",
+    "crates/cupertino-app-protocols",
+    "crates/cupertino-apps",
+    "crates/cupertino-assets",
+    "crates/cupertino-defaults",
+    "crates/cupertino-diagnostic-events",
+    "crates/cupertino-files",
+    "crates/cupertino-geometry",
+    "crates/cupertino-gpu",
+    "crates/cupertino-icons",
+    "crates/cupertino-keyboard",
+    "crates/cupertino-kit",
+    "crates/cupertino-menu-model",
+    "crates/cupertino-raster-math",
+    "crates/cupertino-theme",
+    "crates/cupertino-trash",
+    "crates/cupertino-ui-controls",
+    "crates/cupertino-ui-core",
+    "crates/cupertino-ui-files",
+    "crates/cupertino-ui-render",
+    "crates/cupertino-ui-text",
+    "crates/cupertino-ui-wayland",
+    "crates/cupertino-wayland-client",
+]
+
+[workspace.package]
+edition = "2021"
+license = "GPL-3.0-or-later"
+
+[profile.release]
+strip = true
+lto = "thin"

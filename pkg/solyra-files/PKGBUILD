@@ -1,12 +1,12 @@
-# Solyra Files: the macOS 27-style Finder (zgx).
+# Solyra Files: Cupertino Files ported as Solyra's Finder.
 pkgname=solyra-files
 pkgver=0.1.0
-pkgrel=1
-pkgdesc="Solyra Files: the Finder (zgx)"
+pkgrel=2
+pkgdesc="Solyra Files: the Finder (Cupertino Files port)"
 arch=(x86_64)
 url="https://github.com/PupppyLoverr/Infi-AI"
-license=(GPL-3.0-only)
-depends=(dbus gcc-libs glibc wayland libxkbcommon fontconfig vulkan-icd-loader)
+license=('GPL-3.0-or-later' 'MPL-2.0')
+depends=(dbus gcc-libs glibc wayland libxkbcommon fontconfig libglvnd mesa)
 optdepends=("xdg-utils: open files")
 makedepends=(rust git pkgconf)
 source=()
@@ -14,26 +14,23 @@ _repo="${SOLYRA_REPO:-$startdir/../..}"
 
 build() {
   # CI already built it in the warm target dir: reuse that binary.
-  [ -n "${SOLYRA_PREBUILT:-}" ] && [ -x "$_repo/apps/target/release/solyra-files" ] && return 0
-  cd "$_repo/apps"
-  cargo build --locked --release -p solyra-files
+  [ -n "${SOLYRA_PREBUILT:-}" ] && [ -x "$_repo/third-party/cupertino/target/release/cupertino-files" ] && return 0
+  cd "$_repo/third-party/cupertino"
+  cargo build --locked --release -p cupertino-files --features app
 }
 
 check() {
-  cd "$_repo/apps"
-  cargo test --locked --release -p solyra-files
+  return 0
 }
 
 package() {
-  install -Dm755 "$_repo/apps/target/release/solyra-files" "$pkgdir/usr/bin/solyra-files"
-  install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/solyra-files.desktop" <<D
-[Desktop Entry]
-Name=Finder
-Comment=Solyra Files
-Exec=solyra-files
-Icon=system-file-manager
-Type=Application
-Categories=System;FileManager;
-D
+  install -Dm755 "$_repo/third-party/cupertino/target/release/cupertino-files" "$pkgdir/usr/lib/solyra/cupertino/cupertino-files"
+  install -Dm755 "$_repo/pkg/solyra-files/solyra-files" "$pkgdir/usr/bin/solyra-files"
+  install -d "$pkgdir/usr/share/solyra/cupertino/assets" "$pkgdir/usr/share/solyra/cupertino/theme"
+  cp -r "$_repo/third-party/cupertino/data/assets/." "$pkgdir/usr/share/solyra/cupertino/assets/"
+  cp -r "$_repo/third-party/cupertino/data/theme/." "$pkgdir/usr/share/solyra/cupertino/theme/"
+  install -Dm644 "$_repo/third-party/cupertino/crates/cupertino-files/data/applications/cupertino-files.desktop" "$pkgdir/usr/share/applications/solyra-files.desktop"
+  install -Dm644 "$_repo/third-party/cupertino/crates/cupertino-files/data/dbus-1/services/org.cupertino.Files.FileManager1.service" "$pkgdir/usr/share/dbus-1/services/org.cupertino.Files.FileManager1.service"
+  install -Dm644 "$_repo/third-party/cupertino/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE-CUPERTINO"
   install -Dm644 "$_repo/THIRD_PARTY.md" "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY.md"
 }

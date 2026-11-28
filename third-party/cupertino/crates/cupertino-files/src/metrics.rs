@@ -1,0 +1,156 @@
+//! Measured metrics of the design file manager.
+//!
+//! All lengths are in points (logical pixels); times in seconds.
+
+/// Window chrome.
+pub mod window {
+    /// Default content size of a new browser window. (window template rect).
+    pub const DEFAULT_SIZE: (f64, f64) = (920.0, 436.0);
+    /// Template origin of the window (bottom-left, screen of the authoring machine).,
+    /// but only the cascade offset below is meaningful on another screen.
+    pub const TEMPLATE_ORIGIN: (f64, f64) = (75.0, 740.0);
+    /// Offset used when a new window is cascaded from the front window..
+    pub const CASCADE_OFFSET: f64 = 29.0;
+    /// Height of the unified toolbar + titlebar. data table; that this window uses
+    /// the unified style is.
+    pub const UNIFIED_TOOLBAR_HEIGHT: f64 = 52.0;
+    /// Height of the compact variant. data table.
+    pub const COMPACT_TOOLBAR_HEIGHT: f64 = 40.0;
+    /// Path bar height..
+    pub const PATH_BAR_HEIGHT: f64 = 28.0;
+    /// Status bar height (default mode).
+    pub const STATUS_BAR_HEIGHT: f64 = 20.0;
+    /// Status bar height of the second mode. meaning of the mode unknown.
+    pub const STATUS_BAR_HEIGHT_ALT: f64 = 28.0;
+    /// Horizontal spacing of the status bar items and its leading inset.
+    pub const STATUS_BAR_ITEM_SPACING: f64 = 8.0;
+    pub const STATUS_BAR_LEADING_INSET: f64 = 4.0;
+    /// Zoom slider of the status bar.
+    pub const STATUS_BAR_SLIDER: (f64, f64) = (137.0, 20.0);
+    /// Toolbar controls of the browser window, `(width, height)`: the back and forward group, and the search field at
+    /// rest, a round button.
+    pub const TOOLBAR_BACK_FORWARD: (f64, f64) = (73.0, 36.0);
+    pub const TOOLBAR_SEARCH_FIELD: (f64, f64) = (36.0, 36.0);
+    /// The search field's width while it has the keyboard or holds text, and the time it takes to change (seconds).
+    pub const SEARCH_OPEN: f64 = 249.0;
+    pub const SEARCH_GROW_SECONDS: f64 = 0.2;
+    /// The most of the toolbar the open search field takes.
+    pub const SEARCH_MAX_SHARE: f64 = 0.5;
+    /// Horizontal inset of the toolbar's items from its edges, and the space between two items.
+    pub const TOOLBAR_INSET: f64 = 8.0;
+    pub const TOOLBAR_ITEM_GAP: f64 = 8.0;
+    /// Room the folder's title keeps when the search field grows (approximate).
+    pub const TITLE_MIN: f64 = 60.0;
+    /// The toolbar's controls between the title and the search field, `(width, height)`: the view-mode choice, the
+    /// View menu button and the share, Tags and Action group.
+    pub const TOOLBAR_VIEW_MODES: (f64, f64) = (160.0, 36.0);
+    pub const TOOLBAR_VIEW_MENU: (f64, f64) = (47.0, 36.0);
+    pub const TOOLBAR_ACTIONS: (f64, f64) = (109.5, 36.0);
+}
+
+/// Sidebar.
+pub mod sidebar {
+    /// Default width of the sidebar pane, from the window's leading edge to the divider; the content starts 1 pt
+    /// further on, past the divider.
+    pub const DEFAULT_WIDTH: f64 = 223.0;
+    /// Minimum width is this constant plus the width of a legacy (non-overlay) scroller..
+    pub const MIN_WIDTH_BASE: f64 = 128.0;
+    /// Width of a legacy scroller (the overlay style adds nothing)..
+    pub const LEGACY_SCROLLER_WIDTH: f64 = 15.0;
+    /// The widest a drag on the divider makes the sidebar: room for long place names while the folder keeps most of
+    /// a window. The browser's minimum wins over it in a narrow window.
+    pub const MAX_WIDTH: f64 = 400.0;
+    /// Row size styles of the outline view: small / medium / large. data table.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum RowSize {
+        Small,
+        Medium,
+        Large,
+    }
+    impl RowSize {
+        /// Default style when the user preference is unset..
+        pub const DEFAULT: RowSize = RowSize::Medium;
+        pub fn row_height(self) -> f64 {
+            match self {
+                RowSize::Small => 24.0,
+                RowSize::Medium => 28.0,
+                RowSize::Large => 32.0,
+            }
+        }
+        pub fn font_size(self) -> f64 {
+            match self {
+                RowSize::Small => 11.0,
+                RowSize::Medium => 13.0,
+                RowSize::Large => 15.0,
+            }
+        }
+        /// Icon size (field 1 of the metrics record, 16/20/24); the field meaning is.
+        pub fn icon_size(self) -> f64 {
+            match self {
+                RowSize::Small => 16.0,
+                RowSize::Medium => 20.0,
+                RowSize::Large => 24.0,
+            }
+        }
+    }
+    /// Group (section header) row: font 11, height 19..
+    pub const GROUP_ROW_HEIGHT: f64 = 19.0;
+    pub const GROUP_FONT_SIZE: f64 = 11.0;
+    /// Leading indent of rows, space between groups, indent of the group row..
+    pub const INDENT: f64 = 6.0;
+    pub const INTERGROUP_SPACING: f64 = 13.0;
+    pub const GROUP_ROW_INDENT: f64 = 6.0;
+    /// Indentation per level of the outline.
+    pub const INDENTATION_PER_LEVEL: f64 = 14.0;
+    /// Cell layout: 17 pt icon at x = 0, text field from x = 22, 17 pt text height.
+    pub const CELL_ICON: f64 = 17.0;
+    pub const CELL_TEXT_X: f64 = 22.0;
+    pub const CELL_TEXT_HEIGHT: f64 = 17.0;
+    /// Eject / action button of a row.
+    pub const CELL_BUTTON: (f64, f64) = (19.0, 17.0);
+}
+
+/// Context menus. The context menu of the design uses
+/// the same menu window as the menu bar's menus.
+pub mod menu {
+    /// Item height, regular control size..
+    pub const ITEM_HEIGHT: f64 = 22.0;
+    /// Separator height..
+    pub const SEPARATOR_HEIGHT: f64 = 11.0;
+    /// Padding above the first and below the last item. (`_paddingOnEdge).
+    pub const EDGE_PADDING: f64 = 5.0;
+    /// Corner radius of the menu, continuous..
+    pub const RADIUS: f64 = 6.0;
+    /// Corner radius of the highlighted row and its inset from both sides, continuous..
+    pub const SELECTION_RADIUS: f64 = 4.0;
+    pub const SELECTION_INSET: f64 = 5.0;
+    /// Text size of regular menus. (sizes 13 to 14 pt map to the regular control size; 13 is the lower).
+    pub const TEXT_SIZE: f64 = 13.0;
+    /// Leading space before the title of an item without a state column and indent: 9 + 8 - 2..
+    pub const TITLE_OFFSET: f64 = 15.0;
+    /// Trailing padding, regular control size..
+    pub const TRAILING_PADDING: f64 = 14.0;
+    pub const SUBMENU_ARROW: f64 = 16.0;
+    /// Minimum menu width. approximate: 150 pt applies only to menus with type-select behaviour.
+    pub const MIN_WIDTH: f64 = 150.0;
+    /// Submenu overlap with the row of its parent, and its vertical offset from that row..
+    pub const SUBMENU_OVERLAP: f64 = 5.0;
+    pub const SUBMENU_TOP_OFFSET: f64 = 5.0;
+    /// The menu keeps this far from the output's edges. approximate.
+    pub const SCREEN_MARGIN: f64 = 4.0;
+    /// The tag row's view: 192 wide for the colour dots plus 24, 49 tall (`TLabelViewForMenu`).
+    pub const TAG_ROW_WIDTH: f64 = 216.0;
+    pub const TAG_ROW_HEIGHT: f64 = 49.0;
+    pub const TAG_DOT_DIAMETER: f64 = 16.0;
+    pub const TAG_DOT_TOP: f64 = 8.0;
+}
+
+/// The strip under the toolbar of the trash's view, which holds its Empty button.
+pub mod trash {
+    /// Height of the strip, its separator line included.
+    pub const STRIP_HEIGHT: f64 = 38.0;
+    /// From the window's leading edge to the strip's label.
+    pub const STRIP_INSET: f64 = 20.0;
+    /// From the Empty button to the window's trailing edge.
+    pub const BUTTON_INSET: f64 = 18.0;
+}

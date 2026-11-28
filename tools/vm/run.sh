@@ -22,13 +22,23 @@ if [ ! -f base.qcow2 ]; then
   tail -2 setup.log
 fi
 # Payload: binaries, desktop entries, the QML shell, Hyprland config, wallpaper, scenario.
-P=payload/stage; rm -rf $P; mkdir -p $P/bin $P/share/applications $P/wallpapers $P/fonts
+P=payload/stage; rm -rf $P; mkdir -p $P/bin $P/lib/cupertino $P/share/applications $P/share/dbus-1/services $P/share/cupertino/assets $P/share/cupertino/theme $P/wallpapers $P/fonts
 cp "$repo"/assets/fonts/geist/Geist*.ttf "$repo/assets/fonts/60-solyra-geist.conf" $P/fonts/
 cp "${TERM_BIN:-$repo/apps/terminal/target/release/solyra-term}" $P/bin/solyra-term
-files_bin="${FILES_BIN:-$repo/apps/target/release/solyra-files}"; [ -f "$files_bin" ] && cp "$files_bin" $P/bin/solyra-files
+files_bin="${FILES_BIN:-$repo/third-party/cupertino/target/release/cupertino-files}"
+if [ -f "$files_bin" ]; then
+  cp "$files_bin" $P/lib/cupertino/cupertino-files
+  cp "$repo/pkg/solyra-files/solyra-files" $P/bin/solyra-files
+  chmod +x $P/lib/cupertino/cupertino-files $P/bin/solyra-files
+  cp -r "$repo/third-party/cupertino/data/assets/." $P/share/cupertino/assets/
+  cp -r "$repo/third-party/cupertino/data/theme/." $P/share/cupertino/theme/
+  cp "$repo/third-party/cupertino/crates/cupertino-files/data/dbus-1/services/org.cupertino.Files.FileManager1.service" $P/share/dbus-1/services/
+fi
 cp "$repo/iso/airootfs/usr/local/bin/solyra-app" $P/bin/solyra-app
+cp "$repo/iso/airootfs/usr/local/bin/solyra-control" $P/bin/solyra-control
+chmod +x $P/bin/solyra-app $P/bin/solyra-control
 printf '[Desktop Entry]\nName=Terminal\nComment=Solyra Terminal\nExec=solyra-term\nIcon=utilities-terminal\nType=Application\nStartupWMClass=solyra-term\n' > $P/share/applications/solyra-term.desktop
-printf '[Desktop Entry]\nName=Finder\nComment=Solyra Files\nExec=solyra-files\nIcon=system-file-manager\nType=Application\n' > $P/share/applications/solyra-files.desktop
+cp "$repo/third-party/cupertino/crates/cupertino-files/data/applications/cupertino-files.desktop" $P/share/applications/solyra-files.desktop
 cp -r "$repo/shell/qs" $P/qs; cp -r "$repo/shell/hypr" $P/hypr
 cp "$repo/assets/wallpapers/twilight-skyline-4k.jpg" $P/wallpaper.jpg
 cp "$repo/assets/wallpapers/solyra-dusk-1920x1200.png" $P/wallpaper.png

@@ -102,10 +102,13 @@ hyprctl dispatch 'hl.dsp.window.close()' >/dev/null; sleep 1
 q glass 90; shot 14-glass-tinted 1.0
 q glass 0; shot 15-glass-clear 1.0
 solyra-files >/tmp/files.log 2>&1 &
-shot 15b-finder 4
+shot 15b-finder 4.5
+wtype -M logo -k 2 -m logo 2>/dev/null || true
+shot 22b-finder-list 1.2
+up /tmp/files.log
 hyprctl dispatch "hl.dsp.window.move({ workspace = 'special:minimized', follow = false })" >/dev/null
 shot 15c-dock-minimized 1.5
-pkill -x solyra-files; sleep 1
+pkill -x cupertino-files 2>/dev/null || pkill -x solyra-files 2>/dev/null || true; sleep 1
 q glass 35
 
 # Interactive Downloads 3x2 Stack + spring-damped Dock wave magnification
@@ -132,12 +135,25 @@ done
 # Restore default user 4K Twilight Skyline wallpaper
 q wallpaper ""; sleep 1.0
 
-# Verify solyra-app CLI + live LRCLIB synced lyrics API
+# Verify solyra-app CLI + solyra-control MCP + live LRCLIB synced lyrics API
 solyra-app help > /tmp/solyra-app-check.txt 2>&1; up /tmp/solyra-app-check.txt
+printf '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n' | solyra-control --mcp > /tmp/solyra-control-check.txt 2>&1 || true
+up /tmp/solyra-control-check.txt
 curl -fsSL --max-time 6 -G -H 'User-Agent: SolyraOS/0.1' 'https://lrclib.net/api/get' \
   --data-urlencode 'artist_name=Daft Punk' --data-urlencode 'track_name=Around the World' \
   > /tmp/lrclib-live-check.txt 2>&1 || true
 up /tmp/lrclib-live-check.txt
+
+# Cupertino Session Agent, App Switcher, Screenshot Tool, OSD & Merged Terminal Agent Mode
+q sessionDialog shutdown; shot 24a-logout-panel 1.0
+q sessionDialog ""; sleep 0.3
+q switcher true; shot 24b-switcher 1.0
+q switcher false; sleep 0.3
+q screenshot true; shot 24c-screenshot-tool 1.0
+q screenshot false; sleep 0.3
+SOLYRA_TERM_AGENT=1 solyra-term >/tmp/term-agent.log 2>&1 &
+AGENT_PID=$!; sleep 3.5; shot 23b-terminal-agent 0.5
+kill $AGENT_PID 2>/dev/null || true; sleep 0.5
 
 # Seed timestamped .lrc for Firefox real web song playback
 mkdir -p "$HOME/.local/share/solyra/lyrics"

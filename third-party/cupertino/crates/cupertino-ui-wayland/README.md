@@ -1,0 +1,305 @@
+# cupertino-ui-wayland
+
+CupertinoKit's window system on the transport (`cupertino-wayland-client`), and drawing a surface of it with tiny-skia;
+the application's menus published to the desktop menu bar (the `menus` module, *Menus*) and its accessibility tree
+published over AT-SPI (the `atspi` module, *Accessibility*). MPL-2.0. It binds no protocol beyond the
+transport's standard set and never reaches the private protocols (`cupertino-layers` denies `cupertino-protocols` and
+`cupertino-shell-client`). Depends on `cupertino-wayland-client`, `cupertino-geometry`, `cupertino-keyboard`,
+`cupertino-ui-core` (its `platform` module, and the `AccessibilityAdapter` the `atspi` module implements),
+`cupertino-ui-render` (with its `gpu` module, the GPU renderer the presenter's windows draw with), `cupertino-ui-text`,
+`cupertino-menu-model`, `cupertino-gpu` (the graphics layer, for the GPU presenter), `cupertino-diagnostic-events`'
+`profile` (the frame timeline `CUPERTINO_PROFILE` asks for, installed when the window system connects), zbus (the
+menus on the session bus), `accesskit` and `accesskit_unix` (AT-SPI), `unicode-segmentation`, `tracing` and
+`tiny-skia`.
+
+## Public API
+
+| Item | Contents |
+|---|---|
+| `WaylandWindowSystem` | `cupertino-ui-core`'s `platform::WindowSystem` on one transport `Connection` (`connect(profile)`, `new(connection, profile)`); `connection` and `surface(window)` reach the transport for an extension protocol; on a compositor with `cupertino_app_effects_v1` it learns the session's appearance and display options before the first window (`appearance()`) and reports them as `PlatformEvent::Appearance`; it reports how scroll views show their bars as `PlatformEvent::ScrollBars` after each display options; it takes a steady caret (version 9) into `SystemAppearance::steady_caret` and reports `PlatformEvent::Appearance` only when it changed; it reports the lock state as `PlatformEvent::SessionLock`, and `SessionLock(false)` once at start on a compositor that can't tell (below version 5); `WindowRequest::Backdrop` puts that protocol's material under the whole window at the backdrop's alpha, shaped to the window's size and corner radius on each present, and a new alpha or radius for the same material changes the one shown; `WindowRequest::Materials` puts one more backdrop of that protocol under each region of the list (shape, radius, alpha; a region with `glass`, or a backdrop of a glass material name, is sent as `set_glass` with its style, container and spacing; the tone the compositor tells a glass backdrop, version 7, arrives as `WindowEvent::GlassTone` with the region's index, or none for the window's own backdrop), reuses the backdrops already shown and takes away the ones left over, and an empty list takes them all away; a list or a backdrop past the protocol's limits (64 backdrops on a surface, 128 for the client), which the compositor would answer by ending the connection, is refused before any backdrop is asked for, and a refused list leaves the window without its materials; `WindowRequest::Menus` publishes a toplevel's menus through the `menus` module (*Menus*) once it is configured, keeps their items' enabled states, reports chosen items as `WindowEvent::MenuActivated` and withdraws them with `None` or when the window goes; without the effects at version 2 or a session bus the menus are not shown; a window opened with `DecorationMode::{Unified, UnifiedCompact, Sidebar}` asks the effects for that window style at creation, and is titled where the compositor has no effects; `request_activation_token` asks `xdg_activation_v1` for a token naming the application and answers `None` when it can't ask |
+| `GpuRenderers` | from `WaylandWindowSystem::gpu_renderers`: `renderer(config, rasterizer)` makes a window's GPU renderer (`cupertino_ui_render::gpu::WindowRenderer`) on the process's device while it draws on the GPU, `None` otherwise; a renderer factory holds a clone and asks it each time |
+| `SurfaceRoles`, `RoleEvent` | `with_roles` gives windows roles from protocols outside the window system (a desktop shell's layer and lock surfaces): `create` makes a window's surface by its `app_id`, `event` turns the transport's extension events into configures and closes, `destroyed`, `keyboard_focus` and `outputs_changed` follow the windows and outputs, `prepare`, called at the start of every dispatch, sends the requests the application asked for since and reads the transport's state, `woke` follows each return from the dispatch's wait (a watchdog's busy record), and `frame_done` each frame callback the server answered; a role's configure has no activated state, so its `WindowStates::activated` says whether the window or a popup of its chain has the keyboard (between `wl_keyboard.enter` and `leave`), and a configure never turns inactive a window that keys still reach |
+| `ShmPresenter`, `Ready` | one per surface, owned by the application, holding no protocol object: `configured(size)` after a configure, `frame_done` on the surface's `Event::Frame`, `request_redraw`; `poll(&Connection)` until `Ready::Idle` reports a new scale (`Ready::ScaleChanged`) first and then `Ready::Draw` once the surface is configured, a frame is asked for, none is in flight and the transport has a free buffer; `draw(&mut Connection, damage, paint)` paints and presents a frame; `draw_solid(&mut Connection, rgba)` shows the surface as one colour, a stretched single pixel (`Connection::present_solid`), or where the compositor has no one-pixel buffers a frame filled with it |
+| `popup::placement` | the `PopupPlacement` of a popup covering a parent-local rectangle, rounded outwards to whole points, its top-left corner at the rectangle's; an empty or non-finite rectangle is `Error::InvalidShape` |
+| `clipboard::{TEXT_TYPES, set_text, text}`, `clipboard::Clipboard` | the text clipboard: a copy offers `text/plain;charset=utf-8`, `text/plain` and `UTF8_STRING`; a paste reads the first of them an offer has, drops a character cut by the transport's read limit and is `None` when the offer was replaced or its client did not answer in time. `Clipboard` keeps the latest selection (`selection_changed`) and the text this client set, which a paste reads while no selection is known |
+| `rgba_to_argb8888`, `Error` | the pixel conversion into shm buffers, and errors |
+
+## How it works
+
+`draw` keeps the last frame's `Pixmap`. Without damage the pixmap is cleared and the frame is whole. With damage
+(rectangles in points) only those rectangles, rounded out to device pixels and cut to the buffer, are cleared for
+`paint`; only they and what the leased buffer missed of the frames shown since it last held one
+(`BufferLease::missed`) are converted into it, cut into rectangles that do not overlap so each pixel is converted
+once, and only they are reported with `damage_buffer`. Rectangles that add up
+to the buffer convert it once, whole. A frame at another size or scale is drawn whole, and so is the first one after
+`configured`: a configure can change what a frame shows (activation, maximized) without changing its size.
+
+`draw_with` hands `paint` the device-pixel rectangles that were cleared (`None` when the frame is whole), for a painter
+that draws a whole frame elsewhere and copies those rectangles in (`copy_rects`). `Damage` collects what changed between
+frames in points: it is the whole surface when new, merges overlapping rectangles and keeps at most eight apart; `take`
+gives the rectangles for the next frame, or `None` for all of it.
+
+The configure serial needs no handling here: the transport sizes the leased buffer from the surface's latest configure
+and acknowledges exactly that serial with the commit. The lease holds the connection from `lease` to `present`, so no
+configure is dispatched while `paint` runs, and a configure overtaken before the draw is never acknowledged. The frame
+callback's time, for an animation clock, is `FrameCallback::time` of the transport's `Event::Frame`.
+
+## The window system
+
+Windows and popups map one to one onto the transport's toplevels and popups; destroying a window destroys its popups.
+`SurfaceRoles::opening` receives each window's view key before role selection. `before_commit` lets an extension send
+state for that key on the actual window and keyed layer surfaces before a frame or a state-only commit. It sees kept
+layers as well as newly created ones and is not called for a submitted frame still waiting for a buffer.
+A window with a role from `SurfaceRoles` (a shell's layer surface) may hand transitions of its presentation to the
+compositor when it offers `cupertino_layers_v1` version 2 (`Capabilities::present_animation`): each
+`WindowRequest::Present` goes to the window's presentation, made on its first change (`presentations.rs`), and is
+committed at once without a buffer, or with the window's first frame when it has not drawn one. While a frame of the
+window is away (`WindowSystem::submit`) that commit waits until the frame's commits are sent, so it never applies
+what the UI thread sent with the frame ahead of the frame. The compositor runs the
+offset, opacity and scale on its clock, with the session's time scale and Reduce Motion; the window draws nothing for
+it. The animations a change starts are followed through `finished`, `replaced` and `settled`
+(`WaylandWindowSystem::presentation_settled`). Without the global, or on a toplevel, the request is refused
+(`PlatformError::Unsupported`) and the application draws its transitions itself. From version 3 a popup takes the same
+requests (`Capabilities::present_popups`): the runtime sends a popover's growth and shrinking and a closing menu's fade
+there, and an input region asked for meanwhile goes with the commit, so a closing popup takes no input as it fades.
+From version 4 a window has surface layers (`Capabilities::surface_layers`, `surface_layers.rs`): each `SurfaceLayer`
+is a `wl_surface` made a `cupertino_layer_v1` of the window's surface, drawn from buffers of its own at the window's
+scale (shared memory, or dmabufs from the GPU renderer's texture as a window's are), its rect and look sent as the
+layer's values with the window's next commit, and `WindowRequest::Layer` changes sent as its requests (committed
+without a buffer when the window shows a frame, as a presentation's are, or with the layer's first values); while such an animation moves a
+layer's x, y, width or height, a frame that declares the layer's rect again sends none of the parts it moves (a value
+sent would replace the animation) and sends them with the first frame after it ended; their animations count for
+`presentation_settled`, and a window whose layers' last running animation ends hears `WindowEvent::LayersSettled` once,
+in the read that saw it end; a `LayerChange::through` goes as `animate_samples`. The `surface-layers` example is a window
+with one layer that fades on the compositor's clock while its content blur goes up and back down through samples, or
+with `--renderer` is drawn by the GPU renderer.
+Configures, close, popup dismissal, scale, pointer, keys, keyboard focus and the input method arrive as `WindowEvent`s
+of the window whose surface they name. A popup's configure comes after a `WindowEvent::PopupPlaced` with the rectangle
+the compositor placed it at in its parent, after any flip or slide. Key modifiers are logical (`Mods`), through the `Profile` the window system was
+made with. Input times are the compositor's milliseconds mapped onto the window system's clock (`CLOCK_MONOTONIC` nanoseconds, the clock the runtime reads, so an event's time compares with its
+now): the first one, and any that would land in the future or more than a second in the past, anchors the mapping
+at the time it was read, and the ones after keep the compositor's spacing. A button's serial is the transport's latest
+input serial.
+
+Where the compositor lists ABGR8888, a submitted frame in shared memory is drawn straight into the buffer it leases
+(`hand_over.rs`): the CPU renderer paints the frame's damage and what the buffer missed, or all of it when its pixels
+are unknown, into the buffer, and nothing is copied; a buffer the frame does not use (its drawing failed) goes back
+unattached. The window system lends no buffer to the UI thread (`present_into` is not taken) and presents no frame
+from it (`present`, and `present_layer` and `present_surface_layers` with a frame, are `PlatformError::Unsupported`).
+Elsewhere, and for a frame of the GPU renderer read back, the renderer's frame (premultiplied RGBA) is copied from its
+own image into the buffer, byte for byte as ABGR8888 where the compositor lists that format and converted to ARGB8888
+otherwise: its damage and what the buffer missed, or all of it when the buffer's pixels are unknown. The compositor is
+told only the frame's damage, or all of the surface when the frame changed size. No free buffer, no configure yet, or
+a frame at another size than the latest configure asks for is `NotReady`, and the runtime draws the next frame whole.
+The transport acknowledges the latest configure with every frame. A window's input region (`WindowSpec::input_region`, then `WindowRequest::SetInputRegion`) is sent with
+the next present that follows a change, rounded outwards to whole points; a window that never sets one takes input over
+its whole surface. A window's opaque region (`WindowRequest::SetOpaqueRegion`) goes with the next frame presented
+after it changes, rounded inwards to whole points, and an empty one sends none. A raised layer (`Submission::raised`) is drawn into a synchronized subsurface at the window's top left
+corner, as wide as the window, at its scale and with an empty input region; its raised materials go to the
+subsurface's backdrops (`cupertino_app_effects_v1` version 11), so the compositor draws them between the subsurface and
+the window's content. Its frame draws only its own damage and what its buffer missed, and it commits before the
+window, so it applies with the window's commit; `present_layer(None)` hides it with a solid colour's. The capability needs the transport's subsurfaces and version 11
+of the effects global. A glass region named by a variant (`GlassRegion::variant`), and a window backdrop's glass (`Backdrop::glass`), goes as `set_glass_variant` and its tint as `set_glass_tint` to a backdrop of version 23, and a surface layer's (`SurfaceLayerLook::variant`, `tint`) to a layer of version 7 (`glass_wire.rs`), each sent when it changes; an older compositor is sent the region's or the look's style and no tint. `request_frame` answers at once when no frame callback is outstanding, else with the callback; a
+callback nobody asked for is not reported. On a compositor with `wp_presentation`, each presented frame is reported as
+`Presented` with the time it turned visible, moved from the compositor's presentation clock onto the window system's
+clock and never later than now, or as `Discarded` when the compositor never showed it.
+
+`present_solid` shows a window as one colour without a frame: the transport's single pixel stretched over the window's
+size, with its backdrop shaped and its input region sent as for a present. It acknowledges the latest configure and asks
+for a frame callback; a frame presented later is whole. Without `Capability::SolidColor` it is
+`PlatformError::Unsupported` and the runtime draws the window instead; without a configure it is `NotReady`.
+
+`set_clipboard` offers its data in each of its MIME types as the selection, and the transport's `SelectionLost` (another
+client's selection replaced it) arrives as `PlatformEvent::ClipboardReplaced`. A clipboard read finishes before
+`read_clipboard` returns (the transport's one-second limit) and its data arrives with the next `dispatch`. Not offered yet, so their flags are false: touch, the primary selection, and the desktop's
+effects protocol, which an extension binds through `connection`. Drags go out (`drag_and_drop` with the clipboard and
+a seat): `start_drag` hands the transport the data, the actions and the image as a `DragIcon` in `wl_shm`'s byte order,
+one drag at a time (a new one cancels the last), and reports the drag source's events as `PlatformEvent::Drag`.
+Drags over a window (from any client, this one included) arrive as `WindowEvent::Drop` with the transport modifiers
+held; `answer_drop` accepts the type and sets the actions, `read_drop` reads the drop like a clipboard read, and
+`finish_drop` finishes it (setting the action taken first, whatever was chosen during the drag, a copy when the
+runtime took it as an ask, and refusing an action the source does not allow) or
+refuses it. At most 8 drops are kept while they are read. A popup's `offset` moves
+its anchor rectangle; `reactive` is not sent.
+
+## The GPU path
+
+`renderer` holds the fallback rule and the rule of each class. A process is of a renderer class
+(`cupertino_ui_core::platform::RendererClass`), which it declares when it connects (`WaylandWindowSystem::connect_as`;
+`connect` is the CPU's class, and `cupertino_kit::app::run` takes the application's `Application::RENDERER`):
+`Cpu` never makes a device and never binds the dmabuf protocol, `Gpu` warms up from the start, and `ByUse` (an
+application that declares none) starts on the CPU and moves to the GPU for good once a window covers more than a
+quarter of the largest output it is on (`large`) or presents more than 30 frames a second in each of two whole
+seconds (`Busy`), counted by `GpuPath::presented` with every window's present. `CUPERTINO_RENDERER=gpu` asks for the
+GPU whatever the class (it overrides a software device and missing dmabuf feedback, but not a device with no dmabuf
+allocator); `CUPERTINO_RENDERER=cpu` keeps a process on the CPU. Missing libraries or devices (`Unavailable`), a
+device whose render node the process cannot see (`NoRenderNode`, a sandbox without `/dev/dri`), a device that can
+allocate no dmabufs, by GBM or by texture export (`NoAllocator`), and three resets within a minute select the CPU;
+purges never count.
+Each window system keeps its renderer and why (`WaylandWindowSystem::renderer`, `GpuPath::choice`, with the context
+losses it counts); a change is logged as `renderer: <cpu|gpu> (<reason>)` and recorded in
+`$XDG_RUNTIME_DIR/cupertino/renderers/<pid>`. A process or surface that wanted the GPU and draws on the CPU
+(`renderer::fallback`: the process, one surface, or a reset of its context) logs
+`renderer: fell back to the CPU (<scope>): <why>` and records the diagnostic event `toolkit.renderer.fallback`,
+which `cupertino diagnose events` lists for the last fortnight.
+
+`gpu_path::GpuPath`, owned by the window system, asks the process's render thread
+(`cupertino_ui_render::render_thread`) for the process's one device, on the feedback's render node, with the GPU
+renderer's programs saved per driver in `$XDG_CACHE_HOME/cupertino/programs`, while the first frames go out in shared
+memory; a second window system of the process finds it made or being made. Once it is ready the path makes its
+presenter's programs on it, takes it over and reports `PlatformEvent::RendererChanged`: the runtime drops every
+window's renderer (the CPU renderer's frame, layers and caches go with it) and draws whole frames with a new one. The
+new ones come from `GpuRenderers` (`WaylandWindowSystem::gpu_renderers`), which the kit's renderer factory holds:
+while the window system is on the GPU it makes a `cupertino_ui_render::gpu::WindowRenderer` on the render thread, and
+the CPU renderer otherwise. The path holds a `Claim` on the device; the last window system going lets it go. A warm-up
+inside `Device::new` for 10 s (`DEVICE_HANG`) is given up as a fallback, the run loop waking at that deadline to
+notice. On a loss it frees every surface's buffers (the lost device's images and buffer objects with them), has the
+render thread let the device go (once for the process; another window system meeting the same loss finds it gone),
+reports the change back to the CPU and asks for a new device, or stays on the CPU once the process's devices were
+reset three times within a minute (`render_thread::losses_exceeded`, counted once per loss for the whole process).
+`buffers_lost` from the compositor checks the device and makes every surface's next upload whole.
+
+`gpu_present::GpuSurface` keeps one surface's dmabufs, allocated in `SIZE_STEP` (128 pixel) steps and cropped by the
+viewport, in a modifier the compositor offers and the driver renders to: their textures, the staging texture and the
+drawing are the render thread's, their protocol objects, sync points and commits the window system's. A frame the GPU
+renderer drew carries its texture (`CpuFrame::device`, a `WindowFrame`) and is copied from it into a free buffer
+texel for texel (`blit_texels`), nothing uploaded; a CPU frame has its damage uploaded into a staging texture and drawn
+into a free buffer. The raised layer's subsurface has buffers of its own and is presented as its window is. A surface that falls
+back to shared memory and a drag image read a GPU frame back (`CpuFrame::in_memory`). With
+`linux-drm-syncobj-v1` the frame's native fence is the buffer's
+acquire point and its release point is waited for through an eventfd (two buffers); without it the commit waits for
+the own fence and a buffer is reused one commit after its release (three buffers). A buffer that cannot be allocated
+or that the compositor refuses moves the surface to shared memory for good; the transport destroys its syncobj
+surface object before the first shared-memory attach.
+
+A window's frame is drawn and committed away from the UI thread (`WindowSystem::submit`, `hand_over.rs`), its raised
+layer and surface layers with it: the window system takes the frame's display list, resources, damage and the
+window's renderer (shared, `SharedRenderer`), and each changed layer's list and renderer (`LayerList`). On the UI
+thread it sends what applies with the window's commit (the surface layers' values, made or gone, and the raised layer
+placed), makes sure every surface the frame draws has a free buffer (else the frame is `NotReady` and the window waits
+for all of them), prepares each surface's commit (a free buffer chosen or allocated, its sync points, the configure the
+window's answers: `Connection::gpu_commit`, `BufferLease::detach`), the window's first, hides the raised layer where the
+frame hides it, and hands the rest over. A frame with a surface on the GPU is drawn on the render thread (`gpu_present::Draw`); one all in shared
+memory on the CPU pool (`cupertino_ui_core::pool`), one lane per window, into the buffers it detached: straight into
+them where the renderer draws into memory in ABGR8888, else into the renderer's own image and copied (converted to
+ARGB8888, or read back from the GPU). Once every surface is drawn, the thread that drew them sends the frame back and
+commits the surface layers, then the raised layer's subsurface, then the window, acknowledging the configure, attaching
+and committing in that order; a surface that cannot be drawn, or a renderer that panics, leaves the whole frame
+uncommitted, and the panic goes on in the instance that submitted it. A frame in shared memory never waits for the
+render thread, which may be making a device's programs. The next dispatch reads the frame back (before what the
+compositor said of it) and gives the buffers back; once the thread says the frame's commits are sent, the runtime
+hears `WindowEvent::Shown`. Until then the window draws no other frame, so nothing its next frame sends from the UI
+thread (a raised layer hidden, a solid colour) goes out before them, and freeing a surface's GPU buffers waits for the render thread's work before it. No frame is
+declined; only a solid colour (`present_solid`) is still shown from the UI thread.
+
+## Menus (`menus`)
+
+Publishes the application's menus to the desktop menu bar over the session bus.
+
+### Public API
+
+| Item | Contents |
+|---|---|
+| `Exporter` | one per application and bus connection. `new(builder, app_id, map, on_activate)` builds the connection from a `zbus::blocking::connection::Builder` (`Builder::session()` on the desktop) with the application object already served, so zbus listens for method calls before it reads the socket: a call made right after an address is announced is never dropped unanswered. `export(window, &MenuBar)` publishes `MenuBar::exported` and returns the window's `DbusProperties`; `set_enabled(window, action, enabled)`; `set_modifier_map` rewrites every accelerator for another profile; `remove(window)` withdraws a closed window's objects; `set_reader(name)` names the only peer answered |
+| `AppMenus`, `WindowExport` | the windows of a process share one connection and `Exporter` per application id: `AppMenus::open(app_id, map, wake)` gives a window the next `WindowId` on its application's connection (made for the first window, closed with the last), and its `WindowExport` exports, enables, names the reader and yields the items chosen in that window alone (an `app.` item goes to the newest window, whose application menu is shown). Dropping it withdraws the window's objects. `AppMenus::default()` is on the session bus |
+| `WindowMenus` | a Wayland window's menus: its `WindowExport` and its `cupertino_app_menu_v1` announcement |
+| `DbusProperties` | where a window's menus are, which it passes to `cupertino_app_menu_v1.set_address` |
+| `Activation`, `WindowId` | a chosen item: the action, and the window for a `win.` action |
+
+### How it works
+
+The application object (`/org/example/Notes` for `org.example.Notes`) serves `org.gtk.Actions` with every `app.`
+action of the open windows and, at `<app>/menus/appmenu`, `org.gtk.Menus` with the application menu (About,
+Settings… and Quit when the application handles them; the menu bar adds Hide, Hide Others and Show All). Each window
+serves its `win.` actions at `<app>/window/<n>` and its menu bar at `<app>/window/<n>/menus/menubar`. Every menu is in
+group 0; sections and submenus are menus of their own linked with `:section` and `:submenu`. Labels carry no
+mnemonic: each `_` goes out doubled. A change replaces each
+menu that differs in one `Changed` record. Actions are stateless and take no parameter: `Activate` of a disabled one
+does nothing, of an unknown one or with a parameter is `InvalidArgs`; `SetState` is `NotSupported`. Unlike a GTK
+application's, the objects answer only the reader, the menu bar connection the compositor verified
+(`cupertino_app_menu_v1.menu_reader`, passed to `Exporter::set_reader`): every `org.gtk.Menus` and `org.gtk.Actions`
+method of any other peer, and of every peer while there is no reader, is `AccessDenied`, and `Changed` is sent to the
+reader alone. Labels carry document names, so reads are refused as well as activation.
+
+## Accessibility (`atspi`)
+
+Publishes the application's accessibility tree to assistive technology (screen readers) over AT-SPI, and hands
+their requests back to the application's loop. It implements `cupertino-ui-core`'s `AccessibilityAdapter` on
+AccessKit's Unix adapter (`accesskit` 0.25, `accesskit_unix` 0.24 with its default features: zbus 5 on async-io, no
+tokio). AccessKit's types stay inside the module.
+
+### Public API
+
+| Item | Contents |
+|---|---|
+| `AtspiAdapter` | `new(waker)` takes the window system's `Waker` (`WindowSystem::waker()`); the adapter goes into `RuntimeOptions.accessibility`. `muted(waker)` starts muted and hidden until the first `session_locked`, for an application that may start while the session is locked (`cupertino_kit::app` uses it for every Kit application); `lock_screen(waker)` is never muted nor hidden by `session_locked`, for the application that draws the lock screen |
+
+```rust
+let options = RuntimeOptions {
+    accessibility: Some(Box::new(AtspiAdapter::new(system.waker()))),
+    ..options
+};
+let runtime = Runtime::new(system, options);
+```
+
+### How it works
+
+- **Windows.** Each window is a top-level AT-SPI object with its own AccessKit adapter, created the first time core
+  names the window (its first focus or update). The application's name on the bus is its process name.
+- **Activation.** Nothing is exported until an assistive technology turns accessibility on (`org.a11y.Status`
+  `IsEnabled`); until then `is_active` is false and core builds no tree. When a window activates, the adapter wakes the
+  application so core sends every window whole; a window that activates after core sent its tree gets it from the copy
+  the adapter keeps, never by calling into the application from AccessKit's thread. When the last window deactivates,
+  those copies are no longer handed out: core stops sending while nothing listens.
+- **Nodes.** Roles, names, descriptions, states, bounds in window points, relations, children and values (text, number
+  with its range and step, toggle) map one to one. `Separator` and `Splitter` are both AccessKit's splitter, ARIA's
+  separator. A list item, tree item, cell or tab without a name or label is labelled by its children, so a reader
+  speaks the text inside it (AccessKit computes a name from descendants only for buttons, links, check boxes, radio
+  buttons and menu items). An item's place and its container's count go out as AccessKit's position in set and set
+  size.
+- **Window title.** Core passes each window's title through `window_title` before its first tree and whenever it
+  changes; a root without a name of its own is published with the title as its name.
+- **Text.** An editable value is published as AccessKit text runs: one per line, ending with its line break, split in
+  runs of at most 255 characters on one line (AccessKit counts a run's characters in a byte). A character is a grapheme
+  cluster; a word takes the spaces after it. The caret and selection core sends in bytes become a text selection in the
+  runs, so the AT-SPI Text interface answers `CaretOffset`, `GetSelection` and `GetNSelections` in characters, and
+  AccessKit emits `TextCaretMoved` and `TextSelectionChanged` as they change in the focused field. A node keeps its runs'
+  ids from update to update. `SetSelection` from the bus becomes core's `SetSelection` with the byte range, when the
+  node offers it.
+- **Sort.** A sorting column header carries its order as AccessKit's sort direction. AccessKit's AT-SPI adapter does
+  not export that, so a header without a description also says "Sorted ascending" or "Sorted descending" as one.
+- **Secrets.** A `PasswordInput` node, or any node whose value is `Protected`, carries no value and offers neither
+  `SetValue` nor a selection, whatever core sent: a second defence after core's.
+- **Session lock.** The lock state comes from the compositor's `cupertino_appearance_v1.session_lock` (core's
+  `session_locked`; a compositor without it is taken as unlocked). While the session is locked the application's content
+  is not readable: each window is published as an empty frame without a name (its root alone, so AccessKit drops every
+  other node), the window title is not published, and an action request from the bus is dropped before it is queued.
+  Core's updates are still taken into the adapter's copy, so the unlock publishes every window whole again, as it is
+  then. An adapter made with `muted` is hidden this way from its start until it learns the session is unlocked. Every
+  node is also sent without its live politeness while locked, and the tree published again at the unlock carries none:
+  AccessKit announces only as a live node is added or renamed, from the node it is sent then, so neither the lock nor
+  the unlock announces anything, and the first change after the unlock speaks as usual. The lock screen's own adapter
+  (`lock_screen`) ignores the lock, so the lock screen is what an assistive technology reads, and the answer to a
+  password attempt is announced while the session is locked.
+- **Actions.** A request from an assistive technology becomes core's `ActionRequest` (`Click`, `Focus`, `Increment`,
+  `Decrement`, `Expand`, `Collapse`, `ShowMenu`, `ScrollIntoView`, `SetValue` with text or a number). It is kept only
+  when its target advertised that action in its last update and it doesn't set a secret's value. It waits in a queue
+  that `drain_actions` empties on the application's loop, and the waker wakes the loop for it. A request without a
+  core action, or with data the action doesn't take, is dropped.
+
+### Limitations
+
+- **Other toolkits behind the lock.** Only CupertinoKit applications hide their tree while the session is locked. An
+  application on another toolkit (GTK, Qt, Electron, an X11 client) publishes its own tree on the same accessibility
+  bus and nothing in the session can make it stop, so an assistive technology can still read it, and act on it, behind
+  the lock screen. Check by hand in an installed session: open such an application next to a Kit one, lock with
+  `Super+Ctrl+Q`, and read the accessibility bus with Accerciser: the Kit windows are empty frames without a name, the
+  other application's content is still there.
+
+- **Text lines and extents.** Runs follow hard line breaks only: a line the editor wraps is one AT-SPI line. Runs carry
+  no character positions, so `GetCharacterExtents` and `GetRangeExtents` have nothing to answer with.
+- **Selection direction.** Core's `SetSelection` takes a range, so a selection set from the bus puts the caret at its
+  end whichever way it was asked.
+- **Window position.** A Wayland client doesn't know where its window is, so bounds are window-relative.
+- **Closed windows.** Core's adapter interface has no call for a closed window, so its AT-SPI object stays until the
+  application exits.

@@ -1,0 +1,19 @@
+#!/bin/sh
+
+: "${CUPERTINO_ASSET_SEARCH_PATH:=/usr/share/solyra/cupertino/assets/solyra:/usr/share/solyra/cupertino/assets/cupertino}"
+: "${CUPERTINO_SPEC_DIR:=/usr/share/solyra/cupertino/theme}"
+export CUPERTINO_ASSET_SEARCH_PATH CUPERTINO_SPEC_DIR
+
+has_terminal=
+for arg do
+  if [ "$arg" = "--terminal" ]; then
+    has_terminal=1
+    break
+  fi
+done
+
+if [ -z "$has_terminal" ]; then
+  set -- --terminal solyra-term "$@"
+fi
+
+exec /usr/lib/solyra/cupertino/cupertino-files "$@"
