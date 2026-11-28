@@ -2,7 +2,9 @@
 
 [32m  INFO[0m: Launching config: "/home/solyra/.config/quickshell/shell.qml"
 [32m  INFO[0m: Shell ID: "1f23d0f74c6cc23f920c90fb6c35d007" Path ID "1f23d0f74c6cc23f920c90fb6c35d007"
-[32m  INFO[0m: Saving logs to "/run/user/1001/quickshell/by-id/2fw4d7pt/log.qslog"
+[32m  INFO[0m: Saving logs to "/run/user/1001/quickshell/by-id/0fb4f7pt/log.qslog"
+MESA-EGL: warning: egl: failed to create dri2 screen
+MESA-EGL: warning: egl: failed to create dri2 screen
 [33m  WARN[97m scene[0m: QML IpcHandler at @shell.qml[360:5]: Signal detected: "islandRequested"
 [33m  WARN[97m scene[0m: QML IpcHandler at @shell.qml[360:5]: Signal detected: "hudRequested"
 [33m  WARN[97m scene[0m: QML IpcHandler at @shell.qml[360:5]: Signal detected: "downloadsRequested"
@@ -16,8 +18,8 @@
 [33m  WARN[97m scene[0m: QML FileView at @ClipHistory.qml[150:29]: Read of /home/solyra/.local/share/solyra/clipboard.json failed: File does not exist.
 [33m  WARN[97m scene[0m: QML FileView at @ControlCenter.qml[207:5]: Read of /home/solyra/.config/solyra/controlcenter.json failed: File does not exist.
 [33m  WARN[97m scene[0m: QML FileView at @ClipHistory.qml[150:29]: Read of /home/solyra/.local/share/solyra/clipboard.json failed: File does not exist.
+[33m  WARN[97m scene[0m: QML FileView at @Island.qml[762:25]: Read of /home/solyra/.local/share/solyra/quicknote.txt failed: File does not exist.
 [33m  WARN[97m scene[0m: QML FileView at @UsageWidget.qml[23:5]: Read of /home/solyra/.local/share/solyra/ai-usage.json failed: File does not exist.
-[33m  WARN[97m scene[0m: QML FileView at @Island.qml[760:25]: Read of /home/solyra/.local/share/solyra/quicknote.txt failed: File does not exist.
 [33m  WARN[97m scene[0m: QML FileView at @WidgetsDashboard.qml[78:5]: Read of /home/solyra/.config/solyra/widgets.json failed: File does not exist.
 [33m  WARN[97m scene[0m: QML FileView at @ShelfModel.qml[26:24]: Read of /home/solyra/.local/share/solyra/shelf.json failed: File does not exist.
 [33m  WARN[97m scene[0m: QML FileView at @shell.qml[81:5]: Read of /home/solyra/.local/share/solyra/events.json failed: File does not exist.
@@ -31,7 +33,8 @@
 [33m  WARN[0m: Qt.atob(string): This method is deprecated. Its output differs from the common Web API. Use the overloads that take array-likes.
 [33m  WARN[0m: Qt.atob(string): This method is deprecated. Its output differs from the common Web API. Use the overloads that take array-likes.
 [32m  INFO[97m qt.multimedia.ffmpeg[0m: Using Qt multimedia with FFmpeg version n9.1 GPL version 3 or later
-[33m  WARN[97m quickshell.wayland.screencopy.hyprland[0m: Ending recording due to screencopy failure for qs::wayland::screencopy::ScreencopyContext(0x7fba5feddec0)
+[31m ERROR[97m quickshell.wayland.buffer.dmabuf[0m: Failed to find render device: no render or primary node found.
+[33m  WARN[97m quickshell.wayland.buffer[0m: Render format initialization failed. All buffers will fall back to SHM.
 [33m  WARN[97m scene[0m: QML Glass at @Dock.qml[127:5]: Cannot specify left, right, and horizontalCenter anchors at the same time.
-[33m  WARN[97m quickshell.dbus.properties[0m: Error updating property org.mpris.MediaPlayer2.mpv.instance-KaNeGNDM/org/mpris/MediaPlayer2/org.mpris.MediaPlayer2.Player:Position
+[33m  WARN[97m quickshell.dbus.properties[0m: Error updating property org.mpris.MediaPlayer2.mpv.instance-UVKFXaMC/org/mpris/MediaPlayer2/org.mpris.MediaPlayer2.Player:Position
 [33m  WARN[97m quickshell.dbus.properties[0m: QDBusError("org.freedesktop.DBus.Error.ServiceUnknown", "The name is not activatable")
