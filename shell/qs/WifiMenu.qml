@@ -73,8 +73,8 @@ StatusMenu {
                 TapHandler { onTapped: { Quickshell.execDetached(["nmcli", "radio", "wifi", w.enabled_ ? "off" : "on"]); w.enabled_ = !w.enabled_; if (w.enabled_) w.refresh() } }
             }
         }
-        Text { visible: w.status !== ""; text: w.status; color: Qt.rgba(1, 1, 1, 0.6); font.family: Theme.font; font.pixelSize: 12 }
-        Text { visible: w.enabled_ && w.nets.length === 0; text: "Looking for networks…"; color: Qt.rgba(1, 1, 1, 0.6); font.family: Theme.font; font.pixelSize: 13 }
+        Text { visible: w.status !== ""; text: w.status; color: Qt.rgba(1, 1, 1, 0.6); font.family: Theme.font; font.pixelSize: 12; font.weight: Theme.wBody;}
+        Text { visible: w.enabled_ && w.nets.length === 0; text: "Looking for networks…"; color: Qt.rgba(1, 1, 1, 0.6); font.family: Theme.font; font.pixelSize: 13; font.weight: Theme.wBody;}
         Repeater {
             model: w.enabled_ ? w.nets.slice(0, 8) : []
             Column {
@@ -97,7 +97,7 @@ StatusMenu {
                         color: modelData.active ? Theme.accent : Qt.rgba(1, 1, 1, 0.14)
                         Icon { anchors.centerIn: parent; name: "wifi"; size: 14; opacity: 0.4 + modelData.signal / 160 }
                     }
-                    Text { anchors.left: badge.right; anchors.leftMargin: 10; anchors.verticalCenter: parent.verticalCenter; width: parent.width - 80; elide: Text.ElideRight; text: modelData.ssid; color: "white"; font.family: Theme.font; font.pixelSize: 14 }
+                    Text { anchors.left: badge.right; anchors.leftMargin: 10; anchors.verticalCenter: parent.verticalCenter; width: parent.width - 80; elide: Text.ElideRight; text: modelData.ssid; color: "white"; font.family: Theme.font; font.pixelSize: 14; font.weight: Theme.wBody;}
                     Icon { visible: modelData.secure; anchors.right: parent.right; anchors.rightMargin: 8; anchors.verticalCenter: parent.verticalCenter; name: "lock"; size: 12; color: Qt.rgba(1, 1, 1, 0.6) }
                     HoverHandler { id: rowHov }
                     TapHandler {
@@ -130,6 +130,7 @@ StatusMenu {
         Text {
             text: "Wi-Fi Settings…"; color: "white"; font.family: Theme.font; font.pixelSize: 14
             TapHandler { onTapped: { w.open = false; Quickshell.execDetached(["sh", "-c", "command -v nm-connection-editor >/dev/null && exec nm-connection-editor || exec solyra-settings"]) } }
+            font.weight: Theme.wBody
         }
     }
 }

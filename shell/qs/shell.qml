@@ -367,6 +367,8 @@ ShellRoot {
         function spotlight(): void { root.spotlight("") }
         function query(text: string): void { root.spotlight(text) }
         function control(): void { root.control() }
+        function ccDetail(name: string): void { cc.showDetail(name) }
+        function ccEdit(on: bool): void { if (on) cc.startEdit(); else cc.finishEdit() }
         function lock(): void { root.lock() }
         function lockMode(mode: string): void { root.setLockMode(mode) }
         function lockSignIn(open: bool): void { root.setLockSignIn(open) }

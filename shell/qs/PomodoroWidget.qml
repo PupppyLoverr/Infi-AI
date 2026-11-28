@@ -156,6 +156,7 @@ Item {
                 text: "▲"
                 color: ruler.accentCol
                 font.pixelSize: 9
+                font.weight: Theme.wBody
             }
 
             MouseArea {

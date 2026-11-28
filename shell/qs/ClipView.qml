@@ -103,6 +103,7 @@ Item {
             : (v.activeCategory === "all" ? "Copy something and it appears here" : "No items tagged " + v.activeCategory)
         color: Qt.rgba(1, 1, 1, 0.48)
         font.family: Theme.font; font.pixelSize: 13
+        font.weight: Theme.wBody
     }
 
     ListView {
@@ -183,6 +184,7 @@ Item {
                             text: modelData.favorite ? "★" : "●"
                             color: modelData.favorite ? "#ff9f0a" : "#ff3b30"
                             font.pixelSize: 9
+                            font.weight: Theme.wBody
                         }
                         Text {
                             text: "•••"
@@ -231,6 +233,7 @@ Item {
                 wrapMode: Text.WrapAnywhere
                 elide: Text.ElideRight
                 font.family: Theme.font; font.pixelSize: 12
+                font.weight: Theme.wBody
             }
 
             // Footer

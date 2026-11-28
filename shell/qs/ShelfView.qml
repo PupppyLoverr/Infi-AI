@@ -215,6 +215,7 @@ Item {
                                 color: "#242428"
                                 font.family: Theme.mono; font.pixelSize: 5
                                 wrapMode: Text.Wrap
+                                font.weight: Theme.wBody
                             }
                         }
 

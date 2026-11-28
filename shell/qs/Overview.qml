@@ -38,6 +38,7 @@ PanelWindow {
         visible: ov.wins.length === 0
         anchors.centerIn: parent
         text: "No open windows"; color: "white"; opacity: dim.opacity; font.family: Theme.font; font.pixelSize: 18
+        font.weight: Theme.wBody
     }
     Repeater {
         model: ov.wins

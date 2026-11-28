@@ -24,16 +24,17 @@ PanelWindow {
     readonly property bool activeHover: mx >= 0 && Theme.dockMagnify && !Theme.reduceMotion
     readonly property bool hidden: Theme.dockAutohide && pointerMx < 0 && forcedMx < 0
     implicitWidth: activeHover ? card.width + 148 : card.width
-    implicitHeight: activeHover ? 140 : (hidden ? 8 : card.height + 8)
-    exclusiveZone: Theme.dockAutohide ? 0 : card.height + 12
+    implicitHeight: activeHover ? 140 : (hidden ? 8 : card.height + 4)
+    exclusiveZone: Theme.dockAutohide ? 0 : card.height + 4
     color: "transparent"
     WlrLayershell.namespace: "solyra-dock"
 
     readonly property var pinned: ["solyra-files", "firefox", "solyra-term", "org.gnome.TextEditor", "mpv", "solyra-settings"]
     readonly property var bundled: ({ "solyra-files": "Finder", "solyra-term": "Terminal", "solyra-settings": "Settings" })
-    // macOS 27 / Cupertino proportions: 52 px icons, balanced gaps, sculptural glass pill.
-    readonly property int cell: 52
-    readonly property int gap: 5
+    property alias dockCard: card
+    property alias dockRow: row
+    readonly property int cell: 46
+    readonly property int gap: 6
     // Recently used apps that are not pinned (macOS's recent-apps section):
     // remembered as they come to the front, newest first, three kept.
     property var recent: []
@@ -60,8 +61,8 @@ PanelWindow {
     // icons), for the magnification curve.
     function centreOf(i) {
         let x = 8
-        for (let k = 0; k < i; k++) x += (items[k].kind === "sep" ? 13 : cell) + gap
-        return x + (items[i] && items[i].kind === "sep" ? 6.5 : cell / 2)
+        for (let k = 0; k < i; k++) x += (items[k].kind === "sep" ? 9 : cell) + gap
+        return x + (items[i] && items[i].kind === "sep" ? 4.5 : cell / 2)
     }
     function entryFor(id) { return DesktopEntries.byId(id) || DesktopEntries.heuristicLookup(id) }
     function windowsOf(appId) { return ToplevelManager.toplevels.values.filter(w => w.appId && (w.appId === appId || w.appId.toLowerCase().indexOf(appId.toLowerCase()) >= 0 || appId.toLowerCase().indexOf(w.appId.toLowerCase()) >= 0)) }
@@ -120,13 +121,14 @@ PanelWindow {
     Glass {
         id: card
         kind: "dock"
-        r: 26
+        r: 20
+        shadow: false
         anchors.bottom: parent.bottom
-        anchors.bottomMargin: dockWin.hidden ? -(height + 12) : 8
+        anchors.bottomMargin: dockWin.hidden ? -(height + 12) : 4
         Behavior on anchors.bottomMargin { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.ms(220); easing.type: Easing.OutCubic } }
         anchors.horizontalCenter: parent.horizontalCenter
-        height: 68
-        width: row.width + 18
+        height: 62
+        width: row.width + 16
         Behavior on width {
             enabled: !Theme.reduceMotion
             SpringAnimation { spring: 4.8; damping: 0.48; epsilon: 0.3 }
@@ -140,7 +142,7 @@ PanelWindow {
             id: row
             x: 8
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: 8
+            anchors.bottomMargin: 6
             spacing: dockWin.gap
             Repeater {
                 model: dockWin.items

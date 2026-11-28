@@ -63,7 +63,7 @@ PanelWindow {
                 Column {
                     anchors.centerIn: parent; spacing: 6
                     Icon { anchors.horizontalCenter: parent.horizontalCenter; name: "basket"; size: 22; color: win.dropping ? "#0a84ff" : Qt.rgba(1, 1, 1, 0.55) }
-                    Text { text: win.dropping ? "Drop here" : "Drop files into basket"; color: Qt.rgba(1, 1, 1, 0.62); font.family: Theme.font; font.pixelSize: 11 }
+                    Text { text: win.dropping ? "Drop here" : "Drop files into basket"; color: Qt.rgba(1, 1, 1, 0.62); font.family: Theme.font; font.pixelSize: 11; font.weight: Theme.wBody;}
                 }
             }
 

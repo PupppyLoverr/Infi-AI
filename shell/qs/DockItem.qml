@@ -36,10 +36,10 @@ Item {
     Rectangle {
         visible: it.sep
         anchors.centerIn: parent
-        width: 1; height: 34
+        width: 1; height: 36
         gradient: Gradient {
             GradientStop { position: 0.0; color: "transparent" }
-            GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, 0.34) }
+            GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, 0.28) }
             GradientStop { position: 1.0; color: "transparent" }
         }
     }
@@ -70,9 +70,9 @@ Item {
             anchors.fill: art
             source: art
             shadowEnabled: true
-            shadowColor: Qt.rgba(0, 0, 0, 0.42)
-            shadowBlur: 0.35
-            shadowVerticalOffset: 3
+            shadowColor: Qt.rgba(0, 0, 0, 0.28)
+            shadowBlur: 0.25
+            shadowVerticalOffset: 2
             shadowHorizontalOffset: 0
         }
     }
@@ -88,21 +88,20 @@ Item {
     Item {
         visible: it.wins.length > 0 || it.item.kind === "bg"
         anchors.horizontalCenter: parent.horizontalCenter
-        anchors.top: parent.bottom
-        anchors.topMargin: 3
-        width: 9; height: 9
+        y: dock.dockCard.height - dock.dockRow.y - it.y - 5
+        width: 4; height: 4
         Rectangle {
             visible: it.item.kind !== "bg"
             anchors.centerIn: parent
-            width: 8; height: 8; radius: 4
-            color: Theme.dark ? Qt.rgba(1, 1, 1, 0.22) : Qt.rgba(0, 0, 0, 0.14)
+            width: 4; height: 4; radius: 2
+            color: Qt.rgba(1, 1, 1, 0.6)
         }
         Rectangle {
-            anchors.centerIn: parent
-            width: 5; height: 5; radius: 2.5
-            color: it.item.kind === "bg" ? "transparent" : (Theme.dark ? Qt.rgba(1, 1, 1, 0.94) : Qt.rgba(0.1, 0.1, 0.12, 0.88))
-            border.width: it.item.kind === "bg" ? 1.2 : 0
-            border.color: Theme.dark ? Qt.rgba(1, 1, 1, 0.9) : Qt.rgba(0.1, 0.1, 0.12, 0.85)
+            anchors.fill: parent
+            radius: 2
+            color: "transparent"
+            border.width: it.item.kind === "bg" ? 1 : 0
+            border.color: Qt.rgba(1, 1, 1, 0.6)
         }
     }
 
@@ -184,8 +183,8 @@ Item {
     PopupWindow {
         id: downloadsPop
         anchor.item: it
-        anchor.rect.x: -130
-        anchor.rect.y: -278
+        anchor.rect.x: it.width / 2 - implicitWidth / 2
+        anchor.rect.y: -dock.dockRow.y - it.y - implicitHeight - 14
         implicitWidth: 312
         implicitHeight: 268
         color: "transparent"
@@ -204,6 +203,7 @@ Item {
                         anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
                         text: it.downloadFiles.length + (it.downloadFiles.length === 1 ? " item" : " items")
                         color: Theme.ink2; font.family: Theme.font; font.pixelSize: 12
+                        font.weight: Theme.wBody
                     }
                 }
                 Item {
@@ -213,6 +213,7 @@ Item {
                         anchors.centerIn: parent
                         text: "Downloads folder is empty"
                         color: Theme.ink2; font.family: Theme.font; font.pixelSize: 13
+                        font.weight: Theme.wBody
                     }
                     Grid {
                         visible: it.downloadFiles.length > 0
@@ -344,6 +345,7 @@ Item {
                                 text: modelData[0]
                                 color: mh.hovered ? "white" : Theme.ink
                                 font.family: Theme.font; font.pixelSize: 13
+                                font.weight: Theme.wBody
                             }
                             HoverHandler { id: mh }
                             TapHandler {

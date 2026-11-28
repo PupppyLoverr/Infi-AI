@@ -16,5 +16,6 @@ Item {
         anchors.centerIn: parent
         visible: cam.error !== Camera.NoError || !cam.cameraDevice || cam.cameraDevice.isNull
         text: "No camera found"; color: Qt.rgba(1, 1, 1, 0.5); font.family: Theme.font; font.pixelSize: 13
+        font.weight: Theme.wBody
     }
 }

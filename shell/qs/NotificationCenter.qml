@@ -104,7 +104,7 @@ PanelWindow {
                                     id: body
                                     x: 14; y: 12; width: parent.width - 44; spacing: 2
                                     Text { width: parent.width; text: note.summary; elide: Text.ElideRight; color: "white"; font.family: Theme.font; font.pixelSize: 13; font.weight: Font.DemiBold }
-                                    Text { width: parent.width; visible: text !== ""; text: note.body; wrapMode: Text.Wrap; maximumLineCount: 3; elide: Text.ElideRight; color: "white"; font.family: Theme.font; font.pixelSize: 12; textFormat: Text.PlainText }
+                                    Text { width: parent.width; visible: text !== ""; text: note.body; wrapMode: Text.Wrap; maximumLineCount: 3; elide: Text.ElideRight; color: "white"; font.family: Theme.font; font.pixelSize: 12; textFormat: Text.PlainText; font.weight: Theme.wBody;}
                                     Row { spacing: 6; visible: note.actions.length > 0; topPadding: 4
                                         Repeater { model: note.actions; Pill { required property var modelData; height: 24; text: modelData.text; onClicked: modelData.invoke() } } }
                                 }

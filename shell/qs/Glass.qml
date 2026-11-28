@@ -40,12 +40,10 @@ Item {
         if (isModule) {
             // Cupertino Control Center modules are appearance-invariant mid-toned
             // glass (0.59 * c + 27) so white text/icons read cleanly on sunlit walls.
-            return Qt.rgba(0.105, 0.11, 0.125, 0.24 + slider * 0.20)
+            return Qt.rgba(0.105, 0.11, 0.125, 0.18 + slider * 0.14)
         }
         if (isDock) {
-            return dark
-                ? Qt.rgba(0.11, 0.12, 0.145, 0.19 + slider * 0.17)
-                : Qt.rgba(0.98, 0.99, 1.0, 0.21 + slider * 0.20)
+            return Qt.rgba(1, 1, 1, 0.16)
         }
         if (isFrosted) {
             return dark
@@ -87,7 +85,7 @@ Item {
         gradient: Gradient {
             GradientStop {
                 position: 0.0
-                color: Qt.rgba(1, 1, 1, g.isSmoke ? 0.07 : (g.isModule ? 0.15 : (g.isDock ? (g.dark ? 0.16 : 0.26) : (g.dark ? 0.12 : 0.22))))
+                color: Qt.rgba(1, 1, 1, g.isSmoke ? 0.07 : (g.isModule ? 0.08 : (g.isDock ? 0.08 : (g.dark ? 0.10 : 0.14))))
             }
             GradientStop {
                 position: Math.min(0.24, (g.isDock ? 9 : 7) / Math.max(1, g.height))
@@ -99,7 +97,7 @@ Item {
             }
             GradientStop {
                 position: 1.0
-                color: Qt.rgba(1, 1, 1, g.isSmoke ? 0.06 : (g.isModule ? 0.13 : (g.isDock ? (g.dark ? 0.13 : 0.20) : (g.dark ? 0.06 : 0.12))))
+                color: Qt.rgba(1, 1, 1, g.isSmoke ? 0.06 : (g.isModule ? 0.06 : (g.isDock ? 0.05 : (g.dark ? 0.06 : 0.08))))
             }
         }
     }
@@ -112,7 +110,7 @@ Item {
         visible: !Theme.reduceTransparency && g.isFrosted && g.height > 24
         gradient: Gradient {
             GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0) }
-            GradientStop { position: Math.min(0.18, 10 / Math.max(1, g.height)); color: Qt.rgba(0, 0, 0, g.dark ? 0.06 : 0.03) }
+            GradientStop { position: Math.min(0.18, 10 / Math.max(1, g.height)); color: Qt.rgba(0, 0, 0, g.dark ? 0.03 : 0.015) }
             GradientStop { position: Math.min(0.36, 22 / Math.max(1, g.height)); color: Qt.rgba(0, 0, 0, 0) }
         }
     }
@@ -132,23 +130,23 @@ Item {
                 x1: 0; y1: 0; x2: 0; y2: g.height
                 GradientStop {
                     position: 0.0
-                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.72 : (g.isDock ? (g.dark ? 0.76 : 0.94) : (g.dark ? 0.58 : 0.88)))
+                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.16 : (g.isDock ? 0.18 : 0.16))
                 }
                 GradientStop {
                     position: Math.min(0.38, 18 / Math.max(1, g.height))
-                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.24 : (g.isDock ? 0.22 : (g.dark ? 0.18 : 0.38)))
+                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.10 : (g.isDock ? 0.10 : (g.dark ? 0.09 : 0.19)))
                 }
                 GradientStop {
                     position: 0.5
-                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.04 : (g.isDock ? 0.05 : (g.dark ? 0.08 : 0.18)))
+                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.03 : (g.isDock ? 0.04 : (g.dark ? 0.04 : 0.09)))
                 }
                 GradientStop {
                     position: Math.max(0.62, 1 - 18 / Math.max(1, g.height))
-                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.22 : (g.isDock ? 0.20 : (g.dark ? 0.15 : 0.32)))
+                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.07 : (g.isDock ? 0.07 : (g.dark ? 0.07 : 0.14)))
                 }
                 GradientStop {
                     position: 1.0
-                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.66 : (g.isDock ? (g.dark ? 0.64 : 0.84) : (g.dark ? 0.42 : 0.66)))
+                    color: Qt.rgba(1, 1, 1, g.isModule ? 0.08 : (g.isDock ? 0.10 : 0.10))
                 }
             }
             PathRectangle { x: 0; y: 0; width: g.width; height: g.height; radius: g.r }
@@ -166,7 +164,7 @@ Item {
     // left/right vertical arcs, zero along the top/bottom specular lines.
     Shape {
         anchors.fill: parent
-        visible: !Theme.reduceTransparency && (g.isModule || g.isDock) && g.width > 12 && g.height > 12
+        visible: !Theme.reduceTransparency && g.isModule && g.width > 12 && g.height > 12
         preferredRendererType: Shape.CurveRenderer
         ShapePath {
             strokeWidth: 0
@@ -174,9 +172,9 @@ Item {
             fillGradient: LinearGradient {
                 x1: 0; y1: 0; x2: 0; y2: g.height
                 GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.0) }
-                GradientStop { position: Math.min(0.28, 14 / Math.max(1, g.height)); color: Qt.rgba(0, 0, 0, g.isModule ? 0.22 : 0.16) }
-                GradientStop { position: 0.5; color: Qt.rgba(0, 0, 0, g.isModule ? 0.42 : 0.30) }
-                GradientStop { position: Math.max(0.72, 1 - 14 / Math.max(1, g.height)); color: Qt.rgba(0, 0, 0, g.isModule ? 0.22 : 0.16) }
+                GradientStop { position: Math.min(0.28, 14 / Math.max(1, g.height)); color: Qt.rgba(0, 0, 0, 0.12) }
+                GradientStop { position: 0.5; color: Qt.rgba(0, 0, 0, 0.21) }
+                GradientStop { position: Math.max(0.72, 1 - 14 / Math.max(1, g.height)); color: Qt.rgba(0, 0, 0, 0.12) }
                 GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.0) }
             }
             PathRectangle { x: 0; y: 0; width: g.width; height: g.height; radius: g.r }
@@ -194,9 +192,9 @@ Item {
             fillRule: ShapePath.OddEvenFill
             fillGradient: LinearGradient {
                 x1: 0; y1: 0; x2: 0; y2: g.height
-                GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, g.isModule ? 0.18 : (g.dark ? 0.14 : 0.26)) }
-                GradientStop { position: 0.5; color: Qt.rgba(0, 0, 0, g.dark ? 0.08 : 0.04) }
-                GradientStop { position: 1.0; color: Qt.rgba(1, 1, 1, g.isModule ? 0.14 : (g.dark ? 0.10 : 0.18)) }
+                GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, g.isModule ? 0.09 : (g.dark ? 0.07 : 0.13)) }
+                GradientStop { position: 0.5; color: Qt.rgba(0, 0, 0, g.dark ? 0.04 : 0.02) }
+                GradientStop { position: 1.0; color: Qt.rgba(1, 1, 1, g.isModule ? 0.07 : (g.dark ? 0.05 : 0.09)) }
             }
             PathRectangle { x: 1; y: 1; width: Math.max(0, g.width - 2); height: Math.max(0, g.height - 2); radius: Math.max(0, g.r - 1) }
             PathRectangle { x: 2; y: 2; width: Math.max(0, g.width - 4); height: Math.max(0, g.height - 4); radius: Math.max(0, g.r - 2) }

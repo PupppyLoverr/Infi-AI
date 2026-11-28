@@ -19,7 +19,7 @@ Singleton {
     property bool hotCorners: true         // bottom-left: Mission Control; bottom-right: desktop widgets peek
     property bool widgets: false            // desktop widgets (clock, calendar, weather)
     property bool nightShift: false        // warm display (hyprsunset)
-    property bool dockMagnify: true        // macOS spring-damped Dock wave magnification
+    property bool dockMagnify: false       // macOS spring-damped Dock wave magnification
     property bool dockAutohide: false      // auto-hide Dock when pointer leaves
     property string wallpaperPath: ""      // empty = ~/.config/solyra/wallpaper.jpg (fallback .png)
 
@@ -37,6 +37,9 @@ Singleton {
     readonly property int radius: 16          // one window radius everywhere
     readonly property string font: "Geist"
     readonly property string mono: "Geist Mono"
+    readonly property int wBody: Font.Medium
+    readonly property int wTitle: Font.DemiBold
+    readonly property int wBold: Font.Bold
 
     // Apple's island springs (Droppy uses response 0.24–0.4, damping 0.8):
     // QML SpringAnimation equivalents, or instant under Reduce Motion.

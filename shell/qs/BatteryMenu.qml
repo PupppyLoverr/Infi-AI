@@ -48,9 +48,9 @@ StatusMenu {
         Row {
             width: parent.width
             Text { width: parent.width - pctText.width; text: "Battery"; color: "white"; font.family: Theme.font; font.pixelSize: 15; font.weight: Font.Bold }
-            Text { id: pctText; text: b.pct + "%"; color: Qt.rgba(1, 1, 1, 0.6); font.family: Theme.font; font.pixelSize: 15 }
+            Text { id: pctText; text: b.pct + "%"; color: Qt.rgba(1, 1, 1, 0.6); font.family: Theme.font; font.pixelSize: 15; font.weight: Theme.wBody;}
         }
-        Text { text: "Power Source: " + (b.onAdapter ? "Power Adapter" : "Battery"); color: Qt.rgba(1, 1, 1, 0.6); font.family: Theme.font; font.pixelSize: 13 }
+        Text { text: "Power Source: " + (b.onAdapter ? "Power Adapter" : "Battery"); color: Qt.rgba(1, 1, 1, 0.6); font.family: Theme.font; font.pixelSize: 13; font.weight: Theme.wBody;}
         Rectangle { width: parent.width; height: 1; color: Qt.rgba(1, 1, 1, 0.14) }
         Text { visible: b.profile !== ""; topPadding: 4; text: "Energy Mode"; color: Qt.rgba(1, 1, 1, 0.6); font.family: Theme.font; font.pixelSize: 13; font.weight: Font.DemiBold }
         Repeater {
@@ -65,7 +65,7 @@ StatusMenu {
                     color: b.profile === modelData[0] ? Theme.accent : Qt.rgba(1, 1, 1, 0.14)
                     Icon { anchors.centerIn: parent; name: modelData[2]; size: 15 }
                 }
-                Text { anchors.left: dot.right; anchors.leftMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: modelData[1]; color: "white"; font.family: Theme.font; font.pixelSize: 14 }
+                Text { anchors.left: dot.right; anchors.leftMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: modelData[1]; color: "white"; font.family: Theme.font; font.pixelSize: 14; font.weight: Theme.wBody;}
                 TapHandler { onTapped: b.setProfile(modelData[0]) }
             }
         }
@@ -73,12 +73,13 @@ StatusMenu {
         Text { topPadding: 2; text: b.hogs.length ? "Using Significant Energy" : "No Apps Using Significant Energy"; color: Qt.rgba(1, 1, 1, 0.6); font.family: Theme.font; font.pixelSize: 13; font.weight: Font.DemiBold }
         Repeater {
             model: b.hogs
-            Text { required property string modelData; leftPadding: 2; text: modelData; color: "white"; font.family: Theme.font; font.pixelSize: 14 }
+            Text { required property string modelData; leftPadding: 2; text: modelData; color: "white"; font.family: Theme.font; font.pixelSize: 14; font.weight: Theme.wBody;}
         }
         Rectangle { width: parent.width; height: 1; color: Qt.rgba(1, 1, 1, 0.14) }
         Text {
             text: "Battery Settings…"; color: "white"; font.family: Theme.font; font.pixelSize: 14
             TapHandler { onTapped: { b.open = false; Quickshell.execDetached(["solyra-settings"]) } }
+            font.weight: Theme.wBody
         }
     }
 }

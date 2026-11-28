@@ -299,8 +299,8 @@ Scope {
                         }
                         Item {
                             width: parent.width; height: 14
-                            Text { anchors.left: parent.left; text: root.fmt(root.player ? root.player.position : -1); color: Qt.rgba(1, 1, 1, 0.72); font.family: Theme.font; font.pixelSize: 11; font.features: { "tnum": 1 } }
-                            Text { anchors.right: parent.right; text: root.player && root.player.length > 0 ? "-" + root.fmt(Math.max(0, root.player.length - root.player.position)) : "--:--"; color: Qt.rgba(1, 1, 1, 0.72); font.family: Theme.font; font.pixelSize: 11; font.features: { "tnum": 1 } }
+                            Text { anchors.left: parent.left; text: root.fmt(root.player ? root.player.position : -1); color: Qt.rgba(1, 1, 1, 0.72); font.family: Theme.font; font.pixelSize: 11; font.features: { "tnum": 1 }; font.weight: Theme.wBody;}
+                            Text { anchors.right: parent.right; text: root.player && root.player.length > 0 ? "-" + root.fmt(Math.max(0, root.player.length - root.player.position)) : "--:--"; color: Qt.rgba(1, 1, 1, 0.72); font.family: Theme.font; font.pixelSize: 11; font.features: { "tnum": 1 }; font.weight: Theme.wBody;}
                         }
                     }
 
@@ -428,8 +428,8 @@ Scope {
                         }
                         Item {
                             width: parent.width; height: 14
-                            Text { anchors.left: parent.left; text: root.fmt(root.player ? root.player.position : -1); color: Qt.rgba(1, 1, 1, 0.62); font.family: Theme.font; font.pixelSize: 11; font.features: { "tnum": 1 } }
-                            Text { anchors.right: parent.right; text: root.player && root.player.length > 0 ? "-" + root.fmt(Math.max(0, root.player.length - root.player.position)) : "--:--"; color: Qt.rgba(1, 1, 1, 0.62); font.family: Theme.font; font.pixelSize: 11; font.features: { "tnum": 1 } }
+                            Text { anchors.left: parent.left; text: root.fmt(root.player ? root.player.position : -1); color: Qt.rgba(1, 1, 1, 0.62); font.family: Theme.font; font.pixelSize: 11; font.features: { "tnum": 1 }; font.weight: Theme.wBody;}
+                            Text { anchors.right: parent.right; text: root.player && root.player.length > 0 ? "-" + root.fmt(Math.max(0, root.player.length - root.player.position)) : "--:--"; color: Qt.rgba(1, 1, 1, 0.62); font.family: Theme.font; font.pixelSize: 11; font.features: { "tnum": 1 }; font.weight: Theme.wBody;}
                         }
                     }
 
@@ -574,7 +574,7 @@ Scope {
                                             anchors.verticalCenter: parent.verticalCenter
                                             width: parent.width - 56; spacing: 2
                                             Text { width: parent.width; elide: Text.ElideRight; text: modelData.title; color: "white"; font.family: Theme.font; font.pixelSize: 15; font.weight: Font.Bold }
-                                            Text { width: parent.width; elide: Text.ElideRight; text: modelData.artist; color: Qt.rgba(1, 1, 1, 0.62); font.family: Theme.font; font.pixelSize: 13 }
+                                            Text { width: parent.width; elide: Text.ElideRight; text: modelData.artist; color: Qt.rgba(1, 1, 1, 0.62); font.family: Theme.font; font.pixelSize: 13; font.weight: Theme.wBody;}
                                         }
                                     }
                                     Text {
@@ -582,6 +582,7 @@ Scope {
                                         anchors { right: parent.right; rightMargin: 14; verticalCenter: parent.verticalCenter }
                                         text: modelData.duration || "3:30"
                                         color: Qt.rgba(1, 1, 1, 0.56); font.family: Theme.font; font.pixelSize: 12; font.features: { "tnum": 1 }
+                                        font.weight: Theme.wBody
                                     }
                                     HoverHandler { id: qh }
                                     TapHandler { onTapped: if (root.shell) root.shell.playQueueItem(index) }
@@ -767,6 +768,7 @@ Scope {
                             visible: root.status !== ""
                             anchors.horizontalCenter: parent.horizontalCenter
                             text: root.status; color: "#ff8f8f"; font.family: Theme.font; font.pixelSize: 12
+                            font.weight: Theme.wBody
                         }
 
                         Row {
@@ -774,7 +776,7 @@ Scope {
                             spacing: 6
                             visible: UPower.displayDevice.isLaptopBattery
                             Icon { name: UPower.displayDevice.state === UPowerDeviceState.Charging ? "charging" : "battery"; size: 15; color: "white" }
-                            Text { text: Math.round(UPower.displayDevice.percentage * (UPower.displayDevice.percentage > 1 ? 1 : 100)) + "%"; color: "white"; font.family: Theme.font; font.pixelSize: 12 }
+                            Text { text: Math.round(UPower.displayDevice.percentage * (UPower.displayDevice.percentage > 1 ? 1 : 100)) + "%"; color: "white"; font.family: Theme.font; font.pixelSize: 12; font.weight: Theme.wBody;}
                         }
                     }
                 }

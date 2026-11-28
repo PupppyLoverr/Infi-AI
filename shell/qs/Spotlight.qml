@@ -159,7 +159,7 @@ Scope {
                     color: catHov.hovered || (sp.arrowed && search.sel === index) ? Qt.rgba(1, 1, 1, 0.12) : "transparent"
                     Icon { x: 18; anchors.verticalCenter: parent.verticalCenter; name: modelData[1]; size: 24 }
                     Text { x: 64; anchors.verticalCenter: parent.verticalCenter; text: modelData[0]; color: "white"; font.family: Theme.font; font.pixelSize: 18; font.weight: Font.DemiBold }
-                    Text { anchors.right: parent.right; anchors.rightMargin: 18; anchors.verticalCenter: parent.verticalCenter; text: "⌃" + (index + 1); color: Qt.rgba(1, 1, 1, 0.5); font.family: Theme.font; font.pixelSize: 15 }
+                    Text { anchors.right: parent.right; anchors.rightMargin: 18; anchors.verticalCenter: parent.verticalCenter; text: "⌃" + (index + 1); color: Qt.rgba(1, 1, 1, 0.5); font.family: Theme.font; font.pixelSize: 15; font.weight: Theme.wBody;}
                     HoverHandler { id: catHov; onHoveredChanged: if (hovered) search.sel = index }
                     TapHandler { onTapped: { search.filter = modelData[2]; search.sel = 0; field.forceActiveFocus() } }
                 }
@@ -182,9 +182,9 @@ Scope {
                         TapHandler { onTapped: search.provider = modelData[0] }
                     }
                 }
-                Text { anchors.verticalCenter: parent.verticalCenter; leftPadding: 8; text: search.asking ? "Thinking…" : (search.answer ? "" : "Press Return to ask"); color: Qt.rgba(1, 1, 1, 0.6); font.family: Theme.font; font.pixelSize: 12 }
+                Text { anchors.verticalCenter: parent.verticalCenter; leftPadding: 8; text: search.asking ? "Thinking…" : (search.answer ? "" : "Press Return to ask"); color: Qt.rgba(1, 1, 1, 0.6); font.family: Theme.font; font.pixelSize: 12; font.weight: Theme.wBody;}
             }
-            Text { id: answer; width: parent.width; wrapMode: Text.Wrap; text: search.answer; color: "white"; font.family: Theme.font; font.pixelSize: 14; textFormat: Text.MarkdownText }
+            Text { id: answer; width: parent.width; wrapMode: Text.Wrap; text: search.answer; color: "white"; font.family: Theme.font; font.pixelSize: 14; textFormat: Text.MarkdownText; font.weight: Theme.wBody;}
         }
 
         // Results.
@@ -235,7 +235,7 @@ Scope {
                             anchors.verticalCenter: parent.verticalCenter
                             width: parent.width - 70
                             Text { width: parent.width; elide: Text.ElideRight; text: modelData.title; color: "white"; font.family: Theme.font; font.pixelSize: modelData.group === "Top Hit" ? 16 : 14; font.weight: Font.DemiBold }
-                            Text { width: parent.width; elide: Text.ElideMiddle; text: modelData.sub; color: Qt.rgba(1, 1, 1, 0.55); font.family: Theme.font; font.pixelSize: 12 }
+                            Text { width: parent.width; elide: Text.ElideMiddle; text: modelData.sub; color: Qt.rgba(1, 1, 1, 0.55); font.family: Theme.font; font.pixelSize: 12; font.weight: Theme.wBody;}
                         }
                     }
                     HoverHandler { onHoveredChanged: if (hovered) search.sel = index }

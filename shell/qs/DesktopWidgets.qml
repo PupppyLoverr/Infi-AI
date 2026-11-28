@@ -122,7 +122,7 @@ PanelWindow {
                     x: 14; anchors.bottom: parent.bottom; anchors.bottomMargin: 12; width: parent.width - 28; spacing: 1
                     Text { width: parent.width; wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
                         text: w.weatherFailed ? "Unavailable offline" : w.cond; color: Theme.ink; font.family: Theme.font; font.pixelSize: 11; font.weight: Font.Medium }
-                    Text { visible: !w.weatherFailed; text: w.range; color: Theme.ink2; font.family: Theme.font; font.pixelSize: 11 }
+                    Text { visible: !w.weatherFailed; text: w.range; color: Theme.ink2; font.family: Theme.font; font.pixelSize: 11; font.weight: Theme.wBody;}
                 }
             }
         }

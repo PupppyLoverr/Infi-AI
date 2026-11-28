@@ -66,6 +66,7 @@ Item {
         color: Qt.rgba(1, 1, 1, 0.45)
         font.family: Theme.font
         font.pixelSize: 14
+        font.weight: Theme.wBody
     }
 
     Column {
@@ -134,6 +135,7 @@ Item {
                     color: Qt.rgba(1, 1, 1, 0.58)
                     font.family: Theme.font
                     font.pixelSize: 12
+                    font.weight: Theme.wBody
                 }
             }
             Equaliser {
@@ -154,6 +156,7 @@ Item {
                 font.family: Theme.font
                 font.pixelSize: 10
                 font.features: { "tnum": 1 }
+                font.weight: Theme.wBody
             }
             Item {
                 id: track
@@ -190,6 +193,7 @@ Item {
                 font.family: Theme.font
                 font.pixelSize: 10
                 font.features: { "tnum": 1 }
+                font.weight: Theme.wBody
             }
         }
 
@@ -257,6 +261,7 @@ Item {
                 color: Qt.rgba(1, 1, 1, 0.42)
                 font.family: Theme.font
                 font.pixelSize: 13
+                font.weight: Theme.wBody
             }
 
             Column {
@@ -292,6 +297,7 @@ Item {
                     text: m.lyricCur + 2 >= 0 && m.lyricCur + 2 < m.lyricLines.length ? m.lyricLines[m.lyricCur + 2].line : ""
                     color: Qt.rgba(1, 1, 1, 0.24)
                     font.family: Theme.font; font.pixelSize: 13
+                    font.weight: Theme.wBody
                 }
             }
 
@@ -351,7 +357,7 @@ Item {
                                 width: parent.width - 48
                                 spacing: 1
                                 Text { width: parent.width; elide: Text.ElideRight; text: modelData.title; color: "white"; font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Bold }
-                                Text { width: parent.width; elide: Text.ElideRight; text: modelData.artist; color: Qt.rgba(1, 1, 1, 0.52); font.family: Theme.font; font.pixelSize: 11 }
+                                Text { width: parent.width; elide: Text.ElideRight; text: modelData.artist; color: Qt.rgba(1, 1, 1, 0.52); font.family: Theme.font; font.pixelSize: 11; font.weight: Theme.wBody;}
                             }
                         }
                         Icon {

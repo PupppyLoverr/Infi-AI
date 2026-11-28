@@ -14,13 +14,13 @@ Item {
     property var items: []
     property var shell
     readonly property bool open: menu.visible
-    width: (icon ? 16 : txt.implicitWidth) + 16; height: 24
+    width: (icon ? 16 : txt.implicitWidth) + 16; height: 28
 
     // The open-item capsule.
     Rectangle {
         anchors.fill: parent
-        radius: height / 2
-        color: Qt.rgba(1, 1, 1, t.open ? 0.20 : (hov.hovered ? 0.08 : 0))
+        radius: 6
+        color: Qt.rgba(1, 1, 1, t.open ? 0.18 : (hov.hovered ? 0.12 : 0))
         Behavior on color { ColorAnimation { duration: Theme.ms(120) } }
     }
     Text {
@@ -28,7 +28,7 @@ Item {
         visible: !t.icon
         anchors.centerIn: parent
         text: t.label; color: "white"
-        font.family: Theme.font; font.pixelSize: 14; font.weight: t.bold ? Font.Bold : Font.Medium
+        font.family: Theme.font; font.pixelSize: 13; font.weight: t.bold ? Theme.wBold : Theme.wBody
         style: Text.Raised; styleColor: Qt.rgba(0, 0, 0, 0.18)
     }
     Icon { visible: !!t.icon; anchors.centerIn: parent; name: t.icon || "info"; size: 16 }
@@ -57,8 +57,8 @@ Item {
                             visible: modelData[0] !== "-"
                             anchors.fill: parent; radius: 8
                             color: hh.hovered ? Theme.accent : "transparent"
-                            Text { anchors.verticalCenter: parent.verticalCenter; x: 12; text: modelData[0]; color: "white"; font.family: Theme.font; font.pixelSize: 14 }
-                            Text { visible: !!modelData[2]; anchors.verticalCenter: parent.verticalCenter; anchors.right: parent.right; anchors.rightMargin: 12; text: modelData[2] || ""; color: hh.hovered ? "white" : Qt.rgba(1, 1, 1, 0.45); font.family: Theme.font; font.pixelSize: 13 }
+                            Text { anchors.verticalCenter: parent.verticalCenter; x: 12; text: modelData[0]; color: "white"; font.family: Theme.font; font.pixelSize: 14; font.weight: Theme.wBody;}
+                            Text { visible: !!modelData[2]; anchors.verticalCenter: parent.verticalCenter; anchors.right: parent.right; anchors.rightMargin: 12; text: modelData[2] || ""; color: hh.hovered ? "white" : Qt.rgba(1, 1, 1, 0.45); font.family: Theme.font; font.pixelSize: 13; font.weight: Theme.wBody;}
                             HoverHandler { id: hh }
                             TapHandler { onTapped: { menu.visible = false; t.shell.menuAction(modelData[1]) } }
                         }

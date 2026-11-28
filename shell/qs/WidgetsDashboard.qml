@@ -165,7 +165,7 @@ Item {
                                     anchors.verticalCenter: parent.verticalCenter
                                     spacing: 1
                                     Text { width: parent.width; elide: Text.ElideRight; text: wd.player ? (wd.player.trackTitle || "Now Playing") : "Nothing Playing"; color: "white"; font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Bold }
-                                    Text { width: parent.width; elide: Text.ElideRight; text: wd.player ? (wd.player.trackArtist || wd.player.identity) : "Open music"; color: Qt.rgba(1, 1, 1, 0.56); font.family: Theme.font; font.pixelSize: 11 }
+                                    Text { width: parent.width; elide: Text.ElideRight; text: wd.player ? (wd.player.trackArtist || wd.player.identity) : "Open music"; color: Qt.rgba(1, 1, 1, 0.56); font.family: Theme.font; font.pixelSize: 11; font.weight: Theme.wBody;}
                                 }
                             }
                             Rectangle {
@@ -211,7 +211,7 @@ Item {
                                         anchors { left: parent.left; leftMargin: 15; right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
                                         spacing: 1
                                         Text { width: parent.width; elide: Text.ElideRight; text: modelData.title; color: "white"; font.family: Theme.font; font.pixelSize: 11; font.weight: Font.DemiBold }
-                                        Text { width: parent.width; elide: Text.ElideRight; text: modelData.time; color: Qt.rgba(1, 1, 1, 0.60); font.family: Theme.font; font.pixelSize: 10 }
+                                        Text { width: parent.width; elide: Text.ElideRight; text: modelData.time; color: Qt.rgba(1, 1, 1, 0.60); font.family: Theme.font; font.pixelSize: 10; font.weight: Theme.wBody;}
                                     }
                                 }
                             }
@@ -242,7 +242,7 @@ Item {
                                 Column {
                                     anchors.right: parent.right; anchors.top: parent.top; spacing: 2
                                     Text { anchors.right: parent.right; text: wd.wCond; color: Qt.rgba(1, 1, 1, 0.90); font.family: Theme.font; font.pixelSize: 10; font.weight: Font.Medium }
-                                    Text { anchors.right: parent.right; text: wd.wRange; color: Qt.rgba(1, 1, 1, 0.78); font.family: Theme.font; font.pixelSize: 10 }
+                                    Text { anchors.right: parent.right; text: wd.wRange; color: Qt.rgba(1, 1, 1, 0.78); font.family: Theme.font; font.pixelSize: 10; font.weight: Theme.wBody;}
                                 }
                             }
                             Row {
@@ -306,6 +306,7 @@ Item {
                                 text: "Click to open"
                                 color: Qt.rgba(1, 1, 1, 0.48)
                                 font.family: Theme.font; font.pixelSize: 11
+                                font.weight: Theme.wBody
                             }
                         }
                         TapHandler { onTapped: if (!wd.customizing) wd.openWidget(slot.modelData) }

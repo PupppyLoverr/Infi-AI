@@ -29,7 +29,7 @@ StatusMenu {
                     color: parent.on ? (modelData[2] === "night" ? "#ff9f0a" : "#5e5ce6") : Qt.rgba(1, 1, 1, 0.14)
                     Icon { anchors.centerIn: parent; name: modelData[1]; size: 15 }
                 }
-                Text { anchors.left: dot.right; anchors.leftMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: modelData[0]; color: "white"; font.family: Theme.font; font.pixelSize: 14 }
+                Text { anchors.left: dot.right; anchors.leftMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: modelData[0]; color: "white"; font.family: Theme.font; font.pixelSize: 14; font.weight: Theme.wBody;}
                 TapHandler {
                     onTapped: {
                         const k = modelData[2]

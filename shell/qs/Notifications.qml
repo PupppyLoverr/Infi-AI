@@ -12,7 +12,7 @@ PanelWindow {
     id: n
     property var shell
     anchors { top: true; right: true }
-    margins { top: 36; right: 10 }
+    margins { top: 31; right: 10 }
     implicitWidth: 360
     implicitHeight: Math.max(1, stack.height)
     exclusiveZone: -1
@@ -80,10 +80,10 @@ PanelWindow {
                             Row { spacing: 8; width: parent.width
                                 Image { width: 16; height: 16; source: banner.note.appIcon ? Quickshell.iconPath(banner.note.appIcon, true) : ""; visible: source != "" }
                                 Text { text: banner.note.appName || "Notification"; color: Theme.ink2; font.family: Theme.font; font.pixelSize: 11; font.weight: Font.DemiBold }
-                                Text { text: "now"; color: Theme.ink3; font.family: Theme.font; font.pixelSize: 11 }
+                                Text { text: "now"; color: Theme.ink3; font.family: Theme.font; font.pixelSize: 11; font.weight: Theme.wBody;}
                             }
                             Text { width: parent.width; text: banner.note.summary; elide: Text.ElideRight; color: Theme.ink; font.family: Theme.font; font.pixelSize: 14; font.weight: Font.DemiBold }
-                            Text { width: parent.width; visible: text !== ""; text: banner.note.body; wrapMode: Text.Wrap; maximumLineCount: 4; elide: Text.ElideRight; color: Theme.ink; font.family: Theme.font; font.pixelSize: 13; textFormat: Text.PlainText }
+                            Text { width: parent.width; visible: text !== ""; text: banner.note.body; wrapMode: Text.Wrap; maximumLineCount: 4; elide: Text.ElideRight; color: Theme.ink; font.family: Theme.font; font.pixelSize: 13; textFormat: Text.PlainText; font.weight: Theme.wBody;}
                             Row { spacing: 6; visible: banner.note.actions.length > 0; topPadding: 4
                                 Repeater { model: banner.note.actions; Pill { required property var modelData; height: 26; text: modelData.text; onClicked: { modelData.invoke(); n.drop(banner.note) } } } }
                         }

@@ -21,8 +21,8 @@ PanelWindow {
     property var shell
     screen: screenModel
     anchors { top: true; left: true; right: true }
-    implicitHeight: 33
-    exclusiveZone: 33
+    implicitHeight: 28
+    exclusiveZone: 28
     color: "transparent"
     WlrLayershell.namespace: "solyra-bar"
 
@@ -117,53 +117,58 @@ PanelWindow {
             model: SystemTray.items
             Item {
                 required property SystemTrayItem modelData
-                width: 28; height: 24
-                IconImage { anchors.centerIn: parent; implicitSize: 16; source: modelData.icon }
-                TapHandler { onTapped: modelData.activate() }
+        width: 28; height: 28
+        Rectangle { anchors.fill: parent; radius: 6; color: Qt.rgba(1, 1, 1, trayHover.hovered ? 0.12 : 0) }
+        IconImage { anchors.centerIn: parent; implicitSize: 16; source: modelData.icon }
+        HoverHandler { id: trayHover }
+        TapHandler { onTapped: modelData.activate() }
                 TapHandler { acceptedButtons: Qt.RightButton; onTapped: if (modelData.hasMenu) modelData.display(bar, x, 32) }
             }
         }
 
-        // Battery: the symbol (fill level, bolt while charging) and its menu.
-        BatteryMenu { id: batteryMenu; visible: UPower.displayDevice.isLaptopBattery; shell: bar.shell }
+        FocusMenu { id: focusMenu; shell: bar.shell }
+        Rectangle {
+            visible: bar.shell && bar.shell.recording
+            width: visible ? 18 : 0; height: 28; radius: 6
+            color: privacyHover.hovered ? Qt.rgba(1, 1, 1, 0.12) : "transparent"
+            Rectangle {
+                anchors.centerIn: parent
+                width: 6; height: 6; radius: 3
+                color: "#ff453a"
+            }
+            HoverHandler { id: privacyHover }
+        }
         WifiMenu { id: wifiMenu; shell: bar.shell }
+        BatteryMenu { id: batteryMenu; visible: UPower.displayDevice.isLaptopBattery; shell: bar.shell }
         // Spotlight search button (Cupertino + macOS 27 Top Bar status area).
         Item {
-            width: 28; height: 22
-            Rectangle { anchors.fill: parent; radius: 11; color: Qt.rgba(1, 1, 1, searchHov.hovered ? 0.14 : 0) }
+            width: 28; height: 28
+            Rectangle { anchors.fill: parent; radius: 6; color: Qt.rgba(1, 1, 1, searchHov.hovered ? 0.12 : 0) }
             Icon { anchors.centerIn: parent; name: "search"; size: 15 }
             HoverHandler { id: searchHov }
             TapHandler { onTapped: bar.shell.spotlight("") }
         }
-        FocusMenu { id: focusMenu; shell: bar.shell }
         // Control Center.
         Item {
-            width: 28; height: 22
-            Rectangle { anchors.fill: parent; radius: 11; color: Qt.rgba(1, 1, 1, bar.shell && bar.shell.controlOpen ? 0.20 : (ccHov.hovered ? 0.14 : 0)) }
+            width: 28; height: 28
+            Rectangle { anchors.fill: parent; radius: 6; color: Qt.rgba(1, 1, 1, bar.shell && bar.shell.controlOpen ? 0.18 : (ccHov.hovered ? 0.12 : 0)) }
             Icon { anchors.centerIn: parent; name: "toggles"; size: 15 }
             HoverHandler { id: ccHov }
             TapHandler { onTapped: bar.shell.control() }
         }
-        // The date and time ("Fri 27 Nov 6:01 pm"); opens the Notification Center.
+        // The date and time opens the Notification Center.
         Item {
-            width: clockText.implicitWidth + 16; height: 22
-            Rectangle { anchors.fill: parent; radius: 11; color: Qt.rgba(1, 1, 1, bar.shell && bar.shell.centerOpen ? 0.20 : (clockHov.hovered ? 0.14 : 0)) }
+            width: clockText.implicitWidth + 16; height: 28
+            Rectangle { anchors.fill: parent; radius: 6; color: Qt.rgba(1, 1, 1, bar.shell && bar.shell.centerOpen ? 0.18 : (clockHov.hovered ? 0.12 : 0)) }
             Text {
                 id: clockText
                 anchors.centerIn: parent
-                color: "white"; font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Medium
-                text: Qt.formatDateTime(clock.date, "ddd d MMM  h:mm ap")
+                color: "white"; font.family: Theme.font; font.pixelSize: 13; font.weight: Theme.wTitle
+                text: Qt.formatDateTime(clock.date, "ddd d MMM h:mm AP")
                 SystemClock { id: clock; precision: SystemClock.Minutes }
             }
             HoverHandler { id: clockHov }
             TapHandler { onTapped: bar.shell.notificationCenter() }
-        }
-        // Cupertino PRIVACY_DOT_PT (9px) screen-capture indicator dot.
-        Rectangle {
-            visible: bar.shell && bar.shell.recording
-            anchors.verticalCenter: parent.verticalCenter
-            width: 9; height: 9; radius: 4.5
-            color: "#ff9f0a"
         }
     }
 }

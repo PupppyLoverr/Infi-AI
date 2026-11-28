@@ -83,6 +83,7 @@ q menu wifi; shot 18-wifi-menu 2.0
 q menu wifi; q menu focus; shot 18b-focus-menu 1.2
 q menu focus; sleep 0.4
 q control; shot 09-control-center 1.4
+q ccDetail wifi; shot 21b-cc-wifi-detail 1.2; q ccDetail ""; q ccEdit true; shot 21c-cc-edit 1.2; q ccEdit false
 q control; sleep 0.5
 notify-send -a "Solyra" "Welcome to Solyra" "Notifications arrive in the corner and respect Focus."; shot 10-notification 1.0
 notify-send -a "Clock" "Timer" "Your 5-minute timer is done."; sleep 0.5

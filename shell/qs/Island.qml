@@ -268,7 +268,7 @@ PanelWindow {
         : mode === "expanded" && tab === "usage" ? { w: 396, h: 184, r: 26 }
         : mode === "expanded" && tab === "tools" ? { w: 540, h: 256, r: 28 }
         : mode === "expanded" ? { w: 480, h: 196, r: 28 }
-        : { w: hoverIdle.hovered ? 134 : 126, h: 25, r: 12.5 }
+        : { w: hoverIdle.hovered ? 100 : 88, h: hoverIdle.hovered ? 22 : 20, r: hoverIdle.hovered ? 11 : 10 }
 
     // Concave outer hardware ears when flush to the top bezel (exact match to 07, 16, 30, 31!)
     Shape {
@@ -588,12 +588,13 @@ PanelWindow {
                         Row {
                             spacing: 6
                             Text { text: win.shell && win.shell.replyBanner ? win.shell.replyBanner.sender : "Message"; color: "white"; font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Bold }
-                            Text { text: win.shell && win.shell.replyBanner ? ("· " + win.shell.replyBanner.app) : ""; color: Qt.rgba(1, 1, 1, 0.45); font.family: Theme.font; font.pixelSize: 11 }
+                            Text { text: win.shell && win.shell.replyBanner ? ("· " + win.shell.replyBanner.app) : ""; color: Qt.rgba(1, 1, 1, 0.45); font.family: Theme.font; font.pixelSize: 11; font.weight: Theme.wBody;}
                         }
                         Text {
                             width: parent.width; elide: Text.ElideRight
                             text: win.shell && win.shell.replyBanner ? win.shell.replyBanner.message : ""
                             color: Qt.rgba(1, 1, 1, 0.78); font.family: Theme.font; font.pixelSize: 12
+                            font.weight: Theme.wBody
                         }
                     }
                 }
@@ -699,7 +700,7 @@ PanelWindow {
                 onLoaded: item.active = Qt.binding(() => win.tab === "face" && win.mode === "expanded")
                 onStatusChanged: if (status === Loader.Error) faceError.visible = true
             }
-            Text { id: faceError; visible: false; anchors.centerIn: parent; text: "Notchface needs QtMultimedia"; color: Qt.rgba(1, 1, 1, 0.5); font.family: Theme.font; font.pixelSize: 13 }
+            Text { id: faceError; visible: false; anchors.centerIn: parent; text: "Notchface needs QtMultimedia"; color: Qt.rgba(1, 1, 1, 0.5); font.family: Theme.font; font.pixelSize: 13; font.weight: Theme.wBody;}
 
             // Tools + Termi-Notch + Droppy Quick Note
             Item {
@@ -725,7 +726,7 @@ PanelWindow {
                         width: parent.width; height: 34; radius: 10; color: Qt.rgba(1, 1, 1, 0.08)
                         Row {
                             anchors.fill: parent; anchors.leftMargin: 12; spacing: 8
-                            Text { anchors.verticalCenter: parent.verticalCenter; text: "›"; color: "#7ee787"; font.family: Theme.mono; font.pixelSize: 15 }
+                            Text { anchors.verticalCenter: parent.verticalCenter; text: "›"; color: "#7ee787"; font.family: Theme.mono; font.pixelSize: 15; font.weight: Theme.wBody;}
                             TextField {
                                 id: termField
                                 anchors.verticalCenter: parent.verticalCenter
@@ -765,6 +766,7 @@ PanelWindow {
                         width: parent.width; height: 28
                         color: Qt.rgba(1, 1, 1, 0.75); font.family: Theme.mono; font.pixelSize: 11
                         elide: Text.ElideRight; wrapMode: Text.WrapAnywhere; maximumLineCount: 2
+                        font.weight: Theme.wBody
                     }
                     Process {
                         id: termProc

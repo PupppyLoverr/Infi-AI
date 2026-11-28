@@ -6,7 +6,7 @@ Rectangle {
     signal moved(real v)
     height: 64; radius: 20; color: Theme.fill
     Text { x: 12; y: 8; text: s.label; color: Theme.ink; font.family: Theme.font; font.pixelSize: 12; font.weight: Font.DemiBold }
-    Text { visible: s.value < 0; x: 12; y: 34; text: "Not available on this device"; color: Theme.ink2; font.family: Theme.font; font.pixelSize: 12 }
+    Text { visible: s.value < 0; x: 12; y: 34; text: "Not available on this device"; color: Theme.ink2; font.family: Theme.font; font.pixelSize: 12; font.weight: Theme.wBody;}
     Rectangle {
         id: track
         visible: s.value >= 0

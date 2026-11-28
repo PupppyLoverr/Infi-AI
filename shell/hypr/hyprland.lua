@@ -53,7 +53,7 @@ hl.config({
             size = 14,
             passes = 4,
             noise = 0.01,
-            vibrancy = 0.44,          -- vivid refracted colour behind glass (Cupertino + macOS 27 Golden Gate)
+            vibrancy = 0.22,          -- restrained colour through the frosted glass
             vibrancy_darkness = 0.14,
             popups = true,
             popups_ignorealpha = 0.16, -- menus and tooltips: blur the card, not its corners
@@ -62,10 +62,10 @@ hl.config({
             -- MODULE_REFRACTION=-80 optical lensing and clarity.
             variant = 8,
             acrylic = {
-                refraction = 38,     -- strong inward edge lensing matching Cupertino module glass
-                bulb = 26,           -- width of the curved optical rim, px
-                clarity = 0.62,      -- crystal-clear backdrop with soft Gaussian diffusion
-                aberration = 0.024,  -- subtle prismatic colour fringe along the curved edge
+                refraction = 14,     -- subtle inward edge lensing
+                bulb = 12,           -- width of the curved optical rim, px
+                clarity = 0.80,      -- retain wallpaper detail through the blur
+                aberration = 0.0,    -- no visible chromatic fringe
                 tint = 0x08F4F8FF,
             },
         },
@@ -107,7 +107,7 @@ hl.animation({ leaf = "specialWorkspace", enabled = true, speed = 4, spring = "s
 -- gets rounded blur and its shadow never turns into a blurred box.
 hl.layer_rule({
     name = "solyra-glass",
-    match = { namespace = "^solyra-(bar|dock|glass|notifications|notifcenter|snap|overview|island|widgets|basket)$" },
+    match = { namespace = "^solyra-(bar|dock|glass|controlcenter|notifications|notifcenter|snap|overview|island|widgets|basket)$" },
     blur = true,
     ignore_alpha = 0.16,
 })
@@ -196,7 +196,7 @@ hl.bind("XF86AudioPrev", hl.dsp.exec_cmd("playerctl previous"), { locked = true 
 -- that half; a corner: that quarter; the top edge: fill the screen. The
 -- zones leave the menu bar, the dock and the usual gaps clear, as the snap
 -- layouts (Super+Z) do. A window that did not move (a click) never snaps.
-local SNAP_EDGE, BAR, DOCK, GAP = 6, 30, 76, 8
+local SNAP_EDGE, BAR, DOCK, GAP = 6, 28, 66, 8
 local function xy(v)
     if type(v) == "table" then return v.x or v[1] or 0, v.y or v[2] or 0 end
     return 0, 0

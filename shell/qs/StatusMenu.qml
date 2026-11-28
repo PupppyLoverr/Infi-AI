@@ -14,12 +14,12 @@ Item {
     property Component symbol: null        // optional custom bar symbol (battery)
     default property alias content: holder.data
     signal opened()
-    width: 30; height: 24
+    width: 30; height: 28
 
     Rectangle {
         anchors.fill: parent
-        radius: height / 2
-        color: Qt.rgba(1, 1, 1, s.open ? 0.20 : (hov.hovered ? 0.08 : 0))
+        radius: 6
+        color: Qt.rgba(1, 1, 1, s.open ? 0.18 : (hov.hovered ? 0.12 : 0))
         Behavior on color { ColorAnimation { duration: Theme.ms(120) } }
     }
     Icon { visible: !s.symbol; anchors.centerIn: parent; name: s.icon || "info"; size: s.iconSize }
