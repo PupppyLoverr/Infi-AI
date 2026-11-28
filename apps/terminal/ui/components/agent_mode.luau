@@ -93,19 +93,20 @@ function M.View(): Node
 		grow = 1,
 		shrink = 1,
 		min_w = 0,
-		h_full = true,
+		min_h = 0,
 		bg = "#141414",
 		items = "stretch",
 		-- Titlebar: traffic lights + sidebar toggle space | bold title + workspace | >_ toggle
 		ui.row {
-			h = "$terminal.bar",
+			h = 46,
+			pt = 6,
 			shrink = 0,
 			items = "center",
 			gap = 8,
 			pr = 14,
 			controls.drag_space {
 				w = function()
-					return if state.sidebar:get() then 12 else sidebar.toggle_left() + sidebar.TOGGLE_SIZE + 8
+					return if state.sidebar:get() then 14 else sidebar.toggle_left() + sidebar.TOGGLE_SIZE + 10
 				end,
 				shrink = 0,
 			},
@@ -213,6 +214,7 @@ function M.View(): Node
 					text_size = 13.5,
 					color = "#fffffff2",
 					bg = theme.clear,
+					border = 0,
 					focus = { border = 0 },
 					on_key = function(e)
 						if e.key == "Enter" and not e.shift then

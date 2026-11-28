@@ -151,11 +151,6 @@ hl.window_rule({
     match = { class = "^(solyra-term|solyra-files|solyra-settings)$" },
     opacity = "0.999 override",
 })
-hl.window_rule({
-    name = "solyra-files-blur",
-    match = { class = "^solyra-files$" },
-    blur = true,
-})
 
 local mod = "SUPER"
 hl.bind(mod .. " + SPACE", hl.dsp.global("solyra:spotlight"))

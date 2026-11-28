@@ -504,13 +504,17 @@ Scope {
         implicitHeight: cc.editing ? 572 : 500
         exclusionMode: ExclusionMode.Ignore
         color: "transparent"
-        opacity: cc.open ? 1 : 0
-        Behavior on opacity {
-            NumberAnimation { duration: Theme.reduceMotion ? 0 : (cc.open ? 250 : 180) }
-        }
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.namespace: "solyra-controlcenter"
         WlrLayershell.keyboardFocus: cc.open ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+
+        Item {
+            id: panelBody
+            anchors.fill: parent
+            opacity: cc.open ? 1 : 0
+            Behavior on opacity {
+                NumberAnimation { duration: Theme.reduceMotion ? 0 : (cc.open ? 250 : 180) }
+            }
 
         TileFrame {
             controlId: "wifi"; x: 8; y: 8
@@ -894,6 +898,7 @@ Scope {
                 font.family: Theme.font; font.pixelSize: 11; font.weight: Theme.wTitle
             }
             TapHandler { onTapped: cc.finishEdit() }
+        }
         }
     }
 }
