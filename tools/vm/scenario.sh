@@ -124,7 +124,9 @@ for pair in \
   "19b-glass-liquid-4k:/usr/share/backgrounds/solyra/liquid-abstract-4k.jpg" \
   "19c-glass-golden-4k:/usr/share/backgrounds/solyra/golden-valley-4k.jpg" \
   "19d-glass-light-arch-4k:/usr/share/backgrounds/solyra/light-arch-4k.jpg" \
-  "19e-glass-galaxy:/usr/share/backgrounds/solyra/galaxy-1920x1080.png"; do
+  "19e-glass-galaxy:/usr/share/backgrounds/solyra/galaxy-1920x1080.png" \
+  "19f-glass-cupertino-orb:/usr/share/backgrounds/solyra/cupertino-orb-4k.jpg" \
+  "19g-glass-cupertino-lake:/usr/share/backgrounds/solyra/cupertino-lake-4k.jpg"; do
   name="${pair%%:*}"; wp="${pair#*:}"
   if [ -f "$wp" ]; then
     q wallpaper "$wp"; sleep 1.4
