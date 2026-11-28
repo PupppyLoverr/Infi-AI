@@ -1,0 +1,169 @@
+//! Offscreen rendering of an output to an image (`--screenshot PATH`, headless mode, tests).
+
+use std::path::Path;
+use std::time::Duration;
+
+use anyhow::{anyhow, Context, Result};
+use image::RgbaImage;
+use smithay::backend::allocator::Fourcc;
+use smithay::backend::egl::fence::EGLFence;
+use smithay::backend::renderer::damage::OutputDamageTracker;
+use smithay::backend::renderer::element::RenderElement;
+use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
+use smithay::backend::renderer::{Bind, Color32F, ExportMem, Offscreen};
+use smithay::utils::{Buffer, Physical, Rectangle, Size, Transform};
+
+use super::CupertinoElement;
+
+/// How long an offscreen screenshot or window-capture readback waits for the GPU before aborting, so the compositor
+/// loop never blocks indefinitely on a stalled GPU.
+pub const READBACK_WAIT: Duration = Duration::from_millis(200);
+
+/// Wait at most `wait` for GPU work already queued on `renderer` to complete before a CPU pixel readback.
+/// Returns `Ok(())` once signalled (or if the EGL display does not support fences), and an error if `wait` expires.
+pub fn wait_for_readback(renderer: &mut GlesRenderer, wait: Duration) -> Result<()> {
+    renderer
+        .with_context(|_| ())
+        .map_err(|e| anyhow!("activate renderer context for readback fence: {e}"))?;
+    let fence = match EGLFence::create(renderer.egl_context().display()) {
+        Ok(fence) => fence,
+        Err(_) => return Ok(()),
+    };
+    renderer
+        .with_context(|gl| unsafe { gl.Flush() })
+        .map_err(|e| anyhow!("flush renderer for readback fence: {e}"))?;
+    if fence
+        .client_wait(Some(wait), true)
+        .map_err(|e| anyhow!("waiting for readback fence: {e}"))?
+    {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "offscreen GPU readback did not finish within {} ms",
+            wait.as_millis()
+        ))
+    }
+}
+
+/// Render `elements` (front to back) into a texture of `size` and read it back as RGBA.
+///
+/// A fresh damage tracker is used, so the whole output is painted regardless of earlier frames.
+pub fn render_to_image<E: RenderElement<GlesRenderer>>(
+    renderer: &mut GlesRenderer,
+    elements: &[E],
+    size: Size<i32, Physical>,
+    scale: f64,
+    clear: Color32F,
+) -> Result<RgbaImage> {
+    render_to_image_transformed(renderer, elements, size, scale, Transform::Normal, clear)
+}
+
+/// [`render_to_image`] for an output of mode `size` that is rotated or flipped by `transform`: the elements are in
+/// the logical space of the output as it is shown, and the image is the framebuffer of the mode.
+pub fn render_to_image_transformed<E: RenderElement<GlesRenderer>>(
+    renderer: &mut GlesRenderer,
+    elements: &[E],
+    size: Size<i32, Physical>,
+    scale: f64,
+    transform: Transform,
+    clear: Color32F,
+) -> Result<RgbaImage> {
+    let buf_size: Size<i32, Buffer> = (size.w, size.h).into();
+    let mut texture: GlesTexture = renderer
+        .create_buffer(Fourcc::Abgr8888, buf_size)
+        .map_err(|e| anyhow!("create offscreen buffer: {e}"))?;
+    let mut tracker = OutputDamageTracker::new(size, scale, transform);
+    let mapping = {
+        let mut target = renderer
+            .bind(&mut texture)
+            .map_err(|e| anyhow!("bind offscreen buffer: {e}"))?;
+        tracker
+            .render_output(renderer, &mut target, 0, elements, clear)
+            .map_err(|e| anyhow!("render offscreen: {e:?}"))?;
+        drop(target);
+        wait_for_readback(renderer, READBACK_WAIT)?;
+        let target = renderer
+            .bind(&mut texture)
+            .map_err(|e| anyhow!("rebind offscreen buffer for readback: {e}"))?;
+        renderer
+            .copy_framebuffer(&target, Rectangle::from_size(buf_size), Fourcc::Abgr8888)
+            .map_err(|e| anyhow!("read back framebuffer: {e}"))?
+    };
+    let bytes = renderer
+        .map_texture(&mapping)
+        .map_err(|e| anyhow!("map framebuffer: {e}"))?;
+    RgbaImage::from_raw(size.w as u32, size.h as u32, bytes.to_vec())
+        .ok_or_else(|| anyhow!("unexpected pixel buffer size"))
+}
+
+/// What an output of mode `size` turned by `transform` shows, upright: the framebuffer drawn as for the screen,
+/// then turned back. Some elements draw with the output's transform, so the frame is not drawn upright directly.
+pub fn render_shown_image<E: RenderElement<GlesRenderer>>(
+    renderer: &mut GlesRenderer,
+    elements: &[E],
+    size: Size<i32, Physical>,
+    scale: f64,
+    transform: Transform,
+    clear: Color32F,
+) -> Result<RgbaImage> {
+    let framebuffer =
+        render_to_image_transformed(renderer, elements, size, scale, transform, clear)?;
+    Ok(upright(framebuffer, transform))
+}
+
+/// The framebuffer of an output turned by `transform`, turned back the way the output shows it.
+fn upright(framebuffer: RgbaImage, transform: Transform) -> RgbaImage {
+    use image::imageops::{flip_horizontal, rotate180, rotate270, rotate90};
+    match transform {
+        Transform::Normal => framebuffer,
+        Transform::_90 => rotate90(&framebuffer),
+        Transform::_180 => rotate180(&framebuffer),
+        Transform::_270 => rotate270(&framebuffer),
+        Transform::Flipped => flip_horizontal(&framebuffer),
+        Transform::Flipped90 => flip_horizontal(&rotate90(&framebuffer)),
+        Transform::Flipped180 => flip_horizontal(&rotate180(&framebuffer)),
+        Transform::Flipped270 => flip_horizontal(&rotate270(&framebuffer)),
+    }
+}
+
+pub fn save_png(image: &RgbaImage, path: &Path) -> Result<()> {
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    }
+    image
+        .save(path)
+        .with_context(|| format!("writing {}", path.display()))
+}
+
+/// Scene elements helper alias for callers that only render scenes.
+pub fn render_scene_to_png(
+    renderer: &mut GlesRenderer,
+    elements: &[CupertinoElement],
+    size: Size<i32, Physical>,
+    scale: f64,
+    path: &Path,
+) -> Result<RgbaImage> {
+    let img = render_to_image(
+        renderer,
+        elements,
+        size,
+        scale,
+        Color32F::new(0.0, 0.0, 0.0, 1.0),
+    )?;
+    save_png(&img, path)?;
+    Ok(img)
+}
+
+/// Fraction of pixels that differ noticeably from the first pixel (cheap "is anything drawn" test).
+pub fn nonuniform_fraction(img: &RgbaImage) -> f64 {
+    let first = *img.get_pixel(0, 0);
+    let diff = img
+        .pixels()
+        .filter(|p| {
+            p.0.iter()
+                .zip(first.0.iter())
+                .any(|(a, b)| (*a as i32 - *b as i32).abs() > 6)
+        })
+        .count();
+    diff as f64 / (img.width() as f64 * img.height() as f64)
+}

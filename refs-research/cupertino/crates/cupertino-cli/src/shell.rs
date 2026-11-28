@@ -1,0 +1,734 @@
+//! `cupertino shell …`: the components of the shell host (the dock, the menu bar, the launcher…) and the processes the
+//! running desktop's server supervises (the hosts, the portal, the prompts…), listed and restarted one at a time through
+//! the server's `org.cupertino.Session1` interface on the session bus, and a component of a development build of the
+//! shell host made to panic on its own bus connection.
+
+use crate::diagnostics::dev_builds::older_than_installed;
+use crate::{Arg, Args, Command, Context, Failure, FailureKind, Group, Reply, Run, Stability};
+use serde::Serialize;
+use std::fmt::Write as _;
+use std::path::Path;
+use std::time::Duration;
+
+pub(crate) const GROUP: Group = Group {
+    name: "shell",
+    summary: "The components of the running desktop's shell host and its supervised processes: list them and restart one",
+    description: "Commands for the shell of the current session: its components (the menu bar, the dock, the desktop, \
+                  the window manager, the overview, the launcher, the notifications, the control panel, the on-screen \
+                  displays, the session agent and the dialogs), which run in the shell host `cupertino-shell`, and the \
+                  processes the desktop's server starts and keeps running: the host, the host a component runs in \
+                  alone, and the built-in portal, prompts, desktop control and login. \
+                  They talk to the server of the current session over the session bus, which allows them to the \
+                  session's own user alone, outside any Flatpak or Snap.\n\n\
+                  When the system configuration declares a development folder (see `cupertino dev-folder enable`), a \
+                  component it names runs in a host of its own that the server starts from the folder's \
+                  `cupertino-shell` at every start, when that file is a regular file of the user or root that no one \
+                  else can write. These commands say which component runs in which host and where the folder's file \
+                  goes.",
+    commands: &[COMMANDS],
+};
+
+const NAME: Arg = Arg::positional(
+    "name",
+    "the name of the component or of the process, as `cupertino shell list` shows it",
+);
+
+/// Where `shell crash` makes the component panic.
+const CRASH_POINTS: &[&str] = &["dispatch", "paint", "helper"];
+
+const AT: Arg = Arg::option(
+    "at",
+    "where the component panics: as its loop dispatches (dispatch, the default), as it next paints (paint), or on a \
+     helper thread (helper)",
+)
+.values(CRASH_POINTS);
+
+const COMMANDS: &[Command] = &[
+    Command {
+        path: &["shell", "list"],
+        summary: "Lists the shell host's components and the processes the server supervises, with their state, \
+                  program and whether it is the development folder's",
+        description: "Asks the server of the current session for every process it supervises, in the order they \
+                      start (the shell host `host`, the host `host-NAME` a component runs in alone, and the other \
+                      processes), and for every component of the shell host: where it runs (host, the shared host; \
+                      host-NAME, a host of its own, from the development folder or installed; none, nothing runs \
+                      it, as the shell host is not installed or cannot start; or off, the session does not run \
+                      it), whether a host holds its connection to the server, and the bus \
+                      connection the server accepted for it on the session bus with the process that holds it. Each \
+                      process has its name, its state (running, stopping, waiting to start again, or stopped \
+                      after it ended successfully), and while it runs its pid, its start time (also as clock ticks \
+                      after boot, field 22 of /proc/PID/stat, which tells a process from a later one with the same \
+                      pid), the program that runs and whether that is the development folder's. installed is the \
+                      installed program, and dev_program the file of the development folder the process \
+                      starts when it is there (null when the folder does not apply to it).\n\n\
+                      dev_program_older_than_installed is true when that file is there and was last modified before \
+                      the installed program (a package's files keep their build time): the folder holds a build \
+                      older than the installed package. The server no longer starts such a file: from the next start \
+                      of the process the installed program runs. SOURCE says `development folder (older than \
+                      installed)` while a process started before the package was installed still runs it, or \
+                      `(older build in development folder)` after another source; `cupertino shell use-installed NAME` \
+                      removes the file and restarts the process on the installed program. It is \
+                      false when either file is missing, its times cannot be read or are equal, or the installed \
+                      program is not an absolute path.\n\n\
+                      Without a session bus the command fails with exit code 3 (no_session_bus), without a desktop \
+                      server on it also with 3 (no_server), and with a server that has no such interface with exit code \
+                      8 (not_supported). A caller the server refuses fails with exit code 4 (refused).",
+        examples: &[
+            ("cupertino shell list", "Show the components and the shell processes of this session."),
+            (
+                "cupertino --format json shell list",
+                "Report them as one JSON envelope, for a script.",
+            ),
+        ],
+        stability: Stability::Preview,
+        args: &[],
+        run: Run::Once(list),
+    },
+    Command {
+        path: &["shell", "restart"],
+        summary: "Restarts one component, or ends one supervised process and starts it again at once, the development \
+                  folder looked at again",
+        description: "Asks the server to restart <name>. A component is restarted where it runs: its host stops it and \
+                      starts it again, or, for a component the development folder names or the configuration runs \
+                      alone, the server starts its host again from the folder's `cupertino-shell` when one is there \
+                      and passes the checks, else from the installed one. The host and the other components go on. \
+                      Any other process is sent SIGTERM, then SIGKILL when it has not ended 5 seconds later, and \
+                      started again at once, whatever its exit status. The command returns once the component says it \
+                      is ready, or the new process runs, with the pid, start time and program of its host or of the \
+                      process, and whether that is the development folder's.\n\n\
+                      The component or process loses what it held only in memory. An unknown name fails with exit \
+                      code 2 (unknown_process); a process that ended and could not start again fails with exit code 6 \
+                      (not_started), and the server tries again after its restart throttle. The other failures are \
+                      those of `shell list`.",
+        examples: &[
+            (
+                "cupertino shell restart dock",
+                "Restart the dock component, from the development folder's host when it holds a build.",
+            ),
+            (
+                "cupertino --format json shell restart menubar",
+                "Restart the menu bar component and report its host as JSON.",
+            ),
+        ],
+        stability: Stability::Preview,
+        args: &[NAME],
+        run: Run::Once(restart),
+    },
+    Command {
+        path: &["shell", "use-installed"],
+        summary: "Removes the development folder's file for a component or process, then restarts it on its installed \
+                  program",
+        description: "Takes the development build of <name> out of use: removes the file the component's host (or the \
+                      process) would start from the development folder (as `shell list` shows it in dev_program), \
+                      when it is there, then restarts <name> as `shell restart` does, so it runs in the installed host \
+                      or program again. Nothing else in the folder changes: the folder holds one `cupertino-shell` \
+                      for every component it names, so each of them starts the installed host at its next start.\n\n\
+                      A component or process the development folder does not apply to fails with exit code 5 \
+                      (no_dev_program) without a restart; a file that cannot be removed fails with exit code 4 (cannot_remove). The \
+                      other failures are those of `shell restart`.",
+        examples: &[(
+            "cupertino shell use-installed dock",
+            "Go back to the installed host for the dock component.",
+        )],
+        stability: Stability::Preview,
+        args: &[NAME],
+        run: Run::Once(use_installed),
+    },
+    Command {
+        path: &["shell", "crash"],
+        summary: "Makes a component of a development build of the shell host panic, to try how the host contains it",
+        description: "Finds the component <name>'s own session bus connection (the unique name the server's \
+                      ComponentOf of org.cupertino.Session1 answers with that component) and calls \
+                      org.cupertino.ShellComponentDebug1.Crash on it, which only a development (debug) build of \
+                      cupertino-shell serves. The component then panics where --at says: as its loop next \
+                      dispatches the shell's events (dispatch, the default), as it next paints a window (paint), or \
+                      on a helper thread it starts at once (helper). Its host tears it down and the server starts it \
+                      again after its restart time, as for any failure; five failures within a minute stop it until \
+                      `cupertino shell restart <name>`.\n\n\
+                      A component that runs nowhere, or has no accepted bus connection, fails with exit code 2 \
+                      (unknown_component); one that runs in a release build of the shell host with exit code 8 \
+                      (not_development_build). The other failures are those of `shell list`.",
+        examples: &[
+            (
+                "cupertino shell crash osd",
+                "Make the on-screen displays panic as their loop next dispatches.",
+            ),
+            (
+                "cupertino shell crash osd --at paint",
+                "Make them panic as they next draw.",
+            ),
+        ],
+        stability: Stability::Preview,
+        args: &[NAME, AT],
+        run: Run::Once(crash),
+    },
+];
+
+/// The server's bus name, object and interface.
+const SERVER: &str = "org.cupertino.Session1";
+const SERVER_PATH: &str = "/org/cupertino/Session1";
+
+/// How long one call to the server may take: a restart waits for the process to end, at most its stop grace of 5
+/// seconds, and then for it to start.
+const CALL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// A supervised process as the server sends it: name, state, pid, start ticks, start time in seconds since 1970,
+/// program, from the development folder, installed program, development folder's file; 0 and empty for what is unknown.
+type Record = (String, String, u32, u64, u64, String, bool, String, String);
+
+/// A supervised process as the command reports it.
+#[derive(Serialize)]
+struct Process {
+    name: String,
+    state: String,
+    pid: Option<u32>,
+    /// Seconds since 1970.
+    started: Option<u64>,
+    /// Clock ticks after boot, field 22 of `/proc/PID/stat`.
+    start_ticks: Option<u64>,
+    program: Option<String>,
+    from_dev_folder: bool,
+    installed: String,
+    dev_program: Option<String>,
+    /// The development folder's file is there and was last modified before the installed program: it starts instead
+    /// of a newer installed program ([`older_than_installed`]).
+    dev_program_older_than_installed: bool,
+}
+
+impl From<Record> for Process {
+    fn from(r: Record) -> Self {
+        let text = |s: String| Some(s).filter(|s| !s.is_empty());
+        Self {
+            name: r.0,
+            state: r.1,
+            pid: Some(r.2).filter(|p| *p != 0),
+            start_ticks: Some(r.3).filter(|t| *t != 0),
+            started: Some(r.4).filter(|t| *t != 0),
+            program: text(r.5),
+            from_dev_folder: r.6,
+            installed: r.7,
+            dev_program: text(r.8),
+            dev_program_older_than_installed: false,
+        }
+    }
+}
+
+impl Process {
+    /// Compares the development folder's file with the installed program, as this process sees both files.
+    fn compared(mut self) -> Self {
+        self.dev_program_older_than_installed = self
+            .dev_program
+            .as_deref()
+            .is_some_and(|dev| older_than_installed(Path::new(dev), Path::new(&self.installed)));
+        self
+    }
+
+    /// `development folder` or `installed` while it runs, else `-`; with a note when the development folder's file is
+    /// older than the installed program.
+    fn source(&self) -> String {
+        let source = match (&self.program, self.from_dev_folder) {
+            (None, _) => "-",
+            (Some(_), true) => "development folder",
+            (Some(_), false) => "installed",
+        };
+        match (self.dev_program_older_than_installed, source) {
+            (false, _) => source.to_owned(),
+            (true, "development folder") => format!("{source} (older than installed)"),
+            (true, _) => format!("{source} (older build in development folder)"),
+        }
+    }
+
+    /// `pid 1234, started 2026-11-11 10:00:00 UTC, /usr/bin/cupertino-shell (installed)`
+    fn running(&self) -> String {
+        let mut line = String::new();
+        if let Some(pid) = self.pid {
+            let _ = write!(line, "pid {pid}");
+        }
+        if let Some(started) = self.started {
+            let _ = write!(line, ", started {}", utc(started));
+        }
+        if let Some(program) = &self.program {
+            let _ = write!(line, ", {program} ({})", self.source());
+        }
+        line
+    }
+}
+
+/// `2026-11-11 10:00:00 UTC`
+fn utc(seconds: u64) -> String {
+    let days = seconds / 86_400;
+    let time = seconds % 86_400;
+    format!(
+        "{} {:02}:{:02}:{:02} UTC",
+        crate::manual::civil_date(days as i64),
+        time / 3600,
+        time / 60 % 60,
+        time % 60
+    )
+}
+
+/// The address of the session bus: `DBUS_SESSION_BUS_ADDRESS`, else the `bus` socket in `XDG_RUNTIME_DIR`.
+fn bus_address(cx: &Context) -> Result<String, Failure> {
+    let set = |name: &str| cx.var(name).filter(|v| !v.is_empty());
+    if let Some(address) = set("DBUS_SESSION_BUS_ADDRESS") {
+        return address.into_string().map_err(|_| {
+            Failure::new(
+                FailureKind::Unavailable,
+                "no_session_bus",
+                "DBUS_SESSION_BUS_ADDRESS is not UTF-8",
+            )
+        });
+    }
+    if let Some(socket) = set("XDG_RUNTIME_DIR").map(|dir| Path::new(&dir).join("bus")) {
+        if socket.exists() {
+            return Ok(format!("unix:path={}", socket.display()));
+        }
+    }
+    Err(Failure::new(
+        FailureKind::Unavailable,
+        "no_session_bus",
+        "no session bus: neither DBUS_SESSION_BUS_ADDRESS nor a bus socket in XDG_RUNTIME_DIR; run the command in the \
+         desktop session",
+    ))
+}
+
+/// A connection to the session bus.
+fn session_bus(cx: &Context) -> Result<zbus::blocking::Connection, Failure> {
+    let address = bus_address(cx)?;
+    let unavailable = |e: zbus::Error| {
+        Failure::new(
+            FailureKind::Unavailable,
+            "no_session_bus",
+            format!("cannot connect to the session bus at {address}: {e}"),
+        )
+    };
+    zbus::blocking::connection::Builder::address(address.as_str())
+        .and_then(|b| b.method_timeout(CALL_TIMEOUT).build())
+        .map_err(unavailable)
+}
+
+/// Calls `method` of the server with `body` and reads its answer as `T`.
+fn call<B, T>(cx: &Context, method: &str, body: &B) -> Result<T, Failure>
+where
+    B: serde::Serialize + zbus::zvariant::DynamicType,
+    T: for<'d> serde::Deserialize<'d> + zbus::zvariant::Type,
+{
+    call_on(&session_bus(cx)?, method, body)
+}
+
+/// [`call`] on `connection`.
+fn call_on<B, T>(
+    connection: &zbus::blocking::Connection,
+    method: &str,
+    body: &B,
+) -> Result<T, Failure>
+where
+    B: serde::Serialize + zbus::zvariant::DynamicType,
+    T: for<'d> serde::Deserialize<'d> + zbus::zvariant::Type,
+{
+    let reply = connection
+        .call_method(Some(SERVER), SERVER_PATH, Some(SERVER), method, body)
+        .map_err(|e| refusal(method, e))?;
+    reply.body().deserialize().map_err(|e| {
+        Failure::new(
+            FailureKind::Unsupported,
+            "not_supported",
+            format!("the server answered {method} with something this command does not read: {e}"),
+        )
+    })
+}
+
+/// The error name under which the server's bus library sends a standard error it wraps, whose own name starts the
+/// message.
+const WRAPPED_ERROR: &str = "org.freedesktop.zbus.Error";
+
+/// What a failed call means for the command.
+fn refusal(method: &str, e: zbus::Error) -> Failure {
+    let zbus::Error::MethodError(name, message, _) = &e else {
+        return Failure::new(
+            FailureKind::Unavailable,
+            "no_server",
+            format!("calling {method} on the desktop's server failed: {e}"),
+        );
+    };
+    let message = message.clone().unwrap_or_default();
+    // a standard error the server's bus library wraps arrives under its own name, the standard one first in the text
+    let (name, message) = match message.split_once(": ") {
+        Some((inner, rest)) if name.as_str() == WRAPPED_ERROR && inner.starts_with("org.") => {
+            (inner.to_owned(), rest.to_owned())
+        }
+        _ => (name.to_string(), message),
+    };
+    match name.as_str() {
+        "org.freedesktop.DBus.Error.ServiceUnknown" | "org.freedesktop.DBus.Error.NameHasNoOwner" => {
+            Failure::new(
+                FailureKind::Unavailable,
+                "no_server",
+                format!("no desktop server on the session bus ({SERVER}): is a Cupertino session running?"),
+            )
+        }
+        "org.freedesktop.DBus.Error.UnknownMethod"
+        | "org.freedesktop.DBus.Error.UnknownInterface"
+        | "org.freedesktop.DBus.Error.UnknownObject" => Failure::new(
+            FailureKind::Unsupported,
+            "not_supported",
+            format!(
+                "the running server has no {method}: it is older than this command; it takes the shell commands \
+                 from the next session that starts a newer server"
+            ),
+        ),
+        "org.freedesktop.DBus.Error.InvalidArgs" => {
+            Failure::usage("unknown_process", format!("{message}; see `cupertino shell list`"))
+        }
+        "org.freedesktop.DBus.Error.NoReply" | "org.freedesktop.DBus.Error.Timeout" => Failure::new(
+            FailureKind::Temporary,
+            "no_answer",
+            format!("the server did not answer {method} in time"),
+        ),
+        error if error.starts_with("org.cupertino.Session1.Error.") => Failure::new(
+            FailureKind::Denied,
+            "refused",
+            format!(
+                "the server refuses this process ({message}): only an unsandboxed process of the session's own user \
+                 may manage its shell processes"
+            ),
+        ),
+        _ => Failure::new(
+            FailureKind::Temporary,
+            "not_started",
+            format!("{message} ({name})"),
+        ),
+    }
+}
+
+fn processes_on(connection: &zbus::blocking::Connection) -> Result<Vec<Process>, Failure> {
+    let records: Vec<Record> = call_on(connection, "ListShellProcesses", &())?;
+    Ok(records
+        .into_iter()
+        .map(|r| Process::from(r).compared())
+        .collect())
+}
+
+fn restart_process(cx: &Context, name: &str) -> Result<Process, Failure> {
+    let record: Record = call(cx, "RestartShellProcess", &(name,))?;
+    Ok(Process::from(record).compared())
+}
+
+/// A component of the server's component table as the server and the session bus show it.
+#[derive(Serialize)]
+struct Component {
+    name: String,
+    /// Where it runs: `host`, `host-NAME`, `none` or `off`.
+    runs_in: String,
+    /// Its host of its own starts from the development folder.
+    from_dev_folder: bool,
+    /// A host holds the connection the server handed out for it.
+    connected: bool,
+    /// The component's own bus connection, the one the server accepted for it.
+    connection: Option<String>,
+    /// The process that holds that bus connection: the component's host.
+    pid: Option<u32>,
+}
+
+impl Component {
+    /// `host-dock (development folder)`, `host`, `off`, …
+    fn place(&self) -> String {
+        if self.from_dev_folder {
+            format!("{} (development folder)", self.runs_in)
+        } else {
+            self.runs_in.clone()
+        }
+    }
+}
+
+/// Every component of the server's table (`ListShellComponents`), in its order, each with the bus connection the
+/// server's `ComponentOf` names it for and the process that holds that connection, from the bus driver.
+fn components_on(connection: &zbus::blocking::Connection) -> Result<Vec<Component>, Failure> {
+    let listed: Vec<(String, String, bool, bool)> =
+        call_on(connection, "ListShellComponents", &())?;
+    let mut components: Vec<Component> = listed
+        .into_iter()
+        .map(|(name, runs_in, from_dev_folder, connected)| Component {
+            name,
+            runs_in,
+            from_dev_folder,
+            connected,
+            connection: None,
+            pid: None,
+        })
+        .collect();
+    for unique in unique_names(connection)? {
+        let name: String = call_on(connection, "ComponentOf", &(unique.as_str(),))?;
+        let Some(component) = components.iter_mut().find(|c| c.name == name) else {
+            continue;
+        };
+        component.pid = connection
+            .call_method(
+                Some(BUS_DRIVER),
+                BUS_DRIVER_PATH,
+                Some(BUS_DRIVER),
+                "GetConnectionUnixProcessID",
+                &(unique.as_str(),),
+            )
+            .and_then(|reply| reply.body().deserialize::<u32>())
+            .ok();
+        component.connection = Some(unique);
+    }
+    Ok(components)
+}
+
+#[derive(Serialize)]
+struct Listed {
+    processes: Vec<Process>,
+    components: Vec<Component>,
+}
+
+fn list(_: &Args, cx: &Context) -> Result<Reply, Failure> {
+    let connection = session_bus(cx)?;
+    let processes = processes_on(&connection)?;
+    let components = components_on(&connection)?;
+    let width = processes
+        .iter()
+        .map(|p| p.name.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
+    let sources: Vec<String> = processes.iter().map(Process::source).collect();
+    let source_width = sources
+        .iter()
+        .map(|s| s.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max("development folder".len());
+    let mut human = format!(
+        "{:width$}  {:8}  {:>7}  {:source_width$}  PROGRAM\n",
+        "NAME", "STATE", "PID", "SOURCE"
+    );
+    for (p, source) in processes.iter().zip(&sources) {
+        let pid = p.pid.map_or_else(|| "-".to_owned(), |pid| pid.to_string());
+        let program = p.program.as_deref().unwrap_or(&p.installed);
+        let _ = writeln!(
+            human,
+            "{:width$}  {:8}  {pid:>7}  {source:source_width$}  {program}",
+            p.name, p.state,
+        );
+    }
+    let places: Vec<String> = components.iter().map(Component::place).collect();
+    let name_width = components
+        .iter()
+        .map(|c| c.name.len())
+        .max()
+        .unwrap_or(0)
+        .max("COMPONENT".len());
+    let place_width = places
+        .iter()
+        .map(|p| p.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max("RUNS IN".len());
+    let _ = write!(
+        human,
+        "\n{:name_width$}  {:place_width$}  {:9}  {:>7}  CONNECTION\n",
+        "COMPONENT", "RUNS IN", "CONNECTED", "PID"
+    );
+    for (c, place) in components.iter().zip(&places) {
+        let pid = c.pid.map_or_else(|| "-".to_owned(), |pid| pid.to_string());
+        let _ = writeln!(
+            human,
+            "{:name_width$}  {place:place_width$}  {:9}  {pid:>7}  {}",
+            c.name,
+            if c.connected { "yes" } else { "no" },
+            c.connection.as_deref().unwrap_or("-")
+        );
+    }
+    Ok(Reply::new(
+        &Listed {
+            processes,
+            components,
+        },
+        human,
+    ))
+}
+
+fn restart(args: &Args, cx: &Context) -> Result<Reply, Failure> {
+    let name = args.value("name").expect("<name> is a positional argument");
+    let process = restart_process(cx, name)?;
+    let human = format!("{name} restarted: {}\n", process.running());
+    Ok(Reply::new(&process, human))
+}
+
+#[derive(Serialize)]
+struct UsedInstalled {
+    /// The file taken out of the development folder; `None` when there was none.
+    removed: Option<String>,
+    process: Process,
+}
+
+fn use_installed(args: &Args, cx: &Context) -> Result<Reply, Failure> {
+    let name = args.value("name").expect("<name> is a positional argument");
+    let connection = session_bus(cx)?;
+    let listed = processes_on(&connection)?;
+    // a component's file is its own host's: the host that runs it alone is `host-NAME`
+    let host = format!("host-{name}");
+    let Some(process) = listed
+        .iter()
+        .find(|p| p.name == name)
+        .or_else(|| listed.iter().find(|p| p.name == host))
+    else {
+        let components = components_on(&connection)?;
+        return Err(
+            if let Some(component) = components.iter().find(|c| c.name == name) {
+                Failure::new(
+                FailureKind::Validation,
+                "no_dev_program",
+                format!(
+                    "{name} runs in {}, not in a host of its own from the development folder: `cupertino \
+                     dev-folder enable --components {name}` gives it one",
+                    component.place()
+                ),
+            )
+            } else {
+                Failure::usage(
+                    "unknown_process",
+                    format!(
+                    "no component or shell process is named {name:?}; see `cupertino shell list`"
+                ),
+                )
+            },
+        );
+    };
+    let file = process.dev_program.clone().ok_or_else(|| {
+        Failure::new(
+            FailureKind::Validation,
+            "no_dev_program",
+            format!(
+                "the development folder does not apply to {name}: it always runs {}",
+                process.installed
+            ),
+        )
+    })?;
+    let removed = match std::fs::remove_file(&file) {
+        Ok(()) => Some(file),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            return Err(Failure::new(
+                FailureKind::Denied,
+                "cannot_remove",
+                format!("cannot remove {file}: {e}"),
+            ))
+        }
+    };
+    let process = restart_process(cx, name)?;
+    let mut human = match &removed {
+        Some(file) => format!("removed {file}\n"),
+        None => format!("the development folder holds no {name} program\n"),
+    };
+    let _ = writeln!(human, "{name} restarted: {}", process.running());
+    Ok(Reply::new(&UsedInstalled { removed, process }, human))
+}
+
+/// The object and interface a development build of a shell component serves on its own bus connection.
+const CRASH_PATH: &str = "/org/cupertino/ShellComponentDebug1";
+const CRASH_INTERFACE: &str = "org.cupertino.ShellComponentDebug1";
+
+/// The bus driver, which lists the connections of the bus and tells which process holds one.
+const BUS_DRIVER: &str = "org.freedesktop.DBus";
+const BUS_DRIVER_PATH: &str = "/org/freedesktop/DBus";
+
+#[derive(Serialize)]
+struct Crashed {
+    component: String,
+    at: String,
+    /// The component's own connection, which took the call.
+    connection: String,
+}
+
+/// The unique names of the connections on the bus.
+fn unique_names(connection: &zbus::blocking::Connection) -> Result<Vec<String>, Failure> {
+    let names: Vec<String> = connection
+        .call_method(
+            Some(BUS_DRIVER),
+            BUS_DRIVER_PATH,
+            Some(BUS_DRIVER),
+            "ListNames",
+            &(),
+        )
+        .and_then(|reply| reply.body().deserialize())
+        .map_err(|e| {
+            Failure::new(
+                FailureKind::Unavailable,
+                "no_session_bus",
+                format!("the session bus does not list its connections: {e}"),
+            )
+        })?;
+    Ok(names
+        .into_iter()
+        .filter(|name| name.starts_with(':'))
+        .collect())
+}
+
+/// The unique name of `component`'s own bus connection: the connection the server's `ComponentOf` names it for.
+fn component_connection(
+    connection: &zbus::blocking::Connection,
+    component: &str,
+) -> Result<String, Failure> {
+    for name in unique_names(connection)? {
+        let of: String = call_on(connection, "ComponentOf", &(name.as_str(),))?;
+        if of == component {
+            return Ok(name);
+        }
+    }
+    Err(Failure::usage(
+        "unknown_component",
+        format!(
+            "no component named {component:?} runs with an accepted bus connection; see `cupertino shell list`"
+        ),
+    ))
+}
+
+fn crash(args: &Args, cx: &Context) -> Result<Reply, Failure> {
+    let name = args.value("name").expect("<name> is a positional argument");
+    let at = args.value("at").unwrap_or(CRASH_POINTS[0]);
+    let connection = session_bus(cx)?;
+    let owner = component_connection(&connection, name)?;
+    connection
+        .call_method(
+            Some(owner.as_str()),
+            CRASH_PATH,
+            Some(CRASH_INTERFACE),
+            "Crash",
+            &(at,),
+        )
+        .map_err(|e| match &e {
+            zbus::Error::MethodError(error, _, _)
+                if matches!(
+                    error.as_str(),
+                    "org.freedesktop.DBus.Error.UnknownObject"
+                        | "org.freedesktop.DBus.Error.UnknownInterface"
+                        | "org.freedesktop.DBus.Error.UnknownMethod"
+                ) =>
+            {
+                Failure::new(
+                    FailureKind::Unsupported,
+                    "not_development_build",
+                    format!(
+                        "{name} runs in a release build of the shell host, which takes no crash"
+                    ),
+                )
+            }
+            _ => Failure::new(
+                FailureKind::Temporary,
+                "no_answer",
+                format!("{name} did not take the crash: {e}"),
+            ),
+        })?;
+    let human = format!("{name} asked to panic ({at}) on its connection {owner}\n");
+    Ok(Reply::new(
+        &Crashed {
+            component: name.to_owned(),
+            at: at.to_owned(),
+            connection: owner,
+        },
+        human,
+    ))
+}

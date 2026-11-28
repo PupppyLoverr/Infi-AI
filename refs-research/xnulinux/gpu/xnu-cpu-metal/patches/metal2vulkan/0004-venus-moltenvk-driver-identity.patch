@@ -1,0 +1,230 @@
+diff --git a/crates/metal2vulkan-runtime/src/depth_copy.rs b/crates/metal2vulkan-runtime/src/depth_copy.rs
+index 8bb16fa..738588d 100644
+--- a/crates/metal2vulkan-runtime/src/depth_copy.rs
++++ b/crates/metal2vulkan-runtime/src/depth_copy.rs
+@@ -139,7 +139,7 @@ pub(super) fn drawn(device: &Device, format: Format) -> Option<Drawn> {
+     let description = &device.properties().description;
+     drawn_by(
+         &device.properties().driver_facts,
+-        description.driver_id,
++        description.underlying_driver_id(),
+         format,
+     )
+ }
+diff --git a/crates/metal2vulkan-runtime/src/driver_defects.rs b/crates/metal2vulkan-runtime/src/driver_defects.rs
+index 88ea718..9f1bc55 100644
+--- a/crates/metal2vulkan-runtime/src/driver_defects.rs
++++ b/crates/metal2vulkan-runtime/src/driver_defects.rs
+@@ -857,7 +857,7 @@ pub(super) const AFFECTED: &[Affected] = &[
+ pub(super) fn of(description: &DeviceDescription) -> BTreeSet<RuntimeDriverDefect> {
+     among(
+         AFFECTED,
+-        description.driver_id,
++        description.underlying_driver_id(),
+         description.canonical_device_id(),
+     )
+ }
+diff --git a/crates/metal2vulkan-runtime/src/pipeline/objects.rs b/crates/metal2vulkan-runtime/src/pipeline/objects.rs
+index 8c3c841..1ef50ae 100644
+--- a/crates/metal2vulkan-runtime/src/pipeline/objects.rs
++++ b/crates/metal2vulkan-runtime/src/pipeline/objects.rs
+@@ -1613,6 +1613,16 @@ fn takes_multi_variable_dynamic(device: &Device) -> bool {
+     if let Some(&answered) = device.shared().dynamic_multi_variable.get() {
+         return answered;
+     }
++    // Mesa Venus uses asynchronous pipeline creation by default: if this
++    // self-check pipeline fails on the host driver (as MoltenVK 1.4.2 does for
++    // multi-variable dynamic storage buffer bindings), Venus still returns
++    // `VK_SUCCESS` on the guest with a client handle that virglrenderer never
++    // registered, and the immediate `vkDestroyPipeline` triggers a fatal Venus
++    // CS error (`failed to look up object`) that kills the ring. Skip the probe
++    // on Venus so it takes the safe static binding path.
++    if device.properties().description.driver_id == Some(metal2vulkan::vk::DriverId::MESA_VENUS) {
++        return false;
++    }
+     // A host step makes no object of its own and must not compile here (`exit_guard`): its
+     // variant takes the static form every device took before, and the answer stays unasked for a
+     // later variant outside a step.
+diff --git a/crates/metal2vulkan/src/device/derive.rs b/crates/metal2vulkan/src/device/derive.rs
+index 6c78892..18c9ee9 100644
+--- a/crates/metal2vulkan/src/device/derive.rs
++++ b/crates/metal2vulkan/src/device/derive.rs
+@@ -384,7 +384,9 @@ fn workarounds(desc: &DeviceDescription) -> Vec<DriverWorkaround> {
+     // Every rasterizer but Apple's hands a clipped primitive's fragments their coverage by the
+     // whole primitive (or, lavapipe, by its own pieces), never by Apple's pieces; and every
+     // tessellator but Apple's orders a patch's triangles its own way.
+-    if !(desc.driver_id == Some(vk::DriverId::MOLTENVK) && desc.vendor_id == APPLE_VENDOR_ID) {
++    if !(desc.underlying_driver_id() == Some(vk::DriverId::MOLTENVK)
++        && desc.vendor_id == APPLE_VENDOR_ID)
++    {
+         found.push(DriverWorkaround::ClippedCoverageNotMetals);
+         found.push(DriverWorkaround::TessellatorNotMetals);
+     }
+@@ -396,7 +398,7 @@ fn workarounds(desc: &DeviceDescription) -> Vec<DriverWorkaround> {
+ 
+ /// The workarounds of [`workarounds`] keyed on the driver's identity alone.
+ fn by_identity(desc: &DeviceDescription) -> Vec<DriverWorkaround> {
+-    match desc.driver_id {
++    match desc.underlying_driver_id() {
+         Some(vk::DriverId::GOOGLE_SWIFTSHADER) => vec![DriverWorkaround::BufferAtomicsUncontained],
+         Some(vk::DriverId::MOLTENVK) if desc.vendor_id == APPLE_VENDOR_ID => vec![
+             DriverWorkaround::EarlyTestsDropMultisampledImageWrites,
+diff --git a/crates/metal2vulkan/src/device/description.rs b/crates/metal2vulkan/src/device/description.rs
+index dd68588..400c164 100644
+--- a/crates/metal2vulkan/src/device/description.rs
++++ b/crates/metal2vulkan/src/device/description.rs
+@@ -208,6 +208,31 @@ impl DeviceDescription {
+         self.features.contains(&feature)
+     }
+ 
++    /// The underlying Vulkan implementation behind a passthrough ICD such as Virtio-GPU Venus.
++    ///
++    /// Keeps `self.driver_id` intact for logging, cache keys, and Venus-specific handling while
++    /// letting compiler and runtime workaround tables match the host driver that actually compiles
++    /// SPIR-V and executes Vulkan commands:
++    ///
++    /// - When `driver_id == DriverId::MESA_VENUS`, `vendor_id == 0x106b` (Apple), and the device
++    ///   exposes `VK_EXT_fragment_shader_interlock`, the host driver is MoltenVK (Asahi Linux
++    ///   Honeykrisp on Apple Silicon does not expose `VK_EXT_fragment_shader_interlock`), so this
++    ///   returns `Some(DriverId::MOLTENVK)` (unless `XNU_CPU_METAL_VENUS_HOST_DRIVER=raw`).
++    /// - Otherwise returns `self.driver_id`.
++    pub fn underlying_driver_id(&self) -> Option<vk::DriverId> {
++        const APPLE_VENDOR_ID: u32 = 0x106b;
++        if self.driver_id == Some(vk::DriverId::MESA_VENUS)
++            && self.vendor_id == APPLE_VENDOR_ID
++            && self
++                .extensions
++                .contains(&VkExtension::ExtFragmentShaderInterlock)
++            && std::env::var("XNU_CPU_METAL_VENUS_HOST_DRIVER").as_deref() != Ok("raw")
++        {
++            return Some(vk::DriverId::MOLTENVK);
++        }
++        self.driver_id
++    }
++
+     /// Whether `GLSL.std.450 InterpolateAtOffset` reads at the pixel center plus its offset, as
+     /// GLSL.std.450 states ("An offset of (0, 0) identifies the center of the pixel"): every
+     /// driver but MoltenVK, whose SPIRV-Cross converts the instruction to Metal's
+@@ -218,7 +243,7 @@ impl DeviceDescription {
+     /// `VkProperty::InterpolateAtOffsetFromSevenSixteenths`, where translation moves a Metal
+     /// offset by 7/16 and reads nothing else through the instruction.
+     pub(crate) fn interpolates_at_offset_centered(&self) -> bool {
+-        self.driver_id != Some(vk::DriverId::MOLTENVK)
++        self.underlying_driver_id() != Some(vk::DriverId::MOLTENVK)
+     }
+ }
+ 
+diff --git a/crates/metal2vulkan/src/device/driver_facts.rs b/crates/metal2vulkan/src/device/driver_facts.rs
+index 68b22d7..4315853 100644
+--- a/crates/metal2vulkan/src/device/driver_facts.rs
++++ b/crates/metal2vulkan/src/device/driver_facts.rs
+@@ -950,12 +950,20 @@ pub(crate) const DEFECTS: &[Measured<DriverWorkaround>] = &[
+ 
+ /// The defects translation works around on the driver `description` names, on its GPU.
+ pub(crate) fn defects(description: &DeviceDescription) -> BTreeSet<DriverWorkaround> {
+-    among(DEFECTS, description.driver_id, identity(description))
++    among(
++        DEFECTS,
++        description.underlying_driver_id(),
++        identity(description),
++    )
+ }
+ 
+ /// The deviations of the driver `description` names, on its GPU.
+ pub(crate) fn deviations(description: &DeviceDescription) -> BTreeSet<DriverDeviation> {
+-    among(DEVIATIONS, description.driver_id, identity(description))
++    among(
++        DEVIATIONS,
++        description.underlying_driver_id(),
++        identity(description),
++    )
+ }
+ 
+ /// The `vendorID` and the `deviceID` the tables name `description`'s GPU by.
+@@ -2480,7 +2488,7 @@ impl DeviceDescription {
+     /// The runtime's driver facts ([`DriverFact`]) of the device this description names: those
+     /// its driver's rows name, on its vendor and GPU, at any release.
+     pub fn driver_facts(&self) -> BTreeSet<DriverFact> {
+-        among(MEASURED, self.driver_id, identity(self))
++        among(MEASURED, self.underlying_driver_id(), identity(self))
+     }
+ 
+     /// The formats the device lists as color attachments of optimal tiling without
+diff --git a/crates/metal2vulkan/src/device/function_storage.rs b/crates/metal2vulkan/src/device/function_storage.rs
+index a513d72..61506fe 100644
+--- a/crates/metal2vulkan/src/device/function_storage.rs
++++ b/crates/metal2vulkan/src/device/function_storage.rs
+@@ -145,7 +145,7 @@ pub(crate) fn of(desc: &DeviceDescription) -> FunctionStorage {
+     let gpu = desc.canonical_device_id();
+     MEASURED
+         .iter()
+-        .find(|d| desc.driver_id == Some(d.driver) && desc.vendor_id == d.vendor && gpu == d.device)
++        .find(|d| desc.underlying_driver_id() == Some(d.driver) && desc.vendor_id == d.vendor && gpu == d.device)
+         .map_or(FunctionStorage::Assumed(FLOOR), |d| {
+             FunctionStorage::Measured(d.bytes)
+         })
+diff --git a/crates/metal2vulkan/src/device/tests/driver_facts.rs b/crates/metal2vulkan/src/device/tests/driver_facts.rs
+index 7bb766a..13cca8f 100644
+--- a/crates/metal2vulkan/src/device/tests/driver_facts.rs
++++ b/crates/metal2vulkan/src/device/tests/driver_facts.rs
+@@ -899,3 +899,60 @@ fn moltenvk_warns_of_each_color_attachment_it_cannot_blend() {
+         assert!(desc.driver_facts().contains(&BLENDLESS), "{version}");
+     }
+ }
++
++/// Virtio-GPU Venus running over MoltenVK on Apple Silicon keeps `driver_id == MESA_VENUS` while
++/// resolving `underlying_driver_id()` to `MOLTENVK` (so MoltenVK's compiler/runtime workarounds
++/// stay active). Both native Honeykrisp and Venus-over-Honeykrisp (Apple vendor without
++/// `VK_EXT_fragment_shader_interlock`) keep their own identity, and native MoltenVK resolves to
++/// `MOLTENVK`.
++#[test]
++fn venus_underlying_driver_distinguishes_moltenvk_honeykrisp_and_native() {
++    use crate::device::driver_facts::defects;
++    use crate::device::{ApiVersion, DeviceDescription, DriverWorkaround, VkExtension};
++
++    // 1. Venus + MoltenVK on Apple Silicon (e.g. Virtio-GPU Venus over host MoltenVK 1.4.2).
++    let mut venus_mvk = DeviceDescription::new(ApiVersion::V1_3);
++    venus_mvk.driver_id = Some(DriverId::MESA_VENUS);
++    venus_mvk.vendor_id = 0x106b;
++    venus_mvk
++        .extensions
++        .insert(VkExtension::ExtFragmentShaderInterlock);
++    assert_eq!(venus_mvk.driver_id, Some(DriverId::MESA_VENUS));
++    assert_eq!(venus_mvk.underlying_driver_id(), Some(DriverId::MOLTENVK));
++    assert!(defects(&venus_mvk).contains(&DriverWorkaround::FunctionsInlinedAtEveryCall));
++    assert!(defects(&venus_mvk).contains(&DriverWorkaround::BothBarycentricFormsRejected));
++    assert!(!venus_mvk.interpolates_at_offset_centered());
++
++    // 2a. Venus over Honeykrisp on Apple Silicon (no VK_EXT_fragment_shader_interlock).
++    let mut venus_hk = DeviceDescription::new(ApiVersion::V1_3);
++    venus_hk.driver_id = Some(DriverId::MESA_VENUS);
++    venus_hk.vendor_id = 0x106b;
++    assert_eq!(venus_hk.driver_id, Some(DriverId::MESA_VENUS));
++    assert_eq!(venus_hk.underlying_driver_id(), Some(DriverId::MESA_VENUS));
++    assert!(!defects(&venus_hk).contains(&DriverWorkaround::FunctionsInlinedAtEveryCall));
++    assert!(venus_hk.interpolates_at_offset_centered());
++
++    // 2b. Native Honeykrisp on Apple Silicon.
++    let mut native_hk = DeviceDescription::new(ApiVersion::V1_3);
++    native_hk.driver_id = Some(DriverId::MESA_HONEYKRISP);
++    native_hk.vendor_id = 0x106b;
++    assert_eq!(native_hk.driver_id, Some(DriverId::MESA_HONEYKRISP));
++    assert_eq!(
++        native_hk.underlying_driver_id(),
++        Some(DriverId::MESA_HONEYKRISP)
++    );
++    assert!(!defects(&native_hk).contains(&DriverWorkaround::FunctionsInlinedAtEveryCall));
++    assert!(native_hk.interpolates_at_offset_centered());
++
++    // 3. Native MoltenVK on Apple Silicon.
++    let mut native_mvk = DeviceDescription::new(ApiVersion::V1_3);
++    native_mvk.driver_id = Some(DriverId::MOLTENVK);
++    native_mvk.vendor_id = 0x106b;
++    native_mvk
++        .extensions
++        .insert(VkExtension::ExtFragmentShaderInterlock);
++    assert_eq!(native_mvk.driver_id, Some(DriverId::MOLTENVK));
++    assert_eq!(native_mvk.underlying_driver_id(), Some(DriverId::MOLTENVK));
++    assert!(defects(&native_mvk).contains(&DriverWorkaround::FunctionsInlinedAtEveryCall));
++    assert!(!native_mvk.interpolates_at_offset_centered());
++}

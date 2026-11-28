@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Patches applied to Mesa 26.3.1 for arm64e macOS PAC compatibility in gallivm JIT:
+#
+# 1. C -> JIT indirect calls (sign unsigned JIT code pointer for arm64e blraaz):
+# - src/gallium/auxiliary/gallivm/lp_bld_init.c (gallivm_jit_function)
+# - src/gallium/auxiliary/gallivm/lp_bld_init_orc.cpp (gallivm_jit_function)
+#
+# 2. JIT -> C / JIT -> JIT table indirect calls (strip PAC since LLVM MCJIT emits plain blr):
+# - src/gallium/drivers/llvmpipe/lp_texture_handle.c (compile_function, matrix->compile_{sample,fetch,size}_function)
+# - src/gallium/auxiliary/gallivm/lp_bld_const.c (lp_build_const_func_pointer_from_type)
+# - src/gallium/auxiliary/gallivm/lp_bld_format_aos.c (fetch_rgba_8unorm)
+# - src/gallium/auxiliary/gallivm/lp_bld_conv.c (_mesa_float_to_half)
+# - src/gallium/auxiliary/gallivm/lp_bld_init.c (gallivm_add_global_mapping)
+# - src/gallium/auxiliary/gallivm/lp_bld_init_orc.cpp (gallivm_add_global_mapping)
+#
+# All patches are guarded by `#if defined(__has_feature) && __has_feature(ptrauth_calls)`
+# so arm64 builds are unaffected.

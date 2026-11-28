@@ -1,0 +1,24 @@
+From: xnulinux
+Subject: [PATCH] linux64: memory outside our own is the host's RAM, mapped as normal memory
+
+Hosted, a physical page pmap does not manage is the host's RAM (a Linux buffer mapped into a task by kexts/XnuDrm),
+not a device: mapped as device memory, unaligned accesses to it fault.
+---
+diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -10676,9 +10676,13 @@
+ 
+ 	assert(vm_last_phys > vm_first_phys); // Check that pmap has been bootstrapped
+ 
+ 	if (!pa_valid(paddr)) {
++		extern unsigned long linux64_hook;
+ 		pmap_io_range_t *io_rgn = pmap_find_io_attr(paddr);
+-		return (io_rgn == NULL) ? VM_WIMG_IO : io_rgn->wimg;
++		if (io_rgn != NULL) {
++			return io_rgn->wimg;
++		}
++		return linux64_hook ? VM_WIMG_DEFAULT : VM_WIMG_IO;    /* LINUX64: the host's RAM */
+ 	}
+ 
+ 	result = VM_WIMG_DEFAULT;

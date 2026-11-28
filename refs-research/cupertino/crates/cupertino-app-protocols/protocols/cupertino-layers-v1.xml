@@ -1,0 +1,471 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="cupertino_layers_v1">
+  <copyright>
+    SPDX-License-Identifier: MIT OR Apache-2.0
+  </copyright>
+
+  <description summary="layers the server places, blends and animates for a client's own surfaces">
+    Public protocol: a client hands the server parts of a window as layers, each a surface of its
+    own placed in fractional points over a parent surface, and lets the server move, fade, scale
+    and reveal them along timed curves and springs on the server's clock, so a transition runs at
+    the display's rate while the client is busy and costs it no repaint per frame. A layer may
+    carry glass that moves with it, a blend role that mixes its pixels with the glass behind it,
+    a raised elevation that lifts it above its siblings, a pointer-lit rim and a blur that varies
+    across it; the glass of several layers may join into one shape that moves as they do, and a
+    layer's own content may blur as it goes, and glass may carry a thin line along the outside of
+    its outline that keeps its width as the layer scales; from version 7 the glass may be named
+    by its system variant, tinted, and grow under a press. A popup,
+    like a panel, may be moved, faded and scaled as a whole. Scrolling and other motion that follows the pointer stay with the client: it moves
+    layers with a cheap commit per frame and no repaint.
+
+    A request names surfaces of the client that sends it; the server never lets a client place
+    or animate another client's surface.
+  </description>
+
+  <interface name="cupertino_layers_v1" version="7">
+    <description summary="makes surfaces layers of a parent surface">
+      Global singleton, offered to every client.
+    </description>
+
+    <enum name="error">
+      <entry name="invalid_surface" value="0" summary="a surface belongs to another client or is gone"/>
+      <entry name="role" value="1" summary="the surface already has a role or a layer object or is the parent, or the parent is not a window's, a popup's or a layer shell surface's main surface"/>
+      <entry name="too_many_layers" value="2" summary="the parent or the client holds as many layers as the server allows"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="unbind the global">
+        Layers created through this global stay valid.
+      </description>
+    </request>
+
+    <request name="get_layer">
+      <description summary="make a surface a layer of a parent surface">
+        Gives the surface the layer role and makes it a layer of the parent, drawn above the
+        parent's own surface tree. The layer appears with the parent's next commit, at its
+        initial state: at the parent's origin, its bounds the size of its content, opacity 1,
+        scale 1, no corner radius, no glass, the normal blend role and the flat elevation.
+        Layers of a parent are drawn in creation order, later ones above, and raised layers above
+        all flat ones. The parent is a window's (xdg_toplevel), a popup's (xdg_popup) or a layer
+        shell surface's main surface: not a layer, a subsurface or a surface without a role. A
+        surface that is a layer of the parent may become one again after its layer object was
+        destroyed, and not while that object lives.
+
+        The layer's content is the surface's own buffer and applies on the surface's own commit,
+        never waiting for the parent: see the late-content rule of cupertino_layer_v1. Its
+        geometry and look apply with the parent's commit.
+
+        Posts invalid_surface when either surface belongs to another client, role when the surface
+        already has a role (a layer of the parent whose layer object lives included) or is the
+        parent, or the parent has none of the roles above, and too_many_layers when the parent already holds 64
+        layers or the client 256 (layers that are not destroyed count).
+      </description>
+      <arg name="id" type="new_id" interface="cupertino_layer_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="parent" type="object" interface="wl_surface"/>
+    </request>
+
+    <!-- Version 2 additions -->
+
+    <request name="get_presentation" since="2">
+      <description summary="let the server move, fade and scale a surface as a whole">
+        Gives a layer shell surface's main surface a presentation: a layer object whose x and y
+        offset everything the surface draws (its content, its subsurfaces, its backdrops, its
+        popups and its layers) from where the surface lies, whose scale scales all of it about the
+        surface's centre and whose opacity fades all of it. So a panel opens and closes along a
+        curve on the server's clock without drawing a frame. The presentation starts at rest: x
+        and y 0, opacity 1, scale 1.
+
+        Its values and animations follow the rules of cupertino_layer_v1 and apply with the
+        surface's own commit. Input and semantics stay where the surface lies: the server routes
+        input to the surface at rest and the client hit-tests against its own layout, as for
+        layers' target values. Width, height and corner_radius, and the look requests (set_glass,
+        set_blend, set_elevation, set_highlight, set_blur_ramp, set_masks_to_bounds,
+        set_placeholder), post invalid_property on a presentation. Destroying it puts the surface
+        back at rest with its next commit.
+
+        From version 3 the surface may also be an xdg_popup's surface: its presentation moves,
+        fades and scales the popup, its subsurfaces, its backdrops and its layers (popups of the
+        popup keep presentations of their own), so a popover
+        grows out of what it opened from and a menu fades as it closes without drawing a frame. A
+        popup's scale is about the centre of its window geometry (without one, of what its surfaces
+        cover); to grow it out of another point the client moves
+        it along the same curve: scaling by s about a point p of the popup is the scale s about its
+        centre c with x and y at (p - c) times (1 - s). Input stays with the popup at rest.
+
+        Posts invalid_surface when the surface belongs to another client, and role when it is not a
+        layer shell surface (from version 3, nor an xdg_popup's surface) or already has a
+        presentation that is not destroyed.
+      </description>
+      <arg name="id" type="new_id" interface="cupertino_layer_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+  </interface>
+
+  <interface name="cupertino_layer_v1" version="7">
+    <description summary="a surface placed, blended and animated by the server over its parent">
+      All state is double-buffered on the parent surface: it applies on the parent's next
+      wl_surface.commit, together with that commit's buffer, and a synchronized parent caches it
+      with its own state. So the parent's content, its layers' places and the animations it starts
+      always change in the same frame.
+
+      Geometry is in fixed point, in the parent's logical points, so a layer lands on the device
+      pixels of a scaled output: its origin is rounded to the output's device pixels when drawn and
+      never to whole logical points.
+
+      Animations run on the server's clock: an animation starts when the frame showing the commit
+      that started it is drawn (and at the latest 100 milliseconds after that commit when no output
+      shows the parent), and follows the session's time scale and the fixed time tests set. A new
+      value or animation of a property retargets it from the value and velocity shown at its
+      start: the motion stays continuous in both (an animation through samples starts at its first
+      sample instead). While reduce_motion is on
+      (cupertino_appearance_v1), animations of the spatial properties (x, y, width, height, scale,
+      corner_radius) and of content_blur end at their target in their first frame; opacity
+      animates as asked, so a transition becomes a fade.
+
+      Input: a layer takes no input. Pointer and touch go to the surfaces below, the parent's, in
+      the parent's coordinates, and the client hit-tests against the layers' target values, not the
+      values shown during an animation. Semantics: the accessible bounds a client publishes for a
+      layer's content are its target values; settled tells desktop control when they are what is
+      shown.
+
+      Clipping: a layer of a window is drawn only inside that window, its rounded corners
+      included, wherever its place and scale take it, and with masks_to_bounds
+      inside both its own rounded bounds and the window; its glass and placeholder are cut to the
+      window too. A window that draws its own decorations is clipped to its window geometry.
+      Where masked bounds cross the window's rounded corners, the part inside is rounded by the
+      larger of the two radii. The layers of a layer shell surface are clipped only by
+      masks_to_bounds.
+
+      Ranges: values the server shows are held in a range far past any output, so no request
+      takes the scene past what it can draw: an origin within a million points either way of
+      the parent's, a width, height and corner radius up to a million points, a scale up to 64,
+      and a timed curve's Bézier y control points from -10 to 11. A value set, a target, a
+      sample or a velocity past its end is held at it, as is a value an animation overshoots to;
+      nothing is posted for it.
+
+      Queued requests: a value set again, or a look request made again, before the parent's
+      commit replaces the earlier one, so repeated requests never pile up; the animations
+      queued and not yet applied count towards the client's 512 as running and waiting ones do.
+
+      Content blur (version 4): content_blur blurs the layer's own content, not its glass nor what
+      lies behind it, by a Gaussian whose standard deviation is in the layer's points, so a panel's
+      text and symbols soften as it closes without a frame drawn for each step. The content is
+      blurred as a whole picture, transparent beyond its edges, and scales, moves, fades and is
+      clipped with the layer as its sharp content is. It applies to a layer of the normal blend
+      role; a vibrant layer draws its content sharp. 0, the initial value, draws the content as it
+      is; a client's blurred layers count towards its limits as its other layers do. The server
+      blurs only the part of the content that can show, on the output and inside the layer's
+      mask, with the blur's reach around it; content whose visible part would still need more
+      than the server's limit for one blurred copy (content far larger than the output, scaled far
+      down) is drawn sharp. On a layer object below version 4, content_blur is an
+      invalid_property.
+
+      Late content: the parent's commit never waits for a layer's content. When a commit shows a
+      part of the layer's bounds its content does not cover (a scroll that outruns the drawing),
+      that part shows the layer's placeholder colour until the content arrives; content that
+      arrives later shows from the layer surface's own commit, at the geometry the server shows
+      then.
+
+      When the parent is destroyed the layer becomes inert and draws nothing. Destroying the
+      layer surface removes the layer at once.
+    </description>
+
+    <enum name="error">
+      <entry name="invalid_value" value="0" summary="opacity outside 0 to 1, a negative size, scale, radius or blur, a content blur over 64, a lens outside 1 to 4, a glass group spacing outside 0 to 64, a glass edge wider than 4 or of a channel outside 0 to 1, or a glass tint channel outside 0 to 1"/>
+      <entry name="invalid_property" value="1" summary="a property, glass style, glass variant, glass modifier, size class, blend role, elevation or highlight not defined at the object's version"/>
+      <entry name="invalid_curve" value="2" summary="a duration over 10 seconds, Bézier x control points outside 0 to 1, or a spring response outside 0.01 to 10 seconds or damping ratio outside 0.05 to 4"/>
+      <entry name="too_many_animations" value="3" summary="the client has as many animations running or waiting as the server allows"/>
+      <entry name="group_full" value="4" summary="the glass group already holds 16 layers of the parent"/>
+    </enum>
+
+    <enum name="property">
+      <entry name="x" value="0" summary="the origin's x, in the parent's logical points"/>
+      <entry name="y" value="1" summary="the origin's y, in the parent's logical points"/>
+      <entry name="width" value="2" summary="the bounds' width, in logical points"/>
+      <entry name="height" value="3" summary="the bounds' height, in logical points"/>
+      <entry name="opacity" value="4" summary="opacity of the layer, its glass included, from 0 to 1"/>
+      <entry name="scale" value="5" summary="scale of the layer, its glass included, about the bounds' centre"/>
+      <entry name="corner_radius" value="6" summary="the radius of the bounds' continuous corners, in logical points"/>
+      <entry name="content_blur" value="7" since="4" summary="the standard deviation of a Gaussian blur of the layer's own content, in the layer's logical points before its scale, from 0 (sharp) to 64; a layer of the normal blend role only, its glass and what lies behind it never blurred"/>
+    </enum>
+
+    <enum name="blend">
+      <entry name="normal" value="0" summary="the content is drawn over what lies behind it"/>
+      <entry name="vibrant" value="1" summary="the content's coverage is drawn as a colour taken from the glass behind it: brightened and saturated over a dark face, darkened over a light one, for text and symbols"/>
+      <entry name="vibrant_secondary" value="2" summary="vibrant, at the weight of secondary text and symbols"/>
+      <entry name="vibrant_fill" value="3" summary="vibrant, at the weight of a fill behind controls"/>
+    </enum>
+
+    <enum name="elevation">
+      <entry name="flat" value="0" summary="in the parent's plane"/>
+      <entry name="raised" value="1" summary="lifted above every flat layer of the parent, its glass casting a soft shadow; its glass reads the flat layers and the parent beneath it, so a lifted thumb or a lens shows what it lies over"/>
+    </enum>
+
+    <enum name="highlight">
+      <entry name="fixed" value="0" summary="the glass rim is lit from above"/>
+      <entry name="pointer" value="1" summary="the glass rim is lit from the pointer while it is over the parent's output, from above otherwise"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="remove the layer">
+        The layer disappears with the parent's next commit; its running animations end without
+        events. The surface keeps the layer role and may become a layer of the same parent again.
+      </description>
+    </request>
+
+    <request name="set_value">
+      <description summary="set a property at once">
+        The property jumps to value with the parent's commit. A running animation of the property
+        is replaced (see replaced).
+        Posts invalid_property for an unknown property and invalid_value for a value outside the
+        property's range.
+      </description>
+      <arg name="property" type="uint" enum="property"/>
+      <arg name="value" type="fixed"/>
+    </request>
+
+    <request name="animate_timed">
+      <description summary="animate a property along a timed curve">
+        Moves the property to value over duration milliseconds along the cubic Bézier through
+        (0, 0), (x1, y1), (x2, y2) and (1, 1), from the value and velocity shown when it starts.
+        serial names the animation in finished and replaced. Within one commit, set_value requests
+        apply before animations, so a set_value and an animation of the same property in one commit
+        animate from the set value.
+        Posts invalid_property, invalid_value, invalid_curve or too_many_animations; the client may
+        have 512 animations running or waiting.
+      </description>
+      <arg name="serial" type="uint"/>
+      <arg name="property" type="uint" enum="property"/>
+      <arg name="value" type="fixed"/>
+      <arg name="duration" type="uint" summary="milliseconds, at most 10000"/>
+      <arg name="x1" type="fixed"/>
+      <arg name="y1" type="fixed"/>
+      <arg name="x2" type="fixed"/>
+      <arg name="y2" type="fixed"/>
+    </request>
+
+    <request name="animate_spring">
+      <description summary="animate a property along a spring">
+        Moves the property to value along a damped spring: response is the period of the undamped
+        spring in seconds and damping its damping ratio (1 settles without overshoot, below 1
+        bounces). The spring starts from the value and velocity shown when it starts; velocity
+        (units per second) is its initial velocity when the property is at rest, as after a
+        gesture's release. The animation finishes once the property stays within a thousandth of
+        a unit of its target.
+        Posts invalid_property, invalid_value, invalid_curve or too_many_animations.
+      </description>
+      <arg name="serial" type="uint"/>
+      <arg name="property" type="uint" enum="property"/>
+      <arg name="value" type="fixed"/>
+      <arg name="response" type="fixed"/>
+      <arg name="damping" type="fixed"/>
+      <arg name="velocity" type="fixed"/>
+    </request>
+
+    <request name="cancel">
+      <description summary="stop a property where it is shown">
+        Stops the property's animation at the value shown when the parent's commit applies; the
+        animation is replaced (see replaced). Posts invalid_property for an unknown property.
+      </description>
+      <arg name="property" type="uint" enum="property"/>
+    </request>
+
+    <request name="set_glass">
+      <description summary="draw glass below the layer's content">
+        Glass of style drawn in the layer's rounded bounds, below its content, moving, scaling and
+        fading with it. The styles are the values of cupertino_backdrop_v1.glass_style
+        (cupertino_app_effects_v1); 4294967295 removes the glass. lens magnifies what the glass shows about the bounds'
+        centre (1 shows it at its size). Posts invalid_property for an unknown style and
+        invalid_value for a lens below 1 or above 4.
+      </description>
+      <arg name="style" type="uint" summary="a cupertino_backdrop_v1.glass_style value, or 4294967295 for none"/>
+      <arg name="lens" type="fixed"/>
+    </request>
+
+    <request name="set_blend">
+      <description summary="choose how the content mixes with the glass behind it">
+        A vibrant role takes the content's alpha as coverage and draws it in a colour derived from
+        what lies behind it, following the appearance and the display options: with
+        reduce_transparency or increase_contrast it draws the plain label colour of the
+        appearance at the role's weight. Posts invalid_property for an unknown role.
+      </description>
+      <arg name="blend" type="uint" enum="blend"/>
+    </request>
+
+    <request name="set_elevation">
+      <description summary="lift the layer above its siblings">
+        Posts invalid_property for an unknown elevation.
+      </description>
+      <arg name="elevation" type="uint" enum="elevation"/>
+    </request>
+
+    <request name="set_highlight">
+      <description summary="choose where the glass rim is lit from">
+        Posts invalid_property for an unknown highlight.
+      </description>
+      <arg name="highlight" type="uint" enum="highlight"/>
+    </request>
+
+    <request name="set_blur_ramp">
+      <description summary="vary the blur of the layer's glass from its top to its bottom">
+        The glass blurs at top times its style's blur along its top edge and at bottom times it
+        along its bottom edge, smoothly in between, as the soft edge of a bar over scrolled
+        content. 1 and 1 (the initial state) blur evenly. Posts invalid_value for a negative
+        weight or one above 1.
+      </description>
+      <arg name="top" type="fixed"/>
+      <arg name="bottom" type="fixed"/>
+    </request>
+
+    <request name="set_masks_to_bounds">
+      <description summary="clip the content to the rounded bounds">
+        1 clips the layer's content to its rounded bounds within the parent's window, 0 (the
+        initial state) only to the window. A masked layer whose bounds lie outside the window
+        draws nothing.
+      </description>
+      <arg name="masks" type="uint"/>
+    </request>
+
+    <request name="set_placeholder">
+      <description summary="the colour shown where content has not arrived">
+        Straight red, green, blue and alpha from 0 to 1 shown in the part of the bounds the content
+        does not cover; the initial colour is transparent. Posts invalid_value for a channel
+        outside 0 to 1.
+      </description>
+      <arg name="red" type="fixed"/>
+      <arg name="green" type="fixed"/>
+      <arg name="blue" type="fixed"/>
+      <arg name="alpha" type="fixed"/>
+    </request>
+
+    <!-- Version 3 additions -->
+
+    <request name="set_glass_group" since="3">
+      <description summary="join the glass of layers into one shape">
+        Layers of one parent that have glass and the same nonzero group draw it as one shape: the
+        union of their rounded bounds, as the scene shows them at each frame, whose outlines blend
+        into each other over spacing logical points (0 joins them with a hard edge). So a shape that
+        grows out of another (a button budding out of a field) comes out of its glass as the layers
+        move, scale and resize. The joined glass takes the style, lens, highlight, blur ramp,
+        elevation, (from version 5) edge and (from version 7) variant and tint of the group's first layer in drawing order and the highest opacity of its
+        layers, and is drawn below the content of that layer. 0, the initial group, keeps the
+        layer's glass alone; a layer without glass adds nothing to its group. A group holds at most
+        16 layers of a parent, as many shapes as one joined glass takes: the request that would
+        put a 17th layer in it posts group_full, so no layer's glass is ever silently left out.
+        Posts invalid_value for a negative spacing or one above 64.
+      </description>
+      <arg name="group" type="uint"/>
+      <arg name="spacing" type="fixed"/>
+    </request>
+
+    <!-- Version 4 additions -->
+
+    <request name="animate_samples" since="4">
+      <description summary="animate a property through values sampled at even steps">
+        Moves the property through samples over duration milliseconds: the samples are its values
+        at even steps of the duration, the first at its start and the last at its end, and between
+        two of them it moves in a straight line. So a client carries a motion no single curve does
+        (the product of two springs, a clamped ramp) and the server runs it on its clock. Unlike
+        animate_timed and animate_spring the motion does not start from the value shown: it starts
+        at the first sample, which the client takes from what it shows. serial names the animation
+        in finished and replaced, and the property rests at the last sample, its target.
+
+        samples is an array of 32-bit IEEE 754 floats in the byte order of the host, 2 to 1000 of
+        them (as many as one request of at most 4096 bytes carries, with room to spare). Posts
+        invalid_curve for a duration over 10000 milliseconds or under 1, an array whose
+        length is not a multiple of 4, or fewer than 2 or more than 1000 samples, invalid_value for
+        a sample outside the property's range, and invalid_property or too_many_animations as the
+        other animations do.
+      </description>
+      <arg name="serial" type="uint"/>
+      <arg name="property" type="uint" enum="property"/>
+      <arg name="duration" type="uint" summary="milliseconds, 1 to 10000"/>
+      <arg name="samples" type="array"/>
+    </request>
+
+    <!-- Version 5 additions -->
+
+    <request name="set_glass_edge" since="5">
+      <description summary="draw a line along the outside of the layer's glass">
+        A line width logical points wide just outside the outline of the layer's glass, of the
+        straight colour red, green, blue at alpha, drawn over what lies there and over the glass's
+        own antialiased edge, as a stroke the client would draw around its shape. Its width stays
+        width points whatever the layer's scale, and in a glass group the line runs just outside
+        each shape's own outline as the scene shows it at each frame, left out inside the group's
+        other shapes, as a stroke around each shape cut by the others: where the shapes overlap only
+        the outline of the whole shows, where they only blend each keeps its own, and it follows them
+        as they move, scale and resize; the group takes the edge of its first layer in drawing
+        order. The line fades with the glass. From version 6 it softens with the content_blur of
+        the layer whose edge it is, blurred by the same Gaussian as that layer's content, so it
+        blurs with the content as a panel closes. 0, the initial
+        width, draws none; a layer without glass draws no edge. Posts invalid_value for a width
+        below 0 or above 4, or a channel outside 0 to 1.
+      </description>
+      <arg name="width" type="fixed"/>
+      <arg name="red" type="fixed"/>
+      <arg name="green" type="fixed"/>
+      <arg name="blue" type="fixed"/>
+      <arg name="alpha" type="fixed"/>
+    </request>
+
+    <!-- Version 7 additions -->
+
+    <request name="set_glass_variant" since="7">
+      <description summary="draw glass of a system variant below the layer's content">
+        As set_glass, with the glass named by its system variant, its modifiers and the size class
+        its size-dependent values resolve at: the values of cupertino_backdrop_v1.glass_variant,
+        glass_modifier and size_class (cupertino_app_effects_v1), resolved as
+        cupertino_backdrop_v1.set_glass_variant resolves them. A layer of an inactive window takes
+        the inactive branch of a variant on the regular glass, and the glass of an interactive
+        layer grows under a press inside its bounds as shown, about their centre, and lets go on
+        the release; it does not grow while reduce_motion is on. The last of set_glass and
+        set_glass_variant decides the layer's glass; set_glass with 4294967295 removes it. Posts
+        invalid_property for an unknown variant, size class or modifier bit and invalid_value for
+        a lens below 1 or above 4.
+      </description>
+      <arg name="variant" type="uint" summary="a cupertino_backdrop_v1.glass_variant value"/>
+      <arg name="modifiers" type="uint" summary="cupertino_backdrop_v1.glass_modifier bits"/>
+      <arg name="size_class" type="uint" summary="a cupertino_backdrop_v1.size_class value"/>
+      <arg name="lens" type="fixed"/>
+    </request>
+
+    <request name="set_glass_tint" since="7">
+      <description summary="lay a colour over the face of the layer's glass">
+        A straight sRGB colour, red, green and blue from 0 to 1, laid over the face of the layer's
+        glass at alpha, as cupertino_backdrop_v1.set_glass_tint lays it; alpha 0 (the initial
+        state) lays none. In a glass group the joined glass takes the tint of the group's first
+        layer. Posts invalid_value for a channel outside 0 to 1.
+      </description>
+      <arg name="red" type="fixed"/>
+      <arg name="green" type="fixed"/>
+      <arg name="blue" type="fixed"/>
+      <arg name="alpha" type="fixed"/>
+    </request>
+
+    <event name="finished">
+      <description summary="an animation reached its target">
+        Sent once, in the frame the property reached the target of the animation named serial.
+      </description>
+      <arg name="serial" type="uint"/>
+    </event>
+
+    <event name="replaced">
+      <description summary="an animation was replaced before it finished">
+        A later set_value, animation or cancel of the same property replaced the animation named
+        serial; value and velocity (units per second) are what was shown when it was replaced, the
+        start of the motion that follows.
+      </description>
+      <arg name="serial" type="uint"/>
+      <arg name="value" type="fixed"/>
+      <arg name="velocity" type="fixed"/>
+    </event>
+
+    <event name="settled">
+      <description summary="every property of the layer shows its target">
+        Sent when the last running or waiting animation of the layer finished or was replaced by
+        a set value: what is shown is again what the client hit-tests and publishes.
+      </description>
+    </event>
+  </interface>
+</protocol>

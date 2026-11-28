@@ -1,0 +1,262 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="cupertino_control_v1">
+  <copyright>
+    SPDX-License-Identifier: MIT OR Apache-2.0
+  </copyright>
+  <description summary="native scoped desktop control and trusted session consent">
+    Only the compositor-created controller connection sees the manager. Binding it grants no observation,
+    capture or input authority. Version 1 remains discovery-only. Version 2 requests explicit output-scoped
+    consent from the private session authority. Fresh physical input on its registered surface is required
+    to approve. Lock, disconnect and stop revoke a run. Output capture uses ext-image-copy-capture, with sources
+    bound to the exact approved run epoch. Version 3 adds consented native semantic observation and actions, with
+    sealed bounded publications owned by each application surface. Version 4 names the app each run comes from:
+    the person's remembered answer for that app decides a request at once, and the session authority asks only
+    for services the app has no answer for. Physical input never suspends a run; an authentication prompt
+    suspends it until the prompt closes. Version 5 lets one controller connection serve several runs at once, one
+    per local peer, each with its own epoch, held input and captures.
+  </description>
+  <interface name="cupertino_control_v1" version="5">
+    <enum name="error">
+      <entry name="permission" value="2" summary="the connection no longer holds the controller capability"/>
+      <entry name="session_exists" value="1" summary="the connection already has as many live sessions as allowed"/>
+      <entry name="exhausted" value="3" summary="the server cannot assign another unique run epoch"/>
+    </enum>
+    <request name="destroy" type="destructor">
+      <description summary="release this manager">
+        Existing session objects remain alive. This does not cancel or destroy them.
+      </description>
+    </request>
+    <request name="get_session">
+      <description summary="create an inactive session">
+        At most one session may be live for a connection, across all its manager bindings; from version 5 at
+        most eight, created through a manager bound at version 5. Destroying one allows another session with a
+        fresh epoch. The server immediately sends created, then status with serial zero.
+        The manager's capability is checked again for every request. No consent or mutation is implied.
+      </description>
+      <arg name="id" type="new_id" interface="cupertino_control_session_v1"/>
+    </request>
+  </interface>
+  <interface name="cupertino_control_session_v1" version="5">
+    <enum name="phase">
+      <entry name="inactive" value="0"/>
+      <entry name="awaiting_consent" value="1" since="2"/>
+      <entry name="active" value="2" since="2"/>
+      <entry name="suspended" value="3" since="2"/>
+      <entry name="revoked" value="4" since="2"/>
+    </enum>
+    <enum name="refusal">
+      <entry name="stale_epoch" value="0" summary="the request names another run epoch"/>
+      <entry name="not_granted" value="1" since="2"/>
+      <entry name="denied" value="2" since="2"/>
+      <entry name="stale_geometry" value="3" since="2" summary="an earlier geometry revision, or for perform an earlier publication revision"/>
+      <entry name="outside_scope" value="4" since="2"/>
+      <entry name="unsupported" value="5" since="2"/>
+      <entry name="blocked" value="6" since="2"/>
+      <entry name="no_authority" value="7" since="2"/>
+      <entry name="busy" value="8" since="2"/>
+      <entry name="invalid_input" value="9" since="2"/>
+      <entry name="unknown_outcome" value="10" since="2"/>
+      <entry name="unidentified" value="11" since="4" summary="the app the run comes from cannot be named"/>
+    </enum>
+    <request name="destroy" type="destructor">
+      <description summary="end this session and invalidate its epoch"/>
+    </request>
+    <request name="query">
+      <description summary="query the status of this exact run">
+        serial is the caller's correlation value and must be nonzero; it is echoed unchanged in the reply.
+        An epoch other than the one in created is refused without reporting session state. Querying has no
+        side effect. The controller capability must still be held when the request is processed.
+      </description>
+      <arg name="serial" type="uint"/>
+      <arg name="epoch_hi" type="uint"/>
+      <arg name="epoch_lo" type="uint"/>
+    </request>
+    <enum name="error">
+      <entry name="permission" value="2" summary="the connection no longer holds the controller capability"/>
+      <entry name="invalid_serial" value="1" summary="serial zero is reserved for the initial status"/>
+      <entry name="identity" value="3" summary="identify was sent twice, or after start" since="4"/>
+    </enum>
+    <event name="created">
+      <description summary="the server-assigned nonzero run epoch">
+        The epoch combines epoch_hi as the upper 32 bits and epoch_lo as the lower 32 bits. It is unique within this server's lifetime; a client must
+        also bind its handles to the identity of the live compositor and this connection. available is zero
+        in version 1: discovery does not promise operations that the implementation cannot enforce yet.
+      </description>
+      <arg name="epoch_hi" type="uint"/>
+      <arg name="epoch_lo" type="uint"/>
+      <arg name="available" type="uint"/>
+    </event>
+    <event name="status">
+      <description summary="status without desktop content">
+        Sent initially with serial zero, then in answer to a successful query. Version 1 is always inactive.
+      </description>
+      <arg name="serial" type="uint"/>
+      <arg name="phase" type="uint" enum="phase"/>
+    </event>
+
+    <event name="refused">
+      <arg name="serial" type="uint"/>
+      <arg name="reason" type="uint" enum="refusal"/>
+    </event>
+    <enum name="capability" bitfield="true" since="2">
+      <entry name="observe" value="1"/><entry name="capture" value="2"/>
+      <entry name="pointer" value="4"/><entry name="keyboard" value="8"/>
+      <entry name="semantic" value="16" since="3"/>
+    </enum>
+    <enum name="key_state" since="2"><entry name="released" value="0"/><entry name="pressed" value="1"/></enum>
+    <request name="start" since="2">
+      <description summary="ask for control of one output">
+        Capabilities are explicit, nonempty and limited to this version's capability bits. Before version 5 only
+        one run may await consent or be active at a time, and a request beside another is refused with busy. From
+        version 5 runs are independent: several may be active at once, each holding its own keys and buttons, and
+        a run that must ask the person waits in the awaiting_consent phase until the runs asked before it are
+        answered. No desktop content is sent before consent. Serial must be nonzero.
+        From version 4 a run must be identified first (unidentified otherwise). Observe, semantic, pointer and
+        keyboard need the app's desktop-control service, capture its screen-capture service. A service the person
+        turned off for the app refuses the request with denied. When every needed service is allowed the run is
+        active before completed; otherwise the session authority asks the person and the run awaits consent.
+        A version 2 or 3 run is asked every time and its answer is not remembered.
+        A run that was revoked stays revoked: start on its session is refused with stale_epoch (busy from older
+        servers), and a client destroys the session and gets another for a fresh run. denied comes before
+        stale_epoch and busy.
+      </description>
+      <arg name="serial" type="uint"/><arg name="epoch_hi" type="uint"/><arg name="epoch_lo" type="uint"/>
+      <arg name="output" type="object" interface="wl_output"/><arg name="capabilities" type="uint" enum="capability"/>
+    </request>
+    <request name="motion" since="2">
+      <arg name="serial" type="uint"/><arg name="epoch_hi" type="uint"/><arg name="epoch_lo" type="uint"/>
+      <arg name="revision" type="uint"/><arg name="x" type="fixed"/><arg name="y" type="fixed"/>
+    </request>
+    <request name="button" since="2">
+      <description summary="press or release a pointer button where the pointer is">
+        The release of a button this run holds needs only the grant: it is delivered whatever revision it carries
+        and wherever the pointer is, since the press may itself have changed the layout.
+      </description>
+      <arg name="serial" type="uint"/><arg name="epoch_hi" type="uint"/><arg name="epoch_lo" type="uint"/>
+      <arg name="revision" type="uint"/><arg name="code" type="uint"/><arg name="state" type="uint" enum="key_state"/>
+    </request>
+    <request name="key" since="2">
+      <description summary="deliver a Linux evdev key through the normal keyboard router">
+        The server owns held state and timestamps. Reserved session and power actions are not available. The
+        release of a key this run holds needs only the grant, whatever revision it carries and wherever the keyboard
+        focus went.
+      </description>
+      <arg name="serial" type="uint"/><arg name="epoch_hi" type="uint"/><arg name="epoch_lo" type="uint"/>
+      <arg name="revision" type="uint"/><arg name="code" type="uint"/><arg name="state" type="uint" enum="key_state"/>
+    </request>
+    <request name="axis" since="2">
+      <arg name="serial" type="uint"/><arg name="epoch_hi" type="uint"/><arg name="epoch_lo" type="uint"/>
+      <arg name="revision" type="uint"/><arg name="horizontal" type="fixed"/><arg name="vertical" type="fixed"/>
+    </request>
+    <request name="stop" since="2"><description summary="revoke this run; cleanup is safe to repeat"/></request>
+    <request name="resume" since="2">
+      <description summary="continue a suspended run">
+        A run suspended while an authentication prompt or a protected session panel held the keyboard resumes by
+        itself when it closes. This request resumes it at once when nothing blocks it any more; it is refused with
+        blocked otherwise. It never asks the person again.
+      </description>
+      <arg name="serial" type="uint"/><arg name="epoch_hi" type="uint"/><arg name="epoch_lo" type="uint"/>
+    </request>
+    <event name="geometry" since="2">
+      <description summary="the granted output's current logical rectangle">
+        This event is followed by status. It is sent again each time revision advances; input carrying an earlier
+        revision is refused with stale_geometry. A changed rectangle, scale or transform of the output advances
+        revision. While the run observes (version 3 and the observe capability), so does a change in where the
+        windows its observations list lie on this output: a window's origin, size or scale, a window appearing in
+        or leaving that list, or a change in their stacking order. A changed title, focus, app id or published
+        snapshot leaves revision as it is and is announced by semantic_changed alone. Capture uses the same output,
+        upright in buffer pixels.
+      </description>
+      <arg name="revision" type="uint"/><arg name="x" type="int"/><arg name="y" type="int"/>
+      <arg name="width" type="int"/><arg name="height" type="int"/><arg name="scale" type="fixed"/>
+      <arg name="name" type="string"/>
+    </event>
+    <event name="completed" since="2">
+      <description summary="the request was dispatched, not proof that the application acted"/>
+      <arg name="serial" type="uint"/>
+    </event>
+    <request name="observe" since="3">
+      <description summary="a complete consented observation with authoritative window transforms">
+        Includes third-party window metadata without claiming semantic support. Native snapshots are surface-owned,
+        bounded and versioned. Protected session and authentication surfaces are excluded.
+      </description>
+      <arg name="serial" type="uint"/><arg name="epoch_hi" type="uint"/><arg name="epoch_lo" type="uint"/>
+    </request>
+    <request name="perform" since="3">
+      <description summary="route one supported action to its exact publication revision">
+        Requires observe and semantic consent. Payload is a sealed bounded Invocation. Completion reports the
+        native runtime's result; applications may finish after a timeout, so uncertain outcomes must not be replayed.
+      </description>
+      <arg name="serial" type="uint"/><arg name="epoch_hi" type="uint"/><arg name="epoch_lo" type="uint"/>
+      <arg name="payload" type="fd"/><arg name="length" type="uint"/>
+    </request>
+    <event name="observation" since="3"><arg name="serial" type="uint"/><arg name="payload" type="fd"/><arg name="length" type="uint"/></event>
+    <event name="action_finished" since="3"><arg name="serial" type="uint"/><arg name="payload" type="fd"/><arg name="length" type="uint"/></event>
+    <event name="semantic_changed" since="3"><arg name="revision_hi" type="uint"/><arg name="revision_lo" type="uint"/></event>
+    <request name="identify" since="4">
+      <description summary="name the process the run is for">
+        The controller names the local process it serves: its process id and its start time in clock ticks since
+        boot (field 22 of /proc/PID/stat), start_hi holding the upper 32 bits. Sent at most once, before start.
+        The compositor checks that the process still has that start time, then finds its app: the nearest ancestor
+        that is a connected application client whose windows name one desktop entry, else the executable of the
+        process's parent. A process it cannot name makes start refuse with unidentified. On a run that already
+        ended, as when the session locked, it is ignored.
+      </description>
+      <arg name="pid" type="uint"/><arg name="start_hi" type="uint"/><arg name="start_lo" type="uint"/>
+    </request>
+    <request name="select_capture" since="5">
+      <description summary="make the next output capture source this run's">
+        The next ext_output_image_capture_source_v1 this connection creates belongs to this run: it captures only
+        while this run is active with the capture capability on that output, and stops with this run alone. A
+        later select_capture on any session of the connection replaces the selection. Without a selection a
+        source belongs to the first run of the connection that may capture that output.
+      </description>
+    </request>
+  </interface>
+
+  <interface name="cupertino_control_authority_v1" version="2">
+    <description summary="the supervised session agent's consent authority">
+      Offered only to the session-lock role. One authority may be bound at once. Its loss revokes the runs
+      awaiting its answer; a run an app's remembered answers started needs no authority.
+      Consent must name a registered surface and a fresh physical input serial delivered to that surface.
+      The controller cannot bind this interface or approve its own request. Requests come one at a time: the
+      next requested event follows only once the earlier request was answered or ended.
+    </description>
+    <enum name="error"><entry name="permission" value="2"/><entry name="busy" value="1"/></enum>
+    <request name="destroy" type="destructor"/>
+    <request name="set_surface"><arg name="surface" type="object" interface="wl_surface"/></request>
+    <request name="answer">
+      <description summary="the person's answer to a request">
+        allow 1 approves the run and, from version 2, remembers allow for each asked service of its app. allow 2
+        (version 2) refuses the run and remembers deny for each asked service. Both need a fresh physical input
+        serial on the registered surface; a deny without one refuses this run only. allow 0 refuses this run only
+        and remembers nothing (the panel was dismissed or could not be shown).
+      </description>
+      <arg name="epoch_hi" type="uint"/><arg name="epoch_lo" type="uint"/>
+      <arg name="allow" type="uint"/><arg name="serial" type="uint"/>
+    </request>
+    <request name="stop"><arg name="epoch_hi" type="uint"/><arg name="epoch_lo" type="uint"/></request>
+    <event name="requested">
+      <arg name="epoch_hi" type="uint"/><arg name="epoch_lo" type="uint"/>
+      <arg name="capabilities" type="uint"/><arg name="output_name" type="string"/><arg name="resuming" type="uint"/>
+    </event>
+    <event name="changed">
+      <arg name="epoch_hi" type="uint"/><arg name="epoch_lo" type="uint"/><arg name="phase" type="uint"/>
+    </event>
+    <enum name="app_kind" since="2">
+      <entry name="desktop" value="1" summary="identity is a desktop entry id"/>
+      <entry name="executable" value="2" summary="identity is an absolute executable path"/>
+    </enum>
+    <event name="app" since="2">
+      <description summary="the app the next requested event asks for">
+        Sent right before requested for a run that names its app. name is the desktop entry's name, or the
+        executable's file name. services holds the services asked (desktop control 1, screen capture 2), only
+        those the app has no remembered answer for. remembered is 1 when the answer will be remembered for the
+        app, 0 when it applies to this run only.
+      </description>
+      <arg name="epoch_hi" type="uint"/><arg name="epoch_lo" type="uint"/>
+      <arg name="kind" type="uint" enum="app_kind"/><arg name="identity" type="string"/>
+      <arg name="name" type="string"/><arg name="services" type="uint"/><arg name="remembered" type="uint"/>
+    </event>
+  </interface>
+</protocol>

@@ -1,0 +1,403 @@
+# cupertino-menubar
+
+The menu bar of the Cupertino desktop. It stands in for the design's system menu bar process (menus, status items, clock).
+The crate has no Smithay dependency. Its component (`MenuBar`, `component`), which the shell host `cupertino-shell` runs on
+a thread of its own, draws the bars and popups from the layouts this crate computes, and feeds the crate pointer, key and
+timer events with absolute timestamps in seconds.
+
+## Contents
+
+| Module | Contents |
+|---|---|
+| `layout` | `BarContent` → `BarLayout`: bold app-name menu, menus, status items nearest the control panel first, control panel slot, clock. Items that do not fit are reported hidden. `layout_popup` lays out rows, separators, check / radio column, icon column, shortcut text (the Mac modifier glyphs while Super is the command key, the PC key names such as `Alt+` and `F4`, `Ctrl+Super+` and `Z` while Ctrl is: `MenuMetrics::shortcut_style`, set from the server's primary modifier), submenu arrows, flipping, clipping and scrolling. `TextMeasure` abstracts text measurement; `MonoMeasure` is a deterministic stand-in. |
+| `controller` | `MenuController`: press-drag-release, click-sticky menus, hover switching between open menus, focus-bar shortcut, arrow / Home / End / Enter / Esc keys, type-ahead, submenus that open after a short dwell and close at once off the way into them, with a safe triangle, disabled / checked / separator / shortcut items, `AboutToShow` and `Activate` effects. It tells the pointer's buttons apart (`Button`: `button_press` / `button_release`; `pointer_press` and `pointer_release` are the primary button): the primary and the secondary button open a title's menu and press in the menus alike, except that the primary button opens no menu of a status item whose primary action is to activate it (`StatusEntry::primary_opens_menu`, false for a status notifier item that is not only a menu), the middle button opens none and presses no row, the release of a button other than the one pressed does nothing, and a slot a press opened no menu of is activated on release over it with its button and the pointer's place (`SlotActivated`). `pointer_scroll` takes a scroll in steps and parts of one; over a status item with no menu open it gathers them and sends the whole steps (`SlotScrolled`, per axis, positive down or right), keeping the rest for the next scroll there, dropped by a scroll the other way or over another slot. Every public call ends by comparing the menus open with those the source was told of and reports the difference (`controller/shown.rs`): `MenuClosed` for each menu that no longer shows, the deepest first, then `MenuOpened` for each that shows now, the shallowest first, however they closed (Esc, a click outside, another title, a choice, the item gone from the content); a menu whose exporter renumbered its item while it showed still shows under the new id and gets neither. `Activate`, `MenuOpened` and `MenuClosed` carry the input clock's time in milliseconds: the latest input's (`set_input_time`, which the component calls with each pointer and key event's window-system time) advanced by the controller's clock since, so a timer's submenu is stamped with its own moment. `open_item` opens the title's menu that holds an item as if clicked, with the submenus on the way open and their rows selected (the exporter's `ItemActivationRequested`), unless a press the bar follows is held (`routing::opens_requested_menu` keeps the component from asking while the bar gives way to an overview or the session is locked). A status item's tip (`controller/hover.rs`, `tooltip`) shows once the pointer has rested on the item `STATUS_TOOLTIP_DELAY` (0.6 s, the toolkit's tooltip delay) with no menu open, and goes when the pointer leaves the item or the bar (`pointer_leave`), on a press, a scroll, a key or an open menu, coming again only once the pointer left the item and came back; `close` puts it away too, and drops a press whose release the bar may never see. The keyboard and the Help search live in `controller/keyboard.rs`. Releasing a press, the delays and the way into a submenu are `cupertino-menu-model`'s `tracking`, which Kit's menus share: a press on a title dragged onto a row chooses it on release; released on the title within 0.5 s the menu stays open; released there later, held or dragged out and back, it closes. The way into a submenu holds while each move stays in the triangle and the pointer does not rest 0.375 s (`tick` then gives the row under it the highlight). Type-ahead is CupertinoKit's `typeahead` (a one-second pause restarts it, and it restarts in another menu level). |
+| `clock` | The clock text (`clock_text`: weekday, day and short month, 12 / 24-hour time, seconds, day period, flashing separators) and its ticks (`next_tick`, `tick_interval`) from `ClockSettings`, which `cupertino_defaults::menubar` reads from and writes to `menubar.conf` (the `clock.* keys, bad lines reported with their numbers). |
+| `extras` | The bar's own status items (Wi-Fi, battery, Bluetooth, Focus): which show, their icons, menus (`ExtraMenu`) and row actions (`ExtraAction`), from an `Extras` snapshot of the services; the system menu (`system_menu`, rows at fixed ids `SystemRow`) and its Recent Items submenu (`recent_items`). The Wi-Fi item's menu is a panel: its rows carry a `PanelRow` (`item`), which `layout_popup` lays out 308.5 pt wide with its right edge level with the item's, and which the view draws with a switch, a disc for the joined network, lock and signal marks and a disclosure for the other networks, and so is the Bluetooth item's, with a disc for each paired device; the title row never highlights and a row's highlight stands clear of the dividing lines; the switch and the disclosure leave the panel open when chosen. |
+| `recent` | What Recent Items lists (`RecentItems`): `RecentSources::read` takes the launcher's applications in its order (`cupertino_apps::frecency`, ids without an installed visible desktop entry skipped) and the documents of `recently-used.xbel` newest first (`cupertino_apps::recent`, missing files skipped), at most 10 of each, leaving out what was used at or before the last Clear Menu (`RecentSources::clear`, the bar's own `$XDG_DATA_HOME/cupertino/menubar-recent-items-cleared`). It never writes the launcher's or the applications' files. |
+| `item` | `MenuItem`: label, mnemonic, separator, enabled, visible, `Toggle`, `Shortcut`, icon name / data, children, the GMenuModel action and accelerator, and its `Origin` (the bar's or an exporter's), by which an activated item is routed, and a `detail`: secondary text drawn dimmed after the label (a search result's path). The exporter's `disposition` (`Disposition`: a warning row draws its label orange, an alert row in the theme's destructive colour, an informative row as a normal one), `accessible-desc` (`description`, read by assistive technology), `Toggle::Indeterminate` / `RadioIndeterminate` (neither on nor off, drawn as a dash), a `Shortcut` sequence (`before`: the chords pressed first, up to four in all) and, from the menu's own properties, `rtl` (rows laid out mirrored: the mark and icon at the right, the shortcut and submenu chevron at the left), `icon_dirs` (where the exporter's icon names are looked up first) and `notice` (the menu asks for attention: a 4 pt dot after the bold app name). `path_to` gives the items from a menu down to an item. |
+| `fallback` | Synthetic menus of an app that exports none: the app menu (About, Settings…, Hide, Hide Others, Show All, Quit; Settings… and Show All on the desktop), File (Close Window), Edit (Undo, Redo, Cut, Copy, Paste, Select All; enabled on a bar whose server takes `edit`, version 11, and disabled below), View (Exit Full Screen while the active window is in full screen, always enabled then; else Enter Full Screen, enabled only while the window can zoom, since the server refuses the person's full screen elsewhere; with a server before shell version 16, which never says full screen, Enter Full Screen stays enabled), Window (Minimize and Zoom, each disabled while the active window's is (`WindowState::can_minimize`, from shell version 15, and `can_zoom`), Move to Workspace, Tile Window, Bring All to Front, the window list of at most 1000 rows with the active window checked and minimized ones marked, Close Window; with Alt held Minimize All, Zoom All, Arrange in Front (a cascade) and Close All, see *Alt variants*) and Help (the search field, see *Help search*). Items of server actions show the chord the server binds (`Chords`), none while it sent none; the app's own convention chords use the primary modifier the server names. Ids are negative and stable; `action_for` maps activated ids back to `FallbackAction`. |
+| `search` | The Help menu's search (`search`, `help_menu`): the enabled leaf items of the system menu, the App menu and the application's menus, Help included, whose label or submenu title holds the field's text, and the Help menu with them as rows (see *Help search*). |
+| `merge` | `Export::merge`: an exporter's tree merged with the bar's App, File, Window and Help menus (roles, rebinding to the exporter's items, order, ids; see *Merged menus*); `Export::roles` for the routing, `label_role`, `accel_shortcut`. |
+| `source` | `MenuSourceMap`: window → `MenuSource::{Kde, Gtk, Synthetic}`. A window gets only the menus it exported, never another window of its application. |
+| `registered` | Which registered menu (`dbus::registrar`) belongs to the active window when the server announced none for it, from the process the server names (`active_client`, shell version 24): an X11 program's window (shown by the X11 bridge) by the title its X11 window has, among several of one title the one with the X input focus, a window several connections registered the one whose process the window names (`_NET_WM_PID`), else the first connection that registered it; a registered window the X server once had and no longer has reported gone, a number it never had (a Wayland program's) never; a window on Wayland by its own process's registrations, several matched in the order the windows were made when there are as many as the application's windows, else the latest. `X11Windows` is the X server behind a trait. |
+| `x11` | `XServer`: the X11 bridge's X server, connected the first time an X11 window is active (so the bar never starts the bridge), again after it broke, through `DISPLAY` or else the display on the bridge's command line; titles from `_NET_WM_NAME`, else `WM_NAME`; the focus from `GetInputFocus` followed up to its top-level window, else `_NET_ACTIVE_WINDOW`; a window's process from `_NET_WM_PID`. |
+| `dbus::dbusmenu` | `DBusMenuClient`: `GetLayout` parsing (`parse_layout`), `Event`, `AboutToShow`, and `LayoutUpdated` / `ItemsPropertiesUpdated` / `ItemActivationRequested` as a `MenuUpdate` stream, property update helpers. `MenuTree` is one exporter's tree as its replies and signals describe it: which part a batch of `LayoutUpdated` signals asks to read again (the parent a signal names; the whole tree for the root, a parent the tree does not hold, more than four parents, or a revision below the one held, which an exporter that replaced its menu and counts again sends), a reply put in its place, property changes applied; a property an update removes returns to its default (a separator turned standard is enabled), `toggle-state` defaults to indeterminate, `icon-data` is a PNG, `children-display` `submenu` makes a submenu of an item with no rows read yet. `MenuProperties` is the menu's `Version`, `TextDirection`, `Status` and `IconThemePath`, read at start and from `PropertiesChanged`, and marks every item of the tree it shows (`MenuTree::shown`). `about_to_show_group` and `event_group` make one call of many; an exporter of version 1 or 2, or one that answers `UnknownMethod`, is called item by item. Every `Event` (`MenuEvent`: `opened`, `closed`, `clicked`) carries the input's timestamp in milliseconds. |
+| `follow` | A DBusMenu exporter followed by the worker for as long as something shows its menu, an application's menus and a status item's alike. A task per exporter subscribes to its signals, reads the tree and reports it whole after every change: signals within 50 ms are one change, `ItemsPropertiesUpdated` is applied to the tree held, `LayoutUpdated` reads the affected part. Before a menu or submenu shows, the task sends `AboutToShow` and reads the item's layout again when the answer asks for it, when the item's rows were never read, or when the call fails (an exporter without the method cannot say). The task makes one call at a time and applies replies in order, so an older reply never replaces a newer layout. Every call has a bounded wait (`Waits`: 1 s for `AboutToShow`, 5 s for a layout), spent by the task and never by a bar: a menu opens at once with the rows last read and changes when the answer comes. A first read that fails, of a window's menu as of a status item's, is made again without a word after 100 ms, doubling up to 6.4 s (12.7 s in all) while something still shows the menu, then the failure is reported (an item or a window can name its menu before the object answers, as Chromium and Electron do for seconds); a status item's menu is also told that it is about to show before its first read. An application's visible top-level menus with `children-display` `submenu` and no rows (Chromium and Electron give a menu's rows only once it is about to show) are told they are about to show as soon as the whole tree is read, as one `AboutToShowGroup` or, for an exporter without it, one `AboutToShow` each, all within the 1 s `AboutToShow` wait, and the tree is read again before it is reported, so the merge sees loaded menus; the changes the exporter signalled before that read's answer are in it and cost no read again, and no `opened` is sent for them. A whole tree read later that has such menus again tells them again, at most `PREFETCH_ROUNDS` (4) times per exporter. Consecutive `AboutToShow` requests and consecutive events are sent as one group call. The task sends `closed` only for a menu it told as opened or its tree still holds, and when the last thing showing the menu lets it go (`Follower::finish`, the window closed or the application quit) it sends `closed` for every menu still open, deepest first. Events go under the ids the exporter has then: the changes it signalled are read first (after an `AboutToShow`, the changes signalled with the answer are waited for up to 50 ms before an `opened`), an item the exporter renumbered is found again at its place under its label as the bars find it (`controller::rematch`), so `opened` names the id the open menu has now, an item it took away is not told it opened, and the menus held as open follow their items to their new ids, so their `closed` does too. The latest `ItemActivationRequested` of a batch of signals is reported, after the tree is read again (`Event::ActivationRequested`), and the component opens that item's menus on a bar whose front application exports it (`MenuController::open_item`), not while that bar gives way to an overview or the session is locked. |
+| `dbus::sni` | `WatcherService` serving the watcher at `/StatusNotifierWatcher` as `org.kde.StatusNotifierWatcher` and `org.freedesktop.StatusNotifierWatcher` (both names claimed, the second when free; the component is the host, `IsStatusNotifierHostRegistered` is true, `ProtocolVersion` 0). `RegisterStatusNotifierItem` takes a bus name (the item at `/StatusNotifierItem`), `service/path`, or a bare object path (the caller's unique name and that path); a name without owner is refused with `NameHasNoOwner`, and an item is announced (`StatusNotifierItemRegistered`, `RegisteredStatusNotifierItems`) only once its service is known to be on the bus; at most 32 items per connection and 512 in all (`LimitsExceeded`). An item goes, with `StatusNotifierItemUnregistered` and the changed `RegisteredStatusNotifierItems`, when its service or the connection that registered it loses its name, also when that is found as it registers; an item registered again by the owner of its service is the owner's from then on, so one another connection registered first under a name it does not own stays while the owner does. `RegisterStatusNotifierHost` keeps other hosts (at most 64) and signals `StatusNotifierHostRegistered`, and `StatusNotifierHostUnregistered` when one leaves. `fetch_item` reads an item with one `GetAll` (one by one for an item that does not answer it) on `org.kde.StatusNotifierItem`, else `org.freedesktop.StatusNotifierItem`: id, category, title, status, window id, icon, attention icon and movie, overlay icon (names and ARGB32 pixmaps: of the first 16 an item sends of at most 256 px a side, only the one `best_pixmap` draws at each of `kept_pixmap_sizes`, the slot's icon at one and two pixels a point), `IconThemePath`, tooltip (`StatusToolTip`, `text` drops its markup; its pixmaps are not kept, the tip draws text), `ItemIsMenu`, `Menu`. `StatusItem::tooltip_text` is the tooltip's text, else the title, which the view shows in Kit's tooltip below the item's slot while the controller says the pointer rests on it, its lines joined on Kit's one-line tip (`view::tip_text`). While an item needs attention it shows its attention icon, else its attention movie as a still, never its usual pixmap; a passive one is not shown. `item_changes` reports `NewTitle`, `NewIcon`, `NewAttentionIcon`, `NewOverlayIcon`, `NewToolTip`, `NewStatus`, `NewIconThemePath` and `NewMenu` as `ItemChange`s, taken off the connection at once and kept one of each kind; `refresh_item` reads again only what a change names (`NewStatus` and `NewIconThemePath` carry their value). `send_action` sends `Activate`, `SecondaryActivate`, `ContextMenu` (x, y) and `Scroll` (delta, `horizontal` / `vertical`), the worker's `Request::StatusAction`, which the routing makes of a click or a scroll on an item, as the specification has them: the primary button sends `Activate`, except on an item that is only a menu (`ItemIsMenu`, `StatusItem::primary_action`), which opens its menu, or sends `ContextMenu` when the bar has none of it; the secondary button opens its menu, else sends `ContextMenu`; the middle button sends `SecondaryActivate`; x and y are the pointer's place in the compositor space (the bar's output position added). A scroll sends `Scroll` with whole steps, positive down or right: a wheel's detents (120ths of one), a touchpad's movement one step per `view::SCROLL_POINTS_PER_STEP` (15 pt, a detent's), gathered by the controller; `best_pixmap` `best_pixmap` picks the smallest pixmap at least the size drawn. |
+| `dbus::registrar` | The `com.canonical.AppMenu.Registrar` the worker serves after the watcher; the process asks it to own the name with the first bar and to release it with the last. `RegisterWindow` keeps the menu at the caller's unique name and object path with the caller's process (`GetConnectionUnixProcessID`), one per connection and window number (registering again keeps the connection's place), at most 256 of one process over all its connections (past it that process's oldest goes) and 4096 in all (past it a process holding as many as any other makes room from its own, else the process holding the most gives way when it holds over 64, else the newcomer is refused, so no process's first 64 are taken by another's); a caller whose process the bus cannot name, or that left the bus while it was asked, is not kept; `UnregisterWindow` drops the caller's own; a connection that leaves the bus loses its registrations, and so does an X11 window the bar finds gone (`Request::ForgetRegistrations`); `GetMenuForWindow` answers the first connection's registration of a window, else the error `org.freedesktop.DBus.Error.InvalidArgs`; `GetMenus` lists every window with that menu (`a(uso)`). `WindowRegistered(u, s, o)` tells of a window that gets a menu or whose menu changes (another connection's registration standing, another path), `WindowUnregistered(u)` of a window left with none, however its registrations went. Every change is the worker event `Registrations`. |
+| `dbus::gtk` | `GtkMenuClient`: an `org.gtk.Menus` + `org.gtk.Actions` reader and `Activate`. The menus: `Start` subscribes to groups (`LOAD_ROUNDS` rounds at the load), sections are flattened with separators, `_` is the only mnemonic marker (`__` an underscore), a link's `action-namespace` prefixes the actions of the menu it links to, accelerators are kept as text, `icon` / `verb-icon` give a name (a plain name or a themed icon's first) or an image's bytes, and `hidden-when` hides an item whose action is missing (`action-missing`) or missing or disabled (`action-disabled`), and always for `macos-menubar`; the application menu is read next to the menu bar and leads the tree under `GTK_APP_MENU`. The actions (`DescribeAll` on the application object for `app.`, the window object for `win.`; any other prefix names no object): an item is enabled when its action exists, is enabled and takes a parameter exactly when the item has a target, of its type; a stateful action with a target shows a radio mark (checked when the state equals the target), a boolean one without a target a check mark. Both interfaces' `Changed` signals keep the cache current (`GtkMenuClient::changes`, subscribed before the load): menu records apply to the groups subscribed, a record that only inserts into a new menu of such a group creates it (a section added later; any other record for a menu the cache has not is ignored), a menu a record empties goes, one that removes past its menu's end is ignored, records for a group whose `Start` reply is awaited are held and applied after it when their signal's serial is later than the reply's, and a record delivered after the reply but sent before it (its serial not later) is dropped, as the reply holds it; the actions' changes apply removals, enabled changes, state changes (only to a state of the action's type) and then additions (of actions not known). With each tree it sends, the worker subscribes to the groups the tree now links to and ends those it no longer does (`GtkMenuClient::subscription`, at most one `Start` of a menu object awaited, at most `MAX_GROUPS` groups); a released exporter (`Request::ReleaseGtk`, sent when no bar shows its menus), a client a reload replaced, and a load or `Start` that ends after the exporter was released end their subscriptions, so the exporter stops sending their changes. A menu keeps at most `MAX_MENU_ITEMS` items, a menu object at most `MAX_MENUS` menus (of the `Start` reply as of the records), a signal applies at most `MAX_SIGNAL_RECORDS` records and at most `MAX_HELD_RECORDS` records are held, since any application can send them. The worker reads the signals from the moment it subscribes, before the menus load, so a burst cannot fill the connection's signal queue and stop it; a change that comes while the menus load is not applied but loads them once more (twice at most). It applies each later change as it comes, one change of an exporter waiting at most, and sends the rebuilt tree at most every 50 ms. A tree is built from at most `MAX_TREE_ITEMS` entries, links included, and a link back to a menu being built builds nothing; an exporter keeps at most `MAX_ACTIONS` actions. Activation takes the item's action from the client and leaves the client with the worker; when an item is chosen the component sends `Request::ChooseGtk`, by which the worker takes what it activates then (its action's name and target and the object that owns the action, at most 16 waiting), and asks for an activation token for the bar's window and the application, which `Request::ActivateChosen` hands to that activation, so an exporter that numbers its items afresh while the token is asked for still runs the chosen item's action; `Activate` carries the item's target and the token as `activation-token` and `desktop-startup-id` in its platform data, so a window the action opens takes the focus. The worker loads such menus again when the exporter refuses with `AccessDenied` (100 ms, doubling to 1.6 s, then the refusal is reported): a CupertinoKit application answers only the bar's connection, which it learns over its own Wayland connection, possibly after the bar's first load. A load that fails is reported to the process (`Event::LayoutFailed`), which keeps the source's empty tree, so it does not ask in a loop, and asks again when a group announces the source again; the server sends the group again when it verifies the bar's connection. |
+
+The D-Bus layer (`dbus`) is runtime agnostic (zbus with its `async-io` backend); the component runs its futures on its
+own loop, the executor of its bus connections.
+
+```rust
+use cupertino_menubar::controller::{Effect, MenuController};
+use cupertino_menubar::layout::{BarContent, MonoMeasure};
+
+let mut c = MenuController::new(output_rect, Box::new(MonoMeasure::default()));
+c.set_content(BarContent { app_name: "Files".into(), menus, clock: "10:42".into(), ..Default::default() });
+let out = c.pointer_press(pointer, now);
+for effect in out.effects {
+    match effect {
+        Effect::AboutToShow { item, .. } => { /* dbusmenu AboutToShow, then set_content */ }
+        Effect::Activate { item, .. } => { /* dbusmenu Event "clicked" with the time */ }
+        _ => {}
+    }
+}
+```
+
+## Running
+
+The menu bar is a component of the shell host (`docs/architecture/shell-host.md`): `MenuBar` implements
+`cupertino_kit_shell::Component` (`ComponentName::MENUBAR`), and `cupertino-shell` runs it on a Kit instance and a thread of
+its own, with its own Wayland and bus connections, when the server's `components` list names `menubar`. It shows one menu bar
+per output and opens its menus as popups (`src/view.rs`): each bar is a Kit window with the server's `menu_bar` role
+(`Role::MenuBar`, a top layer surface across the output that reserves its height, kept while the component restarts, D19),
+the `MenuBar` material behind it while the bar is solid (`Surface::MenuBar`), and each open menu level is a Kit popup with a
+grab, on the menu variant's glass at the menu's own size without the variant's drop shadow (the popup draws the menu's window
+shadow apart; `view/body.rs`, the Wi-Fi join prompt too), placed where the controller laid it out. The theme, text and icons are the ones Kit shares in
+the process; the display options come with the host's `Event::Appearance`, the outputs with `Event::Outputs`, the server's
+feed with `Event::MenuBar` and the lock with `Event::Session`. Its session and system bus connections are Kit's async ones
+(`bus::session`, `cupertino_kit::bus::connect`), whose tasks run on the component's own loop; what reads files, the X11
+bridge's X server, the icons and the radios' blocking calls runs on Kit's I/O pool (`cupertino_kit::task::io`), and an
+application is started through the host (`host::spawn`). The component starts no thread of its own.
+
+`examples/menubar_capture.rs` draws the bar, its menus, the system menu, the status items' menus, the join prompt and the
+help search headless, over a light and a dark wallpaper:
+
+```sh
+cargo run -p cupertino-menubar --example menubar_capture -- menubar/menu --appearance both --wallpaper dark --scale 2 --out target/captures
+```
+
+
+**A click on empty bar space while a menu is open** closes the menu and does nothing else: no item is chosen and the press
+reaches no client. The server takes that press as outside the menu's grab (only the popups belong to the grab, not the bar
+they hang from), ends the grab, and the bar hears `popup_done` (`Input::Dismissed`); the keyboard goes to the key window,
+not to the bar, which asks for it only while a title is focused by the shortcut. The controller does the same for a press it
+receives on empty bar space (`Hit::Bar`). As with any outside press, a click on another title while a menu is open closes
+the menu without opening the other one; hover and Left / Right switch menus.
+
+| Setting | Effect |
+|---|---|
+| `menubar.conf` in the configuration directory | The clock options. `CUPERTINO_MENUBAR_CONFIG` overrides the path. A missing file leaves every key unset. The bar watches the file and applies a change at once (the clock is redrawn and its tick rescheduled); a bad line is reported and keeps its last good value. |
+| `CUPERTINO_ASSET_DIR` | The first asset pack (`cupertino-assets` resolves the others): the bar text's `ui` font and the symbols of the status items (`extras::SYMBOL_NAMES`). A symbol no pack has is reported at startup and its item is drawn without it. |
+
+`menubar.conf` keys, with what an unset key reads as (the design's read rules):
+
+| Key | Values | Default |
+|---|---|---|
+| `clock.show_seconds` | `on`, `off` | `off` |
+| `clock.show_day_of_week` | `on`, `off` | `off` |
+| `clock.show_date` | `when-space-allows`, `always`, `never` | `never` |
+| `clock.show_am_pm` | `on`, `off` (12-hour cycle only) | `on` |
+| `clock.flash_separators` | `on`, `off` | `off` |
+| `clock.hour_cycle` | `12`, `24` | `12` |
+
+The clock is redrawn 0.1 s after each minute, or each second with seconds or flashing separators.
+
+The component fails, and its host starts it again (D16), when its session bus connection cannot be made or closes, and
+when another process owns `org.kde.StatusNotifierWatcher` on the session bus. Without a system bus it shows no Wi-Fi,
+battery or Bluetooth item.
+
+## What a restart loses
+
+A failed component is started again alone by its host (D16). While it is down the server keeps each bar's last picture
+and the space it reserves (the persistent `menu_bar` surface, D19), so windows do not move under it; the new instance
+draws over it. Kept across a restart: `menubar.conf` and the time of the last Clear Menu (files, read again), the
+do-not-disturb state, which panel is open where and where an overview is shown (retained on the host bus, so they
+arrive again as the component follows its topics; a bar made while an overview of its output is shown starts hidden),
+the server's feed of the active application and its windows (sent again to the new bars), the
+radios and the battery (read again) and the session agent's entries (retained on the host bus). It loses:
+
+- any open menu, title focus and a Help search with its text;
+- the Wi-Fi join prompt and the passphrase being typed (wiped from memory), and a join under way;
+- the status items registered with `org.kde.StatusNotifierWatcher`: the name has a new owner, and an application that
+  registers again when it does (as the StatusNotifierItem specification asks) comes back, one that does not shows no
+  item until it starts again;
+- the menus registered with `com.canonical.AppMenu.Registrar`, likewise: Qt, KDE Frameworks and the other exporters that
+  watch the name register again, and a window of one that does not shows the synthetic menus;
+- the exported menus read so far, read again when they show;
+- an application or document being started (its activation token), which does not start;
+- the names of the applications read from their desktop entries, read again.
+
+The instance that ended leaves none of its bus work behind in the host: its bus tasks belong to the objects that started them and
+are cancelled with them, never detached, and its end closes its session and system connections, whose executors Kit
+runs until each connection is gone, since the loop that ran them is gone. The executors belong to those objects too,
+never to the tasks (`spawned.rs`), so a cancelled task that its executor did not run again is dropped with the
+executor, and what it holds (the extras' task holds the system connection) with it. The program test
+`crates/cupertino-session-tests/tests/shell-menubar.rs` bounds what fifty restarts add to the host's memory.
+
+## How it works
+
+- **Surfaces.** A top-anchored layer surface per output whose exclusive zone is the bar's height, so the server keeps
+  the space while it holds the bar (D19). The server owns hiding, revealing and dimming. The bar gives way to an
+  overview of its output: while the overview says it is on its way in or open
+  (`OverviewShown` on the host bus, from the `overview` component alone; the bus says it no longer is when the
+  overview stops), the bar's menus close, it fades out along the overview's own motion (`SpringPreset::OVERVIEW_OPEN`,
+  under Reduce Motion `Timing::OVERVIEW_FADE`, on the compositor's clock: `WindowRequest::Present`) and takes no input
+  (an empty input region); it fades back in the same way from the start of the way out. Its exclusive zone stays, so no
+  window refits. The bar draws nothing of its
+  own: the wallpaper shows through it as it is, with no strip, fill or blur, and only its text and symbols follow what
+  is behind them (*Backdrop* below). Increase Contrast keeps it see-through. Under Reduce Transparency it is a solid
+  strip: the window's background is the `MenuBar` surface of the theme, the material's opaque recipe (grey 0.1255
+  dark, 0.8549 light), and the bar has none otherwise (`tone::solid_bar`). Each open menu level is an `xdg_popup` with a `Menu` backdrop. Its disabled rows, their submenu
+  arrows and checkmarks recede to the menu text at 0.26; with Increase Contrast they stay readable at 0.53 and the
+  separators strengthen to 0.47 (`MenuPalette::high_contrast`). The process keeps its palette under
+  the display options (no recorded contrast palette for the menu bar text and status items).
+- **Menus.** The server's `cupertino_menu_bar_v1` feed names the active application and how its window exports menus:
+  DBusMenu or GMenuModel. A window without menus gets the synthetic menus, whose actions go back as `window_command` /
+  `move_to_workspace` / `activate_window`. From version 10 the feed also lists the application's windows and sends the
+  chords the server binds and its primary modifier; the synthetic menus are rebuilt when they change. A version 9 server
+  sends neither, so the system items show no chord, and the bar does not send the commands it lacks. From version 11 the
+  Edit items send `edit` before their menu closes, and the server types the chord into the key window once the keyboard
+  is back there; below version 11 they stay disabled. The `engage` event focuses the bar's first
+  title; from version 12 `engage_help` opens the Help menu with its search field focused (see *Help search*). Arrows,
+  Return and Escape navigate, and letters typed without Ctrl, Alt or the primary modifier select the first row they
+  start (type-ahead; in the Help menu they go to its search field).
+- **Alt variants.** While Alt is held, the open menus show the alternate of each of the bar's items that has one in its
+  place: in the Window menu Minimize becomes Minimize All (`minimize_all`, enabled even when the active window cannot
+  minimize), Zoom becomes Zoom All (`zoom_all`, enabled even when the active window cannot zoom), Close Window becomes Close All (`quit_app`, every window of the application)
+  and Bring All to Front becomes Arrange in Front, which cascades the windows (`cascade_all`; a Cupertino label, as the
+  design names none); in the system menu Force Quit becomes Force Quit <app name> (see *System menu*). The bar holds the keyboard while its
+  menus are open and reads Alt from the modifiers it was last sent, once per batch of events, so an Alt press and a
+  click that arrive in the same batch choose what the menu showed before the swap; a menu opened with Alt held shows
+  the alternates at once. A click or Return chooses the item the row shows at that moment, and the
+  highlight stays on the row across a swap. A row is measured for the wider of its item and its alternate, so the menu
+  keeps its size. Alternates have fixed ids of their own (-1025…-1028) and show no chord: the server binds none to
+  minimize all, zoom all or cascade, and Close All runs the bound quit action, whose chord next to it would mislead. An exporter's items have no alternates.
+- **Merged menus (`merge`).** An exporter's tree is merged with the bar's own menus once it has arrived; nothing shows
+  before. The server reports one address per window, the GMenuModel one when the window announced both.
+  - Roles: about, preferences, quit, close and full screen. A GMenuModel item has the role of its action (`app.about`;
+    `app.preferences` or `app.settings`; `app.quit`; `win.close`; `win.fullscreen`). A DBusMenu item has the role of its
+    label, compared without mnemonic markers, a trailing "…" or "..." and case: about starts with "About"; quit is
+    "Quit", "Quit" and anything, or "Exit"; preferences is "Preferences", "Settings", "Options" or "Configure <name>";
+    close is "Close" or "Close Window"; full screen is "Full Screen", "Enter Full Screen", "Exit Full Screen" or "Toggle Full Screen" (Electron's). English only; any other
+    label stays as exported. `<name>` is the desktop entry's `Name` or the last component of the application id.
+  - App menu: always the bar's. About, Settings… and Quit invoke the exporter's first item of their role (looked for in
+    the application's own menu, File, Edit, then the other menus); without one About shows the About panel, Settings…
+    is disabled and Quit closes every window. The exporter's about, preferences and quit items leave the application's
+    own menu, File and Edit, and the separators left leading, trailing or doubled go; a menu the removal left with no visible item goes (hidden items do not count).
+    A DBusMenu menu not loaded yet stays, so the follower loads the application's top-level menus before the bar first
+    gets the tree (`follow`): an Electron File of only Settings…, a hidden item and Quit shows as the bar's File from the start. A title that goes
+    while its menu is open closes the menu and drops the press held on it.
+    The rest of the application's own menu goes between About and Settings…, after a separator: the GMenuModel
+    application menu (`app_menu_object_path`), or the top-level DBusMenu menu titled (any case) with `<name>`.
+  - File is always shown: the exporter's, with a separator and the bar's Close Window appended when it is loaded
+    and has no item of role close, else the bar's File (Close Window). Edit and any other menu show as exported. View shows as exported, with a separator and Enter Full Screen
+    appended when it has no full screen item and is loaded. Window is the bar's Window menu with the exporter's items
+    that are no duplicates (by role close, or by label Minimize, Zoom, Maximize, Close, Close Window, Bring All to
+    Front, Move to Workspace, Move to Desktop) below a separator at its end. Help is the bar's, with the exporter's items
+    below the search row and a separator. Menus the exporter lacks are not added, except File, Window and Help. The order is
+    File, Edit, View, the others, Window, Help; an application that exports only a GMenuModel application menu gets
+    File, Window and Help.
+  - Ids: the bar's items keep their fixed ids, all at most -1000 (-1107…-1111 for the separators the merge adds);
+    the exporter's keep theirs, so a layout update leaves an open menu in place. An exporter that rebuilds its tree
+    under new ids (Chromium's, and so every Electron application, renumbers every item when it is told a menu is about
+    to show; the GMenuModel reader numbers its items afresh on every change) leaves it in place too: an open menu,
+    submenu and selected row are found again in the new content under the same id and label, else at the same place
+    under the same label, else under the label elsewhere, else under the same id (`controller`), and show the new
+    content's rows; the exporter is not told again that the menu shows. A menu whose item is gone closes, and so do the
+    submenus below it. Each item carries its origin
+    (`item::Origin`, set to the exporter by the DBusMenu and GMenuModel readers), and an activated item is routed by the
+    origin of the item shown in the menu that was open, never by its id: the bar's own items act through the server
+    (rebound About, Settings… and Quit activate the exporter's item), the exporter's go to the exporter. The DBusMenu
+    reader also leaves out an exporter's item whose id is in the bar's range (at most -1000), so ids never repeat in
+    one menu; the GMenuModel reader numbers its items from 1. A submenu of the exporter's items, in the exporter's
+    menus or in the App menu, sends the exporter `AboutToShow` as it opens. The bar's
+    Window and Help menus send the exporter no `AboutToShow` as they open; the exporter's top-level Window and Help
+    are loaded with the others when the tree is read, but items an exporter fills in lazily deeper there do not show.
+  - Changes: a DBusMenu exporter is followed while a bar shows its menus (`follow`), so a menu the application
+    changes or replaces shows its current rows, an open one included, and a chosen row carries the id the exporter
+    has for it now.
+  - Accelerators: a GMenuModel item's `accel` names the physical keys the application receives; it is read with
+    `cupertino_menu_model::Chord::from_accel` and the modifier map of the server's profile (the primary modifier of the
+    shortcut group). The bar shows the keys the person presses, by the class of the window's keys the server sends
+    (`key_class` of `active_client`, version 24; the class of every other application until it does). For a
+    third-party application the server makes Ctrl chords of Super chords (Ctrl+Shift chords for a terminal), so the bar
+    shows the chord `cupertino_keyboard::rewrite::pressed_for` gives: under `cupertino`, `<Primary>q` shows as Super+Q
+    (the command glyph), `<Primary>F5` as Ctrl+F5 (function keys, Escape, Tab, Space, Delete and the arrows are not
+    rewritten); under `classic-pc` and for a window of the desktop's toolkit (a client that bound
+    `cupertino_app_effects_v1`, whatever its id) the accelerator shows as it is (`<Primary>q` is Ctrl+Q, `<Super>q`
+    Super+Q). Accepted gap: the bar does not know `rewrite_off`, so an application opted out of the rewrite shows
+    Super+Q where only Ctrl+Q works.
+- **Help search (`search`).** The Help menu's first row is a search field (`cupertino-ui-text`'s `TextBuffer`, the editing chords of
+  `keyboard.conf`). It takes the typing keys while the Help menu is open, through the popup's keyboard grab: Space, and the
+  arrows, Home and End while it holds text (with no text Left and Right switch menus as elsewhere). Up and Down move
+  through the rows, Return or a click chooses the selected one, and Esc clears the text first, then closes the menu.
+  - Matching: a label holds the text, case ignored, the text trimmed, or the title of a submenu on the item's way does
+    ("Export" finds "File ▸ Export ▸ PDF"; the menu titles of the bar themselves do not count, so "File" does not list
+    the whole File menu). Only enabled leaf items count: separators, disabled items (headers among them), submenus
+    themselves and hidden items are never results. The items searched are the system menu's, the App menu's and every
+    menu of the application as the bar shows them (merged), the Help menu's own items included (the application's and
+    the bar's); only the bar's search row, No Results row and result rows are left out. An exporter's submenu that has
+    not been loaded yet is not searched.
+  - Results: labels that start with the text first, then labels that hold it, then items found by a submenu title
+    alone, each group in menu order, at most 12 (`fallback::MAX_SEARCH_RESULTS`), as rows below the field, the first
+    selected. A row shows the item's check or radio mark, the label, the path to the item ("File ▸ Export", the system
+    menu as "System") dimmed after it, and the item's chord. The path is cut at its end with an ellipsis to the room
+    left before the chord; the label is never cut (a long one widens the menu). With nothing found the field has a
+    disabled "No Results" row below it. A menu with the field is at least `MenuMetrics::search_width` wide.
+  - Ids: the field is -1030, No Results -1031, and result `n` is -1050 - `n` (`fallback::search_result`), by position,
+    so the ids stay while typing. Choosing a result is choosing the item it found in its own menu: the controller
+    sends `Activate` with that menu's slot and the item's id, and routing goes by the item's origin as for a click on
+    it (an exporter's item goes to the exporter, the bar's acts through the server).
+  - The empty field shows "Search" (`fallback::SEARCH_PLACEHOLDER`, the row's label) dimmed. The row shows the chord
+    of the server's `help_search` binding (version 12) right of the field, none while the server sent none.
+  - The Help search shortcut: on `engage_help` (version 12) the bar opens the Help menu with the keyboard in the field
+    (`MenuController::focus_help_search`). It takes the keyboard through `engage`'s path: the Help title takes keyboard
+    focus, the bar asks for exclusive keyboard interactivity, and the menu opens when the keyboard arrives
+    (`keyboard_arrived`), its popup grab holding it from then on; there is no second keyboard-interactivity switch.
+    With the keyboard on the bar already (title focus) or a menu open, Help opens at once; with Help open, its submenus
+    close and the field keeps its text. Esc clears the field, then closes the menu and the keyboard goes back; a lock
+    closes it as every menu. A version 11 server never sends the event, so the chord does nothing there.
+  - Not yet: highlighting the found item in its real menu on hover. The bar has no clipboard, so copy, cut and paste in
+    the field only change its text where they edit it. The caret is 2 pt wide and fades in and out as every text field's does, and a text wider than the field is not
+    scrolled.
+  - Known limit: dead keys and the Compose key do not compose in the field. The field gets the character of each key
+    press as the bar's keymap translates it (`cupertino-wayland-client`), without compose sequences: a dead key types
+    nothing and the next letter comes
+    unaccented, so "é" cannot be typed through a dead key (a layout that has the character on a key of its own types
+    it). There is no input method in the bar.
+- **Session.** The labels follow the appearance the host announces (`Event::Appearance`), redrawn on every change. The
+  solid strip follows it in the server. On `locked` (`Event::Session`) the bars close every open menu and title focus.
+- **Open panels.** An item is drawn highlighted, as an open menu's title is, while what it opened is open: an
+  application or status menu (the controller's open title), the control panel and the notification centre's list behind
+  the clock. The panels belong to other components, which say on the host bus where they are open (`PanelShown` on the
+  `Panels` topic, from `controlcenter` and `notifications` only; `extras::OpenPanels`); whatever closes a panel (Escape,
+  a click outside, a second click, another item or panel taking the keyboard, the lock, its output going) clears its
+  highlight, and a panel's component the server gives up (`ComponentStopped`) takes it along. A click on the control
+  panel slot or the clock publishes `TogglePanel` for the bar's output. The highlight shows on the bar of the panel's
+  output only; while a panel does not say its output it shows only where there is one bar. Both items read as expanded to assistive
+  technology while their panel is open. The highlight is the highlight colour of the slot's tone painted
+  (`view::HighlightPill`, a node under the slot, so the text keeps the bar's colours), the same shape in every mode and
+  tone: the system names it tinted clear glass, but shows a flat capsule that only darkens what lies behind the bar by
+  the colour's share (lightens it under light text), with none of the lens, rim and lift clear glass would add.
+- **Backdrop.** From shell version 21 the server sends each bar the mean encoded sRGB colour of its output's wallpaper
+  under the strip in bands of equal width across the output (`backdrop_bands`); a server of version 14 to 20 sends the
+  lightness of that mean colour instead (`backdrop_luminance`, CIE L*/100 in thousandths), read as the luminance it
+  stands for (`tone::Backdrop`). Each bar picks its own tone (`tone::BarTone::fresh`) from the relative luminance of the
+  mean colour under the whole strip (the encoded mean made linear, weighed as Rec. 709 weighs red, green and blue): light
+  text below 0.334 (`tone::LIGHT_TEXT_BELOW`), dark text from it, with no band held around the cut, since the measure
+  changes only with the wallpaper. The bar's text and symbols are black at 85 % or white at 90 % (`tone::bar_text`), both
+  opaque with Increase Contrast; the menus keep their own palette. What follows the tone: the labels, the application
+  name, the clock, the system mark, the control panel glyph, the extras' symbols (drawn by the toolkit in the text colour
+  of the bar's tone), the dot of a status item without an icon and the open title's highlight. What keeps the
+  appearance: the menus and the screen capture indicator's indigo. Third-party status items keep their own icons. Before
+  the first value, below version 14, while Reduce Transparency makes the bar solid and while `show.background` gives it
+  a backdrop of its own (the `MenuBar` material: its blur under a grey of 0.9647 at 80 % in the light appearance and
+  0.1765 at 90 % in the dark one), the whole bar keeps the appearance's palette.
+- **Status items over an uneven wallpaper.** With `tone.per_item = on` in `menubar.conf` (the default), the bands, a
+  see-through bar and a server of version 21, each item of the status area (status items, the control panel and the
+  clock) takes the tone of the wallpaper under its own slot (`tone::SlotTones`): the luminance of the mean colour of the
+  bands it covers, each counted by how much of it lies under the slot. A new item, and every item after a new measure or
+  a change of the appearance or the display options, takes the bar's cut at once; after that an item keeps its tone
+  while the luminance under it stays within 0.02 of the cut (`tone::SLOT_TONE_HOLD`) and changes only when it has been
+  past that band for 0.25 s (`tone::SLOT_TONE_SETTLE`), so an item moved a little by its neighbours or the clock does
+  not change back and forth. The menus and the titles keep the bar's own tone.
+- **Text over the wallpaper.** The text, symbols and mark lie sharp on the wallpaper with no halo, ring or backing under
+  them, over any wallpaper and in either tone. A status item's glyph drawn light (an extra's symbol, a template icon, the
+  dot of an item without an icon, the control panel's glyph) has one faint shadow below it, in one pass
+  (`tone::status_shadow`: black at 30 %, blurred 2.5 pt, 1.75 pt down); a dark glyph, the clock, the titles and the mark
+  have none. The session's Reduce Transparency is the one source of the solid strip
+  (`tone::solid_bar`, `BarScene::solid`). A bar redraws when its tone changes.
+- **System menu.** The first slot draws the system mark (`cupertino_icons::system_mark`, tinted with the label colour) and
+  opens `Extras::system_menu`: About This Computer, Settings, Recent Items, Force Quit, then Sleep, Restart, Shut Down, Lock Screen, Log
+  Out <name> and, when the session agent can switch, Login Window, with separators between the groups. Every row and
+  separator has a fixed id in -4000…-4099 (`SystemRow`), so an open menu survives a rebuild. About This Computer starts
+  `cupertino-settings --about` and Settings starts `cupertino-settings`, both from `PATH` with an activation token (`XDG_ACTIVATION_TOKEN`, `DESKTOP_STARTUP_ID`); Force Quit
+  sends the `force_quit_dialog` command, which a version 9 server does not get. With Alt held and an active application,
+  Force Quit shows its alternate Force Quit <app name> (-4013, `SystemRow::ForceQuitApp`), with the name the bold App menu
+  title shows, no ellipsis and no chord; a name over 64 characters (`MAX_FORCE_QUIT_NAME_CHARS`, the cap of the other
+  names in the system menu) is cut at its end with an ellipsis. It sends `force_quit_app` with the app id the label was
+  built for, and the server ends that application only while it is still the active one. Unlike Force Quit, it asks for
+  no confirmation: choosing the item that names the application with Alt held is the confirmation. It is disabled below version 13
+  (`MenuBar::can_force_quit_app`) and absent on the desktop. Force Quit, Lock Screen and Log Out show
+  the chord the server binds to them, none while it sent none. Without a session agent the menu is About This Computer, Settings, Recent
+  Items, Force Quit and Lock Screen.
+- **Recent Items.** The submenu is read (`recent` module) each time the system menu opens, never on a timer: a disabled
+  Applications header and up to 10 applications by desktop entry name, a disabled Documents header and up to 10 documents by
+  file name, a separator and Clear Menu. A section without rows keeps its header; with nothing to list the submenu is a
+  disabled Clear Menu alone. Ids: the submenu -4009, the headers -4010 and -4011, Clear Menu -4012, its separators -4055
+  and -4056, the application rows -4060…-4069 and the document rows -4070…-4079 by position; a click is resolved against
+  the rows read when the menu opened. An application starts from its desktop entry with no files; a document opens with
+  the default application of its type (`mimeapps.list`), its file in the `%f %F %u %U` codes; both get an activation
+  token, through `cupertino_apps::launch` like Settings… and the dock. A document no installed application opens goes to
+  `xdg-open` without a token, as the dock's folders do. An entry with `Terminal=true` is not started (the bar has no
+  terminal). Clear Menu stores the time and hides what was used until then; problems are reported on standard error.
+- **Session menu.** The system menu's session entries (`SessionAction`) are not D-Bus calls of the bar: the session agent answers only the server, so the bar sends `cupertino_menu_bar_v1.session_action` and the server calls the agent. Which entries work and the name on Log Out come from the agent's `SessionMenu` on the host bus (retained, from the `agent` component alone; `component::Model::published`): an entry it turns off is disabled, and the agent and logind still refuse what is not allowed. Without it (the agent not started yet, or given up by the host) the menu has no session entries but Lock Screen, which works through the server's lock screen. A system menu that is open when the host gives the agent up closes.
+- **Extras (`extras_bus`).** Wi-Fi, battery and Bluetooth read the system bus; Wi-Fi and Bluetooth through `cupertino-radios`, which finds the Cupertino daemons, else NetworkManager and BlueZ, as Settings and the control panel do, on Kit's I/O pool so the bar never waits for a service: one reading of a radio is under way at a time and the newest request meanwhile is kept, the task waits 150 ms for a reading it started and otherwise takes it when it ends, and a service still silent after 3 s hides its item while the other items are read as before. A signal of a radio's service reads that radio alone, and a Bluetooth device's signal strength reads nothing. On NetworkManager the bar reads the radio and its device; the networks in range are read when those differ from what the bar shows, when the Wi-Fi menu opens, once more 4 s after a scan was asked for, and with every change for 30 s after that. The Focus item shows the do-not-disturb state
+  and its durations that the notifications component publishes on the host bus (`DoNotDisturbChanged`), and its rows
+  publish `SetDoNotDisturb`. The task reads the radios and the battery again after any signal on those objects, when a
+  service's name changes owner, once a minute and after every action. A service that is not running, or has
+  no device, hides its item. Any other failure hides it too and is reported on stderr once per reason. Without a system bus
+  only the Focus item can show. The order next to the control panel is Wi-Fi, battery, Bluetooth, Focus, then the status
+  notifier items. The task's queue is bounded (`QUEUE`, 16): any peer can send the component signals, so a refresh is queued
+  only when none waits (the read a waiting refresh causes starts after the new signal, so it sees what it announced), and an action that finds the queue full (the task
+  stuck on a service that does not answer) is dropped and reported on stderr instead of queued without bound.
+  - Wi-Fi: a `Wi-Fi` switch row, then "Known Network(s)" and "Other Network(s)", each by name. A saved, open or OWE network is
+    joined without a passphrase. The bar has no passphrase prompt, so other networks are listed disabled.
+  - Battery: "Battery N%", "Power Source: Battery / Power Adapter", and "Charging" while charging (rows approximate).
+  - Bluetooth: a panel like the Wi-Fi one: the `Bluetooth` title with its switch, then while on a Devices heading over the
+    paired devices by name (a disc with the Bluetooth mark, the accent's while connected; "No devices" when there are none; at most 8), and Bluetooth Settings…, which opens the settings' Bluetooth pane. A device row connects or disconnects.
+  - Focus: shown only while do not disturb is on. A `Do Not Disturb` row turns it off, and the duration rows re-arm it.
+- **Screen capture indicator.** While the server reports a capture session (`screen_capture`, menu bar version 3), a 9 pt
+  indigo dot sits right of the clock at the bar's right end, 7.5 pt from the output's edge and 8 pt from the clock's
+  text (`BarContent::indicator`). The enter / exit animation and
+  minimum time are not played. Camera, microphone and system-audio indicators need the PipeWire graph and
+  are not shown.
+
+## Protocols / D-Bus it speaks
+
+| Name | Role |
+|---|---|
+| Host bus (`cupertino_kit_shell::bus`) | `TogglePanel` on a click on the clock (notification centre) or the control panel slot, `PanelShown` for their highlight; `DoNotDisturbChanged` for the Focus item and `SetDoNotDisturb` from its rows; `OverviewShown`, which the bar gives way to; `ComponentStopped`. |
+| `org.kde.StatusNotifierWatcher`, `org.freedesktop.StatusNotifierWatcher` | Owned on the component's own session bus connection (the second when no other process owns it); the component is the status item host. |
+| `com.canonical.AppMenu.Registrar` | Owned on the component's own connection while it shows a bar and no other process owns the name; released with the last bar. Qt, KDE Frameworks, Chromium, Electron and LibreOffice export their menus and hide their in-window menu bar only while the name has an owner. Electron's registrations are the only place its menus are named: the bar matches them to the active window (`registered`). |
+| `org.cupertino.Network1`, else NetworkManager | System bus, through `cupertino-radios`. The radio switch, the devices, the networks in range, joining, leaving and scanning. |
+| UPower | System bus. The display device and `OnBattery`. |
+| `org.cupertino.Bluetooth1`, else BlueZ | System bus, through `cupertino-radios`. The adapter, its power switch and devices, connecting and disconnecting. |
+
+
+- **.** Behaviour of the design: bar structure, press-drag-release and
+  click-sticky interaction, hover switching, keyboard navigation, type-ahead. The per-output presentation (dimmed inactive
+  output, auto-hide in full screen) lives in `cupertino-wm::menu_bar`.
+- **.** The bar is 33 pt tall and every item's frame 22 pt, centred with 5.5 pt above and below
+  (`BarMetrics::item_inset_y`). The selection highlight of a pressed title is a capsule 22 pt tall, reaching 13.875 pt past the title's text on
+  each side (`BarMetrics::selection_corner_radius`, `title_highlight_overhang`), in a veil of the text's tone: dark at 7 %
+  under dark text, light at 10 % under light text. A title is its text and 10 pt on each side, so two titles' text is
+  20 pt apart. An item of the status area (status items, the control panel, the clock) sits in a slot of its content
+  and 10.5 pt on each side (`status_frame_padding`), the slots meeting, so two 16 pt status icons are 21 pt apart
+  (37 pt from middle to middle); its highlight is a capsule 2 pt wider than its slot on each side, 12.5 pt past the
+  content (`status_highlight_overhang`, `BarMetrics::highlight_span`), and a status panel's right edge is level with
+  it. A menu hangs from the
+  bar so that its labels line up with the title's text (the menu's edge 16.5 pt left of it), its rows are 24 pt and its
+  separators 11 pt, its highlight is inset 5.5 pt with a 6.75 pt corner and its corner is 11.5 pt. A row with an
+  icon (an inline picture or a themed name) draws it in the icon column before the label, a symbol in the label's
+  colour, white on the highlight; shortcuts take 0.28 of the label's strength. A chosen row's highlight goes off for
+  0.034 s and on for 0.067 s before the choice is made and the menus close (not with Reduce Motion); the menus then
+  fade out, which the toolkit's runtime does.
+- **Clock.** The parts, the two-space join with a date and one space without, the unset-key reads, the
+  1 s / 60 s tick 0.1 s after the boundary, the `remainder(t, 2) > 0` flash phase and its punctuation space are as designed. The
+  English patterns stand in for the locale's skeleton step, and the hour cycle is a setting (/ approximate: no
+  locale data). `when-space-allows` always shows the date; the compact fallback is open. The battery and Bluetooth rows (open), the symbol choice (one `symbol.wifi` / `symbol.battery` / `symbol.bluetooth` / `symbol.moon` each, drawn in the bar's text
+  colour, dimmed to 0.4 when the radio is off or has no link; no signal-strength or charge-level variants) are approximate.
+  Third-party status items keep their own icons (ARGB pixmap, a file of their `IconThemePath` (laid flat, a theme directory or `hicolor` under it), absolute path or `hicolor`; a menu row's icon name is looked up in its exporter's `IconThemePath` directories the same way, `icons::Loader::named_icon` and `icons::find_in_theme_path` serving both), an overlay icon over the bottom right quarter.
+- **approximate.** Paddings, popup metrics, the band a status item holds its tone in and how long it waits, what the tone covers.
+
+**Text.** The controller measures with the toolkit's text system (`view::KitMeasure`), the one the windows draw with, so the slots and rows it lays out hold the text the windows draw, at every output scale.
+
+### Settings the bar follows
+
+`menubar.conf` also says which items the bar shows (clock, Wi-Fi, Bluetooth, battery, focus), whether the bar has a
+backdrop of its own over the wallpaper, whether each status item follows the wallpaper under it (`tone.per_item`), how many recent documents and applications the system menu lists (0 to 50) and
+which status icons stay out of the bar (listed by the id the application gives the icon, else its bus name). All apply
+at once. The bar also keeps the automatic look: when `appearance.conf` turns it on, the bar writes the `appearance` key
+of `compositor.json` as the clock passes the two switch times (checked every minute and at each change of the file),
+which the server applies at once; a high-contrast variant stays high contrast. The bar's height is still reserved at the
+start (the server reads it then).
+
+## Open issues
+
+Alt-click on the clock toggles do not disturb in the design. The bar has no reliable modifier state for a click:
+the server sends keyboard modifiers only to the focused surface, and the bar holds the keyboard only while a title is
+focused. A click on the clock therefore always opens the notification centre.

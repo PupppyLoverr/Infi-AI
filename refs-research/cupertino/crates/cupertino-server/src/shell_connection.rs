@@ -1,0 +1,102 @@
+//! Connections the server hands to the processes it starts: one end of a socket pair is inserted as a client with the
+//! given [`ClientState`], the other goes to the process as `WAYLAND_SOCKET`. Such a client cannot be told apart from an
+//! application on the public socket by anything but this state ([`crate::authorization`]), which is why the shell
+//! roles and the screen capture are offered to it alone.
+
+use std::os::fd::AsRawFd;
+use std::os::unix::net::UnixStream;
+use std::os::unix::process::CommandExt;
+use std::process::{Child, Command};
+use std::sync::Arc;
+
+use smithay::reexports::wayland_server::DisplayHandle;
+
+use crate::authorization::{ClientCapabilitySet, Holder, ShellRole};
+use crate::force_quit::ProcessHandle;
+use crate::state::ClientState;
+
+/// The client's end of a connection and the state the server keeps for it.
+pub type BoundConnection = (UnixStream, Arc<ClientState>);
+
+/// A new client with `state`: the server end is inserted, the other end is returned.
+pub fn connect_client(display: &DisplayHandle, state: ClientState) -> std::io::Result<UnixStream> {
+    connect_bound_client(display, state).map(|(stream, _)| stream)
+}
+
+/// Like [`connect_client`], and the state the server keeps for the connection, to bind the process to ([`bind_holder`]).
+pub fn connect_bound_client(
+    display: &DisplayHandle,
+    state: ClientState,
+) -> std::io::Result<BoundConnection> {
+    let (server, client) = UnixStream::pair()?;
+    let state = crate::state::insert_client(display, server, state)?;
+    Ok((client, state))
+}
+
+/// The state of a connection for a shell process the server supervises, holding `roles` and no other.
+pub fn shell_process_state(roles: &[ShellRole]) -> ClientState {
+    ClientState {
+        capabilities: ClientCapabilitySet::of(roles.iter().copied()),
+        ..ClientState::default()
+    }
+}
+
+/// A connection for a client that runs in the server's own process (tests), holding `roles` and no other for as long
+/// as it is open. A shell process the server starts is bound to its process instead ([`bind_holder`]).
+pub fn shell_process_connection(
+    display: &DisplayHandle,
+    roles: &[ShellRole],
+) -> std::io::Result<UnixStream> {
+    connect_client(
+        display,
+        ClientState::detached(ClientCapabilitySet::of(roles.iter().copied())),
+    )
+}
+
+/// Bind the connection to the process started for it: its capabilities end when the process exits, so a connection
+/// kept open by anything else (a descriptor passed on, a leftover child) holds nothing. The child has not been waited
+/// for yet, so its pid cannot belong to another process. A connection that is not bound holds nothing; when binding
+/// fails the caller ends the process. The process is read off the loop from now ([`ClientState::look_up_process`]).
+pub fn bind_holder(state: &ClientState, pid: u32) -> std::io::Result<()> {
+    let handle = ProcessHandle::open(pid)?;
+    state
+        .holder
+        .set(Holder::Process(handle))
+        .map_err(|_| std::io::Error::other("the connection already has a holder"))?;
+    state.look_up_process();
+    Ok(())
+}
+
+/// A program whose holder could not be bound has no permissions. End it and reap it away from
+/// the compositor: even after SIGKILL a child in a kernel wait need not exit at once.
+pub(crate) fn end_unbound(mut child: Child) {
+    let pid = child.id();
+    let _ = child.kill();
+    if let Err(e) = std::thread::Builder::new()
+        .name("unbound-child".into())
+        .spawn(move || {
+            if let Err(e) = child.wait() {
+                tracing::warn!(pid, error = %e, "could not reap the unbound process");
+            }
+        })
+    {
+        tracing::warn!(pid, error = %e, "could not start a reaper for the unbound process");
+    }
+}
+
+/// Pass `stream` to the process `command` starts as `WAYLAND_SOCKET`.
+pub fn hand_over(command: &mut Command, stream: &UnixStream) {
+    let fd = stream.as_raw_fd();
+    command.env("WAYLAND_SOCKET", fd.to_string());
+    crate::file_limit::restore_in_child(command);
+    // Safety: the closure runs in the child between fork and exec and calls only fcntl, which is async-signal-safe.
+    unsafe {
+        command.pre_exec(move || {
+            // `UnixStream::pair` sets close-on-exec; the child keeps its end across exec
+            if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}

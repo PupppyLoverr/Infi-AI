@@ -1,0 +1,141 @@
+# cupertino-wayland-client
+
+Wayland client transport for application windows over the standard protocols, so the same code runs on Cupertino and
+on any other compositor, and, in the `app` module, the public protocols of the Cupertino server
+(`cupertino-app-protocols`) as extensions on its queue, each optional. MPL-2.0. Depends on `cupertino-animation`,
+`cupertino-app-protocols` (feature `client`), `cupertino-defaults`, `cupertino-geometry`, `wayland-client`,
+`wayland-protocols` and `xkbcommon` (over the system's libxkbcommon); `cupertino-layers` fails the build if it ever
+reaches `cupertino-protocols` or another compositor's protocol crates.
+
+## Public API
+
+| Item | Contents |
+|---|---|
+| `Connection::{connect, from_stream, from_wayland}`, `Waker` | the connection (`WAYLAND_DISPLAY` / `WAYLAND_SOCKET`, a given socket, or an established `wayland_client::Connection` the process also runs event queues of its own on); `Connection::wait` returns the next `Event`s, a `Waker` wakes it from another thread |
+| `Capability`, `CapabilitySet` | the optional protocols the compositor offers: seat, clipboard, fractional scale, server-side decorations, activation, cursor shape, output layout, text input, presentation feedback, subsurfaces, one-colour surfaces (`SolidColor`: `wp_single_pixel_buffer_manager_v1` with `wp_viewporter`). `Connection::capabilities` lists them, with the extension protocols bound so far (`Extension`, `CapabilitySet::extension`); a call that needs a missing one fails with `Error::Unsupported` |
+| `Connection::toplevel`, `ToplevelConfig`, `Toplevel` | an xdg toplevel: app id, title, size limits, the decorations asked for, and the handle of another client's exported toplevel to open as a child of (`foreign_parent`, xdg-foreign-unstable-v2; without the protocol, or for a handle the compositor does not know, no parent). `set_title`, `set_size_limits`, `set_maximized`, `set_fullscreen`, `minimize`, `start_move`, `start_resize`, `show_window_menu`, `set_decorations`, `activate`, `destroy` |
+| `WindowConfigure`, `WindowStates`, `Decorations`, `WmCapabilities` | a configure: serial, size (or none: the client picks), bounds, states, the decorations granted, and what the compositor supports (window menu, maximize, fullscreen, minimize) when it said. A compositor without `zxdg_decoration_manager_v1`, or one that answers client-side, gives `Decorations::Client` |
+| `Connection::popup`, `PopupPlacement`, `PopupConfigure`, `Popup`, `Anchor`, `Gravity`, `ConstraintAdjustment` | xdg popups of a toplevel or popup, with an optional grab and an offset; with `xdg_wm_base` version 3 a reactive one is placed again when its parent moves or resizes, and a reactive or `parent_size` placement names the parent's configure not acknowledged yet. `Connection::reposition_popup` moves one (version 3) and returns the token of its `Event::PopupRepositioned`; `Event::PopupDone` when the compositor dismisses one |
+| `Connection::lease`, `BufferLease`, `BufferLayout`, `BufferFormat`, `PixelRect` | an shm buffer for the next frame at the surface's scale (`Argb8888` or `Xrgb8888`, which every compositor takes, or `Abgr8888` where `Connection::offers` says the compositor lists it), at most `BufferLayout::MAX_EXTENT` (16384) pixels per side, up to three per surface; a surface drawing frame after frame (frames under 100 ms apart) whose buffers of its size are all in use has the memory of its next one made and its pages mapped on a thread of its own, since making the pages of a large buffer costs its first frame several times what writing its pixels does (the first buffer of a size makes none, and a pause lets an unused one go); `BufferLease::missed` names the rectangles in which a buffer differs from the frame shown last (what the frames shown in the other buffers since changed, more than 32 of them as their bounds; `None` for a new buffer, another size, a whole frame shown elsewhere, or pixels written but not presented), so a damaged frame redraws only them and its own damage; `present` or `present_damage` acks the latest configure, attaches, damages, asks for a frame callback and commits; `Connection::buffer_free` tells whether a lease would get a buffer now |
+| `Connection::present_solid` | a surface of one colour (straight RGBA, sent premultiplied) as a single-pixel buffer the viewport stretches over its configured size in points, at buffer scale 1, whatever the surface's scale: no pixels are drawn or uploaded, and a configure, a new scale or an output change costs a viewport destination. It acks the latest configure, keeps the pixel while the colour stays, keeps the input region and frame callbacks; without `Capability::SolidColor` it is `Error::Unsupported` and the caller presents a filled shm buffer instead. The next `lease` after it reports `missed` as `None` |
+| `Event::{Presented, Discarded}`, `Presented`, `PresentedKind`, `Connection::presentation_clock` | with `wp_presentation`, every present asks for feedback: when the frame reached the screen in nanoseconds on the compositor's clock (a `clockid_t`), the refresh interval, the retrace counter and how it was shown; or that it never was |
+| `Event::{Frame, ScaleChanged, OutputsChanged}`, `FrameCallback`, `Scale`, `OutputInfo`, `OutputId`, `OutputGeometry`, `OutputTransform` | frame pacing, the surface's scale, outputs: name, description, make, model, physical size and transform (`wl_output`, an empty or `Unknown` make or model and a zero size read as unknown); with `zxdg_output_manager_v1` each output's logical position and size, and `OutputInfo::effective_scale`, the current mode over the logical size (1.5 at a fractional scale) |
+| `Connection::set_input_region` | the part of a surface that takes pointer input, rounded outwards; `None` is the whole surface |
+| `Connection::set_opaque_region` | the part of a surface its pixels cover whole, rounded inwards, with the next present; an empty slice says none is |
+| `Connection::request_activation_token`, `TokenRequest`, `Event::ActivationToken` | a token to hand to an application this one launches (`xdg_activation_v1`) |
+| `PointerEvent`, `KeyboardEvent`, `Button`, `Modifiers`, `key`, `ScrollSource`, `CursorShape`, `ResizeEdge` | pointer and key input (`key` names the evdev codes of common keys); every event carries the compositor's input time in milliseconds (enter, leave and repeated keys take the latest one advanced by the time since); the axes of one `wl_pointer.frame` arrive as one scroll, with its source, wheel detents in 120ths and whether the finger lifted; keys carry keysym and text from the compositor's keymap (compiled once per text: the connections of a process that were sent the same text share it, each with a keyboard state of its own), with dead keys and compose sequences resolved through the X compose table of the locale (`XCOMPOSEFILE`, else `$XDG_CONFIG_HOME/XCompose` or `~/.XCompose`, else the locale's file under `XLOCALEDIR` or `/usr/share/X11/locale`; a key inside a sequence has no text, the key that ends it has the result, a key that breaks it has none; results longer than one character are skipped), key repeat runs in the client, for a key that types outside a compose sequence only. `Connection::{modifiers, input_serial}` read the held modifiers and the serial of the latest input event; `Connection::held_press` (`HeldPress`, `PressDevice`) the press the seat still holds: the serial of the pointer button press or touch down that started its implicit grab (the first of the buttons or fingers still down; of the two devices, the one whose grab started last), which `start_move`, `start_resize` and `show_window_menu` answer whatever motion, keys or focus changes came since, and none once every button and finger is up, the pointer left or the touches were cancelled; with none held those three send nothing and are `Error::PermissionDenied`; `Connection::set_cursor` sets a named cursor: the compositor's with `wp_cursor_shape_v1`, else drawn from an XCursor theme at the integer scale of the surface the pointer is on, falling back to the theme's default cursor and following the themes it inherits from, an animated one playing its images while the pointer stays (`Connection::wait` wakes for each), and drawn again from the images of the new scale when the surface under it changes scale; the theme is the user's (`CursorTheme::from_env`: `XCURSOR_THEME`, `XCURSOR_SIZE`, `XCURSOR_PATH` or the XDG icon directories, read when first needed) unless `Connection::set_cursor_theme` names one with its search path; `Connection::hide_cursor` hides it |
+| `Connection::{set_selection, receive, receive_async}`, `ClipboardOffer`, `ReadId`, `Event::{Selection, SelectionLost, Received}` | the clipboard: offer contents in several MIME types, hear when another client's selection (or the compositor) took the place of this client's (`SelectionLost`), list and read another client's. `receive` blocks for up to a second; `receive_async` reads in `Connection::wait`'s loop, polling the pipe with the display, and ends as `Event::Received`: at most 16 MiB, `None` when the offer was replaced, the source sent nothing for a second, the read took longer than ten seconds or the pipe failed, eight reads at once |
+| `Connection::{start_drag, start_drag_with_icon, accept_drag, set_drag_actions, receive_drop, finish_drag, refuse_drop}`, `DragOffer`, `DragEvent`, `DragSource`, `DragSourceEvent`, `DragActions`, `DragIcon`, `Event::{Drag, DragSource}` | drag and drop (`wl_data_device`): another client's drag over a surface arrives as enter (with the offer's types and the source's actions), motion, the compositor's chosen action, leave and drop; it is accepted in one of its types or refused, a drop is read only once it was accepted in that type and dropped (through `Event::Received`, with the limits of `receive_async`) and then finished, or refused with `refuse_drop` (the offer goes unfinished, which the source hears as a cancel). A dropped offer is kept apart from the drag under the pointer, so another drag can enter while it is read (at most 8 are kept; past them the oldest is refused). A compositor older than drag actions (`wl_data_device_manager` before version 3) sends no actions and takes no finish: its drags allow a copy alone, `set_drag_actions` sends nothing and a finished drop is only destroyed. An enter without an offer (a null source) lets the drag before it go and reports nothing; a drag that leaves, or a surface destroyed under it, lets its offer go. `start_drag` drags this client's contents from the held button press (the one that started the implicit grab) with the actions it allows, serves them like the selection, and reports the target's type, the chosen action, the drop, the finish or the cancel. `start_drag_with_icon` adds a `DragIcon` (premultiplied `argb8888` pixels at a whole-number buffer scale that divides both sides, at most `DragIcon::MAX_EXTENT` (1024) pixels a side, and a hotspot in points) as the `start_drag` icon surface, committed after the request with the hotspot as `wl_surface.offset` (the attach offset before version 5); its surface and buffer are destroyed at the drop, the cancel, or when another drag replaces it. A drag the compositor ignored (the release reached it first: the client hears the release, not a leave) ends as `DragSourceEvent::Cancelled` at that release and frees them too |
+| `Connection::set_text_input`, `TextInputState`, `SurroundingText`, `ContentHint`, `ContentPurpose`, `ChangeCause`, `Event::TextInput`, `TextInputEvent`, `TextInputDone`, `Preedit` | input methods (`zwp_text_input_v3`): the focused text field's state goes out, the input method's preedit, commit and delete come back as one batch per `done` |
+| `Error`, `Disconnect` | typed errors: a missing required protocol with its minimum version, the disconnect cause, a configure serial that did not increase, an unsupported format or MIME type, a denied or cancelled transfer, no free buffer |
+| `Connection::{subsurface, place_subsurface, unmap_subsurface}` | a synchronized subsurface of a window, popup or external surface (`wl_subcompositor`): above its parent, with an empty input region so the pointer and touches reach the parent, drawn through `lease` at the parent's scale and at the size `place_subsurface` gives, with no frame callback or presentation feedback of its own (the parent's commit shows it and stands for both); `unmap_subsurface` attaches no buffer, which hides it with the parent's next commit; destroying the parent destroys it first |
+| `State`, `ExternalRole`, `Event::Extension`, `ExtensionEvent`, `Connection::{bind_extension, queue_handle, external_surface, wl_surface, wl_output, seat, pointer, surface_outputs, roundtrip}`, `OutputId::{registry_name, from_registry_name}` | the extension hook: another crate adds protocols of its own on the same queue (below) |
+
+## How it works
+
+`wl_compositor` (version 4 or later), `wl_shm` and `xdg_wm_base` are required; a missing one is
+`Error::MissingRequiredProtocol` at connect, never a degraded mode. Everything else is a capability.
+
+A `BufferLease` borrows the connection, so no configure arrives between drawing and presenting: the buffer always
+answers the latest configure, which is acked once, with the first buffer presented for it. The scale is the fractional
+scale when `wp_fractional_scale_v1` and `wp_viewporter` are offered, else `wl_surface.preferred_buffer_scale`, else the
+largest scale of the outputs the surface entered; without the viewporter it is rounded up to a whole number. With the
+viewport, `BufferLease::set_zoom` magnifies a frame about its centre on the compositor (the viewport's source is the
+middle of the buffer), and the next frame without a zoom shows the whole buffer again.
+
+A present may be sent from another thread (`Commit`, which is `Send`): `BufferLease::detach` takes the buffer out of
+the connection (`DetachedBuffer`, its pixels and what it missed) with the commit that shows it, and
+`Connection::gpu_commit` makes the commit of a dmabuf frame; the buffer counts as the compositor's from then on. The
+commit answers the configure that was the latest when it was made: `Commit::commit` acknowledges it unless a later one
+already was, then attaches, damages, asks for the frame callback and feedback and commits, holding the surface's
+serials (shared with the connection) only while those requests go out, so a configure arriving meanwhile is answered
+by the next frame. A commit of a destroyed surface sends nothing. The detached buffer comes back with
+`Connection::buffer_shown` once its commit went out, or `buffer_unused`; events stay on the connection's queue.
+`ExternalRole` is `Send + Sync` for this.
+
+A surface of one colour (`present_solid`) needs no frame at all: the compositor stretches one pixel over it. The
+viewport is created then even without fractional scaling, and an shm frame presented later on the same surface keeps it
+(buffer scale 1, destination the logical size), so the surface can go from one to the other in either direction.
+
+An input method gets the focused field's state only while its surface has the text-input focus: it is sent again
+after each enter, only when it changed, and a value once sent (surrounding text, cursor rectangle) is withdrawn by
+enabling afresh. Surrounding text is cut to the protocol's 4000 bytes around the selection, or around the cursor when
+the selection alone is longer, at character boundaries. A password or PIN purpose, or the `hidden_text` or
+`sensitive_data` hint, never sends its text and always adds the `sensitive_data` hint, whatever the caller set; a
+`Debug` print of the text-input types shows the length of typed text, never the text. A preedit cursor that is off a character boundary is hidden, and a
+batch cut short by a focus change is dropped. Applying the batch to the field (clamping deletes to characters, the
+order in `TextInputDone`) is the caller's. A state with `reset` set enables the input method afresh once, even when
+nothing else changed, and is then kept as sent.
+
+Copying serves each paste on a short-lived thread (at most 8 at once, 1 s each); pasting reads at most 16 MiB within
+1 s, and returns the client's own contents directly.
+
+## Extensions
+
+The `app` module, and a crate above the transport such as `cupertino-shell-client`, adds protocols on the connection's
+queue, so their events stay in order with the standard ones and `Connection::wait` dispatches both in one pass. Outside
+`app`, the transport names no protocol beyond the standard ones.
+
+- Binding: `Connection::bind_extension(versions, data)` binds the extension's global with user data of a type the
+  extension crate defines, and lists it in `Connection::capabilities` with the version bound; `None` when the
+  compositor offers none in the range, which is where the application takes its fallback. Objects the extension creates
+  later use `Connection::queue_handle`. Rust allows the extension's `impl Dispatch<TheirInterface, TheirData> for
+  State` only with that local type; `()` is refused.
+- Events: the `Dispatch` impl hands what it receives to `State::emit`, which `Connection::wait` returns as
+  `Event::Extension` in order with the transport's own events (`ExtensionEvent::downcast` gets the value back,
+  `downcast_ref` looks at it), or puts it
+  where the extension reads it, such as a queue shared through the user data. `State::fail` ends the next wait with an
+  error, for a protocol violation the extension found; `State::output_id` names a `wl_output` the extension received. `Connection::wait` returns after each read from the compositor, maybe with no `Event`, once everything read
+  is dispatched; the extension then reads its queue. A burst of extension events costs one wait, not one each.
+- Surface roles: `Connection::external_surface(assign)` creates a `wl_surface` and calls `assign` with it, the queue
+  handle and its `SurfaceId`, before the first commit; `assign` creates the role's objects and returns an
+  `ExternalRole`. A role the compositor never configures (a layer of another surface) names the surface it is drawn
+  with (`ExternalRole::drawn_with`): it presents at once and leases buffers at that surface's scale. Each configure
+  of any other role goes to `State::configure_external(surface, serial, size)` from the
+  extension's `Dispatch` impl (a 0 width or height leaves that dimension to the client, which `lease` fills from its
+  `preferred` size; a serial that does not increase ends the next
+  wait with `Error::InvalidSerial`). The surface then draws through `Connection::lease` like any other: present calls
+  `ExternalRole::ack_configure` before the commit, once per configure. A role whose protocol forbids a commit before the
+  first configure, such as `ext_session_lock_surface_v1`, returns false from `ExternalRole::initial_commit`. `Connection::destroy` destroys its popups, calls
+  `ExternalRole::destroy`, then the surface. `Connection::popup` with it as parent creates the popup without a parent
+  and hands it to `ExternalRole::adopt_popup` before its first commit; the default refuses. `adopt_popup` must attach
+  the popup to the role of the surface it was called for, never another one: the transport destroys a surface's popups
+  before the surface, and a popup attached elsewhere outlives its parent, a protocol error.
+- Objects the extension's requests name: `Connection::{wl_surface, wl_output, seat}`. `Connection::roundtrip`
+  dispatches the answers to requests sent so far, for state an extension reads at setup; the transport's own events
+  stay for the next wait. It and every wait prepare the read and then dispatch what is queued before they poll, so a
+  second thread reading the same connection for a queue of its own (`cupertino-screenshot`'s capture thread) cannot
+  take an answer and leave the wait polling a quiet socket;
+
+## Cupertino protocols
+
+In `cupertino_wayland_client::app`. It never reaches the private protocols or the shell client.
+
+| Item | Contents |
+|---|---|
+| `AppEffects` | `cupertino_app_effects_v1`: `bind`, `appearance` (an `Appearance` observer), `backdrop(surface)`, `unify_titlebar(surface)` and `set_window_style(conn, surface, WindowStyle)` (before the surface's first buffer; `WindowStyle::{Titled, Unified, UnifiedCompact, Sidebar}`, the last two from version 6 and, on an older server, the nearest it has: unified for the compact row, titled for the sidebar; `granted_style` tells which), `menu(surface)` (an `AppMenu`; `None` from a version 1 server), `set_disabled_controls(surface, WindowControls)` (version 4; not sent to an older server, which `can_set_disabled_controls` tells), `tells_session_lock` (version 5: the observer sends `AppEvent::SessionLock`), `draws_subsurface_backdrops` (version 11: `backdrop(subsurface)` draws directly below that subsurface, above the rest of its window, and reads what of the window lies below it; before it a subsurface's backdrops draw nothing) |
+| `WindowControls` | the minimize and zoom controls of a window, each a `bool`; the close button can't be disabled |
+| `AppMenu`, `MenuAddress` | `cupertino_app_menu_v1`: `set_address` announces where a window's menus are on the session bus; dropping it withdraws them |
+| `Backdrop` | a server-rendered material below a surface: `set_material`, `set_shape` (rounded to whole points), `set_alpha`, `set_glass(GlassStyle, container, spacing)` (version 6: glass instead of a material; backdrops of a surface with the same nonzero container join into one shape blended over `spacing` points; a version 5 server gets `GlassStyle::fallback_material` instead; `GlassStyle::LargePanel` is sent as regular glass to a server older than version 10 `GlassStyle::Bar` as clear glass to one older than version 12 and `GlassStyle::Dense` and `GlassStyle::Module` as regular glass to one older than version 13, `GlassStyle::Card` as dense glass and `GlassStyle::Track` as clear glass to one older than version 15, `GlassStyle::Popover` as regular glass to one older than version 16, `GlassStyle::Switcher` as regular glass to one older than version 17, `GlassStyle::SubduedModule` as module glass, `GlassStyle::Veiled` as clear glass and `GlassStyle::Sidebar` and `GlassStyle::Snippet` as regular glass to one older than version 18, `GlassStyle::Toolbar` as regular glass to one older than version 19, `GlassStyle::Menu` as dense glass to one older than version 20); `set_blur_ramp(top, bottom)` (version 22: the blur at `top` times its own along the top edge and `bottom` times it along the bottom, smoothly between; `Error::InvalidRamp` for a weight outside 0 to 1; not sent to an older server, which `takes_blur_ramp` tells); `set_glass_variant(VariantGlass, container, spacing)` and `set_glass_tint(rgba)` (version 23, `takes_glass_variants` tells: glass of a `GlassVariant` with its `GlassModifiers` and `GlassSizeClass`, and a straight sRGB tint, alpha 0 for none; an older server gets `VariantGlass::fallback_style` through `set_glass` and no tint; `Error::InvalidGlass` for a channel outside 0 to 1); `id()` names it in `AppEvent::BackdropTone` and `tells_tone()` whether the server sends it (version 7); dropping it removes it with the next commit |
+| `ScrollCounts`, `PointerScroll` | `cupertino_scroll_v1`: `bind`, `watch(pointer)` |
+| `Layers`, `Layer`, `LayerId`, `LayerProperty`, `Fixed` | `cupertino_layers_v1` (versions 1 to 7): `bind`, `layer(surface, parent)`, and from version 2 `presentation(surface)`, a layer shell surface's own presentation whose offset, opacity and scale apply to all it draws (`presents_surfaces` tells), from version 3 a popup's too (`presents_popups` tells). `Layer::set_glass(style, lens)` draws glass of a `GlassStyle` below a layer's content (`None` removes it), magnified by a lens of 1 to 4. The limits it checks before it sends come from `cupertino_app_protocols::layers`, compared as the wire carries them, in 256ths.
+`Layer::set_glass_group(group, spacing)` (version 3) joins the glass of the parent's layers of one group into one shape. `LayerProperty::ContentBlur` (version 4, `blurs_content` tells) is the standard deviation in points, 0 to `MAX_CONTENT_BLUR`, of a Gaussian blur of a layer's own content, set or animated as any property; a layer object below version 4 refuses it with `Error::Unsupported`. `Layer::set_glass_edge(width, colour)` (version 5, `draws_glass_edges` tells) draws a line up to `MAX_GLASS_EDGE` points wide along the outside of a layer's glass, or of its group's joined glass, that keeps its width as the layer scales; from version 6 (`softens_glass_edges` tells) that line softens with the layer's `ContentBlur`, as its content does. From version 7 (`takes_glass_variants` tells) `Layer::set_glass_variant(Option<VariantGlass>, lens)` and `Layer::set_glass_tint(rgba)` name and tint a layer's glass as a backdrop's; an older server gets the variant's fallback style and no tint. A `Layer` sets a property at once (`set`), animates it along a `cupertino_animation::LayerCurve` (`animate(serial, property, value, curve, velocity)`), moves it through 2 to `MAX_SAMPLES` values at even steps of a duration (`animate_samples(serial, property, duration, samples)`, version 4: from the first sample, in straight lines, resting at the last) or stops it (`cancel`); what it asks applies with the parent's next commit, and dropping it removes it. Its events arrive as `AppEvent::LayerFinished`, `LayerReplaced` (the value and velocity shown, in wire `Fixed` units) and `LayerSettled` |
+| `AppEvent` | what the objects receive, inside the transport's `Event::Extension` and in order with its events: `Appearance`, `DisplayOptions` (`cupertino_defaults::accessibility::DisplayOptions`), `ScrollBars` (version 8, after each display options of an appearance observer: whether scroll views keep their tracks shown beside the content), `SteadyCaret` (version 9, after the `ScrollBars` of each display options: whether text carets stay shown without blinking), `SessionLock` (version 5: whether the session is locked, after the display options and on every change), `BuffersLost` (version 21, `AppEffects::tells_buffers_lost`: the server's GPU was reset or purged and what it showed of the client's buffers is gone), `ScrollCount` (before the frame's scroll), `MenuBar` (whether the menu bar shows a window's menus), `MenuReader` (version 3: the bus connection the window's menus answer, for `cupertino_ui_wayland::menus::Exporter::set_reader`), `BackdropTone` (version 7: a glass backdrop's `BackdropTone::{Appearance, Dark, Light}`, which picks the colour of text over it) |
+| `report_appearance`, `report_display_options` | report wire values as `AppEvent`s, for another observer of the same state (the shell's session object) |
+| `Error` | `InvalidShape`, `InvalidAlpha`, `InvalidGlass`, `InvalidLayerValue` |
+
+An appearance other than 0 or 1, display options with reserved bits, a scroll count of an unknown axis, a menu bar
+state other than 0 or 1 and a menu reader that is not a unique bus name fail the connection with a protocol error.
+
+`set_disabled_controls` replaces the window's disabled set, applies with the surface's next commit and may change at any
+time. The server applies it with that commit: the buttons are dimmed, and the shortcuts, the Window menu and the client's
+own `set_minimized` / `set_maximized` do nothing for a disabled control (unzooming a zoomed window still works).
+
+## Example
+
+```
+cargo run -p cupertino-wayland-client --example simple-window [-- --frames N]
+```
+
+A window that asks for server-side decorations and draws its own title bar when it gets client-side ones. Escape or
+the close request exits; `--frames N` animates N frames and prints the size, scale and decorations it ended with.

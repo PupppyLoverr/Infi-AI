@@ -1,0 +1,97 @@
+[package]
+name = "cupertino-server"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Smithay-based Wayland compositor: window policy from cupertino-wm, GLES shadows, rounded corners and material passes, dock and overview placeholders"
+autotests = false
+[package.metadata.cupertino]
+layer = "core"
+
+[lib]
+name = "cupertino_server"
+test = false
+
+[[bin]]
+name = "cupertino-server"
+path = "src/main.rs"
+test = false
+
+[features]
+default = ["winit", "udev", "dbus"]
+winit = ["smithay/backend_winit"]
+udev = [
+    "smithay/backend_drm",
+    "smithay/backend_gbm",
+    "smithay/backend_session",
+    "dep:smithay-drm-extras",
+    "dep:cupertino-devices",
+]
+# session bus worker: notification centre toggle
+dbus = []
+# `restart_policy::TEST_TIME_SCALE_ENV`, the restart delays on a test harness's clock; enabled only in dev-dependencies
+test = []
+
+[dependencies]
+cupertino-app-protocols = { path = "../cupertino-app-protocols" }
+cupertino-control-model = { path = "../cupertino-control-model" }
+cupertino-diagnostic-events = { path = "../cupertino-diagnostic-events" }
+cupertino-assets = { path = "../cupertino-assets" }
+cupertino-defaults = { path = "../cupertino-defaults" }
+cupertino-displays = { path = "../cupertino-displays" }
+cupertino-protocols = { path = "../cupertino-protocols", features = ["server"] }
+cupertino-wm = { path = "../cupertino-wm" }
+cupertino-scene = { path = "../cupertino-scene" }
+cupertino-animation = { path = "../cupertino-animation" }
+cupertino-theme = { path = "../cupertino-theme" }
+cupertino-geometry = { path = "../cupertino-geometry" }
+cupertino-glass = { path = "../cupertino-glass" }
+cupertino-gpu = { path = "../cupertino-gpu" }
+cupertino-effects = { path = "../cupertino-effects" }
+cupertino-input = { path = "../cupertino-input" }
+cupertino-keyboard = { path = "../cupertino-keyboard" }
+cupertino-devices = { path = "../cupertino-devices", optional = true }
+cupertino-peer = { path = "../cupertino-peer" }
+cupertino-server-backend = { path = "../cupertino-server-backend" }
+cupertino-server-input = { path = "../cupertino-server-input" }
+cupertino-server-render = { path = "../cupertino-server-render" }
+async-channel = "2"
+libc = "0.2"
+wayland-backend = "0.3"
+wayland-protocols-plasma = { version = "0.3", features = ["server"] }
+wayland-scanner = "0.31"
+# the per-client event buffer's size ([`state::CLIENT_EVENT_BUFFER`])
+wayland-server = { version = "0.31", features = ["libwayland_1_23"] }
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+rustix = { version = "1", features = ["fs", "net", "process", "rand"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+smithay-drm-extras = { version = "0.1", default-features = false, optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dependencies.smithay]
+version = "0.7"
+default-features = false
+features = ["desktop", "wayland_frontend", "backend_egl", "backend_drm", "backend_gbm", "renderer_gl"]
+
+[dev-dependencies]
+wayland-client = "0.31"
+cupertino-cursor = { path = "../cupertino-cursor" }
+cupertino-protocols = { path = "../cupertino-protocols", features = ["client"] }
+wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+
+[[test]]
+# Every file of `tests/` is a module of this one binary (`tests/main.rs`), but for those with a [[test]] of their own below.
+name = "tests"
+path = "tests/main.rs"
+
+[[test]]
+# Its own binary: the server starts a hard link of it as `cupertino-portal` with no test filter, so every test
+# the binary holds starts in that process, and each of them must turn into the portal first.
+name = "started-programs"
+path = "tests/started-programs.rs"

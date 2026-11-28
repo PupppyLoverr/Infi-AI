@@ -1,0 +1,41 @@
+Upstream: Mesa 26.3.1 (https://archive.mesa3d.org/mesa-26.3.1.tar.xz)
+Upstream-License: MIT
+Patch-License: MIT (provided under the same license as upstream)
+Subject: gallivm: float to half in one instruction on AArch64
+
+lp_build_half_to_float has AArch64 convert in one instruction (lp_has_fp16: an fpext), but lp_build_float_to_half asks
+only for x86's F16C and otherwise packs each channel with some thirty integer operations (lp_build_float_to_smallfloat).
+The window server's intermediate surfaces are RGBA16Float, so every pixel it stores paid that. AArch64 now takes an
+fptrunc (fcvtn). It rounds to nearest even where the generic path truncates: at most one unit in the last place of the
+half. GALLIVM_SOFT_FLOAT_TO_HALF=1 keeps the generic path, to compare: with MESA_SHADER_CACHE_DISABLE=true or the
+shader cache cleared, since the variable is not in the cache's key (60 blended full-screen draws into RGBA16Float on a
+Neoverse V2, 8 threads: 46.8 ms against 63.0).
+
+--- a/src/gallium/auxiliary/gallivm/lp_bld_conv.c
++++ b/src/gallium/auxiliary/gallivm/lp_bld_conv.c
+@@ -176,7 +176,25 @@
+     * though in practice on x86 seems to do nearest-even but it may
+     * be dependent on instruction set support), so is essentially
+     * useless.
++    */
++
++#if DETECT_ARCH_AARCH64
++   /*
++    * AArch64 converts in one instruction (fcvtn), as lp_build_half_to_float
++    * already has it do the other way; the generic path below is some thirty
++    * integer operations a channel, for every pixel stored to a half-float
++    * target. It rounds to nearest even where that path truncates: a
++    * difference of at most one unit in the last place of the half.
++    * GALLIVM_SOFT_FLOAT_TO_HALF=1 keeps the generic path (to compare).
+     */
++   static int soft = -1;
++   if (soft < 0)
++      soft = debug_get_bool_option("GALLIVM_SOFT_FLOAT_TO_HALF", false);
++   if (!soft && lp_has_fp16() && (length == 4 || length == 8)) {
++      return LLVMBuildFPTrunc(builder, src,
++                              lp_build_vec_type(gallivm, lp_type_float_vec(16, 16 * length)), "");
++   }
++#endif
+ 
+    if (util_get_cpu_caps()->has_f16c &&
+        (length == 4 || length == 8)) {

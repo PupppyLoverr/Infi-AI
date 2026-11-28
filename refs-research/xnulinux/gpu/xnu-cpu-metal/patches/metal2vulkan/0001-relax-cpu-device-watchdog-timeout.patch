@@ -1,0 +1,59 @@
+Upstream: steelbrain/metal2vulkan (d9236a8a11d3b90a1aa27b54e2d74d3891c4d2e5)
+Upstream-License: GPL-2.0-or-later OR LGPL-3.0-or-later
+Patch-License: GPL-2.0-or-later OR LGPL-3.0-or-later (provided under the same license as upstream)
+Subject: Relax watchdog and stall timeouts for CPU software rasterizer devices (DeviceKind::Cpu)
+
+diff --git a/crates/metal2vulkan-runtime/src/command_buffer/stall.rs b/crates/metal2vulkan-runtime/src/command_buffer/stall.rs
+index 2410046..671722f 100644
+--- a/crates/metal2vulkan-runtime/src/command_buffer/stall.rs
++++ b/crates/metal2vulkan-runtime/src/command_buffer/stall.rs
+@@ -170,24 +170,45 @@ pub(super) enum Verdict {
+ }
+ 
+ /// How long the clock runs before a probe on `device`: [`STALL`], or what a device test set
+-/// (`device/line.rs`'s hooks).
++/// (`device/line.rs`'s hooks). CPU software rasterizers (e.g. lavapipe) can legitimately take
++/// tens of seconds on heavy frames, so relax their stall bound to 1 hour unless overridden.
+ pub(super) fn stall_after(device: &Device) -> Duration {
+     #[cfg(all(test, any(m2v_gpu, m2v_cpu_icd)))]
+     if let Some(after) = *crate::device::lock(&device.line().hooks.stall_after) {
+         return after;
+     }
+-    let _ = device;
++    if device.properties().kind == crate::DeviceKind::Cpu {
++        if let Some(ms) = std::env::var("XNU_CPU_METAL_WATCHDOG_MS")
++            .ok()
++            .and_then(|s| s.parse::<u64>().ok())
++            .filter(|&v| v > 0)
++        {
++            return Duration::from_millis(ms);
++        }
++        return Duration::from_secs(3600);
++    }
+     STALL
+ }
+ 
+ /// How long a queue's front may go without its timeline advancing on `device`: [`WATCHDOG`], or
+-/// what a device test set (`device/line.rs`'s hooks).
++/// what a device test set (`device/line.rs`'s hooks). CPU software rasterizers (e.g. lavapipe)
++/// must not be declared `GpuHang` / `AccessRevoked` simply because software rasterization + JIT
++/// is slow under heavy load.
+ pub(super) fn watchdog_after(device: &Device) -> Duration {
+     #[cfg(all(test, any(m2v_gpu, m2v_cpu_icd)))]
+     if let Some(after) = *crate::device::lock(&device.line().hooks.watchdog_after) {
+         return after;
+     }
+-    let _ = device;
++    if device.properties().kind == crate::DeviceKind::Cpu {
++        if let Some(ms) = std::env::var("XNU_CPU_METAL_WATCHDOG_MS")
++            .ok()
++            .and_then(|s| s.parse::<u64>().ok())
++            .filter(|&v| v > 0)
++        {
++            return Duration::from_millis(ms);
++        }
++        return Duration::from_secs(3600);
++    }
+     WATCHDOG
+ }
+ 

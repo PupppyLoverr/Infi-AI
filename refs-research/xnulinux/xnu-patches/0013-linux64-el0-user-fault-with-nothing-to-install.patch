@@ -1,0 +1,151 @@
+From: xnulinux
+Subject: [PATCH] linux64: a pure EL0 host's user fault with nothing to install runs the instruction again
+
+On a pure EL0 host the user mappings the host has are a cache of XNU's entries: the host drops an address space's
+whole cache when it needs the tables for another (32 host address spaces for every process by default), and each page
+then comes back at its next fault. linux64_el0_sync_user_pte installs it without vm_fault when XNU's entry allows the
+access, and linux64_el0_utcb_entry resumes the thread.
+
+It took "the host changed nothing" for "not resolved" and gave the fault to vm_fault. That is the answer when another
+CPU's thread of the same task faulted on the same page and installed it first, or when the host took the address
+space's tables away between the fault and the call. vm_fault has nothing to resolve then, and for the commpage, which
+no map entry describes, it fails: the thread got a SIGBUS for a fault that was the host's alone. With several CPUs
+every boot lost daemons to it (logd three times in a row is a panic), more the more often address spaces were
+dropped; with one CPU it cannot happen.
+
+linux64_el0_sync_user_pte now says which it was (installed, nothing to install, not its fault to resolve), and the
+instruction runs again in the first two cases. A fault that comes back on one page seventeen times in a row with
+nothing to change goes to vm_fault after all.
+---
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -7589,19 +7589,29 @@ linux64_el0_ensure_as(pmap_t pmap)
+ 	return pmap->linux64_as;
+ }
+ 
+-bool
++/*
++ * A user page fault the host reported: when XNU's entry for the page already allows the access, the host's mapping is
++ * what was missing (the host keeps a cache of XNU's entries, and drops an address space's whole cache when it needs
++ * the tables for another), and it is installed here without vm_fault.
++ *
++ * Returns 1 when the host's mapping changed; 0 when XNU's entry allows the access and the host had nothing to change
++ * (another CPU's thread of the task installed the same page between this thread's fault and now, or the host has taken
++ * the address space's tables away in between and gives it new ones at the next run); -1 when the fault is not one
++ * this function resolves (vm_fault's).
++ */
++int
+ linux64_el0_sync_user_pte(pmap_t pmap, vm_offset_t far, uint64_t esr)
+ {
+ 	if (!linux64_el0 || !pmap || pmap == kernel_pmap) {
+-		return false;
++		return -1;
+ 	}
+ 	uint64_t as = linux64_el0_ensure_as(pmap);
+ 	if (!as) {
+-		return false;
++		return -1;
+ 	}
+ 	uint64_t ufar = (uint64_t)((int64_t)(far << 8) >> 8);
+ 	if (ufar >= 0x0001000000000000ULL) {
+-		return false;
++		return -1;
+ 	}
+ 	vm_map_address_t va = (vm_map_address_t)(ufar & ~0xfffULL);
+ 	uint32_t ec = (uint32_t)((esr >> 26) & 0x3f);
+@@ -7612,7 +7622,7 @@ linux64_el0_sync_user_pte(pmap_t pmap, vm_offset_t far, uint64_t esr)
+ 	pt_entry_t *ptep = pmap_pte(pmap, va);
+ 	if (!ptep) {
+ 		pmap_unlock(pmap, PMAP_LOCK_SHARED);
+-		return false;
++		return -1;
+ 	}
+ 	pt_entry_t pte = ARM_PTE_EMPTY;
+ 	pmap_paddr_t pa = 0;
+@@ -7623,7 +7633,7 @@ linux64_el0_sync_user_pte(pmap_t pmap, vm_offset_t far, uint64_t esr)
+ 		pte = *(volatile pt_entry_t *)ptep;
+ 		if (!pte_is_valid(pte) || !(pte & ARM_PTE_AF)) {
+ 			pmap_unlock(pmap, PMAP_LOCK_SHARED);
+-			return false;
++			return -1;
+ 		}
+ 		uint64_t ap = pte & ARM_PTE_APMASK;
+ 		user_read = (ap == ARM_PTE_AP(AP_RORO) || ap == ARM_PTE_AP(AP_RWRW));
+@@ -7631,12 +7641,12 @@ linux64_el0_sync_user_pte(pmap_t pmap, vm_offset_t far, uint64_t esr)
+ 		user_exec = !(pte & ARM_PTE_NX);
+ 		if (is_exec ? !user_exec : (is_write ? !user_write : !user_read)) {
+ 			pmap_unlock(pmap, PMAP_LOCK_SHARED);
+-			return false;
++			return -1;
+ 		}
+ 		pa = pte_to_pa(pte);
+ 		if (!pa_valid(pa)) {
+ 			pmap_unlock(pmap, PMAP_LOCK_SHARED);
+-			return false;
++			return -1;
+ 		}
+ 		pai = pa_index(pa);
+ 		pvh_lock(pai);
+@@ -7648,7 +7658,7 @@ linux64_el0_sync_user_pte(pmap_t pmap, vm_offset_t far, uint64_t esr)
+ 	}
+ 	if (!locked_pvh) {
+ 		pmap_unlock(pmap, PMAP_LOCK_SHARED);
+-		return false;
++		return -1;
+ 	}
+ 
+ 	struct linux64_map_req req = {
+@@ -7663,7 +7673,7 @@ linux64_el0_sync_user_pte(pmap_t pmap, vm_offset_t far, uint64_t esr)
+ 	linux64_call(LINUX64_CALL_AS_MAP, &req);
+ 	pvh_unlock(pai);
+ 	pmap_unlock(pmap, PMAP_LOCK_SHARED);
+-	return req.result > 0;
++	return req.result > 0 ? 1 : (req.result == 0 ? 0 : -1);
+ }
+ 
+ bool
+--- a/osfmk/arm/pmap/pmap.h
++++ b/osfmk/arm/pmap/pmap.h
+@@ -925,7 +925,7 @@ extern kern_return_t pmap_test_text_corruption(pmap_paddr_t);
+ #endif /* __ARM_KERNEL_PROTECT__ */
+ 
+ #if !defined(ASSEMBLER) && !defined(__ASSEMBLER__)
+-extern bool linux64_el0_sync_user_pte(pmap_t pmap, vm_offset_t far, uint64_t esr);
++extern int linux64_el0_sync_user_pte(pmap_t pmap, vm_offset_t far, uint64_t esr);
+ extern bool linux64_el0_user_vtop(pmap_t pmap, vm_offset_t va, bool write, pmap_paddr_t *pa_out);
+ extern bool linux64_el0_copyio_chunk(pmap_t pmap, vm_offset_t uaddr, bool write, void *bounce, size_t max_len, size_t *out_len);
+ extern bool linux64_el0_atomic_op(pmap_t pmap, vm_offset_t uaddr, bool write, size_t width, uint64_t *val);
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -4084,7 +4084,9 @@ linux64_el0_utcb_entry(arm_saved_state_t *ss, unsigned long disable_jop)
+ 	req.neon_ptr = (uint64_t)(uintptr_t)&ns->ns_64;
+ 	req.fpu_dirty = 0;
+ 
++	uint64_t unchanged_page = ~0ULL;	/* the page those faults were on */
+ 	unsigned long run_call = LINUX64_CALL_UTCB_RUN;
++	unsigned int unchanged = 0;	/* faults in a row that found the host's mapping as XNU's entry has it */
+ 	for (;;) {
+ 		req.result = 0;
+ 		linux64_call(run_call, &req);
+@@ -4094,7 +4096,20 @@ linux64_el0_utcb_entry(arm_saved_state_t *ss, unsigned long disable_jop)
+ 			    (long long)req.result);
+ 		}
+ 		if (req.stop_kind == LINUX64_STOP_PAGEFAULT) {
+-			if (linux64_el0_sync_user_pte(pmap, (vm_offset_t)req.fault_addr, req.esr)) {
++			/*
++			 * The instruction runs again when the host's mapping was installed, and also when there was
++			 * nothing to install (linux64_el0_sync_user_pte: another CPU was first, or the host dropped the
++			 * address space's tables meanwhile): XNU's entry allows the access, so vm_fault has nothing to
++			 * do for it, and for the commpage, which no map entry describes, vm_fault fails and the thread
++			 * gets a SIGBUS for a fault that was the host's alone. A fault that keeps coming back on one
++			 * page with nothing to change is given to vm_fault after all.
++			 */
++			int synced = linux64_el0_sync_user_pte(pmap, (vm_offset_t)req.fault_addr, req.esr);
++			if (synced > 0 || unchanged_page != (req.fault_addr & ~0xfffULL)) {
++				unchanged = 0;
++				unchanged_page = req.fault_addr & ~0xfffULL;
++			}
++			if (synced > 0 || (synced == 0 && ++unchanged <= 16)) {
+ 				run_call = LINUX64_CALL_UTCB_RESUME;
+ 				continue;
+ 			}

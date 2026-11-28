@@ -1,0 +1,36 @@
+Upstream: Mesa 26.3.1 (https://archive.mesa3d.org/mesa-26.3.1.tar.xz)
+Upstream-License: MIT
+Patch-License: MIT (provided under the same license as upstream)
+Subject: util: use PAGE_SIZE directly in os_get_page_size on macOS
+
+Strict macOS sandboxes (such as com.apple.WebKit.GPUProcess.sb used by Safari's
+WebKit GPU process) deny sysctl-read hw.pagesize, causing sysconf(_SC_PAGESIZE)
+to fail with EPERM. On Darwin arm64/arm64e, PAGE_SIZE expands to vm_page_size
+(initialized by mach_init from the commpage without a sysctl). Prefer the
+existing DETECT_OS_APPLE branch before HAVE_SYSCONF so os_get_page_size()
+succeeds without triggering a sandbox denial.
+
+--- a/src/util/os_misc.c
++++ b/src/util/os_misc.c
+@@ -495,7 +495,10 @@
+ bool
+ os_get_page_size(uint64_t *size)
+ {
+-#if HAVE_SYSCONF
++#if DETECT_OS_APPLE
++   *size = PAGE_SIZE;
++   return true;
++#elif HAVE_SYSCONF
+    const long page_size = sysconf(_SC_PAGESIZE);
+ 
+    if (page_size <= 0)
+@@ -512,9 +515,6 @@
+    GetSystemInfo(&SysInfo);
+    *size = SysInfo.dwPageSize;
+    return true;
+-#elif DETECT_OS_APPLE
+-   *size = PAGE_SIZE;
+-   return true;
+ #else
+ #error unexpected platform in os_sysinfo.c
+    return false;

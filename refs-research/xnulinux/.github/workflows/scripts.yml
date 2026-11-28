@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Run the tests of the repository's shell scripts (tests/scripts): each script as it is, in a sandbox of stand-in
+# commands, so the job needs no root, no VM and no Mac. A test added there is run without a change to this file.
+name: scripts
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: The shell scripts' tests
+        run: bash tests/scripts/run.sh

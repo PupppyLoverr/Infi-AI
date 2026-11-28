@@ -1,0 +1,38 @@
+Upstream: steelbrain/metal2vulkan (d9236a8a11d3b90a1aa27b54e2d74d3891c4d2e5)
+Upstream-License: GPL-2.0-or-later OR LGPL-3.0-or-later
+Patch-License: GPL-2.0-or-later OR LGPL-3.0-or-later (provided under the same license as upstream)
+Subject: Skip host memory deallocators and keep-alive drops when VkDevice is parked
+
+diff --git a/crates/metal2vulkan-runtime/src/buffer.rs b/crates/metal2vulkan-runtime/src/buffer.rs
+index 4292631..4b235c7 100644
+--- a/crates/metal2vulkan-runtime/src/buffer.rs
++++ b/crates/metal2vulkan-runtime/src/buffer.rs
+@@ -2122,6 +2122,15 @@ impl Drop for Imported {
+             Some(AfterImport { after, delayed, .. }) => (Some(after), delayed),
+             None => (None, None),
+         };
++        // If the VkDevice was parked (e.g. watchdog/device-lost), vkFreeMemory will be skipped
++        // because the driver may still be reading these imported host pages; never run caller
++        // deallocators or drop keep-alives that could unmap the pages out from under the driver.
++        if crate::release::parked(self.device.shared().vk().handle()) {
++            if let Some(after) = after {
++                std::mem::forget(after);
++            }
++            return;
++        }
+         // SAFETY: no pending command buffer uses them: an import's own go as the import goes
+         // (`HostImport::drop`), a releasable import's as the last command buffer whose blit read
+         // them completed, and no other read reached them (`host_residency.rs`).
+@@ -2230,6 +2239,12 @@ impl Drop for HostPages {
+         };
+         drop(busy);
+         let import = &self.import;
++        // If the VkDevice is parked, its driver may still be reading these host pages; keep them
++        // mapped instead of invoking the caller's deallocator (which would munmap under the driver).
++        if crate::release::parked(import.device.shared().vk().handle()) {
++            release.keep();
++            return;
++        }
+         match release.keep_alive() {
+             // The caller's keep-alive keeps the pages mapped until the import is freed: the
+             // deallocator runs now, at Metal's moment. Where another buffer lies in the import,

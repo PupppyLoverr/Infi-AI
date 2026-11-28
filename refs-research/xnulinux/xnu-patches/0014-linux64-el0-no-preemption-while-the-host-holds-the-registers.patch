@@ -1,0 +1,44 @@
+From: xnulinux
+Subject: [PATCH] linux64: no preemption while a pure EL0 host holds a thread's registers
+
+After a user page fault the host does not hand the thread's registers over: they stay in the host's user context,
+and linux64_el0_utcb_entry resumes it as it is once linux64_el0_sync_user_pte has installed the page. That context
+belongs to the CPU, not to the thread: every thread that runs user code on the CPU runs in it.
+
+The window was preemptible. linux64_el0_sync_user_pte takes and drops the pmap's lock and the page's, and dropping
+one with an urgent AST pending (another CPU made a thread runnable on this one) switched threads there. The next
+thread's run replaced the registers in the host's context; this thread's resume, on whichever CPU it came back, found
+a context that was not its own and went on from the registers XNU had: those of its last entry into the kernel. It ran
+code a second time on a stack that had moved on, and its return addresses no longer authenticated (EXC_ARM_PAC_FAIL
+at a retab or autibsp, in any process, several per boot with four CPUs and none with one).
+
+linux64_el0_utcb_entry now runs with preemption disabled from before the first run until the registers are in its
+request and fpu_tid says whose NEON state the host's context holds (a switch between the two lost that state the
+same way).
+---
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -4087,6 +4087,16 @@ linux64_el0_utcb_entry(arm_saved_state_t *ss, unsigned long disable_jop)
+ 	uint64_t unchanged_page = ~0ULL;	/* the page those faults were on */
+ 	unsigned long run_call = LINUX64_CALL_UTCB_RUN;
+ 	unsigned int unchanged = 0;	/* faults in a row that found the host's mapping as XNU's entry has it */
++	/*
++	 * No preemption from here until the thread's registers are in req: after a page fault they are only in the
++	 * host's user context, which belongs to this CPU and is every thread's that runs here. linux64_el0_sync_user_pte
++	 * takes and drops the pmap's and the page's locks, and dropping one with an urgent AST pending (another CPU made
++	 * a thread runnable here) switched threads: the next thread's run replaced the host's registers, and this thread's
++	 * resume, on whichever CPU, went on from the registers of its last entry into the kernel (code run a second time
++	 * on a stack that had moved on: its return addresses no longer authenticate, EXC_ARM_PAC_FAIL). The host's NEON
++	 * state is this thread's too until fpu_tid says so, below.
++	 */
++	disable_preemption();
+ 	for (;;) {
+ 		req.result = 0;
+ 		linux64_call(run_call, &req);
+@@ -4129,5 +4139,6 @@ linux64_el0_utcb_entry(arm_saved_state_t *ss, unsigned long disable_jop)
+ 		pcpu->fpu_tid = thread->thread_id;
+ 		pcpu->fpu_live = 1;
+ 	}
++	enable_preemption();
+ 	linux64_el0_dispatch(req.x, req.sp, req.pc, req.pstate, req.esr, req.fault_addr);
+ }

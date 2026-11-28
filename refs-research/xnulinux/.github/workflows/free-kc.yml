@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# scripts/free-kc/kernel-slots.py (the kernel's slots in the collection without Apple's kernelcache), on Mach-O headers
+# the test makes itself: tests/free-kc/test_kernel_slots.py. python3 only, a second or two.
+name: free-kc
+on:
+  push:
+    paths:
+      - .github/workflows/free-kc.yml
+      - scripts/free-kc/**
+      - tests/free-kc/**
+  pull_request:
+    paths:
+      - .github/workflows/free-kc.yml
+      - scripts/free-kc/**
+      - tests/free-kc/**
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: The kernel's slots from layout.json
+        run: python3 tests/free-kc/test_kernel_slots.py -v

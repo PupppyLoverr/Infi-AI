@@ -1,0 +1,35 @@
+# cargo-deny policy: the code is GPL-3.0-or-later, except the MPL-2.0 library crates, so
+# every dependency must carry a licence that GPL-3.0 can absorb, and no dependency may carry a known vulnerability.
+# Run `cargo deny check`.
+[graph]
+all-features = true
+
+[advisories]
+# Only "unmaintained" notices are accepted, each one for a crate that a dependency of ours pulls in and that we cannot
+# replace from here. Revisit them when smithay and zbus publish releases that stop depending on these crates.
+ignore = [
+    { id = "RUSTSEC-2026-0196", reason = "cgmath: matrix maths of smithay 0.7 (the Wayland compositor library); no maintained drop-in, nothing of ours uses it" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names: dependency of zbus 5, our D-Bus library; the advisory says it is no longer maintained as a standalone crate" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant: dependency of zbus 5, our D-Bus library; the advisory says it is no longer maintained as a standalone crate" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: derive macros of zvariant, same advisory as zvariant" },
+]
+
+[licenses]
+confidence-threshold = 0.93
+allow = [
+    "GPL-3.0-or-later",
+    "OFL-1.1",
+    "LGPL-2.1-or-later",
+    "MPL-2.0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "CC0-1.0",
+    "Unlicense",
+    "Unicode-3.0",
+]

@@ -1,0 +1,29 @@
+# Maintainer: Rafael Fragoso <rafaelfragosom@gmail.com>
+# The Cupertino package signing key. The public key is not in the repository: the release job
+# passes it as CUPERTINO_KEYRING_KEY, an ASCII-armored export of the master public key with its signing subkey.
+pkgname=cupertino-keyring
+pkgver=2
+pkgrel=1
+pkgdesc='Cupertino package signing key'
+arch=('any')
+url='https://github.com/orafaelfragoso/cupertino'
+license=('GPL-3.0-or-later')
+depends=('pacman')
+makedepends=('gnupg')
+install=cupertino-keyring.install
+prepare() {
+  : "${CUPERTINO_KEYRING_KEY:?set CUPERTINO_KEYRING_KEY to the public key file}"
+  export GNUPGHOME="$srcdir/gnupg"
+  mkdir -p "$GNUPGHOME"
+  chmod 0700 "$GNUPGHOME"
+  gpg --batch --import "$CUPERTINO_KEYRING_KEY"
+  gpg --batch --export > "$srcdir/cupertino.gpg"
+  gpg --batch --with-colons --list-keys | awk -F: '$1 == "pub" { primary = 1 } primary && $1 == "fpr" { print $10 ":4:"; primary = 0 }' > "$srcdir/cupertino-trusted"
+  [ "$(wc -l < "$srcdir/cupertino-trusted")" -eq 1 ] || { echo 'the key file must hold exactly one primary key' >&2; return 1; }
+}
+
+package() {
+  install -Dm644 cupertino.gpg "$pkgdir/usr/share/pacman/keyrings/cupertino.gpg"
+  install -Dm644 cupertino-trusted "$pkgdir/usr/share/pacman/keyrings/cupertino-trusted"
+  install -Dm644 /dev/null "$pkgdir/usr/share/pacman/keyrings/cupertino-revoked"
+}

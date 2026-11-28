@@ -1,0 +1,27 @@
+{
+  "name": "XnuEAN",
+  "bundle": "org.xnulinux.driver.XnuEAN",
+  "version": "1.0.0",
+  "objects": "out/x12377/native-kexts/XnuEAN/objects.json",
+  "start": "_native_kext_start",
+  "stop": "_native_kext_stop",
+  "libraries": {
+    "com.apple.iokit.AppleVirtIOStorage": "1.0.0",
+    "com.apple.driver.AppleVirtualPlatform": "1.0.0",
+    "com.apple.kpi.bsd": "18.0.0",
+    "com.apple.kpi.iokit": "18.0.0",
+    "com.apple.kpi.libkern": "18.0.0",
+    "com.apple.kpi.mach": "18.0.0",
+    "com.apple.kpi.private": "18.0.0",
+    "com.apple.kpi.unsupported": "18.0.0"
+  },
+  "personalities": {
+    "XnuEAN": {
+      "CFBundleIdentifier": "org.xnulinux.driver.XnuEAN",
+      "IOClass": "XnuEAN",
+      "IOProviderClass": "IOResources",
+      "IOResourceMatch": "IOKit",
+      "IOMatchCategory": "XnuEAN"
+    }
+  }
+}

@@ -1,0 +1,470 @@
+//! `cupertino_layers_v1`: surfaces the server places and animates on its own clock, and from version 2 the
+//! presentation of a layer shell surface as a whole, so a panel opens and closes without drawing a frame. Version 3
+//! presents popups as a whole too, so a popover grows and a menu fades without one, and joins the glass of layers into
+//! one shape ([`Layer::set_glass_group`]). Version 4 blurs a layer's own content ([`LayerProperty::ContentBlur`]).
+//! Version 5 draws a line along the outside of a layer's glass, or of its group's joined glass, at a width that keeps
+//! as the layer scales ([`Layer::set_glass_edge`]); from version 6 that line softens with the layer's content blur
+//! ([`Layers::softens_glass_edges`]). Version 7 names a layer's glass by its system variant and tints it
+//! ([`Layer::set_glass_variant`], [`Layer::set_glass_tint`]).
+
+use crate::app::glass_variant::{valid_tint, VariantGlass};
+use crate::app::{AppEvent, Error, Quiet};
+use crate::{Connection, State, SurfaceId};
+use cupertino_animation::LayerCurve;
+use cupertino_app_protocols::client::layers::cupertino_layer_v1::{
+    self, CupertinoLayerV1, Property as WireProperty,
+};
+use cupertino_app_protocols::client::layers::cupertino_layers_v1::CupertinoLayersV1;
+use cupertino_app_protocols::layers::{
+    LENS, MAX_DURATION_MS, MIN_SAMPLES, SPRING_DAMPING, SPRING_RESPONSE,
+};
+pub use cupertino_app_protocols::layers::{
+    MAX_CONTENT_BLUR, MAX_GLASS_EDGE, MAX_GROUP_SPACING, MAX_SAMPLES,
+};
+use std::sync::atomic::{AtomicU64, Ordering};
+use wayland_client::{Connection as WlConnection, Dispatch, Proxy, QueueHandle};
+
+/// The version that adds [`Layers::presentation`].
+const PRESENTATION_VERSION: u32 = 2;
+/// The version that presents popups and joins layers' glass ([`Layers::presents_popups`], [`Layer::set_glass_group`]).
+const POPUP_VERSION: u32 = 3;
+/// The version that blurs a layer's content ([`Layers::blurs_content`], [`LayerProperty::ContentBlur`]).
+const CONTENT_BLUR_VERSION: u32 = 4;
+/// The version that draws an edge along a layer's glass ([`Layers::draws_glass_edges`], [`Layer::set_glass_edge`]).
+const GLASS_EDGE_VERSION: u32 = 5;
+/// The version that softens the edge along a layer's glass by its content blur ([`Layers::softens_glass_edges`]).
+const SOFT_EDGE_VERSION: u32 = 6;
+/// The version that names a layer's glass by its system variant and tints it ([`Layers::takes_glass_variants`]).
+const VARIANT_VERSION: u32 = 7;
+
+/// Names a [`Layer`] of this process in [`AppEvent::LayerFinished`], [`AppEvent::LayerReplaced`] and
+/// [`AppEvent::LayerSettled`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct LayerId(pub u64);
+
+static NEXT_LAYER: AtomicU64 = AtomicU64::new(1);
+
+/// User data of a layer: the id its events name.
+pub(crate) struct LayerData(LayerId);
+
+/// A value as the wire carries it, in 256ths of a unit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Fixed(pub i32);
+
+impl Fixed {
+    pub fn from_f64(v: f64) -> Fixed {
+        Fixed((v * 256.0).round() as i32)
+    }
+
+    pub fn to_f64(self) -> f64 {
+        f64::from(self.0) / 256.0
+    }
+}
+
+/// `v` as the server reads a `fixed` argument: the bindings truncate it towards zero to 256ths of a unit. A range whose
+/// lower end is above 0 and not a whole number of 256ths is checked on this value, or a value at its end arrives below
+/// it; the other ranges hold 0 or start at a whole unit, so truncation keeps a value inside them.
+fn on_wire(v: f64) -> f64 {
+    f64::from((v * 256.0) as i32) / 256.0
+}
+
+/// An animatable property of a layer or a presentation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum LayerProperty {
+    /// The origin's x, in the parent's points; a presentation's horizontal offset.
+    X,
+    /// The origin's y; a presentation's vertical offset.
+    Y,
+    /// The bounds' width (not of a presentation).
+    Width,
+    /// The bounds' height (not of a presentation).
+    Height,
+    /// From 0 to 1.
+    Opacity,
+    /// About the bounds' centre, or the presented surface's.
+    Scale,
+    /// The bounds' corner radius (not of a presentation).
+    CornerRadius,
+    /// The standard deviation of a Gaussian blur of the layer's own content, in its points, from 0 (sharp) to
+    /// [`MAX_CONTENT_BLUR`] (not of a presentation; from version 4).
+    ContentBlur,
+}
+
+impl LayerProperty {
+    fn wire(self) -> WireProperty {
+        match self {
+            LayerProperty::X => WireProperty::X,
+            LayerProperty::Y => WireProperty::Y,
+            LayerProperty::Width => WireProperty::Width,
+            LayerProperty::Height => WireProperty::Height,
+            LayerProperty::Opacity => WireProperty::Opacity,
+            LayerProperty::Scale => WireProperty::Scale,
+            LayerProperty::CornerRadius => WireProperty::CornerRadius,
+            LayerProperty::ContentBlur => WireProperty::ContentBlur,
+        }
+    }
+
+    /// The version of the protocol from which the server takes the property.
+    pub fn since(self) -> u32 {
+        match self {
+            LayerProperty::ContentBlur => CONTENT_BLUR_VERSION,
+            _ => 1,
+        }
+    }
+
+    /// Whether a presentation has the property: offset, opacity and scale.
+    pub fn presented(self) -> bool {
+        matches!(
+            self,
+            LayerProperty::X | LayerProperty::Y | LayerProperty::Opacity | LayerProperty::Scale
+        )
+    }
+
+    /// Whether the value lies in the property's range, as the server checks it.
+    pub fn accepts(self, value: f64) -> bool {
+        match self {
+            LayerProperty::X | LayerProperty::Y => value.is_finite(),
+            LayerProperty::Opacity => (0.0..=1.0).contains(&value),
+            LayerProperty::ContentBlur => (0.0..=MAX_CONTENT_BLUR).contains(&value),
+            _ => value.is_finite() && value >= 0.0,
+        }
+    }
+}
+
+/// The layers global (`cupertino_layers_v1`).
+pub struct Layers(CupertinoLayersV1);
+
+impl Layers {
+    /// Bind the global; `None` when the server does not offer it.
+    pub fn bind(conn: &mut Connection) -> Option<Layers> {
+        conn.bind_extension(1..=VARIANT_VERSION, Quiet).map(Layers)
+    }
+
+    /// Whether the server names a layer's glass by its system variant and tints it ([`Layer::set_glass_variant`],
+    /// [`Layer::set_glass_tint`], version 7).
+    pub fn takes_glass_variants(&self) -> bool {
+        self.0.version() >= VARIANT_VERSION
+    }
+
+    /// Whether the server presents layer shell surfaces as a whole ([`Self::presentation`], version 2).
+    pub fn presents_surfaces(&self) -> bool {
+        self.0.version() >= PRESENTATION_VERSION
+    }
+
+    /// Whether the server presents popups as a whole too and joins layers' glass (version 3).
+    pub fn presents_popups(&self) -> bool {
+        self.0.version() >= POPUP_VERSION
+    }
+
+    /// Whether the server blurs a layer's own content ([`LayerProperty::ContentBlur`], version 4).
+    pub fn blurs_content(&self) -> bool {
+        self.0.version() >= CONTENT_BLUR_VERSION
+    }
+
+    /// Whether the server draws an edge along a layer's glass ([`Layer::set_glass_edge`], version 5).
+    pub fn draws_glass_edges(&self) -> bool {
+        self.0.version() >= GLASS_EDGE_VERSION
+    }
+
+    /// Whether the edge along a layer's glass softens with the layer's content blur, as its content does (version 6).
+    pub fn softens_glass_edges(&self) -> bool {
+        self.0.version() >= SOFT_EDGE_VERSION
+    }
+
+    /// Make `surface` a layer of `parent`: it shows with the parent's next commit. `None` when either surface is
+    /// gone.
+    pub fn layer(&self, conn: &Connection, surface: SurfaceId, parent: SurfaceId) -> Option<Layer> {
+        let surface = conn.wl_surface(surface).ok()?;
+        let parent = conn.wl_surface(parent).ok()?;
+        let data = LayerData(LayerId(NEXT_LAYER.fetch_add(1, Ordering::Relaxed)));
+        Some(Layer(self.0.get_layer(
+            &surface,
+            &parent,
+            &conn.queue_handle(),
+            data,
+        )))
+    }
+
+    /// The presentation of `surface`, a layer shell surface's main surface or from version 3 a popup's, which offsets,
+    /// scales and fades all it draws; `None` below version 2. Its values apply with the surface's own commit.
+    pub fn presentation(&self, conn: &Connection, surface: SurfaceId) -> Option<Layer> {
+        if !self.presents_surfaces() {
+            return None;
+        }
+        let surface = conn.wl_surface(surface).ok()?;
+        let data = LayerData(LayerId(NEXT_LAYER.fetch_add(1, Ordering::Relaxed)));
+        Some(Layer(self.0.get_presentation(
+            &surface,
+            &conn.queue_handle(),
+            data,
+        )))
+    }
+}
+
+impl Drop for Layers {
+    fn drop(&mut self) {
+        self.0.destroy();
+    }
+}
+
+/// A layer or a presentation (`cupertino_layer_v1`). What it asks applies with its parent's next commit; dropping it
+/// removes the layer (puts a presentation back at rest) with that commit.
+pub struct Layer(CupertinoLayerV1);
+
+impl Layer {
+    /// The id its events name.
+    pub fn id(&self) -> LayerId {
+        self.0.data::<LayerData>().map_or(LayerId(0), |d| d.0)
+    }
+
+    /// Whether the layer object takes `property`: refused below the version that defines it.
+    fn takes(&self, property: LayerProperty) -> Result<(), Error> {
+        if self.0.version() < property.since() {
+            return Err(Error::Unsupported("cupertino_layer_v1.content_blur"));
+        }
+        Ok(())
+    }
+
+    /// Set `property` to `value` at once; a running animation of it is replaced.
+    pub fn set(&self, property: LayerProperty, value: f64) -> Result<(), Error> {
+        self.takes(property)?;
+        if !property.accepts(value) {
+            return Err(Error::InvalidLayerValue);
+        }
+        self.0.set_value(property.wire(), value);
+        Ok(())
+    }
+
+    /// Animate `property` to `value` along `curve` from what is shown when the commit is first drawn; `velocity` (units
+    /// per second) starts a spring from rest. `serial` names the animation in the events. A curve the server refuses (a
+    /// duration over 10 seconds, Bézier x control points outside 0 to 1, a spring response outside 0.01 to 10 seconds or
+    /// damping ratio outside 0.05 to 4 as the wire carries them in 256ths, a number that is not finite) is
+    /// [`Error::InvalidLayerValue`] and sends nothing.
+    pub fn animate(
+        &self,
+        serial: u32,
+        property: LayerProperty,
+        value: f64,
+        curve: LayerCurve,
+        velocity: f64,
+    ) -> Result<(), Error> {
+        self.takes(property)?;
+        if !property.accepts(value) {
+            return Err(Error::InvalidLayerValue);
+        }
+        // a curve the server refuses ends the connection, so it is refused here first
+        match curve {
+            LayerCurve::Timed { duration, bezier } => {
+                let ms = (duration.max(0.0) * 1000.0).round();
+                let unit = 0.0..=1.0;
+                if !(duration.is_finite()
+                    && ms <= f64::from(MAX_DURATION_MS)
+                    && unit.contains(&bezier.x1)
+                    && unit.contains(&bezier.x2)
+                    && bezier.y1.is_finite()
+                    && bezier.y2.is_finite())
+                {
+                    return Err(Error::InvalidLayerValue);
+                }
+                self.0.animate_timed(
+                    serial,
+                    property.wire(),
+                    value,
+                    ms as u32,
+                    bezier.x1,
+                    bezier.y1,
+                    bezier.x2,
+                    bezier.y2,
+                );
+            }
+            LayerCurve::Spring { response, damping } => {
+                if !(response.is_finite()
+                    && damping.is_finite()
+                    && (SPRING_RESPONSE.0..=SPRING_RESPONSE.1).contains(&on_wire(response))
+                    && (SPRING_DAMPING.0..=SPRING_DAMPING.1).contains(&on_wire(damping))
+                    && velocity.is_finite())
+                {
+                    return Err(Error::InvalidLayerValue);
+                }
+                self.0
+                    .animate_spring(serial, property.wire(), value, response, damping, velocity)
+            }
+        }
+        Ok(())
+    }
+
+    /// Move `property` through `samples` over `duration` seconds (version 4): its values at even steps of the duration,
+    /// the first at its start and the last, where it rests, at its end, in a straight line between two. It starts at
+    /// the first sample, not from what is shown. `serial` names the animation in the events.
+    pub fn animate_samples(
+        &self,
+        serial: u32,
+        property: LayerProperty,
+        duration: f64,
+        samples: &[f32],
+    ) -> Result<(), Error> {
+        if self.0.version() < CONTENT_BLUR_VERSION {
+            return Err(Error::Unsupported("cupertino_layer_v1.animate_samples"));
+        }
+        self.takes(property)?;
+        let ms = (duration * 1000.0).round();
+        if !(1.0..=f64::from(MAX_DURATION_MS)).contains(&ms)
+            || !(MIN_SAMPLES..=MAX_SAMPLES).contains(&samples.len())
+        {
+            return Err(Error::InvalidLayerValue);
+        }
+        if !samples.iter().all(|&v| property.accepts(f64::from(v))) {
+            return Err(Error::InvalidLayerValue);
+        }
+        let bytes = samples.iter().flat_map(|v| v.to_ne_bytes()).collect();
+        self.0
+            .animate_samples(serial, property.wire(), ms as u32, bytes);
+        Ok(())
+    }
+
+    /// Stop `property` where it is shown when the commit applies; a property the layer object does not take is left.
+    pub fn cancel(&self, property: LayerProperty) {
+        if self.takes(property).is_ok() {
+            self.0.cancel(property.wire());
+        }
+    }
+
+    /// Draw `style` of glass below the layer's content, in its bounds, magnified by `lens` (1 for none, at most 4); `None`
+    /// draws none. A lens outside 1 to 4 is [`Error::InvalidGlass`] and sends nothing.
+    pub fn set_glass(&self, style: Option<crate::app::GlassStyle>, lens: f64) -> Result<(), Error> {
+        if !(lens.is_finite() && (LENS.0..=LENS.1).contains(&lens)) {
+            return Err(Error::InvalidGlass);
+        }
+        self.0
+            .set_glass(style.map_or(u32::MAX, crate::app::GlassStyle::wire), lens);
+        Ok(())
+    }
+
+    /// Draw glass of a system variant below the layer's content, in its bounds, magnified by `lens` (1 for none, at
+    /// most 4); `None` draws none. The server resolves it with the window's activation and grows interactive glass
+    /// under a press. A server before version 7 draws [`VariantGlass::fallback_style`] instead. A lens outside 1 to 4 is
+    /// [`Error::InvalidGlass`] and sends nothing.
+    pub fn set_glass_variant(&self, glass: Option<VariantGlass>, lens: f64) -> Result<(), Error> {
+        let Some(glass) = glass.filter(|_| self.0.version() >= VARIANT_VERSION) else {
+            return self.set_glass(glass.map(VariantGlass::fallback_style), lens);
+        };
+        if !(lens.is_finite() && (LENS.0..=LENS.1).contains(&lens)) {
+            return Err(Error::InvalidGlass);
+        }
+        self.0.set_glass_variant(
+            glass.wire_variant() as u32,
+            glass.wire_modifiers().bits(),
+            glass.wire_size() as u32,
+            lens,
+        );
+        Ok(())
+    }
+
+    /// Lay the straight sRGB colour `rgba` (each channel 0 to 1) over the face of the layer's glass at its alpha; alpha
+    /// 0 lays none. A channel outside 0 to 1 is [`Error::InvalidGlass`] and sends nothing; a server before version 7
+    /// tints nothing and is sent nothing.
+    pub fn set_glass_tint(&self, rgba: [f64; 4]) -> Result<(), Error> {
+        if !valid_tint(rgba) {
+            return Err(Error::InvalidGlass);
+        }
+        if self.0.version() >= VARIANT_VERSION {
+            let [r, g, b, a] = rgba;
+            self.0.set_glass_tint(r, g, b, a);
+        }
+        Ok(())
+    }
+
+    /// Blur the layer's glass at `top` times its style's blur along its top edge and `bottom` times it along its bottom
+    /// edge, smoothly in between (1 and 1 blur evenly), as the soft edge of a bar over content scrolled under it. Every
+    /// version takes it. A weight outside 0 to 1 is [`Error::InvalidGlass`] and sends nothing.
+    pub fn set_blur_ramp(&self, top: f64, bottom: f64) -> Result<(), Error> {
+        if ![top, bottom].iter().all(|w| (0.0..=1.0).contains(w)) {
+            return Err(Error::InvalidGlass);
+        }
+        self.0.set_blur_ramp(top, bottom);
+        Ok(())
+    }
+
+    /// Clip the content to the layer's rounded bounds.
+    pub fn set_masks_to_bounds(&self, masks: bool) {
+        self.0.set_masks_to_bounds(u32::from(masks));
+    }
+
+    /// Join the layer's glass with that of the parent's other layers of `group` (0 for none) into one shape, whose
+    /// outlines blend over `spacing` points; refused below version 3.
+    pub fn set_glass_group(&self, group: u32, spacing: f64) -> Result<(), Error> {
+        if self.0.version() < POPUP_VERSION {
+            return Err(Error::Unsupported("cupertino_layer_v1.set_glass_group"));
+        }
+        if !(0.0..=MAX_GROUP_SPACING).contains(&spacing) {
+            return Err(Error::InvalidGlass);
+        }
+        self.0.set_glass_group(group, spacing);
+        Ok(())
+    }
+
+    /// Draw a line `width` points wide (0 for none, at most [`MAX_GLASS_EDGE`]) of the straight `color` along the
+    /// outside of the layer's glass, or of its group's joined glass when it is the group's first layer; its width stays
+    /// as the layer scales. Refused below version 5.
+    pub fn set_glass_edge(&self, width: f64, color: [f64; 4]) -> Result<(), Error> {
+        if self.0.version() < GLASS_EDGE_VERSION {
+            return Err(Error::Unsupported("cupertino_layer_v1.set_glass_edge"));
+        }
+        if !(0.0..=MAX_GLASS_EDGE).contains(&width)
+            || color.iter().any(|c| !(0.0..=1.0).contains(c))
+        {
+            return Err(Error::InvalidGlass);
+        }
+        let [r, g, b, a] = color;
+        self.0.set_glass_edge(width, r, g, b, a);
+        Ok(())
+    }
+}
+
+impl Drop for Layer {
+    fn drop(&mut self) {
+        self.0.destroy();
+    }
+}
+
+impl Dispatch<CupertinoLayersV1, Quiet> for State {
+    fn event(
+        _: &mut State,
+        _: &CupertinoLayersV1,
+        _: <CupertinoLayersV1 as Proxy>::Event,
+        _: &Quiet,
+        _: &WlConnection,
+        _: &QueueHandle<State>,
+    ) {
+    }
+}
+
+impl Dispatch<CupertinoLayerV1, LayerData> for State {
+    fn event(
+        state: &mut State,
+        _: &CupertinoLayerV1,
+        event: cupertino_layer_v1::Event,
+        data: &LayerData,
+        _: &WlConnection,
+        _: &QueueHandle<State>,
+    ) {
+        let layer = data.0;
+        match event {
+            cupertino_layer_v1::Event::Finished { serial } => {
+                state.emit(AppEvent::LayerFinished { layer, serial })
+            }
+            cupertino_layer_v1::Event::Replaced {
+                serial,
+                value,
+                velocity,
+            } => state.emit(AppEvent::LayerReplaced {
+                layer,
+                serial,
+                value: Fixed::from_f64(value),
+                velocity: Fixed::from_f64(velocity),
+            }),
+            cupertino_layer_v1::Event::Settled => state.emit(AppEvent::LayerSettled { layer }),
+            _ => {}
+        }
+    }
+}

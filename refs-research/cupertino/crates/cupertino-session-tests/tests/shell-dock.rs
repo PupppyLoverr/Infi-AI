@@ -1,0 +1,500 @@
+//! The dock (`cupertino-dock`) as `cupertino-shell` runs it, against the real server, headless, on a session bus of
+//! the test's own and with a home, settings and data directories of its own (`docs/architecture/shell-host.md`, D16,
+//! D19). The server's supervisor starts this test binary as `cupertino-shell`: with [`host::MARK`] among its
+//! arguments it runs the host with the test menu bar of `shell/components.rs` and the real dock
+//! (`cupertino_shell::DOCK`).
+//! - The dock takes the server's `dock` role on the output and reserves the bar's depth at its bottom.
+//! - A panic injected as it paints, as its loop dispatches and on a helper thread restarts it alone, fifty times, while
+//!   the menu bar keeps drawing and the host's anonymous memory stays flat; while it restarts the server holds the
+//!   bar's picture and keeps its space, so the usable area never reflows (but for the fifth failure in a row, after
+//!   which the server gives it up and holds nothing until it is started again), and every restarted dock takes its
+//!   role again.
+
+#[path = "shell/components.rs"]
+#[allow(dead_code)]
+mod components;
+#[path = "shell/memory.rs"]
+mod memory;
+// shared with `shell-host.rs`, which uses what this test does not
+#[allow(dead_code)]
+#[path = "shell-host/rig.rs"]
+mod rig;
+
+use std::collections::HashSet;
+use std::io::{BufRead, BufReader};
+use std::os::unix::fs::DirBuilderExt;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command as Process, Stdio};
+use std::time::Duration;
+
+use cupertino_server::host::HostKind;
+use zbus::blocking::Connection;
+
+use components::{BAR_SIZE, GREEN, YELLOW};
+use memory::{steady_allocator, HostMemory, CRASHES_IN_A_ROW, RESTARTS};
+use rig::{count, Area, Rig};
+
+/// The host program of this test: `cupertino-shell`'s own (`cupertino_shell::run`) with the test menu bar and the
+/// real dock.
+mod host {
+    use std::path::PathBuf;
+
+    use cupertino_kit_shell::Entry;
+
+    use super::components::{report_to, MENUBAR};
+
+    /// The argument that makes this test binary the host: a filter after `--` that names no test.
+    pub const MARK: &str = "cupertino-shell-dock-host";
+
+    /// The components this host was built with.
+    static ENTRIES: [&Entry; 2] = [&MENUBAR, &cupertino_shell::DOCK];
+
+    /// The report file and the host's own arguments that follow [`MARK`], when this process is the host.
+    pub fn arguments() -> Option<(PathBuf, Vec<String>)> {
+        let args: Vec<String> = std::env::args().collect();
+        let at = args.iter().position(|a| a == MARK)?;
+        let report = PathBuf::from(args.get(at + 1)?);
+        Some((report, args[at + 2..].to_vec()))
+    }
+
+    /// Be the host, the menu bar reporting to `report`.
+    pub fn run(report: PathBuf, args: Vec<String>) -> ! {
+        report_to(report);
+        cupertino_shell::run(&ENTRIES, args)
+    }
+}
+
+/// The host itself, when the supervisor started this binary with [`host::MARK`]; a test run does nothing here.
+#[test]
+fn host_program() {
+    if let Some((report, args)) = host::arguments() {
+        host::run(report, args);
+    }
+}
+
+/// The area the test menu bar covers: the output's top left.
+fn bar_area() -> Area {
+    Area::new(0, 0, BAR_SIZE.width as i32, BAR_SIZE.height as i32)
+}
+
+/// The colour of [`components::MenuBar`] its area shows now.
+fn bar_colour(rig: &mut Rig) -> Option<&'static str> {
+    let image = rig.image();
+    let area = bar_area();
+    let shows = |colour: cupertino_kit::theme::Color| {
+        let want = [colour.r, colour.g, colour.b].map(|c| (c * 255.0) as i32);
+        count(&image, area, |rgb| {
+            (0..3).all(|c| (i32::from(rgb[c]) - want[c]).abs() < 40)
+        }) >= area.covered()
+    };
+    if shows(GREEN) {
+        Some("green")
+    } else if shows(YELLOW) {
+        Some("yellow")
+    } else {
+        None
+    }
+}
+
+/// A session bus of the test's own, whose address the hosts inherit, and the address.
+struct Bus(Child, String);
+
+/// A session bus that starts no service: nothing the component calls reaches a program of the machine.
+const BUS_CONFIG: &str = r#"<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:tmpdir=/tmp</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+"#;
+
+impl Bus {
+    fn start() -> Bus {
+        let config = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("shell-dock-bus.conf");
+        std::fs::write(&config, BUS_CONFIG).expect("the bus's configuration");
+        let mut daemon = Process::new("dbus-daemon")
+            .arg(format!("--config-file={}", config.display()))
+            .args(["--nofork", "--print-address=1"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("dbus-daemon runs");
+        let mut address = String::new();
+        BufReader::new(daemon.stdout.take().unwrap())
+            .read_line(&mut address)
+            .unwrap();
+        assert!(!address.trim().is_empty(), "dbus-daemon gives its address");
+        let address = address.trim().to_owned();
+        std::env::set_var("DBUS_SESSION_BUS_ADDRESS", &address);
+        Bus(daemon, address)
+    }
+}
+
+impl Drop for Bus {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// A directory of the test's own, new and empty, of mode 0700: the session's home, settings or data.
+fn private_dir(name: &str) -> PathBuf {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("shell-dock-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&dir)
+        .expect("a private directory");
+    dir
+}
+
+/// The session the dock runs in: a home, settings, data (and so a trash) and a cache of the test's own, no desktop
+/// entries of the machine's, and the session bus.
+struct Session {
+    bus: Bus,
+    data: PathBuf,
+}
+
+impl Session {
+    fn start() -> Session {
+        let bus = Bus::start();
+        let data = private_dir("data");
+        std::env::set_var("HOME", private_dir("home"));
+        std::env::set_var("XDG_CONFIG_HOME", private_dir("config"));
+        std::env::set_var("XDG_DATA_HOME", &data);
+        std::env::set_var("XDG_DATA_DIRS", private_dir("data-dirs"));
+        std::env::set_var("XDG_CACHE_HOME", private_dir("cache"));
+        Session { bus, data }
+    }
+}
+
+/// The file whose putting in the trash and taking out has the dock draw again: the trash's tile changes its icon.
+const TRASHED: &str = "paint.txt";
+
+/// Turns after which a dock armed to panic as it paints that has not drawn yet is made to draw again, while it runs:
+/// the crash call is not awaited, so the dock may have drawn the trash's change before it took the call. Once it failed
+/// the trash stays as it is, and the restarted dock starts on the trash it then reads.
+const REDRAW_TURNS: u32 = 200;
+
+/// Have the dock draw again: [`TRASHED`] is put in the trash, or taken out when it is there.
+fn toggle(data: &Path) {
+    let files = data.join("Trash/files");
+    std::fs::create_dir_all(&files).expect("the trash's files");
+    let file = files.join(TRASHED);
+    if file.exists() {
+        std::fs::remove_file(file).expect("the trashed file goes");
+    } else {
+        std::fs::write(file, "").expect("the trashed file is made");
+    }
+}
+
+/// `work` on a thread of its own while the server turns, so a call that waits for the server is answered.
+fn aside<T: Send + 'static>(
+    rig: &mut Rig,
+    what: &str,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> T {
+    let work = std::thread::spawn(work);
+    rig.until(what, |_| work.is_finished());
+    work.join().unwrap()
+}
+
+/// The dock's own connection to the session bus, once the server knows it as the dock's: one not among `gone`, the
+/// connections of instances that failed, which the bus may still list for a while.
+fn dock_name(rig: &Rig, session: &Connection, gone: &HashSet<String>) -> Option<String> {
+    let dbus = zbus::blocking::fdo::DBusProxy::new(session).ok()?;
+    dbus.list_names()
+        .ok()?
+        .into_iter()
+        .map(|name| name.to_string())
+        .filter(|name| name.starts_with(':') && !gone.contains(name))
+        .find(|name| rig.state.hosts.component_of_bus_name(name) == Some("dock"))
+}
+
+/// How long a question to the dock's connection waits for its answer: a connection that serves no object yet leaves
+/// a call unanswered, so it is asked again.
+const PROBE_TIMEOUT: Duration = Duration::from_millis(250);
+
+/// Whether the connection `name` serves the components' debug interface yet: the server knows a component's
+/// connection as soon as its name is proved, before the component serves anything on it, and a call made before that
+/// is never answered. `session` gives up on a call after [`PROBE_TIMEOUT`].
+fn serves_crash(rig: &mut Rig, session: &Connection, name: &str) -> bool {
+    let (session, name) = (session.clone(), name.to_owned());
+    aside(rig, "the dock answers", move || {
+        session
+            .call_method(
+                Some(name.as_str()),
+                "/org/cupertino/ShellComponentDebug1",
+                Some("org.freedesktop.DBus.Introspectable"),
+                "Introspect",
+                &(),
+            )
+            .ok()
+            .and_then(|reply| reply.body().deserialize::<String>().ok())
+            .is_some_and(|xml| xml.contains("org.cupertino.ShellComponentDebug1"))
+    })
+}
+
+/// Have the dock panic `at` `dispatch`, `paint` or `helper` (`org.cupertino.ShellComponentDebug1`), once its
+/// current connection serves the interface; that connection joins `gone`.
+fn crash_dock(rig: &mut Rig, session: &Connection, gone: &mut HashSet<String>, at: &str) {
+    let mut name = None;
+    rig.until("the dock has its connection", |rig| {
+        name = dock_name(rig, session, gone);
+        name.is_some()
+    });
+    let name = name.unwrap();
+    gone.insert(name.clone());
+    rig.until("the dock serves its debug interface", |rig| {
+        serves_crash(rig, session, &name)
+    });
+    // no reply is awaited: a crash at dispatch or on a helper may end the component before its reply leaves, and what
+    // shows the crash was taken is the next instance
+    let call = zbus::Message::method_call("/org/cupertino/ShellComponentDebug1", "Crash")
+        .and_then(|m| m.destination(name.as_str()))
+        .and_then(|m| m.interface("org.cupertino.ShellComponentDebug1"))
+        .and_then(|m| m.with_flags(zbus::message::Flags::NoReplyExpected))
+        .and_then(|m| m.build(&(at,)))
+        .expect("the crash call");
+    session
+        .send(&call)
+        .unwrap_or_else(|e| panic!("the crash at {at} is sent: {e}"));
+}
+
+/// The dock's part of the output: what it reserves below the usable area, which ends at `usable_bottom`.
+fn dock_area(usable_bottom: f64) -> Area {
+    let top = usable_bottom as i32;
+    Area::new(0, top, rig::OUTPUT_SIZE.0, rig::OUTPUT_SIZE.1 - top)
+}
+
+/// How far apart two pictures' channels may be and still count as the same pixel.
+const SAME_PIXEL: i32 = 8;
+
+/// How many pixels of `area` `now` shows otherwise than `before`, with the luma of each in `now`.
+fn differing(now: &image::RgbaImage, before: &image::RgbaImage, area: Area) -> Vec<i32> {
+    let mut luma = Vec::new();
+    for y in area.y..area.y + area.h {
+        for x in area.x..area.x + area.w {
+            let (p, q) = (
+                now.get_pixel(x as u32, y as u32),
+                before.get_pixel(x as u32, y as u32),
+            );
+            if (0..3).any(|c| (i32::from(p[c]) - i32::from(q[c])).abs() > SAME_PIXEL) {
+                luma.push((3 * i32::from(p[0]) + 6 * i32::from(p[1]) + i32::from(p[2])) / 10);
+            }
+        }
+    }
+    luma
+}
+
+/// The most the luma of a tile whose icon has not loaded spreads over: it shows the bar's even backdrop, where an
+/// icon has outlines and highlights.
+const BLANK_SPREAD: i32 = 16;
+
+/// Whether the dock in `area` shows another icon than in `before`: some pixels differ, and not as the even backdrop of
+/// a tile whose icon is still loading.
+fn shows_another_icon(now: &image::RgbaImage, before: &image::RgbaImage, area: Area) -> bool {
+    let luma = differing(now, before, area);
+    let spread = luma
+        .iter()
+        .max()
+        .zip(luma.iter().min())
+        .map_or(0, |(max, min)| max - min);
+    spread > BLANK_SPREAD
+}
+
+/// Whether [`TRASHED`] is in the trash.
+fn trash_full(data: &Path) -> bool {
+    data.join("Trash/files").join(TRASHED).exists()
+}
+
+/// The restarted dock's pictures with the trash empty and full, the trash left as it was. The dock draws first what it
+/// shows now, which a restarted dock held by the server shows only once its bar has all it draws at hand (the trash's
+/// state and its icon among it), then the trash's other state: drawing both has the host load both states' icons
+/// before its memory is measured, where a first instance that lives on to show the other state at a restart in the
+/// measure would add them there (heaptrack: 6.7 MiB, the full trash's icons at both sides and every scale).
+fn learn_the_trash(rig: &mut Rig, data: &Path, area: Area) -> [image::RgbaImage; 2] {
+    let was = trash_full(data);
+    let first = rig.image();
+    toggle(data);
+    let mut other = None;
+    rig.until("the restarted dock draws the trash's other icon", |rig| {
+        let now = rig.image();
+        let shows = shows_another_icon(&now, &first, area);
+        other = shows.then_some(now);
+        shows
+    });
+    toggle(data);
+    rig.until("the restarted dock draws the trash as it was", |rig| {
+        differing(&rig.image(), &first, area).is_empty()
+    });
+    let other = other.unwrap();
+    if was {
+        [other, first]
+    } else {
+        [first, other]
+    }
+}
+
+/// The restarted dock has what it reads at start: it follows the trash, there and back, which it looks at from the path
+/// its start's reading gives, and draws each state as `pictures` show it, with the icons its host keeps.
+fn follows_the_trash(rig: &mut Rig, data: &Path, area: Area, pictures: &[image::RgbaImage; 2]) {
+    let was = trash_full(data);
+    for full in [!was, was] {
+        toggle(data);
+        rig.until(
+            &format!(
+                "the restarted dock draws the trash {}",
+                if full { "full" } else { "empty" }
+            ),
+            |rig| differing(&rig.image(), &pictures[usize::from(full)], area).is_empty(),
+        );
+    }
+}
+
+#[test]
+fn the_dock_restarts_alone_holding_its_place_after_injected_panics() {
+    let session = Session::start();
+    steady_allocator();
+    let mut rig = Rig::new("dock", &["dock", "menubar"], &[]);
+    cupertino_server::quit::start_session_service_on(&mut rig.state, Some(session.bus.1.clone()));
+    let bus = zbus::blocking::connection::Builder::session()
+        .and_then(|b| b.method_timeout(PROBE_TIMEOUT).build())
+        .expect("the test's bus");
+    let mut gone = HashSet::new();
+    let output = rig.state.outputs[0].id;
+    rig.until(
+        "the menu bar draws and the dock is on the dock role, reserving its depth",
+        |rig| {
+            bar_colour(rig).is_some()
+                && rig.state.docks.has_dock(output)
+                && rig.state.usable_area(output).h < f64::from(rig::OUTPUT_SIZE.1)
+        },
+    );
+    let host = rig.host_pid(HostKind::Shared).unwrap();
+    // the dock may still grow its bar as its icons and settings come in: what it reserves once it is settled
+    for _ in 0..50 {
+        rig.turn();
+    }
+    let usable = rig.state.usable_area(output);
+    let area = dock_area(usable.y + usable.h);
+    let mut pictures = None;
+
+    let mut colours = HashSet::new();
+    let mut held = false;
+    let first_instance = rig.state.hosts.component_instance("dock");
+    let mut host_memory = HostMemory::of(host);
+    for crash in 0..RESTARTS {
+        let at = ["paint", "dispatch", "helper"][crash as usize % 3];
+        let crashed = rig.state.hosts.component_instance("dock");
+        crash_dock(&mut rig, &bus, &mut gone, at);
+        if at == "paint" {
+            // what it draws next panics: the trash's tile with a file more or less
+            toggle(&session.data);
+        }
+        // every turn until it runs again the bar's space stays reserved and its picture shows, live, held or drawn
+        // anew: the crashed instance's bar shows live until its connection ends and is then held. But the server holds
+        // nothing of a component it gives up, the fifth failure in a row (D16)
+        let gives_up = (crash + 1) % CRASHES_IN_A_ROW == 0;
+        let mut turns = 0;
+        let mut watch = |rig: &mut Rig| {
+            colours.extend(bar_colour(rig));
+            turns += 1;
+            if at == "paint"
+                && turns % REDRAW_TURNS == 0
+                && rig.state.hosts.component_instance("dock") == crashed
+                && rig.state.hosts.component_connected("dock")
+            {
+                toggle(&session.data);
+            }
+            if gives_up {
+                return;
+            }
+            assert_eq!(
+                rig.state.usable_area(output),
+                usable,
+                "the bar's space stays reserved after a crash at {at}"
+            );
+            assert!(
+                rig.state.hosts.persistent_shows_on("dock", output),
+                "the bar's picture shows, live or held, after a crash at {at}"
+            );
+            held |= rig
+                .state
+                .hosts
+                .held_surfaces()
+                .iter()
+                .any(|h| h.component == "dock" && h.picture.is_some());
+        };
+        if gives_up {
+            rig.until(
+                &format!("the server gives the dock up after a crash at {at}"),
+                |rig| {
+                    watch(rig);
+                    rig.state.hosts.component_gave_up("dock")
+                },
+            );
+            let rx = rig.restart("dock");
+            rig.answer(&rx).expect("the dock starts again");
+        }
+        // each crash, or the restart after the last of a row, starts one instance
+        let instance = first_instance + crash + 1;
+        rig.until(
+            &format!("the dock starts again after a crash at {at}"),
+            |rig| {
+                watch(rig);
+                rig.state.hosts.component_instance("dock") == instance
+                    && rig.state.hosts.component_connected("dock")
+            },
+        );
+        // the new instance's bar on the role, the server holding no picture of the dock any more
+        rig.until(
+            &format!("the restarted dock takes its role after a crash at {at}"),
+            |rig| {
+                watch(rig);
+                rig.state.docks.has_dock(output)
+                    && rig
+                        .state
+                        .hosts
+                        .held_surfaces()
+                        .iter()
+                        .all(|h| h.component != "dock")
+            },
+        );
+        // the restarted dock reads its start on the I/O pool, which holds several MiB until it is done: that is over
+        // before the host is measured, once the dock follows the trash it watches from its start
+        match &pictures {
+            None => pictures = Some(learn_the_trash(&mut rig, &session.data, area)),
+            Some(pictures) => follows_the_trash(&mut rig, &session.data, area, pictures),
+        }
+        host_memory.restarted(crash + 1);
+    }
+
+    assert_eq!(
+        rig.host_pid(HostKind::Shared),
+        Some(host),
+        "the host went on"
+    );
+    assert_eq!(
+        rig.state.hosts.component_instance("menubar"),
+        1,
+        "the menu bar was never restarted"
+    );
+    assert_eq!(
+        colours,
+        HashSet::from(["green", "yellow"]),
+        "the menu bar kept drawing while the dock started again"
+    );
+    assert!(held, "the server held the bar's picture while it restarted");
+    assert!(!rig.state.hosts.component_gave_up("dock"));
+    host_memory.assert_nothing_kept(&mut rig);
+    // the restarted bar keeps its place
+    assert_eq!(rig.state.usable_area(output), usable);
+}

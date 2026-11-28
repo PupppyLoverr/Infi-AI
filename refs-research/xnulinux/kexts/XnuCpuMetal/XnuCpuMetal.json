@@ -1,0 +1,32 @@
+{
+  "name": "XnuCpuMetal",
+  "bundle": "org.xnulinux.driver.XnuCpuMetal",
+  "version": "1.0.0",
+  "objects": "out/x12377/native-kexts/XnuCpuMetal/objects.json",
+  "start": "_native_kext_start",
+  "stop": "_native_kext_stop",
+  "libraries": {
+    "com.apple.iokit.IOGraphicsFamily": "1.0.0b1",
+    "com.apple.kpi.iokit": "18.0.0",
+    "com.apple.kpi.libkern": "18.0.0",
+    "com.apple.kpi.mach": "18.0.0"
+  },
+  "personalities": {
+    "XnuCpuMetal": {
+      "CFBundleIdentifier": "org.xnulinux.driver.XnuCpuMetal",
+      "IOClass": "XnuCpuMetalAccelerator",
+      "IOProviderClass": "IOPlatformDevice",
+      "IONameMatch": "xnulinux,gpu",
+      "IOMatchCategory": "IOAccelerator",
+      "MetalPluginName": "XnuCpuMetal",
+      "MetalPluginClassName": "XnuCpuMetalDevice"
+    }
+  },
+  "vtable": {
+    "class": "XnuCpuMetalAccelerator",
+    "base": "IOAccelerator",
+    "base_kext": "com.apple.iokit.IOGraphicsFamily",
+    "slots": 272,
+    "ignore_slots": [16]
+  }
+}

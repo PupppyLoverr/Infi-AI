@@ -1,0 +1,88 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Build gpu/xnu-cpu-metal (XnuCpuMetal.bundle, arm64 + arm64e, with lavapipe and the Venus driver of gpu/venus) on a macOS
+# runner; the arm64e LLVM is cached.
+name: metal-plugin
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci/metal-plugin]
+    paths:
+      - .github/workflows/metal-plugin.yml
+      - gpu/xnu-cpu-metal/**
+      - gpu/venus/**
+      - gpu/xnu-drm/**
+jobs:
+  bundle:
+    runs-on: macos-latest
+    timeout-minutes: 350
+    defaults:
+      run:
+        working-directory: gpu/xnu-cpu-metal
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          sw_vers; uname -m; xcodebuild -version; xcrun --show-sdk-path; sysctl -n hw.ncpu hw.memsize; df -h . | tail -1
+      - name: Tools (Homebrew, Python, Rust)
+        run: |
+          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
+          brew install meson ninja cmake pkgconf bison flex glslang zstd
+          brew install llvm@22 || brew install llvm
+          # Mesa must not find SPIRV-Tools (from glslang): the bundle would depend on Homebrew's dylib
+          brew unlink spirv-tools
+          [ -e /opt/homebrew/opt/llvm@22 ] || ln -s "$(brew --prefix llvm)" /opt/homebrew/opt/llvm@22
+          /opt/homebrew/opt/llvm@22/bin/llvm-config --version
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup toolchain install nightly-2026-11-03-aarch64-apple-darwin --profile minimal --component rust-src
+      # from here on the steps are the README's, in its order
+      - name: Sources
+        run: scripts/fetch-sources.sh
+      - name: Python, bison, flex and the Vulkan headers under build/
+        run: scripts/setup-deps.sh
+      - name: Vulkan loader (arm64, arm64e)
+        run: scripts/build-vkloader-arm64e.sh
+      - name: lavapipe (arm64)
+        run: scripts/build-lavapipe.sh
+      - name: metal2vulkan bridge (arm64)
+        run: scripts/build-m2v.sh
+      - name: LLVM for arm64e (cache)
+        id: llvm
+        uses: actions/cache@v4
+        with:
+          path: gpu/xnu-cpu-metal/build/llvm-arm64e-install
+          key: llvm-arm64e-${{ runner.os }}-${{ hashFiles('gpu/xnu-cpu-metal/scripts/fetch-sources.sh', 'gpu/xnu-cpu-metal/scripts/build-llvm-arm64e.sh') }}
+      - name: LLVM for arm64e
+        if: steps.llvm.outputs.cache-hit != 'true'
+        run: |
+          scripts/build-llvm-arm64e.sh
+          rm -rf build/llvm-arm64e
+      - name: lavapipe (arm64e)
+        run: scripts/build-lavapipe-arm64e.sh
+      - name: metal2vulkan bridge (arm64e)
+        run: scripts/build-m2v-arm64e.sh
+      - name: Venus driver (arm64, arm64e)
+        run: |
+          W="$PWD/build/venus-darwin" bash ../venus/build-darwin.sh
+          echo "VENUS_DYLIB=$PWD/build/venus-darwin/out/lib/libvulkan_virtio.dylib" >> "$GITHUB_ENV"
+      - name: Bundle
+        run: |
+          scripts/build-bundle-universal.sh
+          for f in dist/XnuCpuMetal.bundle/Contents/Frameworks/*.dylib dist/XnuCpuMetal.bundle/Contents/MacOS/XnuCpuMetal; do
+            for a in arm64 arm64e; do
+              # otool and nm print nothing for a slice that is not there, which would pass both checks
+              case " $(lipo -archs "$f") " in *" $a "*) ;; *) echo "$f: no $a slice"; exit 1;; esac
+              if otool -arch $a -L "$f" | tail -n +2 | grep -v -E '^\s*(/usr/lib/|/System/Library/|@rpath/)' | grep -v "$(basename "$f")"; then echo "$f ($a): a dependency outside the system"; exit 1; fi
+              if nm -arch $a -u "$f" | grep -E '^_spv'; then echo "$f ($a): undefined SPIRV-Tools symbols"; exit 1; fi
+            done
+          done
+          lipo -info dist/XnuCpuMetal.bundle/Contents/Frameworks/libvulkan_virtio.dylib
+          tar -C dist -czf "$RUNNER_TEMP/XnuCpuMetal.bundle.tar.gz" XnuCpuMetal.bundle
+          shasum -a 256 "$RUNNER_TEMP/XnuCpuMetal.bundle.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: XnuCpuMetal.bundle
+          path: ${{ runner.temp }}/XnuCpuMetal.bundle.tar.gz
+      - name: Render test on the runner (informative)
+        continue-on-error: true
+        run: scripts/test-render-ci.sh arm64

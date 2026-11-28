@@ -1,0 +1,22 @@
+{
+  "name": "XnuSysCfg",
+  "bundle": "org.xnulinux.driver.XnuSysCfg",
+  "version": "1.0.0",
+  "objects": "out/x12377/native-kexts/XnuSysCfg/objects.json",
+  "start": "_native_kext_start",
+  "stop": "_native_kext_stop",
+  "libraries": {
+    "com.apple.kpi.iokit": "18.0.0",
+    "com.apple.kpi.libkern": "18.0.0",
+    "com.apple.kpi.mach": "18.0.0"
+  },
+  "personalities": {
+    "XnuSysCfg": {
+      "CFBundleIdentifier": "org.xnulinux.driver.XnuSysCfg",
+      "IOClass": "AppleDiagnosticDataAccessReadOnly",
+      "IOProviderClass": "IOResources",
+      "IOResourceMatch": "IOKit",
+      "IOMatchCategory": "XnuSysCfg"
+    }
+  }
+}

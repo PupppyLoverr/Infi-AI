@@ -1,0 +1,801 @@
+//! Public-boundary tests for `cupertino-kit-shell` (W5.10): transaction limits matching
+//! `cupertino_protocols::transaction`, design values, the component table, entry registration, safe no-op requests
+//! outside a component thread, and the runtime's loop against the stand-in server: a component and a program of its
+//! own run on Kit's UI loop on their connection, draw their view on the role it names, carry out the requests their
+//! commands queue, persist their surfaces and say `ready`; a component is told the session's display options at start
+//! and on every change; a component that shows nothing until it has what to show says `ready` only once a view of it
+//! shows it (`Program::showing`), so the server holds the surfaces of the instance before until then, and hears the
+//! size the server configured its layer surface to; a component offered another version of a global of the project than it was built with, or an older layer shell than it works with, is refused before it starts; a busy loop and a busy render
+//! thread are reported; the on-screen displays hear the list the server sends on their keyboard panels as it makes them.
+
+use crate::support;
+
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Mutex;
+use std::time::Duration;
+
+use cupertino_kit::core::{
+    Application, Command, CommandRegistry, Element, Key, Window, WindowBackground, WindowKey,
+};
+use cupertino_kit::geometry::Size;
+use cupertino_kit::layout::{Align, Axis};
+use cupertino_kit::platform::{DecorationMode, SystemAppearance, WindowSpec};
+use cupertino_kit_shell::bus::{Message, OsdKind};
+use cupertino_kit_shell::hosting::{Ended, Host, HostEvent, Kind, Runtime, EXIT_VERSION};
+use cupertino_kit_shell::keyboard_panels::Update;
+use cupertino_kit_shell::{
+    design, holds, host, outputs, run, session, transaction, Anchor, Component, ComponentName,
+    Entry, Error, Event, Keyboard, Layer, LayerSpec, Margin, Program, Role, Surface,
+};
+use support::display::{Offer, SOURCES};
+use support::{
+    component_connection, connect_host, environment_lock, eventually, wait_for, DisplayOption,
+    Seen, Server,
+};
+
+/// The namespace of the test component's layer surface.
+const NAMESPACE: &str = "test-overlay";
+/// The key the test component's surface is persisted under.
+const PERSISTED: &str = "overlay";
+/// The serial and application of the activation the test component's command asks for.
+const ACTIVATION: (u32, &str) = (7, "org.example.App");
+
+/// A layer window of 120 x 80 points, persisted under `persistent`.
+fn overlay_window<M: Clone + 'static>(key: &'static str) -> Window<M> {
+    Window {
+        key: WindowKey(Key::from(key)),
+        spec: WindowSpec {
+            title: key.to_owned(),
+            app_id: format!("org.cupertino.test.{key}"),
+            size: Size::new(120.0, 80.0),
+            min_size: None,
+            max_size: None,
+            decorations: DecorationMode::None,
+            foreign_parent: None,
+            input_region: None,
+        },
+        shortcuts: CommandRegistry::new(),
+        on_close: None,
+        background: WindowBackground::None,
+        content: Element::new(cupertino_kit::controls::Stack {
+            axis: Axis::Vertical,
+            padding: Default::default(),
+            spacing: 0.0,
+            align: Align::Start,
+            children: Vec::new(),
+        }),
+        popup: None,
+        menus: None,
+    }
+}
+
+fn overlay_surface(namespace: &'static str, persistent: Option<&'static str>) -> Surface {
+    Surface {
+        role: Role::Layer(LayerSpec {
+            namespace,
+            output: None,
+            layer: Layer::Overlay,
+            anchor: Anchor::default(),
+            size: Size::new(120.0, 80.0),
+            margin: Margin::default(),
+            exclusive_zone: 0,
+            keyboard: Keyboard::None,
+        }),
+        persistent,
+        holes: Vec::new(),
+    }
+}
+
+/// A component with one persistent layer window, whose first command asks the session to bring an app forward.
+struct Overlay;
+
+#[derive(Clone, Debug)]
+enum OverlayMessage {
+    Activate,
+}
+
+impl Application for Overlay {
+    type Model = ();
+    type Message = OverlayMessage;
+
+    fn init() -> ((), Vec<Command<OverlayMessage>>) {
+        let task = Command::Perform(Box::pin(async { OverlayMessage::Activate }));
+        ((), vec![task])
+    }
+
+    fn update(_: &mut (), message: OverlayMessage) -> Vec<Command<OverlayMessage>> {
+        match message {
+            OverlayMessage::Activate => session::activate_app(ACTIVATION.0, ACTIVATION.1),
+        }
+        Vec::new()
+    }
+
+    fn view(_: &()) -> Vec<Window<OverlayMessage>> {
+        vec![overlay_window("overlay")]
+    }
+}
+
+impl Program for Overlay {
+    fn surface(_: &(), _: &WindowKey) -> Surface {
+        overlay_surface(NAMESPACE, Some(PERSISTED))
+    }
+
+    fn event(_: Event) -> Option<OverlayMessage> {
+        None
+    }
+}
+
+impl Component for Overlay {
+    const NAME: ComponentName = ComponentName::OSD;
+}
+
+/// The on-screen displays as far as the keyboard's panels go: the selected source of the first list it hears is
+/// passed on as an activation, which the stand-in records.
+struct Panels;
+
+#[derive(Clone, Debug)]
+enum PanelsMessage {
+    Heard(String),
+}
+
+impl Application for Panels {
+    type Model = ();
+    type Message = PanelsMessage;
+
+    fn init() -> ((), Vec<Command<PanelsMessage>>) {
+        ((), Vec::new())
+    }
+
+    fn update(_: &mut (), message: PanelsMessage) -> Vec<Command<PanelsMessage>> {
+        match message {
+            PanelsMessage::Heard(id) => session::activate_app(ACTIVATION.0, &id),
+        }
+        Vec::new()
+    }
+
+    fn view(_: &()) -> Vec<Window<PanelsMessage>> {
+        vec![overlay_window("panels")]
+    }
+}
+
+impl Program for Panels {
+    fn surface(_: &(), _: &WindowKey) -> Surface {
+        overlay_surface(NAMESPACE, None)
+    }
+
+    fn event(event: Event) -> Option<PanelsMessage> {
+        match event {
+            Event::KeyboardPanels(Update::Sources {
+                sources, selected, ..
+            }) => sources
+                .get(selected)
+                .map(|s| PanelsMessage::Heard(s.id.clone())),
+            _ => None,
+        }
+    }
+}
+
+impl Component for Panels {
+    const NAME: ComponentName = ComponentName::OSD;
+}
+
+/// A dock that draws nothing: it needs `cupertino_shell_v1` 28.
+struct Dock;
+
+impl Application for Dock {
+    type Model = ();
+    type Message = ();
+
+    fn init() -> ((), Vec<Command<()>>) {
+        ((), Vec::new())
+    }
+
+    fn update(_: &mut (), _: ()) -> Vec<Command<()>> {
+        Vec::new()
+    }
+
+    fn view(_: &()) -> Vec<Window<()>> {
+        Vec::new()
+    }
+}
+
+impl Program for Dock {
+    fn surface(_: &(), _: &WindowKey) -> Surface {
+        overlay_surface("test-dock", None)
+    }
+
+    fn event(_: Event) -> Option<()> {
+        None
+    }
+}
+
+impl Component for Dock {
+    const NAME: ComponentName = ComponentName::DOCK;
+}
+
+/// What the stalling component's update waits for before it returns.
+static GATE: Mutex<Option<Receiver<()>>> = Mutex::new(None);
+
+/// A component whose first update waits for the test to let it go, as an update stuck on work.
+struct Stalling;
+
+impl Application for Stalling {
+    type Model = ();
+    type Message = ();
+
+    fn init() -> ((), Vec<Command<()>>) {
+        ((), vec![Command::Perform(Box::pin(async {}))])
+    }
+
+    fn update(_: &mut (), _: ()) -> Vec<Command<()>> {
+        let gate = GATE.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.recv_timeout(support::PATIENCE);
+        }
+        Vec::new()
+    }
+
+    fn view(_: &()) -> Vec<Window<()>> {
+        Vec::new()
+    }
+}
+
+impl Program for Stalling {
+    fn surface(_: &(), _: &WindowKey) -> Surface {
+        overlay_surface("test-stalling", None)
+    }
+
+    fn event(_: Event) -> Option<()> {
+        None
+    }
+}
+
+impl Component for Stalling {
+    const NAME: ComponentName = ComponentName::NOTIFICATIONS;
+}
+
+/// What the following component was told of the session's appearance and display options, in order.
+static TOLD: Mutex<Vec<SystemAppearance>> = Mutex::new(Vec::new());
+
+/// A component with no window that keeps what it is told of the session's appearance and display options.
+struct Following;
+
+impl Application for Following {
+    type Model = ();
+    type Message = SystemAppearance;
+
+    fn init() -> ((), Vec<Command<SystemAppearance>>) {
+        ((), Vec::new())
+    }
+
+    fn update(_: &mut (), appearance: SystemAppearance) -> Vec<Command<SystemAppearance>> {
+        TOLD.lock().unwrap().push(appearance);
+        Vec::new()
+    }
+
+    fn view(_: &()) -> Vec<Window<SystemAppearance>> {
+        Vec::new()
+    }
+}
+
+impl Program for Following {
+    fn surface(_: &(), _: &WindowKey) -> Surface {
+        overlay_surface("test-following", None)
+    }
+
+    fn event(event: Event) -> Option<SystemAppearance> {
+        match event {
+            Event::Appearance(appearance) => Some(appearance),
+            _ => None,
+        }
+    }
+}
+
+impl Component for Following {
+    const NAME: ComponentName = ComponentName::LAUNCHER;
+}
+
+/// The layer surface the revealing component persists, and what it was told of its configured sizes, in order.
+const REVEALED: &str = "revealed";
+static CONFIGURED: Mutex<Vec<(WindowKey, Size)>> = Mutex::new(Vec::new());
+/// Whether Reduce Motion was on in each appearance the revealing component was told, in order.
+static REVEALING_TOLD: Mutex<Vec<bool>> = Mutex::new(Vec::new());
+
+/// A component that shows nothing until the session turns Reduce Motion on, then a persistent layer surface stretched
+/// over the output: as a component whose first view waits for what it shows, and says so (`Program::showing`).
+struct Revealing;
+
+#[derive(Clone, Debug)]
+enum RevealingMessage {
+    Appearance(SystemAppearance),
+    Configured(WindowKey, Size),
+}
+
+impl Application for Revealing {
+    type Model = bool;
+    type Message = RevealingMessage;
+
+    fn init() -> (bool, Vec<Command<RevealingMessage>>) {
+        (false, Vec::new())
+    }
+
+    fn update(shown: &mut bool, message: RevealingMessage) -> Vec<Command<RevealingMessage>> {
+        match message {
+            RevealingMessage::Appearance(appearance) => {
+                REVEALING_TOLD
+                    .lock()
+                    .unwrap()
+                    .push(appearance.reduce_motion);
+                *shown |= appearance.reduce_motion;
+            }
+            RevealingMessage::Configured(key, size) => CONFIGURED.lock().unwrap().push((key, size)),
+        }
+        Vec::new()
+    }
+
+    fn view(shown: &bool) -> Vec<Window<RevealingMessage>> {
+        if *shown {
+            vec![overlay_window(REVEALED)]
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+impl Program for Revealing {
+    fn surface(_: &bool, _: &WindowKey) -> Surface {
+        Surface {
+            role: Role::Layer(LayerSpec {
+                namespace: REVEALED,
+                output: None,
+                layer: Layer::Bottom,
+                anchor: Anchor {
+                    top: true,
+                    bottom: true,
+                    left: true,
+                    right: true,
+                },
+                size: Size::new(0.0, 0.0),
+                margin: Margin::default(),
+                exclusive_zone: 0,
+                keyboard: Keyboard::None,
+            }),
+            persistent: Some(REVEALED),
+            holes: Vec::new(),
+        }
+    }
+
+    fn showing(shown: &bool) -> bool {
+        *shown
+    }
+
+    fn event(event: Event) -> Option<RevealingMessage> {
+        match event {
+            Event::Appearance(appearance) => Some(RevealingMessage::Appearance(appearance)),
+            Event::Configured { window, size } => Some(RevealingMessage::Configured(window, size)),
+            _ => None,
+        }
+    }
+}
+
+impl Component for Revealing {
+    const NAME: ComponentName = ComponentName::DESKTOP;
+}
+
+static REVEALING: Entry = Entry::of::<Revealing>();
+static FOLLOWING: Entry = Entry::of::<Following>();
+static OVERLAY: Entry = Entry::of::<Overlay>();
+static PANELS: Entry = Entry::of::<Panels>();
+static DOCK: Entry = Entry::of::<Dock>();
+static STALLING: Entry = Entry::of::<Stalling>();
+
+/// A host connected to `server` and its runtime.
+fn host_and_runtime(host_end: std::os::unix::net::UnixStream) -> (Host, Runtime) {
+    let mut host = connect_host(host_end);
+    wait_for(&mut host, |event| matches!(event, HostEvent::Components(_)));
+    let environment = cupertino_kit::app::environment().expect("toolkit environment");
+    let runtime = Runtime::for_host(&mut host, Kind::Shared, environment).unwrap();
+    (host, runtime)
+}
+
+fn position(seen: &[Seen], want: impl Fn(&Seen) -> bool) -> usize {
+    seen.iter()
+        .position(want)
+        .unwrap_or_else(|| panic!("not seen in {seen:?}"))
+}
+
+#[test]
+fn a_component_draws_its_view_runs_its_commands_and_says_ready() {
+    let (server, host_end) = Server::start(Kind::Shared, &["osd"]);
+    let (mut host, runtime) = host_and_runtime(host_end);
+    let connection = component_connection(&mut host, "osd");
+    let mut running = runtime.start(&OVERLAY, connection).unwrap();
+
+    let osd = || "osd".to_owned();
+    let seen = server.seen_until(|seen| {
+        let ready = seen.contains(&Seen::Ready(osd()));
+        let activated = seen.iter().any(|s| matches!(s, Seen::ActivateApp { .. }));
+        ready && activated
+    });
+    let persisted = position(&seen, |s| {
+        *s == Seen::Persisted {
+            component: osd(),
+            key: PERSISTED.into(),
+        }
+    });
+    let drawn = position(&seen, |s| {
+        *s == Seen::Drawn {
+            component: osd(),
+            namespace: NAMESPACE.into(),
+        }
+    });
+    let ready = position(&seen, |s| *s == Seen::Ready(osd()));
+    // persisted before its first buffer; ready once that frame was shown
+    assert!(persisted < drawn && drawn < ready, "{seen:?}");
+    assert!(seen.contains(&Seen::ActivateApp {
+        component: osd(),
+        serial: ACTIVATION.0,
+        desktop_id: ACTIVATION.1.into(),
+    }));
+    // the loop waits for what comes next, out of its busy record
+    eventually("the loop waits", || running.busy_for().is_none());
+
+    running.stop();
+    eventually("the component stops", || {
+        running.ended() == Some(Ended::Stopped)
+    });
+    drop(server);
+}
+
+#[test]
+fn the_on_screen_displays_hear_the_list_the_server_sends_as_their_panels_are_made() {
+    let (server, host_end) = Server::start(Kind::Shared, &["osd"]);
+    let (mut host, runtime) = host_and_runtime(host_end);
+    let connection = component_connection(&mut host, "osd");
+    let mut running = runtime.start(&PANELS, connection).unwrap();
+
+    // the stand-in sends the switch's list in the same breath as it makes the object, before the component's loop
+    // first waits: the component hears it all the same
+    let seen = server.seen_until(|seen| seen.iter().any(|s| matches!(s, Seen::ActivateApp { .. })));
+    assert!(seen.contains(&Seen::ActivateApp {
+        component: "osd".into(),
+        serial: ACTIVATION.0,
+        desktop_id: SOURCES[1].0.into(),
+    }));
+
+    running.stop();
+    eventually("the component stops", || {
+        running.ended() == Some(Ended::Stopped)
+    });
+    drop(server);
+}
+
+#[test]
+fn a_component_is_told_the_display_options_at_start_and_on_every_change() {
+    let (server, host_end) = Server::start(Kind::Shared, &["launcher"]);
+    // the session starts with Reduce Motion on
+    server.set_display_options(DisplayOption::ReduceMotion);
+    let (mut host, runtime) = host_and_runtime(host_end);
+    let connection = component_connection(&mut host, "launcher");
+    let mut running = runtime.start(&FOLLOWING, connection).unwrap();
+    let told = || TOLD.lock().unwrap().clone();
+    let reduce_motion = || told().iter().map(|a| a.reduce_motion).collect::<Vec<_>>();
+
+    eventually("the component is told Reduce Motion at start", || {
+        reduce_motion() == [true]
+    });
+    assert!(
+        !told()[0].dark && !told()[0].increase_contrast,
+        "{:?}",
+        told()
+    );
+
+    server.set_display_options(DisplayOption::empty());
+    eventually("the component is told Reduce Motion went off", || {
+        reduce_motion() == [true, false]
+    });
+
+    server.set_display_options(DisplayOption::ReduceMotion | DisplayOption::IncreaseContrast);
+    eventually("the component is told Reduce Motion came back", || {
+        reduce_motion() == [true, false, true]
+    });
+    assert!(told()[2].increase_contrast, "{:?}", told());
+
+    // the same options again are no change: the next one told is the one after them
+    server.set_display_options(DisplayOption::ReduceMotion | DisplayOption::IncreaseContrast);
+    server.set_display_options(DisplayOption::ReduceTransparency);
+    eventually("the component is told the next change", || {
+        told().len() >= 4
+    });
+    let last = told()[3];
+    assert!(
+        !last.reduce_motion && !last.increase_contrast && last.reduce_transparency,
+        "{:?}",
+        told()
+    );
+    assert_eq!(told().len(), 4, "{:?}", told());
+
+    running.stop();
+    eventually("the component stops", || {
+        running.ended() == Some(Ended::Stopped)
+    });
+    drop(server);
+}
+
+#[test]
+fn a_component_is_ready_once_it_shows_what_it_has_to_show() {
+    let (server, host_end) = Server::start(Kind::Shared, &["desktop"]);
+    let (mut host, runtime) = host_and_runtime(host_end);
+    let connection = component_connection(&mut host, "desktop");
+    let mut running = runtime.start(&REVEALING, connection).unwrap();
+    let desktop = || "desktop".to_owned();
+    // the server holds a surface of the instance before (the stand-in holds one of every component); the turn that
+    // tells the component the session's appearance at start draws a view of nothing, before the next change is read
+    eventually("the component hears the session's appearance", || {
+        *REVEALING_TOLD.lock().unwrap() == [false]
+    });
+
+    // its first views show nothing; the one that shows the persistent surface counts
+    server.set_display_options(DisplayOption::ReduceMotion);
+    let seen = server.seen_until(|seen| seen.contains(&Seen::Ready(desktop())));
+    let persisted = position(&seen, |s| {
+        *s == Seen::Persisted {
+            component: desktop(),
+            key: REVEALED.into(),
+        }
+    });
+    let drawn = position(&seen, |s| {
+        *s == Seen::Drawn {
+            component: desktop(),
+            namespace: REVEALED.into(),
+        }
+    });
+    let ready = position(&seen, |s| *s == Seen::Ready(desktop()));
+    assert!(persisted < drawn && drawn < ready, "{seen:?}");
+    let (width, height) = support::display::OUTPUT_SIZE;
+    assert_eq!(
+        *CONFIGURED.lock().unwrap(),
+        [(
+            WindowKey(Key::from(REVEALED)),
+            Size::new(f64::from(width), f64::from(height))
+        )],
+        "the size the server configured the stretched surface to"
+    );
+
+    running.stop();
+    eventually("the component stops", || {
+        running.ended() == Some(Ended::Stopped)
+    });
+    drop(server);
+}
+
+#[test]
+fn a_component_on_other_versions_of_its_globals_is_refused_before_it_starts() {
+    let current = Offer::CURRENT;
+    // the shell at another version than the crate was built with, older than the dock's messages or not; the layer
+    // shell, of another project, older than the oldest the components work with
+    let rows: [(&str, Offer, &str, &'static Entry, u32, u32); 3] = [
+        (
+            "a dock on an older shell",
+            Offer {
+                shell: 27,
+                ..current
+            },
+            "dock",
+            &DOCK,
+            current.shell,
+            27,
+        ),
+        (
+            "the displays on an older shell",
+            Offer {
+                shell: 30,
+                ..current
+            },
+            "osd",
+            &OVERLAY,
+            current.shell,
+            30,
+        ),
+        (
+            "the displays on an older layer shell",
+            Offer {
+                layer_shell: 3,
+                ..current
+            },
+            "osd",
+            &OVERLAY,
+            current.layer_shell,
+            3,
+        ),
+    ];
+    for (case, offer, name, entry, expected, found) in rows {
+        let (server, host_end) = Server::start_offering(Kind::Shared, &[name], offer);
+        let (mut host, runtime) = host_and_runtime(host_end);
+        let connection = component_connection(&mut host, name);
+        match runtime.start(entry, connection) {
+            Err(error) => assert_eq!(error, Error::Version { expected, found }, "{case}"),
+            Ok(_) => panic!("{case}: the component started"),
+        }
+        drop(server);
+    }
+}
+
+#[test]
+fn a_busy_loop_and_a_busy_render_thread_are_reported() {
+    let (server, host_end) = Server::start(Kind::Shared, &["notifications"]);
+    let (mut host, runtime) = host_and_runtime(host_end);
+    let (release, gate) = mpsc::channel();
+    *GATE.lock().unwrap() = Some(gate);
+    let connection = component_connection(&mut host, "notifications");
+    let mut running = runtime.start(&STALLING, connection).unwrap();
+    eventually("the stalled loop is busy", || {
+        running
+            .busy_for()
+            .is_some_and(|busy| busy >= Duration::from_millis(50))
+    });
+    release.send(()).unwrap();
+    eventually("the loop waits again", || running.busy_for().is_none());
+
+    let (release, gate): (Sender<()>, Receiver<()>) = mpsc::channel();
+    cupertino_ui_render::render_thread::hand_over(move || {
+        let _ = gate.recv_timeout(support::PATIENCE);
+    });
+    eventually("the stuck render thread is busy", || {
+        runtime
+            .render_busy_for()
+            .is_some_and(|busy| busy >= Duration::from_millis(50))
+    });
+    release.send(()).unwrap();
+
+    running.stop();
+    eventually("the component stops", || {
+        running.ended() == Some(Ended::Stopped)
+    });
+    drop(server);
+}
+
+/// A program of its own: it shows one layer window and exits once that window presented its first frame.
+struct Standalone;
+
+#[derive(Clone, Debug)]
+enum StandaloneMessage {
+    Shown,
+}
+
+/// The outputs the program saw when it started.
+static STANDALONE_OUTPUTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+impl Application for Standalone {
+    type Model = ();
+    type Message = StandaloneMessage;
+
+    fn init() -> ((), Vec<Command<StandaloneMessage>>) {
+        let _environment = cupertino_kit_shell::environment();
+        assert!(!session::locked());
+        assert!(holds().is_empty());
+        *STANDALONE_OUTPUTS.lock().unwrap() =
+            outputs::all().into_iter().filter_map(|o| o.name).collect();
+        let shown = Command::OnPresented {
+            window: WindowKey(Key::from("standalone")),
+            message: StandaloneMessage::Shown,
+        };
+        ((), vec![shown])
+    }
+
+    fn update(_: &mut (), message: StandaloneMessage) -> Vec<Command<StandaloneMessage>> {
+        match message {
+            StandaloneMessage::Shown => vec![Command::Exit],
+        }
+    }
+
+    fn view(_: &()) -> Vec<Window<StandaloneMessage>> {
+        vec![overlay_window("standalone")]
+    }
+}
+
+impl Program for Standalone {
+    fn surface(_: &(), _: &WindowKey) -> Surface {
+        overlay_surface("test-standalone", None)
+    }
+
+    fn event(_: Event) -> Option<StandaloneMessage> {
+        None
+    }
+}
+
+#[test]
+fn a_program_of_its_own_runs_on_kit_s_loop_until_it_exits() {
+    use std::os::fd::IntoRawFd;
+
+    let (server, _host_end) = Server::start(Kind::Shared, &[]);
+    let client = server.client();
+    let environment = cupertino_kit::app::environment().expect("toolkit environment");
+    {
+        let _lock = environment_lock();
+        std::env::set_var("WAYLAND_SOCKET", client.into_raw_fd().to_string());
+        run::<Standalone>(environment).expect("the program runs and exits");
+        std::env::remove_var("WAYLAND_SOCKET");
+    }
+    assert_eq!(
+        *STANDALONE_OUTPUTS.lock().unwrap(),
+        vec!["TEST-1".to_owned()]
+    );
+    server.seen_until(|seen| {
+        seen.contains(&Seen::Drawn {
+            component: String::new(),
+            namespace: "test-standalone".into(),
+        })
+    });
+
+    let mut cmd = std::process::Command::new("/bin/true");
+    assert!(host::spawn(cmd));
+    cmd = std::process::Command::new("/nonexistent/cupertino-test-binary");
+    assert!(!host::spawn(cmd));
+}
+
+#[test]
+fn design_limits_entries_and_outside_thread_safety() {
+    assert_eq!(EXIT_VERSION, 76);
+    assert_eq!(
+        transaction::MAX_DEADLINE,
+        Duration::from_millis(cupertino_protocols::transaction::MAX_DEADLINE_MS as u64)
+    );
+    // the menu bar's values are the theme data's
+    let mb = design::menu_bar();
+    let theme = cupertino_assets::theme::load().expect("theme data");
+    let typography = theme.tokens.typography();
+    assert_eq!(mb.height, theme.shapes.menu_bar_height);
+    assert_eq!(
+        mb.selection_radius,
+        theme.shapes.menu_bar_selection_corner_radius
+    );
+    assert_eq!(mb.item.size, typography.menu_bar_item().size as f32);
+    assert_eq!(
+        (mb.item.weight.0, mb.app_name.weight.0),
+        (
+            typography.menu_bar_item().weight,
+            typography.menu_bar_app_name().weight
+        )
+    );
+    assert_eq!(
+        mb.cap_height,
+        typography.metrics.cap_height / typography.metrics.units_per_em
+    );
+
+    assert_eq!(OVERLAY.name(), ComponentName::OSD);
+
+    // Every component in the canonical table round-trips through ComponentName::from_name.
+    for name in [
+        "menubar",
+        "dock",
+        "desktop",
+        "windowmanager",
+        "overview",
+        "launcher",
+        "notifications",
+        "controlcenter",
+        "osd",
+        "agent",
+        "dialogs",
+    ] {
+        let c = ComponentName::from_name(name).expect("known component");
+        assert_eq!(c.as_str(), name);
+    }
+    assert!(ComponentName::from_name("unknown").is_none());
+
+    // Calling request/query APIs outside a component thread does not panic.
+    assert!(!session::locked());
+    assert!(outputs::all().is_empty());
+    assert!(holds().is_empty());
+    session::activate_app(1, "org.example.App");
+    cupertino_kit_shell::bus::publish(Message::ShowOsd {
+        kind: OsdKind::Volume,
+        level: 0.5,
+    });
+
+    // Host::connect fails cleanly when WAYLAND_SOCKET is unset.
+    let _lock = environment_lock();
+    std::env::remove_var("WAYLAND_SOCKET");
+    assert!(matches!(Host::connect(), Err(Error::Protocol(_))));
+}

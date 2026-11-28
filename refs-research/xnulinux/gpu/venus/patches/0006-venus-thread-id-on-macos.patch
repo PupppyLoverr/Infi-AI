@@ -1,0 +1,20 @@
+Upstream: Mesa 26.3.1 (https://archive.mesa3d.org/mesa-26.3.1.tar.xz)
+Upstream-License: MIT
+Patch-License: MIT (provided under the same license as upstream)
+Subject: venus: the calling thread's id on macOS
+
+macOS's SYS_gettid is not Linux's: it asks for a per-thread credential override and fails (-1), so every thread had the
+same id, and two threads waiting on the ring both took themselves for the watchdog's owner: one unlocked the mutex the
+other held. Strict sandboxes deny (and log) it besides, at every wait. The thread's Mach port needs no system call.
+
+--- a/src/virtio/vulkan/vn_common.h
++++ b/src/virtio/vulkan/vn_common.h
+@@ -646,6 +646,8 @@
+    return gettid();
+ #elif DETECT_OS_FREEBSD
+    return syscall(SYS_thr_self);
++#elif DETECT_OS_APPLE /* SYS_gettid is something else there, and fails */
++   return pthread_mach_thread_np(pthread_self());
+ #elif DETECT_OS_WINDOWS
+    return GetCurrentThreadId();
+ #else

@@ -1,0 +1,94 @@
+Upstream: Mesa 26.3.1 (https://archive.mesa3d.org/mesa-26.3.1.tar.xz)
+Upstream-License: MIT
+Patch-License: MIT (provided under the same license as upstream)
+Subject: lavapipe: a pushed descriptor set keeps its immutable samplers
+
+--- a/src/gallium/frontends/lavapipe/lvp_descriptor_set.c
++++ b/src/gallium/frontends/lavapipe/lvp_descriptor_set.c
+@@ -351,6 +351,26 @@
+    return *handle;
+ }
+ 
++void
++lvp_descriptor_set_write_immutable_samplers(struct lvp_descriptor_set *set)
++{
++   const struct lvp_descriptor_set_layout *layout = set->layout;
++   for (uint32_t binding_index = 0; binding_index < layout->binding_count; binding_index++) {
++      const struct lvp_descriptor_set_binding_layout *bind_layout = &set->layout->binding[binding_index];
++      if (!bind_layout->immutable_samplers)
++         continue;
++
++      uint8_t *desc = set->map + bind_layout->offset;
++      for (uint32_t sampler_index = 0; sampler_index < bind_layout->array_size; sampler_index++) {
++         for (uint32_t s = 0; s < bind_layout->max_plane_count; s++)  {
++            memcpy(desc + sampler_index * bind_layout->stride + s * lvp_get_descriptor_size(bind_layout->type) +
++                   lvp_get_sampler_descriptor_offset(bind_layout->type),
++                   &bind_layout->immutable_samplers[sampler_index], sizeof(struct lp_sampler_descriptor));
++         }
++      }
++   }
++}
++
+ VkResult
+ lvp_descriptor_set_create(struct lvp_device *device,
+                           struct lvp_descriptor_set_layout *layout,
+@@ -393,20 +413,7 @@
+ 
+    device->pscreen->resource_bind_backing(device->pscreen, set->bo, set->pmem, 0, 0, 0);
+ 
+-   for (uint32_t binding_index = 0; binding_index < layout->binding_count; binding_index++) {
+-      const struct lvp_descriptor_set_binding_layout *bind_layout = &set->layout->binding[binding_index];
+-      if (!bind_layout->immutable_samplers)
+-         continue;
+-
+-      uint8_t *desc = set->map + bind_layout->offset;
+-      for (uint32_t sampler_index = 0; sampler_index < bind_layout->array_size; sampler_index++) {
+-         for (uint32_t s = 0; s < bind_layout->max_plane_count; s++)  {
+-            memcpy(desc + sampler_index * bind_layout->stride + s * lvp_get_descriptor_size(bind_layout->type) +
+-                   lvp_get_sampler_descriptor_offset(bind_layout->type),
+-                   &bind_layout->immutable_samplers[sampler_index], sizeof(struct lp_sampler_descriptor));
+-         }
+-      }
+-   }
++   lvp_descriptor_set_write_immutable_samplers(set);
+ 
+    *out_set = set;
+ 
+--- a/src/gallium/frontends/lavapipe/lvp_private.h
++++ b/src/gallium/frontends/lavapipe/lvp_private.h
+@@ -398,6 +398,9 @@
+    struct list_head sets;
+ };
+ 
++void
++lvp_descriptor_set_write_immutable_samplers(struct lvp_descriptor_set *set);
++
+ VkResult
+ lvp_descriptor_set_create(struct lvp_device *device,
+                           struct lvp_descriptor_set_layout *layout,
+--- a/src/gallium/frontends/lavapipe/lvp_execute.c
++++ b/src/gallium/frontends/lavapipe/lvp_execute.c
+@@ -3716,8 +3716,10 @@
+    uint32_t types = lvp_pipeline_types_from_shader_stages(pds->stageFlags);
+    u_foreach_bit(pipeline_type, types) {
+       struct lvp_descriptor_set *base = state->desc_sets[pipeline_type][pds->set];
+-      if (base)
++      if (base) {
+          memcpy(set->map, base->map, MIN2(set->bo->width0, base->bo->width0));
++         lvp_descriptor_set_write_immutable_samplers(set);
++      }
+ 
+       VkDescriptorSet set_handle = lvp_descriptor_set_to_handle(set);
+ 
+@@ -3752,8 +3754,10 @@
+    util_dynarray_append(&state->push_desc_sets, set);
+ 
+    struct lvp_descriptor_set *base = state->desc_sets[lvp_pipeline_type_from_bind_point(templ->bind_point)][pds->set];
+-   if (base)
++   if (base) {
+       memcpy(set->map, base->map, MIN2(set->bo->width0, base->bo->width0));
++      lvp_descriptor_set_write_immutable_samplers(set);
++   }
+ 
+    VkDescriptorSet set_handle = lvp_descriptor_set_to_handle(set);
+    lvp_descriptor_set_update_with_template(lvp_device_to_handle(state->device), set_handle,

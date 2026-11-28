@@ -1,0 +1,125 @@
+name: Full validation
+
+# Every check over the whole workspace (`cargo xtask ci --profile full`) in the CI image, then the Arch packages built
+# and install-tested (packages.yml). Nightly, by hand, and from the release workflow, which builds its own packages.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_call:
+    inputs:
+      packages:
+        description: Also build and install-test the Arch packages
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  # A scheduled run of a commit that already passed is skipped.
+  selection:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.select.outputs.run }}
+    steps:
+      - id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = schedule ]; then
+            validated=$(gh api "repos/$GH_REPO/actions/workflows/full-validation.yml/runs?head_sha=$SHA&status=success&per_page=1" --jq '.total_count')
+            if [ "$validated" -gt 0 ]; then
+              echo "run=false" >> "$GITHUB_OUTPUT"
+              echo "Full validation already passed for $SHA; scheduled duplicate skipped." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
+
+  image:
+    needs: selection
+    if: needs.selection.outputs.run == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/ci-images.yml
+
+  # The job setup is the one of ci.yml's `validate`: root restores, the setup action, then every `run` step as `ci`.
+  validate:
+    needs: image
+    name: cargo xtask ci --profile full
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+      volumes:
+        - /usr/local/lib/android:/host/android
+        - /usr/share/dotnet:/host/dotnet
+        - /opt/ghc:/host/ghc
+        - /opt/hostedtoolcache/CodeQL:/host/codeql
+    defaults:
+      run:
+        shell: runuser -u ci -- bash --noprofile --norc -eo pipefail {0}
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      SCCACHE_DIR: /var/cache/sccache
+      SCCACHE_CACHE_SIZE: 6G
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Reads the compile cache main's CI keeps; never writes it.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/cache/sccache
+          key: sccache-validate-${{ github.sha }}
+          restore-keys: sccache-validate-
+      - uses: ./.github/actions/arch-setup
+        with:
+          free-disk: 'true'
+      - name: cargo xtask ci --profile full
+        run: cargo xtask ci --profile full
+      - name: Compile cache
+        if: always()
+        run: sccache --show-stats || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: ci-latest-full
+          path: target/xtask/ci-latest.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f target/xtask/ci-latest.json ]; then
+            jq -r -f .github/ci-summary.jq target/xtask/ci-latest.json >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "cargo xtask ci wrote no report (target/xtask/ci-latest.json)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  arch-packages:
+    needs: validate
+    if: needs.validate.result == 'success' && inputs.packages != false
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/packages.yml

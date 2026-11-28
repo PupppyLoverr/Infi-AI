@@ -1,0 +1,90 @@
+Upstream: Mesa 26.3.1 (https://archive.mesa3d.org/mesa-26.3.1.tar.xz)
+Upstream-License: MIT
+Patch-License: MIT (provided under the same license as upstream)
+Subject: venus: the virtgpu renderer on macOS over the xnulinux DRM bridge
+
+In the hosted macOS of xnulinux, the GPU is the Linux host's virtio-gpu render node, reached through kexts/XnuDrm.
+gpu/xnu-drm/darwin (libxnudrm: xf86drm.h, the render node's open/mmap/poll) is copied to src/virtio/vulkan/xnudrm by the
+build (gpu/venus/build-darwin.sh) and compiled into the driver; syncobjs are simulated (vn_renderer_sim_syncobj).
+The vtest renderer (a socket to a local virglrenderer) and VK_EXT_map_memory_placed are left out on macOS.
+
+--- a/src/virtio/vulkan/meson.build
++++ b/src/virtio/vulkan/meson.build
+@@ -124,7 +124,7 @@
+ 
+ vn_libs = []
+ 
+-if not with_platform_windows
++if not with_platform_windows and host_machine.system() != 'darwin'
+   libvn_files += files('vn_renderer_vtest.c')
+ endif
+ 
+@@ -134,6 +134,18 @@
+     'vn_renderer_virtgpu.c',
+   )
+   vn_deps += dep_libdrm
++elif host_machine.system() == 'darwin'
++  # the hosted macOS of xnulinux: the Linux host's virtio-gpu render node through kexts/XnuDrm (libxnudrm, xnudrm/)
++  libvn_files += files(
++    'vn_renderer_sim_syncobj.c',
++    'vn_renderer_virtgpu.c',
++    'xnudrm/xnudrm.c',
++  )
++  vn_incs += include_directories('xnudrm')
++  vn_c_args += ['-DVN_XNUDRM', '-include', meson.current_source_dir() / 'xnudrm' / 'xnudrm_compat.h']
++  # the runtime's entrypoint tables name weak symbols venus does not define (ELF leaves them NULL): the same on Mach-O;
++  # dead-stripping drops the runtime code venus never calls (as --gc-sections does on ELF), with its references
++  vn_link_args += ['-framework', 'IOKit', '-framework', 'CoreFoundation', '-Wl,-undefined,dynamic_lookup', '-Wl,-dead_strip']
+ endif
+ 
+ if with_platform_wayland or with_platform_x11 or \
+--- a/src/virtio/vulkan/vn_physical_device.c
++++ b/src/virtio/vulkan/vn_physical_device.c
+@@ -1219,7 +1219,8 @@
+    exts->KHR_deferred_host_operations =
+       physical_dev->ray_tracing && renderer_exts->KHR_acceleration_structure;
+    exts->KHR_map_memory2 = true;
+-#if !DETECT_OS_WINDOWS
++   /* not over the xnulinux DRM bridge: its mappings are made by the hosted kernel where it chooses */
++#if !DETECT_OS_WINDOWS && !defined(VN_XNUDRM)
+    exts->EXT_map_memory_placed = true;
+    exts->EXT_physical_device_drm = true;
+ #endif
+--- a/src/virtio/vulkan/vn_renderer.h
++++ b/src/virtio/vulkan/vn_renderer.h
+@@ -213,7 +213,7 @@
+    struct vn_renderer_sync_ops sync_ops;
+ };
+ 
+-#ifdef HAVE_LIBDRM
++#if defined(HAVE_LIBDRM) || defined(VN_XNUDRM)
+ VkResult
+ vn_renderer_create_virtgpu(struct vn_instance *instance,
+                            const VkAllocationCallbacks *alloc,
+@@ -242,6 +242,8 @@
+          result = vn_renderer_create_vtest(instance, alloc, renderer);
+    }
+    return result;
++#elif defined(VN_XNUDRM)
++   return vn_renderer_create_virtgpu(instance, alloc, renderer);
+ #else
+    return vn_renderer_create_vtest(instance, alloc, renderer);
+ #endif
+--- a/src/virtio/vulkan/vn_renderer_virtgpu.c
++++ b/src/virtio/vulkan/vn_renderer_virtgpu.c
+@@ -980,6 +980,7 @@
+     * simulated syncobj. Here we rely on util_sync_provider::timeline_signal
+     * being conditioned upon DRM_CAP_SYNCOBJ_TIMELINE.
+     */
++#ifndef VN_XNUDRM /* no DRM syncobjs over the bridge */
+    if (!VN_DEBUG(NO_DRM_SYNCOBJ)) {
+       gpu->sync = util_sync_provider_drm(gpu->fd);
+       if (!gpu->sync->timeline_signal) {
+@@ -987,6 +988,7 @@
+          gpu->sync = NULL;
+       }
+    }
++#endif
+ 
+    if (!gpu->sync)
+       gpu->sync = vn_renderer_sim_syncobj_get_sync();

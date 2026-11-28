@@ -1,0 +1,130 @@
+Upstream: Mesa 26.3.1 (https://archive.mesa3d.org/mesa-26.3.1.tar.xz)
+Upstream-License: MIT
+Patch-License: MIT (provided under the same license as upstream)
+Subject: arm64e macOS PAC compatibility for gallivm JIT function pointers
+
+--- a/src/gallium/auxiliary/gallivm/lp_bld_const.c
++++ b/src/gallium/auxiliary/gallivm/lp_bld_const.c
+@@ -475,6 +475,9 @@
+                                       LLVMTypeRef function_type,
+                                       const char *name)
+ {
++#if defined(__has_feature) && __has_feature(ptrauth_calls)
++   ptr = __builtin_ptrauth_strip((void *)ptr, 0);
++#endif
+    return LLVMBuildBitCast(gallivm->builder,
+                            lp_build_const_int_pointer(gallivm, ptr),
+                            LLVMPointerType(function_type, 0),
+--- a/src/gallium/auxiliary/gallivm/lp_bld_conv.c
++++ b/src/gallium/auxiliary/gallivm/lp_bld_conv.c
+@@ -217,7 +217,11 @@
+      unsigned i;
+ 
+      LLVMTypeRef func_type = LLVMFunctionType(i16t, &f32t, 1, 0);
+-     LLVMValueRef func = lp_build_const_int_pointer(gallivm, func_to_pointer((func_pointer)_mesa_float_to_half));
++     void *f2h_ptr = func_to_pointer((func_pointer)_mesa_float_to_half);
++#if defined(__has_feature) && __has_feature(ptrauth_calls)
++     f2h_ptr = __builtin_ptrauth_strip(f2h_ptr, 0);
++#endif
++     LLVMValueRef func = lp_build_const_int_pointer(gallivm, f2h_ptr);
+      func = LLVMBuildBitCast(builder, func, LLVMPointerType(func_type, 0), "_mesa_float_to_half");
+ 
+      for (i = 0; i < length; ++i) {
+--- a/src/gallium/auxiliary/gallivm/lp_bld_format_aos.c
++++ b/src/gallium/auxiliary/gallivm/lp_bld_format_aos.c
+@@ -847,8 +847,11 @@
+       if (gallivm->cache)
+          gallivm->cache->dont_cache = true;
+       /* make const pointer for the C fetch_rgba_8unorm function */
+-      function = lp_build_const_int_pointer(gallivm,
+-                                            func_to_pointer((func_pointer) unpack->fetch_rgba_8unorm));
++      void *fetch_ptr = func_to_pointer((func_pointer) unpack->fetch_rgba_8unorm);
++#if defined(__has_feature) && __has_feature(ptrauth_calls)
++      fetch_ptr = __builtin_ptrauth_strip(fetch_ptr, 0);
++#endif
++      function = lp_build_const_int_pointer(gallivm, fetch_ptr);
+       /* cast the callee pointer to the function's type */
+       function = LLVMBuildBitCast(builder, function, LLVMPointerType(function_type, 0), "cast callee");
+ 
+--- a/src/gallium/auxiliary/gallivm/lp_bld_init.c
++++ b/src/gallium/auxiliary/gallivm/lp_bld_init.c
+@@ -388,6 +388,9 @@
+ void
+ gallivm_add_global_mapping(struct gallivm_state *gallivm, LLVMValueRef sym, void* addr)
+ {
++#if defined(__has_feature) && __has_feature(ptrauth_calls)
++   addr = __builtin_ptrauth_strip(addr, 0);
++#endif
+    LLVMAddGlobalMapping(gallivm->engine, sym, addr);
+ }
+ 
+@@ -522,6 +525,10 @@
+ 
+    code = LLVMGetPointerToGlobal(gallivm->engine, func);
+    assert(code);
++#if defined(__has_feature) && __has_feature(ptrauth_calls)
++   code = __builtin_ptrauth_sign_unauthenticated(
++      __builtin_ptrauth_strip(code, 0), 0, 0);
++#endif
+    jit_func = pointer_to_func(code);
+ 
+    if (gallivm_debug & GALLIVM_DEBUG_PERF) {
+--- a/src/gallium/auxiliary/gallivm/lp_bld_init_orc.cpp
++++ b/src/gallium/auxiliary/gallivm/lp_bld_init_orc.cpp
+@@ -682,6 +682,9 @@
+ void
+ gallivm_add_global_mapping(struct gallivm_state *gallivm, LLVMValueRef sym, void* addr)
+ {
++#if defined(__has_feature) && __has_feature(ptrauth_calls)
++   addr = __builtin_ptrauth_strip(addr, 0);
++#endif
+    LPJit::add_mapping_to_jd(sym, addr, gallivm->_per_module_jd);
+ }
+ 
+@@ -742,8 +745,14 @@
+       objcache = (LPObjectCacheORC *)gallivm->cache->jit_obj_cache;
+    }
+ 
+-   return pointer_to_func(
+-      LPJit::lookup_in_jd(func_name, gallivm->_per_module_jd, objcache));
++   void *code = LPJit::lookup_in_jd(func_name, gallivm->_per_module_jd, objcache);
++#if defined(__has_feature) && __has_feature(ptrauth_calls)
++   if (code) {
++      code = __builtin_ptrauth_sign_unauthenticated(
++         __builtin_ptrauth_strip(code, 0), 0, 0);
++   }
++#endif
++   return pointer_to_func(code);
+ }
+ 
+ void
+--- a/src/gallium/drivers/llvmpipe/lp_texture_handle.c
++++ b/src/gallium/drivers/llvmpipe/lp_texture_handle.c
+@@ -294,9 +294,16 @@
+ 
+    matrix->screen = screen;
+ 
++#if defined(__has_feature) && __has_feature(ptrauth_calls)
++   /* Loaded and invoked by LLVM JIT trampolines via plain blr. */
++   matrix->compile_sample_function = __builtin_ptrauth_strip((void *)get_sample_function, 0);
++   matrix->compile_fetch_function = __builtin_ptrauth_strip((void *)get_fetch_function, 0);
++   matrix->compile_size_function = __builtin_ptrauth_strip((void *)get_size_function, 0);
++#else
+    matrix->compile_sample_function = get_sample_function;
+    matrix->compile_fetch_function = get_fetch_function;
+    matrix->compile_size_function = get_size_function;
++#endif
+ 
+    lp_function_cache_init(&matrix->caches[LP_FUNCTION_CACHE_SAMPLE], sample_function_cache_key_table_create(NULL));
+    lp_function_cache_init(&matrix->caches[LP_FUNCTION_CACHE_FETCH], sample_function_cache_key_table_create(NULL));
+@@ -384,6 +391,10 @@
+    gallivm_compile_module(gallivm);
+ 
+    void *function_ptr = func_to_pointer(gallivm_jit_function(gallivm, function, func_name));
++#if defined(__has_feature) && __has_feature(ptrauth_calls)
++   /* Texture/image sample helper tables are invoked by LLVM JIT via plain blr. */
++   function_ptr = __builtin_ptrauth_strip(function_ptr, 0);
++#endif
+ 
+    if (needs_caching)
+       lp_disk_cache_insert_shader(matrix->screen, gallivm->cache, cache_key);

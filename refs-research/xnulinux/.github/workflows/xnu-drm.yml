@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# gpu/xnu-drm on Linux: xnudrmd builds, the Makefile keeps what it promises about the virglrenderer backend, and
+# libxnudrm's fence handling passes its test (over a stand-in for the kext).
+name: xnu-drm
+on:
+  push:
+    paths: [.github/workflows/xnu-drm.yml, gpu/xnu-drm/**]
+  pull_request:
+    paths: [.github/workflows/xnu-drm.yml, gpu/xnu-drm/**]
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: xnudrmd
+        run: make -C gpu/xnu-drm VIRGL=0
+      - name: The Makefile and the virglrenderer backend
+        run: gpu/xnu-drm/test/make.sh
+      - name: libxnudrm's fences
+        run: gpu/xnu-drm/test/run.sh

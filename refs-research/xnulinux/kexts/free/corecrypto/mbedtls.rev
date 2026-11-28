@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Mbed TLS (Apache-2.0 OR GPL-2.0-or-later; used under Apache-2.0), fetched at build time, never kept in this
+# repository: the release, by commit, and the library sources the kext compiles (mbedtls_config_xnulinux.h's modules).
+MBEDTLS_VERSION=3.6.8
+MBEDTLS_REV=82e69999f91126589a28b70dd75b69fbcabe2711
+MBEDTLS_SOURCES=aes.c aesce.c block_cipher.c gcm.c des.c chacha20.c poly1305.c chachapoly.c md5.c sha1.c sha256.c sha512.c md.c rsa.c rsa_alt_helpers.c bignum.c bignum_core.c constant_time.c oid.c asn1parse.c asn1write.c platform.c platform_util.c

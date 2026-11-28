@@ -1,0 +1,504 @@
+Booting a Mac's own APFS system without iBoot or a SEP: trust caches loaded once AppleImage4/AMFI register, SIP
+policy from the boot-arg lp-sip0, the unauthenticated-root allowance, the Preboot volume mounted for the boot cryptexes,
+and the code-signing exceptions amfi_get_out_of_my_way gives locally built code.
+
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index 5362b32..9f46961 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -1,4 +1,5 @@
+ #include <kern/boot_progress.h>
++#include <linux64/linux64.h>
+ /*
+  * Copyright (c) 2000-2021 Apple Inc. All rights reserved.
+  *
+@@ -1083,6 +1084,16 @@ bsd_init(void)
+ 			}
+ 		}
+ #endif
++		{
++			/*
++			 * LINUX64 (xnulinux): a hosted APFS root is the host's own image, unsealed, with no boot manifest to
++			 * authenticate it against. With SIP's unauthenticated-root allowance (boot-arg lp-sip0 with 0x800, what
++			 * "csrutil authenticated-root disable" sets on a Mac) it mounts as it is.
++			 */
++			if (linux64_hook && csr_check(CSR_ALLOW_UNAUTHENTICATED_ROOT) == 0) {
++				require_rootauth = FALSE;
++			}
++		}
+ 		if (require_rootauth) {
+ 			/* enforce sealedness */
+ 			int autherr = VNOP_IOCTL(rootvnode, FSIOC_KERNEL_ROOTAUTH, NULL, 0, vfs_context_kernel());
+@@ -1177,6 +1188,24 @@ bsd_init(void)
+ 	}
+ #endif /* DEVFS */
+ 
++#if CONFIG_MOUNT_PREBOOTRECOVERY
++	{
++		/*
++		 * LINUX64 (xnulinux): a hosted APFS root from a Mac's own disk. On a Mac, dyld in launchd grafts the boot
++		 * cryptexes (the OS cryptex holds the dyld shared cache) from the ignition blob AppleImage4 builds out of iBoot's
++		 * boot object manifests; a hosted boot has no iBoot. The OS and App cryptexes' contents sit in the Preboot
++		 * volume's Cryptexes/OS and Cryptexes/App (scripts/mk-macvm-disk.sh), where dyld finds the shared cache: mount
++		 * the Preboot volume of the root's container at its usual place before launchd runs, as Recovery is mounted.
++		 */
++		if (linux64_hook && rootvnode && strcmp(rootvnode->v_mount->mnt_vfsstat.f_fstypename, "apfs") == 0) {
++			char prebootpath[] = "/System/Volumes/Preboot"; /* !const because of internal casting */
++			int perr = kernel_mount("apfs", NULLVP, NULLVP, prebootpath, rootvnode->v_mount, 0, 0,
++			    KERNEL_MOUNT_PREBOOTVOL, vfs_context_kernel());
++			printf("LINUX64: Preboot volume at %s: %d\n", prebootpath, perr);
++		}
++	}
++#endif
++
+ #if CONFIG_BASESYSTEMROOT
+ #if CONFIG_IMAGEBOOT
+ 	if (bsdmgroot_bootable()) {
+diff --git a/bsd/kern/kern_csr.c b/bsd/kern/kern_csr.c
+index 604f16a..7cffe13 100644
+--- a/bsd/kern/kern_csr.c
++++ b/bsd/kern/kern_csr.c
+@@ -226,6 +226,13 @@ csr_bootstrap(void)
+ 	} else {
+ 		csr_config &= ~CSR_ALLOW_UNAUTHENTICATED_ROOT;
+ 	}
++
++	/* LINUX64 (xnulinux): hosted XNU has no boot policy in its device tree; the boot-arg lp-sip0 stands in for it (0x2 lets
++	 * rootless_check_trusted_class accept /Library/GPUBundles, where Metal finds the hosted system's plugin). */
++	uint32_t hosted_sip;
++	if (PE_parse_boot_argn("lp-sip0", &hosted_sip, sizeof(hosted_sip))) {
++		csr_config |= hosted_sip & ~CSR_ALLOW_APPLE_INTERNAL;
++	}
+ }
+ STARTUP(TUNABLES, STARTUP_RANK_FIRST, csr_bootstrap);
+ 
+diff --git a/bsd/kern/kern_descrip.c b/bsd/kern/kern_descrip.c
+index fac307f..bfc5687 100644
+--- a/bsd/kern/kern_descrip.c
++++ b/bsd/kern/kern_descrip.c
+@@ -73,6 +73,7 @@
+  */
+ 
+ #include <sys/param.h>
++#include <linux64/linux64.h>
+ #include <sys/systm.h>
+ #include <sys/filedesc.h>
+ #include <sys/kernel.h>
+@@ -113,11 +114,25 @@
+ #include <kern/waitq.h>
+ #include <kern/ipc_kobject.h>
+ #include <kern/ipc_misc.h>
++#include <pexpert/pexpert.h>
+ #include <kern/ast.h>
+ 
+ #include <vm/vm_protos.h>
+ #include <mach/mach_port.h>
+ 
++/* LINUX64: hosted with the amfi_get_out_of_my_way boot-arg, code signing lets any locally built code load (kern_mman.c too) */
++int linux64_amfi_off(void);
++int
++linux64_amfi_off(void)
++{
++	static int off = -1;
++	if (off < 0) {
++		int v = 0;
++		off = PE_parse_boot_argn("amfi_get_out_of_my_way", &v, sizeof(v)) && v != 0;
++	}
++	return off;
++}
++
+ #include <security/audit/audit.h>
+ #if CONFIG_MACF
+ #include <security/mac_framework.h>
+@@ -2525,6 +2540,32 @@ sys_dup2(proc_t p, struct dup2_args *uap, int32_t *retval)
+ 	return dup2(p, p_cred, uap->from, uap->to, retval);
+ }
+ 
++/*
++ * LINUX64: dup3(from, to, flags), system call 149 in macOS 27's libsystem_kernel: dup2 that fails when from == to and
++ * takes O_CLOEXEC for the new descriptor.
++ */
++int
++sys_dup3(proc_t p, struct dup3_args *uap, int32_t *retval)
++{
++	kauth_cred_t p_cred = current_cached_proc_cred(p);
++	int error;
++
++	if ((uap->flags & ~O_CLOEXEC) || uap->from == uap->to) {
++		return EINVAL;
++	}
++	error = dup2(p, p_cred, uap->from, uap->to, retval);
++	if (error == 0 && (uap->flags & O_CLOEXEC)) {
++		struct fileproc *fp;
++
++		proc_fdlock(p);
++		if ((fp = fp_get_noref_locked(p, uap->to)) != NULL) {
++			fp->fp_flags |= FP_CLOEXEC;
++		}
++		proc_fdunlock(p);
++	}
++	return error;
++}
++
+ int
+ dup2(proc_t p, kauth_cred_t p_cred, int old, int new, int *retval)
+ {
+@@ -4412,8 +4453,15 @@ dropboth:
+ 		}
+ 
+ #if CONFIG_MACF
+-		error = mac_file_check_library_validation(p, fg, lv.lv_file_start,
+-		    (user_long_t)lv.lv_error_message, lv.lv_error_message_size);
++		/*
++		 * LINUX64: hosted with amfi_get_out_of_my_way, a process may load any library, as it may run any binary:
++		 * AMFI otherwise rejects the locally built (ad-hoc, linker-signed) Python extension modules a locally built
++		 * python dlopens ("mapping process and mapped file (non-platform) have different Team IDs").
++		 */
++		if (!linux64_amfi_off()) {
++			error = mac_file_check_library_validation(p, fg, lv.lv_file_start,
++			    (user_long_t)lv.lv_error_message, lv.lv_error_message_size);
++		}
+ #endif
+ 
+ 		break;
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index 2bf34ab..3777cc5 100644
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -1,4 +1,5 @@
+ #include <kern/boot_progress.h>
++#include <linux64/linux64.h>
+ /*
+  * Copyright (c) 2000-2020 Apple Inc. All rights reserved.
+  *
+@@ -2888,6 +2889,7 @@ badtoolate:
+ 			if (bootarg_execfailurereports) {
+ 				set_proc_name(imgp, current_proc());
+ 			}
++			{ if (exec_failure_reason) kprintf("linux64: exec kill (badtoolate) \"%s\" reason ns %u code 0x%llx\n", current_proc()->p_name, exec_failure_reason->osr_namespace, (unsigned long long)exec_failure_reason->osr_code); }
+ 			psignal_with_reason(current_proc(), SIGKILL, exec_failure_reason);
+ 			exec_failure_reason = OS_REASON_NULL;
+ 
+@@ -5701,6 +5703,7 @@ bad:
+ 	}
+ 
+ 	if (exec_failure_reason && !spawn_no_exec) {
++		{ if (exec_failure_reason) kprintf("linux64: exec kill (exec end) \"%s\" reason ns %u code 0x%llx\n", current_proc()->p_name, exec_failure_reason->osr_namespace, (unsigned long long)exec_failure_reason->osr_code); }
+ 		psignal_with_reason(p, SIGKILL, exec_failure_reason);
+ 		exec_failure_reason = NULL;
+ 	}
+@@ -8304,6 +8307,13 @@ load_init_program(proc_t p)
+ 	boot_progress_stage("root check enter");
+ 	int cache_error = native_owner_cache_prepare(p, (user_addr_t)scratch_addr, &init_envp);
+ 	boot_progress_stage("root check returned");
++	{
++		/* LINUX64 (xnulinux): a hosted test root (no macOS OS volume, no boot manifest) skips the owner root check */
++		if (cache_error && linux64_hook) {
++			printf("linux64: owner root check failed (%d); continuing on a test root\n", cache_error);
++			cache_error = 0;
++		}
++	}
+ 	if (cache_error) panic("offline owner root check failed: %d", cache_error);
+ #endif
+ #if defined(XNU_BOOT_PROGRESS) && XNU_BOOT_PROGRESS
+@@ -8741,6 +8751,7 @@ proc_process_signature(proc_t p, os_reason_t *signature_failure_reason)
+ 
+ 	if (kr != KERN_SUCCESS) {
+ 		error = EINVAL;
++		kprintf("linux64: exec refused \"%s\": machine_task_process_signature: %s\n", p->p_name, error_msg ? error_msg : "(no message)");
+ 
+ 		if (error_msg != NULL) {
+ 			uint32_t error_msg_len = (uint32_t)strlen(error_msg) + 1;
+@@ -8843,6 +8854,23 @@ process_signature(proc_t p, struct image_params *imgp)
+ 	 * which is unexpected but security framework does not
+ 	 * approve of exec, kill and return immediately.
+ 	 */
++	if (imgp->ip_mac_return != 0) {
++		/*
++		 * LINUX64 (xnulinux): under amfi_get_out_of_my_way AMFI's other verdicts on code are already skipped (F_CHECK_LV, exec
++		 * mmap); its execve hook still refuses some of Apple's own daemons ("dyld signature cannot be verified": system_installd,
++		 * MobileSoftwareUpdate services), so the same mode lets those execs go on.
++		 */
++		if (linux64_amfi_off()) {
++			kprintf("linux64: exec \"%s\": MAC policy verdict %d ignored (amfi_get_out_of_my_way)\n",
++			    imgp->ip_vp ? imgp->ip_vp->v_name : "?", imgp->ip_mac_return);
++			imgp->ip_mac_return = 0;
++			if (imgp->ip_cs_error != OS_REASON_NULL) {
++				/* the same hook files its refusal as a code-signing exit reason too */
++				os_reason_free(imgp->ip_cs_error);
++				imgp->ip_cs_error = OS_REASON_NULL;
++			}
++		}
++	}
+ 	if (imgp->ip_mac_return != 0) {
+ 		boot_progress_process_stage(proc_getpid(p),p->p_name,"exec MAC policy REFUSED");
+ 		KERNEL_DEBUG_CONSTANT(BSDDBG_CODE(DBG_BSD_PROC, BSD_PROC_EXITREASON_CREATE) | DBG_FUNC_NONE,
+@@ -8850,6 +8878,7 @@ process_signature(proc_t p, struct image_params *imgp)
+ 		signature_failure_reason = os_reason_create(OS_REASON_EXEC, EXEC_EXIT_REASON_SECURITY_POLICY);
+ 		error = imgp->ip_mac_return;
+ 		unexpected_failure = TRUE;
++		kprintf("linux64: exec refused \"%s\": MAC policy (ip_mac_return %d)\n", imgp->ip_vp ? imgp->ip_vp->v_name : "?", error);
+ 		goto done;
+ 	}
+ 
+@@ -8857,6 +8886,8 @@ process_signature(proc_t p, struct image_params *imgp)
+ 		signature_failure_reason = imgp->ip_cs_error;
+ 		imgp->ip_cs_error = OS_REASON_NULL;
+ 		error = EACCES;
++		kprintf("linux64: exec refused \"%s\": code signature error (ns %u code 0x%llx)\n", imgp->ip_vp ? imgp->ip_vp->v_name : "?",
++		    signature_failure_reason->osr_namespace, (unsigned long long)signature_failure_reason->osr_code);
+ 		goto done;
+ 	}
+ 
+@@ -8864,6 +8895,7 @@ process_signature(proc_t p, struct image_params *imgp)
+ 	os_reason_t launch_constraint_reason;
+ 	if ((error = mac_proc_check_launch_constraints(p, imgp, &launch_constraint_reason)) != 0) {
+ 		signature_failure_reason = launch_constraint_reason;
++		kprintf("linux64: exec refused \"%s\": launch constraints (error %d)\n", imgp->ip_vp ? imgp->ip_vp->v_name : "?", error);
+ 		goto done;
+ 	}
+ 
+@@ -9059,6 +9091,7 @@ done:
+ 			proc_csflags_set(p, CS_KILLED);
+ 		}
+ 		/* make very sure execution fails */
++		{ if (signature_failure_reason) kprintf("linux64: exec kill (signature) \"%s\" reason ns %u code 0x%llx\n", current_proc()->p_name, signature_failure_reason->osr_namespace, (unsigned long long)signature_failure_reason->osr_code); }
+ 		if (vfexec || spawn) {
+ 			assert(signature_failure_reason != OS_REASON_NULL);
+ 			psignal_vfork_with_reason(p, proc_task(p), imgp->ip_new_thread,
+diff --git a/bsd/kern/kern_mman.c b/bsd/kern/kern_mman.c
+index 32d27c9..ec691bb 100644
+--- a/bsd/kern/kern_mman.c
++++ b/bsd/kern/kern_mman.c
+@@ -78,6 +78,7 @@
+  */
+ 
+ #include <sys/param.h>
++#include <linux64/linux64.h>
+ #include <sys/systm.h>
+ #include <sys/filedesc.h>
+ #include <sys/proc_internal.h>
+@@ -487,7 +488,12 @@ mmap(proc_t p, struct mmap_args *uap, user_addr_t *retval)
+ 		/*
+ 		 * Entitlement check.
+ 		 */
+-		error = mac_proc_check_map_anon(p, current_cached_proc_cred(p),
++		/*
++		 * LINUX64 (xnulinux): under amfi_get_out_of_my_way a JIT mapping is let through without the JIT entitlement, as
++		 * AMFI's other verdicts on code are (F_CHECK_LV, executable mmap): the CPU Metal device (Mesa's llvmpipe) compiles
++		 * shaders to machine code in every Metal client, WindowServer included, which is hardened and not JIT-entitled.
++		 */
++		error = ((flags & MAP_JIT) && linux64_amfi_off()) ? 0 : mac_proc_check_map_anon(p, current_cached_proc_cred(p),
+ 		    user_addr, user_size, prot, flags, &maxprot);
+ 		if (error) {
+ 			return EINVAL;
+@@ -669,7 +675,8 @@ mmap(proc_t p, struct mmap_args *uap, user_addr_t *retval)
+ 
+ 			handle = (void *)vp;
+ #if CONFIG_MACF
+-			error = mac_file_check_mmap(vfs_context_ucred(ctx),
++			/* LINUX64: with amfi_get_out_of_my_way, executable mappings of locally built (ad-hoc signed) libraries too */
++			error = linux64_amfi_off() ? 0 : mac_file_check_mmap(vfs_context_ucred(ctx),
+ 			    fp->fp_glob, prot, flags, file_pos, &maxprot);
+ 			if (error) {
+ 				(void)vnode_put(vp);
+diff --git a/bsd/kern/kern_trustcache.c b/bsd/kern/kern_trustcache.c
+index 4b1e8a9..076bc9c 100644
+--- a/bsd/kern/kern_trustcache.c
++++ b/bsd/kern/kern_trustcache.c
+@@ -21,6 +21,7 @@
+  */
+ 
+ #include <os/atomic_private.h>
++#include <linux64/linux64.h>
+ #include <os/overflow.h>
+ #include <pexpert/pexpert.h>
+ #include <pexpert/device_tree.h>
+@@ -78,6 +79,29 @@ SYSCTL_UINT(
+ 	0, "number of loadable trust caches loaded"
+ 	);
+ 
++/* LINUX64 (xnulinux) */
++static bool linux64_trust_cache_skipped = false;
++
++/*
++ * LINUX64 (xnulinux): the runtime is skipped at boot until the AppleImage4 and AMFI kexts register their interfaces
++ * (they start with the kernel collection); once both are there, set it up and load the static trust cache the host
++ * passes (chosen/memory-map/TrustCache), so AMFI validates the OS's platform binaries as on a booted Mac.
++ */
++void linux64_trust_cache_late_init(void);
++void
++linux64_trust_cache_late_init(void)
++{
++	if (!linux64_trust_cache_skipped || img4if == NULL || amfi == NULL) {
++		return;
++	}
++	linux64_trust_cache_skipped = false;
++	trust_cache_runtime_init();
++	if (!linux64_trust_cache_skipped) {
++		load_static_trust_cache();
++		printf("linux64: trust cache runtime set up late; static trust caches: %u\n", num_static_trust_caches);
++	}
++}
++
+ #if CONFIG_SPTM
+ /*
+  * We have the TrustedExecutionMonitor environment available. All of our artifacts
+@@ -124,6 +148,16 @@ get_trust_cache_info(void)
+ void
+ trust_cache_runtime_init(void)
+ {
++	/*
++	 * LINUX64 (xnulinux): hosted without the AppleImage4/AMFI kexts that register img4if/amfi.
++	 * Skip the trust cache runtime until they are loaded (the kernel collection's kexts).
++	 */
++	if (linux64_hook != 0 && (img4if == NULL || amfi == NULL)) {
++		linux64_trust_cache_skipped = true;
++		printf("linux64: no image4/AMFI interface, trust cache runtime skipped\n");
++		return;
++	}
++
+ 	/* Image4 interface needs to be available */
+ 	if (img4if == NULL) {
+ 		panic("image4 interface not available");
+@@ -402,6 +436,16 @@ trust_cache_runtime_init(void)
+ 		allow_engineering_caches = true;
+ 	}
+ 
++	/*
++	 * LINUX64 (xnulinux): hosted without the AppleImage4/AMFI kexts that register img4if/amfi.
++	 * Skip the trust cache runtime until they are loaded (the kernel collection's kexts).
++	 */
++	if (linux64_hook != 0 && (img4if == NULL || amfi == NULL)) {
++		linux64_trust_cache_skipped = true;
++		printf("linux64: no image4/AMFI interface, trust cache runtime skipped\n");
++		return;
++	}
++
+ 	/* Image4 interface needs to be available */
+ 	if (img4if == NULL) {
+ 		panic("image4 interface not available");
+@@ -579,6 +623,16 @@ trust_cache_runtime_init(void)
+ 	allow_legacy_caches = true;
+ #endif
+ 
++	/*
++	 * LINUX64 (xnulinux): hosted without the AppleImage4/AMFI kexts that register img4if/amfi.
++	 * Skip the trust cache runtime until they are loaded (the kernel collection's kexts).
++	 */
++	if (linux64_hook != 0 && (img4if == NULL || amfi == NULL)) {
++		linux64_trust_cache_skipped = true;
++		printf("linux64: no image4/AMFI interface, trust cache runtime skipped\n");
++		return;
++	}
++
+ 	/* Image4 interface needs to be available */
+ 	if (img4if == NULL) {
+ 		panic("image4 interface not available");
+@@ -1175,6 +1229,10 @@ load_static_trust_cache(void)
+ 	/* Mark this function as having been called */
+ 	trust_cache_static_init = true;
+ 
++	if (linux64_trust_cache_skipped) {
++		return;
++	}
++
+ 	/* Nothing to do when the runtime isn't set */
+ 	if (trust_cache_rt == NULL) {
+ 		return;
+diff --git a/bsd/pthread/pthread_shims.c b/bsd/pthread/pthread_shims.c
+index e5e58b5..624d739 100644
+--- a/bsd/pthread/pthread_shims.c
++++ b/bsd/pthread/pthread_shims.c
+@@ -29,6 +29,7 @@
+ #define PTHREAD_INTERNAL 1
+ 
+ #include <stdatomic.h>
++#include <linux64/linux64.h>
+ #include <kern/debug.h>
+ #include <kern/mach_param.h>
+ #include <kern/sched_prim.h>
+@@ -316,6 +317,11 @@ void
+ pthread_init(void)
+ {
+ 	if (!pthread_functions) {
++		/* LINUX64 (xnulinux): pthread.kext registers late (with the collection's kexts); continue without it until then. */
++		if (linux64_hook) {
++			printf("linux64: pthread kext not loaded, pthread support skipped\n");
++			return;
++		}
+ 		panic("pthread kernel extension not loaded (function table is NULL).");
+ 	}
+ 	pthread_functions->pthread_init();
+@@ -324,6 +330,9 @@ pthread_init(void)
+ void
+ pth_proc_hashinit(proc_t p)
+ {
++	if (!pthread_functions) {
++		return;	/* LINUX64: hosted without pthread.kext */
++	}
+ 	pthread_functions->pth_proc_hashinit(p);
+ }
+ 
+diff --git a/bsd/vfs/vfs_subr.c b/bsd/vfs/vfs_subr.c
+index 229d6a1..913adf3 100644
+--- a/bsd/vfs/vfs_subr.c
++++ b/bsd/vfs/vfs_subr.c
+@@ -78,6 +78,7 @@
+  */
+ 
+ #include <sys/param.h>
++#include <linux64/linux64.h>
+ #include <sys/systm.h>
+ #include <sys/proc_internal.h>
+ #include <sys/kauth.h>
+@@ -1144,7 +1145,14 @@ vfs_rootmountalloc_internal(struct vfstable *vfsp, const char *devname)
+ 
+ 	mp->mnt_vtable = vfsp;
+ 	mp->mnt_op = vfsp->vfc_vfsops;
+-	mp->mnt_flag = MNT_RDONLY | MNT_ROOTFS;
++	{
++		/*
++		 * LINUX64 (xnulinux): a hosted HFS+ root (the host-file disk) mounts read-write; nothing here runs the boot
++		 * tasks that would remount it (logd traps on EROFS writing /private/var/db/diagnostics). APFS refuses a
++		 * writable root at mountroot ("can't mount root filesystem writeable"): an APFS root mounts read-only, as on a Mac.
++		 */
++		mp->mnt_flag = (linux64_hook && strcmp(vfsp->vfc_name, "hfs") == 0 ? 0 : MNT_RDONLY) | MNT_ROOTFS;
++	}
+ 	mp->mnt_vnodecovered = NULLVP;
+ 	//mp->mnt_stat.f_type = vfsp->vfc_typenum;
+ 	mp->mnt_flag |= vfsp->vfc_flags & MNT_VISFLAGMASK;
+diff --git a/libkern/amfi/amfi.c b/libkern/amfi/amfi.c
+index 58df36b..bcd81f2 100644
+--- a/libkern/amfi/amfi.c
++++ b/libkern/amfi/amfi.c
+@@ -1,4 +1,5 @@
+ #include <libkern/libkern.h>
++#include <linux64/linux64.h>
+ #include <libkern/section_keywords.h>
+ #include <libkern/amfi/amfi.h>
+ 
+@@ -12,6 +13,7 @@ amfi_interface_register(const amfi_t *mfi)
+ 		panic("AppleMobileFileIntegrity interface already set");
+ 	}
+ 	amfi = mfi;
++	linux64_trust_cache_late_init();
+ }
+ 
+ void
+diff --git a/libkern/img4/interface.c b/libkern/img4/interface.c
+index 3863334..596770a 100644
+--- a/libkern/img4/interface.c
++++ b/libkern/img4/interface.c
+@@ -1,4 +1,5 @@
+ #include <libkern/libkern.h>
++#include <linux64/linux64.h>
+ #include <libkern/section_keywords.h>
+ #include <libkern/img4/interface.h>
+ 
+@@ -15,4 +16,5 @@ img4_interface_register(const img4_interface_t *i4)
+ 		panic("img4 interface already set");
+ 	}
+ 	img4if = i4;
++	linux64_trust_cache_late_init();
+ }

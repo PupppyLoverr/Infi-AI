@@ -1,0 +1,65 @@
+[package]
+name = "cupertino-session-tests"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Program tests of the Cupertino desktop that start programs from more than one crate"
+publish = false
+autotests = false
+
+[package.metadata.cupertino]
+layer = "testing"
+
+[lib]
+test = false
+
+[dev-dependencies]
+calloop = "0.14"
+cupertino-assets = { path = "../cupertino-assets" }
+cupertino-cli = { path = "../cupertino-cli" }
+cupertino-controlcenter = { path = "../cupertino-controlcenter" }
+cupertino-defaults = { path = "../cupertino-defaults" }
+cupertino-input = { path = "../cupertino-input" }
+cupertino-kit = { path = "../cupertino-kit" }
+cupertino-kit-shell = { path = "../cupertino-kit-shell" }
+cupertino-launcher = { path = "../cupertino-launcher" }
+cupertino-login = { path = "../cupertino-login", features = ["app"] }
+cupertino-login-ipc = { path = "../cupertino-login-ipc" }
+cupertino-menubar = { path = "../cupertino-menubar" }
+cupertino-notifications = { path = "../cupertino-notifications" }
+cupertino-osd = { path = "../cupertino-osd" }
+cupertino-portal = { path = "../cupertino-portal" }
+cupertino-prompts = { path = "../cupertino-prompts" }
+cupertino-protocols = { path = "../cupertino-protocols" }
+cupertino-screenshot = { path = "../cupertino-screenshot" }
+cupertino-server = { path = "../cupertino-server", features = ["test"] }
+cupertino-shell = { path = "../cupertino-shell" }
+cupertino-shell-agent = { path = "../cupertino-shell-agent" }
+cupertino-shell-desktop = { path = "../cupertino-shell-desktop" }
+cupertino-shell-dialogs = { path = "../cupertino-shell-dialogs" }
+cupertino-ui-render = { path = "../cupertino-ui-render" }
+cupertino-wm = { path = "../cupertino-wm" }
+image = { version = "0.25", default-features = false }
+serde = "1"
+rustix = { version = "1", features = ["fs", "process"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+wayland-server = "0.31"
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+
+[[test]]
+# Every file of `tests/` is a module of this one binary (`tests/main.rs`), but for those with a [[test]] of their own below.
+name = "tests"
+path = "tests/main.rs"
+
+[[test]]
+# Its own binary: the server starts a hard link of it as `cupertino-portal` with no test filter, so every test
+# the binary holds starts in that process, and each of them must turn into the portal first.
+name = "screenshot"
+path = "tests/screenshot.rs"
+
+[[test]]
+# Its own binary: the server starts a hard link of it as `cupertino-portal` with no test filter, so every test
+# the binary holds starts in that process, and each of them must turn into the portal first.
+name = "shell-dialogs"
+path = "tests/shell-dialogs.rs"

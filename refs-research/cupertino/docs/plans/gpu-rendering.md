@@ -1,0 +1,2653 @@
+# Plan: GPU rendering
+
+The design is in `docs/src/gpu-rendering.md` (in the book: "GPU rendering") and the rules every change keeps are in
+`docs/architecture/rendering.md`. This file is the working plan: every step, what it needs, and when it counts as
+done. Tick a box only when the item is on `main`; tick a step's gate only when its "done when" holds. Record
+measurements under "Measurements" with the commit they were taken at.
+
+The repository has since dropped its scripts, its golden images and the test suite. Where this plan names a script, a golden, a test tier or a benchmark run, it records what was done at the time; validation is now `cargo xtask ci`, and profiling is `samply`, `perf`, `heaptrack` and `CUPERTINO_PROFILE`.
+
+Target machine for every measured gate: NVIDIA (proprietary driver), 3840 x 2160 at 60 Hz, session scale 1.5.
+Headless numbers are also recorded at scale 2 for comparison.
+
+## Rules for every step
+
+- The CPU path stays green: the full validation pass at every commit.
+- After the look freeze (step 1), pixels change only with a change that names the pixels it changes, with a
+  before/after sheet.
+- A step that adds a GPU path keeps the fallback rule working and is covered by the local GPU tier
+  (`CUPERTINO_GPU_REQUIRED=1`).
+- No step ships if it misses a budget of its own; it is fixed or reverted.
+- An item too large for one reviewable change is split in this file before work on it starts.
+
+## Step 0: instruments, baseline and probes
+
+Nothing is optimised before it is measured on the target machine, and no gate may rely on a tool that does not exist.
+
+Instruments:
+
+- [x] the frame bench takes size and scale as arguments.
+- [x] Bench scenarios: idle, window drag over glass, title-bar hover, live resize, the control panel opened, launcher
+      typing (the Files two-finger scroll exists).
+- [x] Toolkit processes write per-phase frame timings (update, view, layout, paint, raster, copy, commit) to a file
+      named by an environment variable; bench collects them per process.
+- [x] Bench counts client frames longer than one refresh, per process, besides the compositor's missed refreshes.
+- [x] the memory measurement reports private dirty memory besides Pss and Rss.
+- [x] Counters in the frame statistics for decoration and HUD rasters and uploads, and for blur passes.
+- [x] The DRM backend logs, on request, which presentation-time branch it takes (`flip-timestamp` or `own-clock`), missed
+      flips, plane assignment (cursor plane, direct scanout) and input-to-flip latency.
+- [x] Every timer that wakes a process on an idle desktop recorded with its reason; each is kept (and listed under
+      "Measurements") or removed.
+
+Baseline:
+
+- [x] Every bench scenario at scale 1.5 and 2: frame time p50/p99, missed refreshes, slow client frames, compositor CPU
+      and GPU time, per-phase client split, per-process CPU and private memory.
+- [x] Each scenario run five times; the run-to-run spread of every figure recorded as its noise.
+- [x] One measured table for Files replacing the two figures in the docs (full repaint at 3840 x 2160, two-finger scroll
+      p99 at scales 1, 1.5 and 2).
+- [ ] Presentation-time branch and plane assignment on the target driver recorded. DEFERRED by the owner (2026-11-15): it needs
+      the session server on the display ("Measurements").
+
+Probes (small programs outside the product; results recorded here):
+
+- [x] Context creation, first program, later programs and teardown: time and private memory, from a Rust binary.
+- [x] Render-target texture cost in total GPU memory, the first one in a process and later ones.
+- [x] A saved program binary as the first program of a fresh process: time and memory against compiling.
+- [x] Native fence soak: resident-memory slope with and without the fence over 10 million frames.
+- [ ] 10-bit (`Abgr2101010`) gradient on the primary plane with the driver's dithering off, against 8-bit. BLOCKED
+      (owner action): it needs the display to itself ("Measurements").
+
+Gate:
+
+- [x] All of the above recorded under "Measurements" (the two owner-action items as BLOCKED); if update, view and
+      layout exceed 4 ms in a Files scroll frame, step 4 gains the incremental view and layout item. They do in the
+      worst frame of a full-screen scroll (5.5–6.1 ms at scales 1 and 1.5), so it does.
+- [x] Each budget in the design confirmed or revised once against the baseline, in a reviewed change, with the reason
+      recorded ("Measurements", "Budgets against the baseline").
+
+## Step 1: shared maths and the look freeze
+
+One owner review, one re-recording of the goldens.
+
+- [x] A graphics layer in `cupertino-layers` that the toolkit, the render layer and the compositor may depend on,
+      and that depends on the foundation layer only; `layers.dot`, the architecture page and the layer tests updated.
+- [x] A crate in it with the definitions as plain Rust and test vectors: rectangle, rounded-rectangle and
+      continuous-corner distance and coverage; the Gaussian kernel with its pyramid levels, edge rule, premultiplied
+      alpha and intermediate precision; drop and inner shadow; gradient interpolation (at most eight stops);
+      position-keyed dithering.
+- [x] The blur planner moves from `cupertino-glass` into it; the compositor uses it from there.
+- [x] CPU renderer: rectangle, rounded-rectangle, stroke and clip coverage from the distance function; nested clips
+      multiply coverage.
+- [x] CPU renderer: blur and shadows from the shared kernel.
+- [x] CPU renderer: gradients per pixel from the shared rule.
+- [x] CPU renderer: scroll offsets rounded to device pixels when drawn.
+- [x] `cupertino-decorations` shapes (title bar, window buttons) from the shared distance function, so the later move
+      to GPU pipelines changes no pixel.
+- [x] Compositor dithering from the shared definition (blur, material, glass and shadow outputs), tested against the
+      vectors. On from the look freeze (see "The definitions and where the renderers disagree").
+- [x] Before/after sheet of every golden at scales 1, 1.5 and 2, reviewed by the owner. The sheet is made (see "The
+      look freeze"); the owner approved it on 2026-11-15.
+- [x] One re-recording of every golden.
+
+### The definitions and where the renderers disagree
+
+The graphics layer holds `cupertino-raster-math` (MPL-2.0, so the toolkit may link it): `coverage`, `blur` (the
+planner, moved from the glass crate, with the kernel, edge rule, precision and an `f32` implementation), `shadow`,
+`gradient` and `dither`, each in `f32` as the shaders compute it. Its test vectors are plain text in
+`crates/cupertino-raster-math/vectors/` (columns named in each file's first line), checked by its tests; a change to a
+definition fails there and `CUPERTINO_WRITE_VECTORS=1` writes them again. Each definition was taken from what the code
+does; where the compositor and the CPU renderer disagree, the definition is the compositor's (the glass tests and the
+compositor's half of the goldens rely on it), and the CPU renderer moves to it at the freeze. For the look-freeze
+review:
+
+- **Coverage.** Compositor (shadow cut-out, rounded rectangles, clip, material, glass): the closed-form first-order
+  distance, coverage `clamp(0.5 − d · px, 0, 1)`. CPU renderer: the shape's cubic path filled by its rasterizer's
+  anti-aliasing (supersampled), strokes by its stroker, clips as masks filled the same way. Definition: the distance.
+  The glass program keeps a copy of its own (`rect_sdf`): it holds the extent to half the size, treats exponents up to
+  2.0 (not 2.001) as circular and writes the straight parts as one expression; the values are the same in practice.
+- **Blur.** Compositor: 2× box halvings to the backdrop scale and while the variance is above 64 texels², then a
+  Gaussian (radius `ceil(3σ)`, at most 35) on the last level; edges clamped; levels in half floats where the device
+  renders to them, 8 bits otherwise. CPU renderer (`Effect::Blur`): three box passes per axis of radius
+  `round(radius · scale / 2)`, transparent edges, every pass rounded to 8 bits. Definition: the compositor's pyramid
+  and kernel, σ = radius / 2 for a toolkit radius, edges clamped for a backdrop and transparent for a layer's own
+  effects, half-float levels with 8 bits as the fallback.
+- **Drop shadow.** Compositor (window shadows): the blurred rounded box in closed form, two error functions across x
+  and an 8-step integral over ±3σ across y, times a density, the window's own area optionally cut out. CPU renderer:
+  the content's alpha moved by its offset rounded to whole device pixels, blurred by the three box passes in 8 bits,
+  tinted and drawn under. Definition: the closed form for rounded rectangles, offsets not rounded. The closed form
+  peaks a little under one (`blur_mass`, 0.9979 for σ = 4) since the tails past 3σ are left out.
+- **Inner shadow.** CPU renderer only: the inverted alpha moved and blurred as above, kept inside the content and drawn
+  over it. Definition: one minus the closed form divided by `blur_mass` (so a large caster's middle stays clear), times
+  the caster's coverage.
+- **Gradients.** CPU renderer: its rasterizer's gradients, straight stops interpolated in encoded sRGB and
+  premultiplied after, any number of stops, at the precision its pipeline picks. Compositor: only the wallpaper's
+  procedural mix of opaque colours. Definition: two to eight stops in order, straight encoded sRGB interpolated
+  linearly in `f32`, premultiplied after, end colours held past the ends, evaluated at pixel centres; more stops are
+  refused.
+- **Dithering.** Neither dithers today. Definition: before an 8-bit store, `v + t / 255` with
+  `t = (m + 0.5) / 64 − 0.5` from the 8 × 8 ordered matrix entry `m` of the framebuffer pixel; exact 8-bit values are
+  kept. Colour channels of straight-alpha outputs (blur, material, glass), alpha of the shadow.
+- **8-bit stores.** The definition rounds to nearest; a driver may round a value within a few hundredths of a step of
+  the half step either way (the local driver does), so a shader test compares such stores within one step and the
+  matrix itself exactly.
+
+Dithering changes pixels, so it waited for the look freeze: `cupertino_raster_math::dither::BY_DEFAULT` is now
+`true`, and the compositor compiles its blur (into 8-bit levels only), material, glass and shadow programs with it;
+`CUPERTINO_DITHER=0` turns it off and `=1` on, to compare. The GL tests (`dither::` in the server's suite, long-running group)
+draw the shader's matrix and dithered stores and the dithered shadow against the definition.
+
+### The look freeze
+
+What each renderer now computes, and what it was tested against (rule 4):
+
+- **CPU renderer coverage.** Fills and strokes of rectangles and rounded rectangles, and clips of those shapes, take
+  each pixel's coverage from its centre's distance to the outline under the node's transform (distance in the shape's
+  units times the transform's scale); a pixel's coverage depends on its position only, so the span path, the scratch
+  path and any damage give the same bytes. Strokes stay centred on the outline: the shared stroke of the outline moved
+  out by half the width (a rectangle's corners stay square). Nested clips multiply. Paths (continuous corners in the
+  toolkit are paths), images and glyphs keep their rasterizers (rule 7). Each row is read in from both ends to the
+  fully covered (or hollow) run, which is written at once. Tested against `coverage.txt`.
+- **CPU renderer gradients.** Per pixel at its centre in node coordinates, by the shared rule, on every shape and on
+  paths (their coverage as a mask). Offsets are held to 0 to 1 and made to increase; one stop is that colour; **more
+  than eight stops are refused and the paint draws nothing**. Tested against `gradient.txt`.
+- **CPU renderer blur and shadows.** A layer's blur and shadows take the shared plan with no capture halving (2x
+  halvings while the variance is above 64, the Gaussian on the last level), transparent edges, levels in `f32` (finer
+  than the half floats the definition allows), the last level read back linearly at every pixel, moved by a shadow's
+  offset unrounded. The inner shadow is one minus the blurred silhouette, times the caster's coverage. Tested against
+  `blur.txt` and, for a rounded rectangle, the closed form of `shadow.txt`'s definitions (within 0.012; the closed form
+  leaves the tails past 3σ out and approximates the error function).
+- **Dithering.** Blur colour channels and shadow alpha, as the definition names; the definition now also names a
+  gradient's colour channels (premultiplied, held at its alpha, which is rounded), so the CPU renderer and the
+  decorations dither gradients. Keyed to the window's (or buffer's) pixel.
+- **Scroll offsets.** A scroll container places its content by its offset rounded to the window's device pixels; its
+  content size and scroll events read the same drawn offset.
+- **Decorations.** The title bar's fill, the rim inside the frame (now the shared inside stroke of the frame's
+  outline, its continuous corners from the outline's extents and exponent), the buttons' discs and their two edge
+  rings (inside strokes) and the button faces' and rings' gradients come from the shared functions. The buttons'
+  glyphs stay paths.
+
+The freeze was taken pending the owner's review of the before/after sheet: every golden image (before: the base
+commit's, after: re-recorded), the preview scenes at scales 1, 1.5 and 2 in both appearances, and the review sheet's
+windows, corners, dock, menus and the control panel in both appearances, side by side with the changed pixels and
+enlarged crops of the most changed places.
+
+The one re-recording changed 67 golden images: 46 of the kit's 52 control fixtures (and the text box's semantics dump, whose scrolled text now sits on a whole point), 5 of
+the control panel's, Files' icon view, the menu bar's 3, 5 of the renderer's 10 (its chrome and clip scenes) and 7 of the
+compositor's 8 (all but the empty desktop; the launcher's drawn region is one pixel taller). Edge pixels of
+rectangles and rounded rectangles move by up to about 30/255, fully covered and empty pixels not at all; shadows and
+blurs move by the Gaussian against three box passes; gradients and the compositor's blurred and glass outputs move by
+the dither, a step at most.
+
+Two server goldens already failed before the freeze, for changes of their own, and the re-recording takes those up too;
+the sheet names them apart from the shared maths: the overview no longer dims the desktop behind it (561 thousand of its
+pixels are lighter), and the launcher's large panel is 177 rows instead of 176, with its dark edge and bevel.
+Step 2's work merged before the re-recording (reduced copies and the minification filter of shrunk windows, partial
+blurs again) changes no golden past the comparison's tolerance. A gradient with more than eight stops draws nothing, so the scroll
+edge's veil, the one gradient that had nine, now has eight; its opacity is linear down the band, so it draws the same.
+Revealing a scrolled target (the caret, a focused row) measures it by the offset itself, not by its whole-pixel place.
+The GL test `coverage_gl::` (server suite, long-running group) draws the compositor's rounded rectangles, a continuous corner
+and an inside border at scales 1, 1.5 and 2 and compares every pixel with the shared coverage.
+
+Gate:
+
+- [x] The owner approved the look, the goldens are re-recorded, and no bench scenario's client CPU p99 is more than
+      10% above its baseline. The goldens are re-recorded and the bench holds (see "Step 1: the look freeze" under
+      Measurements); the owner approved the before/after sheet on 2026-11-15.
+
+## Step 2: compositor wins
+
+- [x] Non-glass materials use the overlap-limited backdrop generation glass uses.
+- [x] The minimize effect reuses one captured texture.
+- [x] Per-frame waste removed: HUD signature string, cursor image clone, wallpaper path bookkeeping.
+- [x] Reduced copies per window for windows drawn below half their size (overview, switcher, minimize, zoom), as a
+      hand-written texture program with the external-sampler variant.
+- [x] A better minification filter for integer-scale clients shown at a fractional scale.
+- [x] Objective checks: a reduced window against a box-filtered reference (shimmer); run-length check of a captured
+      gradient under glass (banding).
+
+Gate:
+
+- [ ] Window drag over glass meets its budgets (p99 CPU time to compose and submit a frame under 2 ms, p99 GPU time
+      under 4 ms) with fewer texels written by blur passes per frame than the baseline; the shimmer and banding
+      checks pass. (Revised from "fewer blur passes": every frame of a drag uncovers something, so every frame needs
+      a blur; the work the blur does is what can fall. The budget was then split into its CPU and GPU halves, each
+      measured on its own. See Measurements, step 2.)
+
+## Step 3: vertical slice of the GPU path
+
+The risk is the handoff, so it is proven first with the smallest renderer possible.
+
+- [x] The headless backend offers `linux-drm-syncobj-v1` when its device has a render node, with a flag to withhold it.
+- [x] A test client renders solid rectangles with GLES into GBM buffer objects on the feedback device, with the
+      offered modifiers, never adding linear on a hardware driver.
+- [x] It attaches them through `zwp_linux_dmabuf_v1` v4.
+- [x] Acquire through native fence → syncobj timeline point; release waited through a syncobj eventfd.
+- [x] The syncobj surface object is destroyed before a shared-memory attach and re-created on return to dmabuf.
+- [x] Without the protocol: wait for the own fence before commit; reuse after release plus one frame.
+- [x] The client counts missed refreshes from presentation-feedback sequence gaps.
+- [x] Overdraw test: many layers of drawing ending in one flat colour; every capture must be uniform.
+- [x] The compositor imports the client's buffers with the driver's default modifier (recorded).
+- [x] Probe: the slice on llvmpipe in the goldens image, allocating by texture export; result recorded.
+- [ ] Runs in a headless session and in the live session on the target machine. Headless: done
+      (`crates/cupertino-server/tests/gpu_slice.rs`). Live: DEFERRED by the owner (2026-11-15), one command ("Measurements",
+      "Step 3").
+
+Gate:
+
+- [ ] One hour in the live session on the target machine beside a `wl_shm` control client of the same size: no more
+      missed refreshes than the control, and every overdraw capture uniform. DEFERRED by the owner (2026-11-15): the command is
+      under "Measurements", "Step 3".
+- [x] The slice's offscreen loop of 10 million frames meets the fence budget.
+
+## Step 4: retained layers in the toolkit
+
+Works with the CPU renderer; no GPU needed.
+
+- [x] The paint tree marks layer boundaries: scroll content (`Layer::Scroll` with its drawn offset, the scroll bars
+      beside it) and opacity groups (`Layer::Opacity`, fades included).
+- [x] The paint tree marks animated subtrees: a node whose transform animates (`Layer::Transform`, a popover's roots
+      while it grows out of its anchor or shrinks into it;
+      `a_growing_popover_marks_its_roots_as_layers_whose_transform_animates`).
+- [x] The CPU renderer keeps scroll layers as images between frames and composites them, within one frame's bytes and
+      8 MiB more (`kept_layers_stay_within_their_cap_and_can_be_dropped`).
+- [x] Scrolling moves a layer and paints only the exposed strip
+      (`a_scroll_paints_only_the_rows_that_come_into_view`).
+- [x] Opacity animations change layer properties, not pixels: a group marked as fading or moving is kept as the image
+      of its subtree within the same cap and laid over from it at each opacity while its subtree is the same and lies
+      where it was painted (`a_fading_group_is_laid_over_from_its_kept_image_and_a_moved_one_painted_again`).
+- [x] Transform animations change layer properties, not pixels: moot on the CPU path, closed. The one transform that
+      animates in a window's paint is a popover growing out of its anchor or shrinking into it, and where the
+      compositor presents popups (the layer protocol's version 3) that runs as the popup's presentation, so the popover
+      draws no frame while it grows and no frame marks a transform layer; only under a compositor without it does
+      the application draw the growth (under Reduce Motion there is none)
+      (`only_a_popover_drawn_growing_marks_a_transform_layer_and_one_presented_grows_without_it`). There the CPU
+      renderer keeps painting a group whose transform changed, since a kept image laid at another place or scale does
+      not have the bytes of its subtree painted there (dithering follows the pixel, paths are rasterized at their
+      place), and the pixels stay those of painting in place. Laying the kept image over at its transform goes with
+      the GPU renderer's layers (step 6).
+- [x] A window told it is suspended drops its renderers' layers and keeps its frame
+      (`a_window_told_it_is_suspended_lets_its_layers_go`).
+- [x] The server tells minimized and fully covered windows they are suspended (`xdg_toplevel` state `suspended`), so
+      they drop their layers: minimized, of a hidden application or of a workspace not shown, or every point of it
+      under the opaque region of windows at rest above it, corners cut; the state goes as soon as it shows again
+      (`a_minimized_window_is_told_it_is_suspended_and_no_longer_once_restored`,
+      `a_window_covered_by_an_opaque_one_is_suspended_until_it_shows_again`,
+      `a_window_under_covers_that_leave_no_point_of_it_does_not_show`, `a_rounded_window_covers_all_but_its_corners`).
+- [x] Kit windows declare their opaque region (the window less its material and glass regions and its corners), so a
+      Kit window covering another suspends it: a toplevel sends it with the frame that changes it, the large solid fills
+      at full alpha its paint tree lays outside any translucent group, under clips that are rectangles and placed by a
+      move alone, a rounded one less its corners, less the materials under its content, each pulled in by a point and
+      rounded inwards (`an_opaque_background_less_its_edges_is_the_region_and_a_translucent_one_none`,
+      `rounded_corners_clips_fractional_edges_and_materials_are_left_out`,
+      `small_fills_and_small_subtrees_are_not_looked_at_and_the_region_keeps_its_largest`,
+      `a_window_declares_its_opaque_background_and_takes_it_back_on_none`,
+      `a_windows_opaque_region_reaches_its_surface_with_the_next_present`); the server suspends a window under it as
+      under any client's (`a_window_covered_by_an_opaque_one_is_suspended_until_it_shows_again`). The compositor's
+      damage tracker takes the same regions through the window's clip element, the corners cut, and leaves undrawn what
+      lies under them; a glass or material backdrop below reads the framebuffer as it draws, so the element now leaves
+      out of its opaque regions what the backdrops below it read, and culling never hands a backdrop pixels of an
+      earlier frame (`a_window_is_opaque_where_its_client_says_inside_its_corners_and_not_over_what_a_backdrop_reads`;
+      before, a terminal declaring its whole surface opaque over a window's sidebar did).
+- [x] Test: a scissored repaint equals a full repaint, with effects crossing the damage edge, at scales 1, 1.5 and 2
+      (`a_frame_drawn_over_the_last_has_the_bytes_of_one_drawn_whole` at 1, 1.25, 1.5 and 2, and, through kept
+      layers, `a_scrolled_layer_has_the_bytes_of_one_drawn_whole_at_its_offset` at 1, 1.5 and 2).
+- [x] Incremental layout for the Files listing: the icon layout is kept between views while the width and the number
+      of items stay, and the grid takes it without comparing its cells.
+- [x] Files view under 4 ms in the worst frame of a full-screen scroll: rows are made only as they come into view and
+      the rest kept (`Element::kept`; the grid's cells keep their nodes while the window only scrolls, and an item's
+      icon is made only for a cell that is built). View p99 2.4–2.8 ms at scale 1 and 2.3–2.5 ms at 1.5, from 6.3 and
+      2.9–4.5 (`a_kept_element_of_the_same_mark_keeps_its_node_unbuilt_and_a_new_mark_builds_it_again`,
+      `a_cell_is_kept_while_the_grid_only_scrolls_and_built_again_when_its_state_or_the_revision_changes`,
+      `a_grid_of_thousands_of_items_makes_icons_only_for_the_cells_it_builds`).
+- [x] Maps keyed by node and paint node ids hash an id with a rotate and one multiply, not the keyed hash of the
+      standard maps: the layout cache and result, the window's placements, the painter's and the damage tracker's
+      maps (`ids_handed_out_in_order_hash_apart_and_an_id_map_finds_each`). Every phase that looks nodes up gets
+      cheaper with it ("Measurements", "Step 4", "Third round").
+- [x] Files layout under 4 ms in the worst frame of a full-screen scroll. The layout pass walks the whole tree every
+      frame however little changed; timed inside the client at scale 1 (about 3700 nodes, load about 4), the cached
+      solve and the placement of every node take 0.8 ms p50, the window's placements 0.5 and its semantics 0.6, the
+      worst frames those that lay out a new row's names. Split in two:
+      Measured at the end (2026-11-15, release, 3840 x 2160, three runs a scenario, the machine otherwise idle): Files'
+      layout p99 in its two-finger scroll 0.30 ms at scale 1 and 0.13 at 1.5 on the GPU path, 0.29 and 0.15 on the CPU
+      path.
+  - [x] Placements kept for a subtree that did not change: a kept node of the same subtree revision and size has its
+        descendants placed from a run, unwalked. A placement's clip is the meeting of every ancestor's clip, those
+        outside the subtree (the viewport's, which stays while the rows move) and those inside it (which move with
+        them), so the run keeps what each descendant was placed from (its parent in the run, its rect and clip as
+        layout gave them and its least hit size) and a frame places them again by the same sums from the kept node's
+        origin and the clip it gets from above, so the placements are the same to the bit without looking a node up
+        in the layout or the tree. A subtree with a scroll container or a raised node keeps no run (their placements
+        follow scroll offsets and what lies over them, which the subtree revision does not cover)
+        (`a_kept_subtree_that_did_not_change_is_placed_from_its_run_as_placing_every_node_places_it`: scrolls at
+        whole and fractional offsets, a row made anew, a row dropped and a resize, against placing every node).
+  - [x] Semantics nodes kept for the same subtrees: a kept node with no scroll container in its subtree keeps a run
+        of what the pass did for it (the size each node was asked at, its accessibility nodes as the walk left them
+        with the bounds each declared, the children and descriptions it handed the node above it, its Tab stops,
+        fallbacks, scopes, roving groups and items, hidden roots and keyed relations, in order) with the subtree's
+        revision and mark; a pass where they are the same, its nodes of the same sizes, the focus outside it and no
+        description handed down to it from above, lays the run in unwalked, each node's bounds taken from where it
+        lies now, and the keyed relations, fallbacks and focus are worked out over the whole tree after it as before
+        (`kept_semantics_laid_in_from_their_runs_are_those_of_a_full_build`: scrolls at whole and fractional offsets,
+        the focus into a row and out, a row made anew, a row dropped and a resize, the nodes, the focus order, the
+        scopes, roving groups and items, the hidden roots and the accessibility diff against a full build). Its time
+        in a scroll frame: measured at the end.
+  - [x] The names of a row measured before it comes into view. Files' grid already builds the cells 200 points past
+        the viewport (`OVERSCAN` in `crates/cupertino-files/src/kit/grid.rs`), so a row's names are shaped in the frame
+        it enters that band, not the frame it shows; what is left is to shape them outside any frame: the runtime
+        handing a window's idle time between a presented frame and the next frame event to work its widgets ask for
+        (the names of the cells past the band, in the direction of the scroll), shaped into the text system's cache
+        (two generations of 512 paragraphs) so the frame that builds them finds them there. Split:
+    - [x] The runtime hands a window's idle time to the widgets that ask for it (`Widget::idle`,
+          `Runtime::run_idle`, `crates/cupertino-ui-core/src/runtime/idle.rs`): when nothing is ready and the run loop
+          would wait on the window system, each node that asked in its measure, its paint or its last idle call
+          (`MeasureCx`, `PaintCx` and `IdleCx::request_idle`, cleared by the call) is called with an idle context that
+          gives it the window's environment, its text system with it, and the time left. The time goes in slices of 1
+          ms at most, each ending 2 ms before a window waiting on its frame is due by its frame clock (the shortest of
+          its last eight periods between frames, a frame a whole period late no longer counted) and before any wake;
+          the window system is looked at before each slice and the first event that arrives ends it. With no request
+          left the loop waits as before, so the work adds no wakeup once done; with work left for a frame that is due,
+          the wait is bounded by the frame being a period late
+          (`idle_work_runs_between_frames_never_inside_one_and_once_for_each_request`,
+          `a_node_asks_from_its_measure_and_one_that_went_away_is_not_called`,
+          `slices_end_before_the_next_frame_is_due_and_before_a_wake_and_work_left_goes_on_after_the_frame`,
+          `the_first_event_that_arrives_ends_the_idle_time`, `once_the_work_is_done_the_loop_waits_as_it_does_without_it`,
+          `what_idle_work_shapes_the_next_frame_lays_out_without_shaping_and_as_it_shapes_itself`,
+          `the_frame_clock_takes_the_shortest_recent_period_and_lets_a_late_frame_go`). The text system's cache stays
+          within its two generations however much is shaped ahead
+          (`the_cache_holds_two_generations_at_most_and_the_last_paragraphs_shaped_whole`).
+    - [x] Files' grid asks for it: its paint asks whenever cells cross the band's edges or the scroll turns, and its
+          idle work shapes the names of the cells within 200 points past the band in the direction of the scroll,
+          nearest first and 64 at most, as a cell's name shapes them: in its name width, then at the width it took
+          (`the_names_shaped_ahead_lie_past_the_cells_built_that_way_nearest_first_and_a_bounded_few`,
+          `the_grid_asks_for_idle_time_again_when_cells_cross_its_band_or_the_scroll_turns`). A scroll whose frames
+          build new rows shapes no paragraph inside a frame once the idle work ran, and each of its frames has the
+          pixels of the same scroll without it
+          (`a_scroll_whose_frames_build_new_rows_shapes_no_name_inside_a_frame_once_the_idle_work_ran`).
+  - Names shaped between frames were not taken up in the rounds that made paint and damage incremental, the
+    shared-memory copy cheaper and then gone, the opaque region declared and placements and semantics kept; their
+    time went to those. At the fifth round the layout p99 is 3.2–3.9 ms on the GPU path at both scales and 1.6–13.8 on
+    the CPU path at loads of 7 to 11, so not under 4 ms in every run ("Measurements", "Step 4", "Fifth round"); with
+    kept semantics and the names shaped between frames: measured at the end. The idle wakeups with the names shaped
+    between frames: measured at the end.
+- [x] The toolkit's paint phase made incremental: a kept node whose subtree did not change (its subtree revision, the
+      ground it is painted on and its nodes in paint order are the same) has its paint nodes laid in as they were,
+      without walking its subtree, and the list is the one a full walk paints
+      (`a_kept_subtree_that_did_not_change_is_laid_in_as_it_was_unwalked_and_the_list_is_the_one_painted_whole`:
+      scrolls at whole and fractional offsets walk 2 of 42 nodes, a changed row walks its own, an inactive window all;
+      list, own pixels and blank equal a new painter's). A Files scroll frame at scale 1 walks about 60 of 3700 nodes;
+      the walk is 0.95 ms p50 from 1.20 at load about 4 ("Measurements", "Step 4", "Third round").
+- [x] The toolkit's damage phase made incremental: the damage tracker keeps each kept subtree the painter laid in
+      unwalked as one run of its nodes; laid in again from the same root with the same nodes, they are compared in
+      order with the run, none looked up apart, and any other run gives its nodes back to be compared one by one, so the
+      damage and the commits are those of comparing every node apart
+      (`kept_subtrees_compared_in_one_go_damage_what_every_node_compared_apart_damages`: scrolls, changed and dropped
+      rows and an inactive window against a tracker comparing each node; a scroll over unchanged rows looks up the
+      view, its pile and the rows across the viewport's edges, of which more or less shows).
+- [x] A kept opaque scroll layer laid over by copy rather than by blending, with the background behind it baked in: the
+      layer is laid over the background colour pending under it in one pass, its empty runs writing the colour and
+      its opaque runs copied (`a_layer_laid_over_its_background_in_one_pass_has_the_bytes_of_the_background_written_and_laid_over`,
+      `a_layer_scrolled_over_its_background_has_the_bytes_of_the_general_path`). Raster p50 5.9–7.2 ms at scale 1, from
+      7.5.
+- [x] The copy into the shared-memory buffer converts each pixel once: a frame's damage and what the buffer missed are
+      cut into rectangles that do not overlap, where a scroll converted the moved viewport once for each
+      (`overlapping_rectangles_become_ones_that_hold_each_pixel_of_their_union_once`). Copy p50 3.2–4.6 ms at scale 1,
+      from 8.9.
+- [x] The frame reaches the compositor without the copy into the shared-memory buffer: the copy's p99 stayed at
+      20.3–26.4 ms, the frames that convert a whole buffer (a buffer new to the window, or one whose pixels are
+      unknown). Timed on the target machine, writing a 3840 x 2160 buffer whose pages are new costs 19–28 ms, nearly
+      all of it the kernel making and zeroing its pages; converting the pixels of a buffer written before costs 5 ms and
+      copying them as they are 1.6–3 ms. So those frames cost the same written by the renderer or by the copy. Split:
+  - [x] The buffer in the renderer's byte order: `abgr8888` where the compositor lists it (`Connection::offers`), the
+        frame's bytes copied as they are; `argb8888`, converted, elsewhere
+        (`abgr8888_is_offered_where_the_compositor_lists_it_and_its_buffers_are_committed_so`,
+        `every_buffer_shown_holds_the_whole_frame_in_either_byte_order`: frames of changing damage through buffers
+        taking turns, new ones among them, hold the whole frame in both byte orders).
+  - [x] A buffer's pages made off the frame: a surface drawing frame after frame whose buffers of its size are all in
+        use has the memory of its next one made and mapped on a thread of its own, the first buffer of a size makes
+        none (a resize), a pause lets an unused one go, and the first frame after a pause that has to make a buffer
+        beside one the compositor holds starts the next one's
+        (`a_surface_drawing_frame_after_frame_makes_its_next_buffer_ahead_and_lets_it_go_after_a_pause`,
+        `a_spare_buffer_s_memory_is_made_whole_and_zeroed_on_its_own_thread`). A buffer that missed more than 32
+        rectangles misses their bounds rather than all of it
+        (`a_buffer_that_missed_many_frames_misses_their_bounds_and_knows_its_other_pixels`).
+  - The renderer drawing into the leased buffer rather than its own pixmap, what the buffer missed repainted by its
+    age: removes the copy that is left, the moved viewport of every scroll frame. With the two items above the copy's
+    p50 is 3.1–5.3 ms and its p99 still 19–20 ms; at the loads measured the slow copies are not only those of new
+    buffers but frames in the middle of a scroll, all three buffers made, whose copy of the moved viewport took 6–25
+    ms ("Measurements", "Step 4", "Fourth round"). Only a buffer in the renderer's byte order (`abgr8888`) can be
+    drawn into; elsewhere the copy converts as now. Split:
+    - [x] The window system leases the buffer before the frame is drawn and presents that lease:
+          `WindowSystem::present_into` hands the renderer the buffer's memory, its stride and what it misses (the
+          frames shown in the other buffers since it held one and the damage of frames not shown, or `None` when new or
+          its pixels unknown) and presents it with the damage the renderer returns; with no free buffer, no configure or
+          a buffer of another size the frame is not drawn and its damage is carried; a lease whose drawing failed is
+          given back unattached; `Lent::No` (the default, a surface on GPU buffers, a compositor without `abgr8888`)
+          keeps the copy path.
+    - [x] The CPU renderer draws a frame into memory it does not own (`UiRenderer::render_into`,
+          `MemoryTarget`): the frame's damage and the leased buffer's missed rectangles into the buffer, whole when the
+          buffer is new or its pixels unknown, its kept layers and scratch images still its own. Its own image is let
+          go while it draws into buffers: of the readers named, the raised layer, the surface layers and a drag image
+          draw with renderers of their own, which keep the copy path, captures and the headless window system lend no
+          buffer, and the switch to the GPU makes new renderers that read nothing of the old; a frame drawn with
+          `render` after one drawn into a buffer is drawn whole.
+    - [x] Test: frames of changing damage through buffers taking turns, new ones and ones whose pixels are unknown
+          among them, have the bytes of the copy path's at scales 1, 1.5 and 2, and a scroll frame copies nothing
+          (`frames_drawn_into_lent_buffers_have_the_bytes_of_the_copy_path`: scroll layers, a buffer held for frames on
+          end, a new one, one of unknown pixels and a frame drawn into the renderer's own image between them;
+          `frames_drawn_into_leased_buffers_show_the_bytes_of_the_copy_path` through the transport: buffers taking
+          turns, new ones made while the compositor holds the others, a frame that finds no free buffer and carries its
+          damage, the held buffers released late, the same bytes and damage committed and no copy timed). The copy's
+          p99 on the CPU path and the gate: measured at the end.
+  - On the GPU path (`CUPERTINO_RENDERER=gpu`) the frame is copied from the renderer's texture into the dmabuf on
+    the GPU: 0.07–0.12 ms p50 and 0.6–0.75 ms p99 at 1.5 ("Measurements", "Step 6: Files on the GPU path").
+- [x] The CPU renderer's kept image of content with a blur or shadow is its picture in place. Scene 910 of
+      `cupertino-ui-gpu`'s `parity::scroll_layers_drawn_whole_match_the_cpu` parted by up to 6/255 on up to 30
+      pixels at the viewport's first column and rows: painting in place cuts what a group reads at the window's edges,
+      and the layer's image, whose scratch images follow the nodes' own extents, did not, so the two nested blurs
+      carried a fill lying past the window's start edge into the viewport; and the image took only the nodes that reach
+      the rows being painted, leaving out of a group the nodes its blur carries in. A group in the image is now painted
+      with all of its subtree, and what a group or a layer of effects reads is cut at the window's edges moved by the
+      layer's offset (`a_kept_layer_s_blurred_groups_read_only_what_the_window_holds_as_in_place`, which fails with
+      either change undone); the parity test runs scenes 900 to 910.
+
+Gate:
+
+- [x] Files two-finger scroll meets its budget at scale 1 and 1.5 on the CPU path, and paint and raster of a scroll frame
+      cover only the exposed strip. Not met on either path. CPU: client frame p99 34.9–37.5 ms at scale 1 and
+      36.6–41.0 ms at 1.5 before the third round, 39.3–67.5 and 41.3–64.8 after it under a heavier load, against 8 ms
+      (79.3 and 126.4 ms at step 0); painting covers the exposed strip, compositing and copying the whole viewport. GPU
+      (`CUPERTINO_RENDERER=gpu`): p99 8.4–10.6 ms at scale 1 and 21.6–35.3 at 1.5 before, 11.4–17.8 and 10.8–14.8 after,
+      with frame p50 4.0–4.1 ms at 1.5 from 6.6 ("Measurements", "Step 4", "Third round"). After the fourth round, at
+      loads of 13 falling to 5: CPU p99 40.0 ms at scale 1 and 39.8 at 1.5 (frame p50 22.0 and 17.9); GPU p99 5.9 ms at
+      scale 1 (load 7.9 to 4.6) and 8.5 at 1.5 (load 4.6 to 5.3), frame p50 3.2 and 2.6 ("Measurements", "Step 4",
+      "Fourth round"). So the GPU path meets the budget at scale 1 in two runs of three (5.6, 5.9; the third 11.7) and
+      at 1.5 in one of three (7.2; 8.5, 10.0), at these loads only; the CPU path misses it at both, its copy's p99
+      alone over the budget. After the fifth round (`1f7756f80`), at loads of 4.7 to 11.3: GPU p99 12.3 ms at scale 1
+      (11.5–18.8) and 12.3 at 1.5 (10.4–14.9), frame p50 5.0 and 2.8, no run under 8 ms; CPU p99 41.2 at scale 1 and
+      36.7 at 1.5, copy p99 21.3 and 22.4. The merge the round started from, measured again on the GPU at scale 1,
+      gives 10.8 (9.9–11.5) with the same phases, so the round moved none of them and the fourth round's 5.9 is not
+      met at today's loads ("Measurements", "Step 4", "Fifth round"). With kept semantics and the CPU path drawing
+      into the leased buffer, no copy left: measured at the end. The unticked items above are what remains of it.
+      Measured at the end (as above): client frame p99 1.63 ms at scale 1 and 1.57 at 1.5 on the CPU path (frame p50
+      0.65 and 1.12, copy p99 0.003 and 0.006: drawn into the leased buffer), 1.57 and 1.36 on the GPU path; no slow
+      frame in any run, against 8 ms.
+
+## Step 5: `cupertino-gpu` and the shader toolchain
+
+- [x] API: devices, buffers, textures with external memory, immutable pipelines, explicit passes, bind groups,
+      fences; borrowed-context mode with a state-restore contract.
+- [x] GLES backend over EGL, with EGL and GBM loaded at run time.
+- [x] Allocators: GBM buffer objects; texture export (`EGL_MESA_image_dma_buf_export`) where there is no GBM.
+- [x] Robustness and purge attributes on every context; reset and purge detection.
+- [x] Shader build step: shared module concatenated, `naga` generating GLSL ES 3.00 and SPIR-V, coordinate adjustment
+      off, blocks and samplers bound by name, uniform blocks only, no `mat2x2` in blocks.
+- [x] Generated shaders committed; a test regenerates them and fails on a difference.
+- [x] Shaders tested against the shared definitions' vectors.
+- [x] Atlases (8-bit coverage, RGBA colour glyphs, path masks) with eviction and caps; pooled render targets with caps.
+- [x] Tests per backend: pipelines, orientation, atlas eviction, pool reuse, export and import, fences, context loss.
+
+Gate:
+
+- [x] CI: the crate's tests pass on llvmpipe. In the CI image (the goldens image, no device passed in) and on the
+      host's llvmpipe ("Measurements", "Step 5"); the first CI run on `main` after the merge confirms it there.
+- [x] Local tier: the crate's tests pass on the NVIDIA GPU.
+
+## Step 6: the GPU renderer and presenter
+
+`GpuRenderer` (`crates/cupertino-ui-gpu`) implements `UiRenderer` over layers. Each primitive lands with its golden
+subset passing on both renderers and its generated scenes (`tests/parity.rs`, one test per group) matching the CPU
+renderer at scales 1, 1.5 and 2 on odd sizes:
+
+- [x] Rectangles and rounded rectangles (fill and stroke).
+- [x] Gradients.
+- [x] Glyph runs.
+- [x] Images and icons.
+- [x] Path masks.
+- [x] Clips: analytic, nested by multiplied coverage, path clips through the mask atlas, stencil only for
+      pixel-aligned rectangles. A rectangle on whole pixels is the scissor (the stencil is not needed), up to four
+      rectangles or rounded rectangles are multiplied in the program, the rest go into one clip mask.
+- [x] Layers with opacity: groups and operation layers as targets from the pool, ready to carry step 4's layer
+      boundaries.
+- [x] Blur, drop shadow, inner shadow.
+
+Presenter and process:
+
+- [x] dmabuf presenter in `cupertino-ui-wayland` with the step 3 synchronisation, size-stepped allocation for live
+      resize, two buffers with release points and three without.
+- [x] Fallback rule in full: `CUPERTINO_RENDERER` (`gpu` overriding software and missing feedback), missing libraries,
+      three losses, purges not counted, per-surface fallback to shared memory on import or allocation failure.
+- [x] "Buffers lost" after a reset or purge: protocol version bump, contract entry in
+      `docs/architecture/contracts.yaml`, compositor event, client repaint, tests.
+- [x] First frame on the CPU while the context and programs warm on a worker thread; after the switch the CPU
+      renderer's frame, layers and caches are freed.
+- [x] `cupertino diagnose` and the frame statistics report the renderer per process.
+- [x] Local GPU tier, presenter: dmabuf import, syncobj, injected loss and purge, CPU↔GPU switch, failed-import
+      fallback, resize storm, fence soak on the NVIDIA GPU.
+- [x] Local GPU tier: goldens on the NVIDIA GPU (with `GpuRenderer`): `cupertino-ui-gpu`'s suite, long-running group.
+- [x] Renderer selection wired with every process on the CPU by default: the single switch `GPU_BY_DEFAULT`
+      (`crates/cupertino-ui-wayland/src/renderer.rs`), which step 7 turns on.
+- [x] Parity at scales 1, 1.5 and 2 with odd sizes, whole frames and frames repainting damage.
+- [x] The presenter draws through `GpuRenderer` when the process is on the GPU, so `CUPERTINO_RENDERER=gpu` gives a
+      GPU-drawn window: the kit's renderer factory makes a `GpuRenderer` on the presenter's device (`GpuDevice` holds
+      it in an `Rc`), its frame carries the window texture to `GpuSurface::present`, which draws it into the buffer
+      instead of uploading pixels (the blit reading texels by position, the buffer being allocated in size steps),
+      and a surface that falls back to shared memory reads the texture back; a headless test in `gpu_presenter`
+      (`the_presenter_shows_what_the_gpu_renderer_drew_from_its_texture_in_dmabufs`).
+- [x] A whole frame's recording on the CPU under 4 ms at 1.5 (13 ms for the timed window, "Measurements",
+      "Step 6: the renderer"). The time was not the draws: 117 of the frame's 125 offscreen targets were made and
+      destroyed every frame, the pool's cap (eight 2 MiB granules) holding fewer than the frame had alive. A target
+      the frame has finished with now gives its texture to the next of its size and format: 2.5 ms, no target made
+      (`timing::a_large_windows_damaged_frame_stays_within_the_gpu_budget`, which holds both budgets). Batching
+      draws is not needed for the budget.
+- [x] `GpuRenderer` keeps scroll layers (`Layer::Scroll`) as textures between frames and moves them, painting only the
+      rows that come into view, as the CPU renderer keeps its images (the cap, a layer new to a frame laid over only
+      where damaged). Without it a scroll frame's damage, which leaves out what only moved with the layer, made the
+      GPU renderer paint the whole viewport in place (raster 5.9 ms p50 at 1.5). Each layer has two textures the size
+      of its viewport: a scroll by whole device pixels draws what stays in view into the other, moved, and paints the
+      rows or columns that come into view and the damage; the content is painted under none of the layer's clips and
+      dithered by its own pixel, so it keeps its bytes as it moves, and the window lays the texture over where the
+      clips let pixels through whole and paints the content in place along their edges. Tests:
+      `parity::scroll_layers_scrolled_frame_by_frame_are_the_frames_drawn_whole` (scrolls down, up, sideways, past the
+      viewport and by half a pixel, with damage), `parity::scroll_layers_drawn_whole_match_the_cpu` and
+      `parity::a_kept_scroll_layer_paints_only_the_rows_that_come_into_view`. Raster 0.7–0.8 ms p50 at 1.5.
+- [x] The raised layer's subsurface presented from GPU buffers too: its frame was read back into shared memory, a
+      wait for the GPU of 4–6 ms in every third Files scroll frame; it now has dmabufs of its own and is copied from
+      the renderer's texture as its window is.
+
+Gate:
+
+- [x] Every golden passes on both renderers, the local tier passes on the target machine, client GPU time and the
+      first-frame budget are met. At `c30025ef`: the quick group (7393 tests) and the long-running group (226) pass with and
+      without `CUPERTINO_GPU_REQUIRED=1`; the GPU timing test's whole-frame budget failed once at 5.7 ms while other
+      builds ran (the CPU renderer's frame beside it took 38 ms against its usual 11) and passes at 2.5 ms on its own.
+      The GPU's share of a frame is under 0.1 ms; the first frame goes out on the CPU in 30 ms while the device warms.
+
+## Step 7: turn it on
+
+There is no switch for every process: each declares its class (`RendererClass`, `Application::RENDERER`) when it
+connects, and `CUPERTINO_RENDERER=cpu|gpu` overrides it.
+
+- [x] Files windows on the GPU; live resize meets its budget. Files' class is the GPU's; its desktop instance keeps
+      the CPU's. At 3840 x 2160 the resize's p99 client frame is 5.3 ms at 1.5 and 4.5 ms at 1, 3.8 ms of it beyond
+      the raster, no slow frame (the CPU: 15.8 ms and 7.8 ms); nothing in the GPU path needed a fix
+      ("Measurements", step 7). Tests: `kit::renderer_class` (`cupertino-files`).
+- [x] Settings on the GPU (`shell::tests::the_settings_window_draws_on_the_gpu`); the About window keeps the CPU.
+- [x] Third-party toolkit applications and the C ABI by the size and repaint rule; sandboxed apps without render-node
+      access take the fallback. An application that declares nothing (`ByUse`, the C ABI's included) starts on the
+      CPU and moves to the GPU for good once a window covers more than a quarter of the largest output it is on, or
+      presents more than 30 frames a second in each of two whole seconds. A process that cannot see the named
+      device's render node draws on the CPU ("no render node for the dmabuf device") and records the fallback. Tests:
+      `renderer::tests` (`cupertino-ui-wayland`), `gpu_presenter::the_rule_moves_*`, `a_cpu_class_*`,
+      `a_sandboxed_process_*` (a process in a user namespace with an empty `/dev/dri`), and
+      `a_c_application_takes_the_size_and_repaint_rule` (`cupertino-ui-abi`).
+- [x] Dock (and overview), launcher and the control panel measured on both renderers with layers; each assigned to the
+      class that meets its budgets; numbers recorded. The dock and the launcher on the GPU: the overview's frames miss
+      a refresh on the CPU (p99 27.7 ms, 4 slow frames a run) and a typed letter's frame passes the 4 ms there (p99
+      5.4 ms), both under 2.1 ms on the GPU. The control panel on the CPU: it draws two whole frames an opening and its
+      motion is the compositor's; the GPU's p99 is no better (17.9 against 16.9 ms) for about 73 MiB.
+- [x] CPU classes confirmed in a full session: OSD, banners, menu bar, prompts, portal overlays and chooser, screenshot
+      toolbar and overlay, lock screen, login, the Files desktop instance. In a headless session at 1.5 with a banner,
+      the volume overlay, the control panel and the screenshot toolbar shown, each records `renderer=cpu`, "its class
+      draws on the CPU"; the lock screen's record is checked by
+      `lock_screen::the_right_password_unlocks_the_session_and_the_application_gets_its_input_back`. Login and the
+      portal's chooser need the system bus the headless session lacks; their classes are checked by
+      `greeter::renderer_class` and `dialog::tests::the_chooser_and_the_overlays_draw_on_the_cpu`. The polkit agent,
+      the keyring prompter and the pick overlay draw with tiny-skia directly and never make a device. Why each is on
+      the CPU is in `docs/src/gpu-rendering.md` ("Who draws on the GPU: classes of surface").
+- [x] The same pixels on both renderers in the preview scenarios. The symbol of a sidebar's selected row landed one
+      device pixel apart (Files at scale 1, Settings at 1.5), and one pixel of a minimized window's thumbnail in the
+      dock was 7/255 apart (the same symbol, in the thumbnail of the Files window). The cause: the CPU renderer moved
+      an image drawn one texel per device pixel onto whole pixels in the coordinates of the piece of the window it
+      painted, rounding a half away from zero, so a piece whose origin lay past the image (a negative position)
+      rounded a half pixel up, the others down; the GPU renderer rounded in the window's. Both now take the window
+      pixel `floor(x + 0.5)` (`cupertino_raster_math::placement::whole_pixel`, which commutes with whole-pixel moves).
+      Files' `icon-view` golden moves 38 pixels: the home row's 20-pixel symbol, whose last two rows had been drawn a
+      row too high, is whole. Tests: `parity::a_selected_rows_symbol_on_a_half_pixel_lands_where_the_cpu_puts_it`
+      (`cupertino-ui-gpu`, scales 1 and 1.5, positions on and off the half pixel, whole frames and damage through the
+      symbol) and `cpu::tests::an_image_on_a_half_pixel_lands_on_one_window_pixel_whatever_piece_paints_it`. The
+      preview with every process on the CPU against the classes, both shot in one run (`PREVIEW_BEFORE`): Files,
+      Settings, the dock's thumbnail and every other shot the same within 2/255, but for shots whose moment differs
+      between two sessions (the overview and its band mid-motion; which of them differ changes between runs) and the
+      launcher's, below.
+- [x] The launcher's round buttons on both renderers: their rims parted by exactly 3/255, one step past the
+      tolerance, on 1 to 22 pixels a shot (launcher at 1.5 and 2). Once a surface layer drawn on the GPU shows at its
+      size in points (its dmabuf's viewport had taken the frame's pixel size, so the button faces showed 1.5 and 2 times
+      too large, `GpuFrame::preferred`), the launcher at rest shot with every process on the CPU and on the GPU is the
+      same within 1/255 at 1.5 and 2 in both appearances (2699 to 4668 pixels a shot at 1, none past it).
+- [ ] A week of daily use on the target machine without a fallback. DEFERRED by the owner (2026-11-15): a week of use. A
+      fallback is logged (`renderer: fell back to the CPU (<scope>): <why>`) and recorded as the diagnostic event
+      `toolkit.renderer.fallback` in the user's event store (kept a fortnight); `cupertino diagnose events --since 7d`
+      lists any, and `cupertino diagnose`'s `gpu.client_renderers` names a process on the CPU after a failure. Purges
+      are not recorded.
+
+Gate:
+
+- [ ] The resize, animation-frame, memory and idle budgets hold across a full session. Resize holds (client CPU
+      beyond the raster 3.8 ms p99 at 1.5, under 8 ms); launcher typing holds (1.9 ms p99, under 4 ms); idle holds
+      (one menu bar frame a minute, the clock's wakeups only, GPU processes 0 wakeups). Not held:
+  - The control panel's opening frames took 14.7 ms p50 and 16.9 ms p99 on the CPU (11.8 and 17.9 ms on the GPU)
+    against the 4 ms animation budget. What they drew: each opening makes the card's window, so a new renderer, and
+    its whole frames; 7.8 of a warm whole frame's 8.1 ms at 1.5 (654 x 969 pixels) was the shadow, 26 even-odd rings
+    each as large as the window filled through the rasterizer, and a new renderer added the glyphs' rasters (0.4 ms)
+    and its scratch images. Now the rings are drawn once into a picture of the window's device pixels while the
+    panel rests and kept for the process (`controlcenter::view`, two at most), the picture is laid over one texel per
+    pixel by a direct loop with the pattern fill's arithmetic (`cupertino-ui-render`, byte for byte the same), and the
+    glyph rasters are the text system's, shared by every renderer on it (`cupertino-ui-text`, 2 MiB). A whole opening
+    frame at 1.5 on a new renderer, in the panel's test driver: 13.8 ms before, 2.5–3.2 ms after (the first opening
+    of a process about 5 ms, its picture drawn once). Tests:
+    `the_bands_laid_as_one_picture_have_the_pixels_of_the_bands_filled_in_place` (within 2/255 at four scales),
+    `a_band_picture_is_made_at_rest_and_found_again_by_a_later_frame`,
+    `an_image_laid_over_directly_has_the_bytes_of_its_pattern_fill`,
+    `rasterizers_on_one_text_system_share_their_glyphs`. The bench's frame times: measured at the end.
+  - Added private memory per GPU process, under 80 MiB. The session's 81.0 (dock), 87.4 (launcher), 75.4 (Files'
+    window) and 71.8 MiB (Settings) were taken with a cold program cache: the session's home is new each run, so each
+    GPU process compiled its programs and loaded the driver's compiler, some 55 MiB it keeps until it exits. One
+    headless session at 3840 x 2160 and 1.5 with Files and Settings open, private MiB (CPU / warm cache / cold):
+    dock 53.5 / 77.6 / 133.6, launcher 15.9 / 38.7 / 92.0, Files' window 29.4 / 37.8 / 97.2, Settings 44.4 / 51.3 /
+    103.7. With a warm cache a GPU process adds 7–24 MiB (`[anon]` 37 against 92 MiB for the dock: the compiler's).
+    The processes now make their programs in turn (`program_cache::take_turn`, a lock in the driver's directory
+    waited on up to 2 s), so on a cold cache only the first compiles and the rest load what it saved: cold, the
+    processes that load take 40–92 MiB (adding 19–39), the one that compiles 92–133 (adding 76–79). The floor is
+    the driver's compiler in that one process after a driver update, a shader change or a new user. Now the compositor
+    makes the toolkit's programs into the cache as its backend starts (`toolkit_programs`, `program_cache::make_ahead`:
+    a thread and a context of its own on the render node it offers, the processes' turn taken first, keyed as their
+    lookup is), so no toolkit process compiles: in a cold headless session at 1.5 the server made the 7 programs in
+    200 ms and the launcher loaded its 8 and compiled none. On by default, `prepare_toolkit_programs: false` in
+    `compositor.json` turns it off. Tests:
+    `handoff::programs_made_ahead_are_loaded_by_a_later_device_and_none_is_compiled`,
+    `handoff::making_programs_ahead_replaces_a_stale_binary_and_never_loads_another_drivers` (`cupertino-gpu`),
+    `programs::the_renderers_programs_made_ahead_are_all_loaded_and_none_compiled` (`cupertino-ui-gpu`),
+    `gpu_presenter::the_presenter_finds_every_program_the_server_made_at_its_start_and_compiles_none` and
+    `gpu_presenter::the_server_shows_its_first_frames_while_it_still_makes_the_toolkit_s_programs` (`cupertino-server`).
+    Decided by the owner (2026-11-15): on by default. The added memory per process after it:
+    measured at the end.
+  - GPU memory per GPU window, open and closed (`nvidia-smi`, Files with a second window opened and closed twice):
+    51, 116, 84, 116, 84 MiB. A window adds 65 MiB; closed, 33 MiB stay and serve the next window, never growing.
+    What stays is the driver's reservation step 0 measured (a process's first targets reserve one more target's
+    size, kept when they are deleted): the renderer gives back every texture it made when it is dropped and keeps
+    its frame alone when its window is not seen, which the device's texture count holds
+    (`memory::a_dropped_renderer_gives_back_every_texture_it_made_and_a_hidden_one_keeps_only_its_frame`).
+
+## Step 8: the compositor's own drawing on the GPU pipelines
+
+The way in is step 10's: a device borrowed from the compositor's context draws into the framebuffer Smithay has bound
+(`Device::begin_owner_pass`, `render::passes`). Two facts shape the split. The layer rules let the compositor (core)
+depend on the graphics layer but not on the toolkit, so it reaches the toolkit renderer's pipelines where they live,
+in `cupertino-gpu` (the `ui_fill` and `ui_texture` programs, the coverage and path mask atlases), not through
+`cupertino-ui-gpu`, which records paint trees. And `ui_fill` draws circular corners only, while title bars and
+buttons have continuous corners, per-corner radii (the bar's top corners alone), linear gradients (button faces and
+rings) and strokes (the rim, the rings). Split (open at the end of step 10's third session):
+
+- [x] Title bars and window buttons through the renderer's rectangle and glyph pipelines in borrowed-context mode.
+      Split:
+  - [x] `cupertino-decorations` records a title bar, its buttons and the rim as a list of draws (an outline with
+        per-corner extents and an exponent, a solid or linear shade, a stroke width; a coverage image of a glyph run
+        or a button glyph) and its CPU path paints that list, the same pixels as today (its tests and the server
+        goldens unchanged).
+  - [x] The `ui_fill` block carries the corner exponent in a lane unused today (zero, circular, for every draw the
+        toolkit records), so a continuous corner is the shared distance on both renderers; and per-corner radii
+        (`FillBlock::corners`, used when the clips' fourth lane is set), so the bar's top corners alone are round
+        without a taller shape and a scissor.
+  - [x] The block layout of `ui_fill` and `ui_texture` as one Rust type in `cupertino-gpu`, which
+        `cupertino-ui-gpu` and the compositor both fill, so neither keeps a copy.
+  - [x] The compositor draws a title bar's list into a texture of its own on the borrowed device (title glyphs and
+        button glyphs rasterized once into an 8-bit atlas, kept across frames), when its state changes, and lays the
+        texture over the window as the uploaded buffer was; the frame statistics count GPU draws apart from CPU
+        rasters (`deco_draws`). The shapes take the shared distance as `ui_fill` does, but through a program of the
+        compositor's own (`shaders/passes/chrome.wgsl`): `ui_fill`'s results go through the driver's blending, whose
+        precision on the target driver (about 16-bit floats) rounds a pixel of a stack of four button layers three
+        steps away from the CPU painter. The chrome program lays each draw over what the draws before it made with
+        the painter's own arithmetic, reading the image below from a second texture, blending off, so the GPU image
+        is the CPU painting byte for byte on the target driver (every title bar and rim of the four appearances,
+        standard and unified, at scales 1, 1.5 and 2). The rim is drawn the same way. Where the device cannot draw,
+        the list is painted on the CPU and uploaded as before.
+- [x] Keyboard HUDs the same way (the input-source HUD, the accent popup, the shortcut notice: rounded fills and
+      centred text). Each is recorded as a list of draws (its rounded fills as paths, its text as glyph runs) in the
+      overlay image cache and drawn by the chrome program; the frame statistics count them as `hud_draws`.
+- [x] The procedural cursor last, kept a cursor-plane element: on the GPU into the plane's buffer where the plane
+      takes a GPU buffer, else the CPU image kept for the plane, the choice recorded here. Kept on the CPU: the DRM
+      compositor fills the cursor plane's buffer on the CPU, with its software renderer into a mapped buffer, so a
+      GPU image of the cursor would have to come back to the CPU to reach the plane.
+- [x] The rectangle passes of a frame (shadows, outlines, rounded rectangles, title bars) drawn inside one enter and
+      leave of the borrowed device instead of one each, so the state is read and put back once a frame
+      ("Measurements", step 10: 0.2 to 0.3 ms of compose work at p50 today). The device notes the groups of state its
+      calls change and `Device::pause` puts back only those, without reading; `Device::resume` enters on what the
+      frame's first enter read.
+- [x] the frame bench's hover finds the window buttons in every run: in two of three runs, with either build,
+      it reports that the hover drew no title bar (the window's place differs between runs), so its median counts
+      none. The baseline from the run that hit them, before step 8: 36 decoration rasters and 36 uploads, 12 MiB.
+      The hover now moves relative to Settings' frame (`--pointer-on`), wherever the session placed it.
+
+Gate:
+
+- [x] The hover scenario shows no CPU raster and no upload ("Measurements", step 8: 0 rasters, 0 uploads, 36 GPU
+      draws).
+
+## Step 9: layers and animation in the compositor
+
+- [x] Protocol XML (new, versioned): fixed-point geometry atomic with the parent commit, glass attached to layers,
+      blend roles, timed and spring animations on the compositor clock, retargeting with value and velocity,
+      `finished` and `replaced`, input and semantics against target values, clipping, per-client limits, the
+      late-content rule.
+- [x] Server global, with its entry in `docs/architecture/contracts.yaml`.
+- [x] Protocol tests (atomicity, retargeting, limits, late content, time scale and fixed time).
+- [x] Compositor animator.
+- Toolkit support; shell and control transitions use it. Split:
+  - [x] A layer shell surface's own presentation (version 2, `get_presentation`): its offset, opacity and scale apply
+        to all it draws, backdrops, popups and layers included, on the server's clock, with its entry in
+        `docs/architecture/contracts.yaml`
+        (`a_presentation_fades_moves_and_scales_all_its_surface_draws_on_the_server_clock`,
+        `a_presentation_is_a_layer_shell_surface_s_own_and_has_four_properties`).
+  - [x] The client side of the protocol on the transport (`cupertino_wayland_client::app`: `Layers`, `Layer`, the events as
+        `AppEvent`s) and the window system's presentations: `WindowRequest::Present` with
+        `Capabilities::present_animation`, committed without a buffer, or with the first frame of a window the update
+        opens (`a_request_for_a_window_the_view_opens_goes_before_its_first_frame`); the animations followed through
+        `finished`, `replaced` and `settled`. Without the global, or on another compositor, the capability is off and
+        the application draws its transitions as before. The server retargets from the value and velocity shown,
+        applies the time scale and ends spatial motion under Reduce Motion; input and semantics stay with the layout,
+        the target.
+  - [x] The control panel's open and close run as the card's presentation on the curves it draws itself: the
+        critically damped rise as a spring of the same rate, exact up to the 0.23 s where the drawn curve jumps its
+        last hundredth, and the 0.18 s fall as a cubic Bezier within a two-thousandth of it
+        (`the_compositor_runs_the_same_fades`,
+        `the_compositor_runs_the_card_s_fades_and_the_card_asks_for_no_frame`); no fade is handed over under Reduce
+        Motion, where the card appears and goes at once.
+  - Paint-tree subtrees as layers of their own surface: a subtree marked `Layer::Opacity` or `Layer::Transform`
+    (or a mark of its own for the launcher's parts) drawn into a child surface the server places and animates, in both
+    presenters, its animations sent to the compositor instead of repainted, hit-testing and semantics on the target
+    values, and the client-side drawing kept where the server lacks the protocol. The presenters draw the raised layer
+    into a subsurface of its own already (`present_layer`); this generalises it to a list of layer surfaces, each
+    `cupertino_layer_v1` with its own frame. Too large for one reviewable change; split:
+    - [x] The mark and the runtime: a widget marks its subtree a surface layer (`Widget::surface_layer`, a
+          `SurfaceLayerMark` of a key and a look: glass style, glass group and spacing, corner radius, masks to its
+          shape). The application changes the layer's properties (`x`, `y`, `width`, `height`, `opacity`, `scale`,
+          `corner_radius`, `content_blur`, each set or animated along a `LayerCurve`) with `WindowRequest::Layer`, as
+          `WindowRequest::Present` carries a window's, straight to the window system and without a frame. After the
+          paint, the runtime takes each marked subtree out of the window's list into a list of its own moved to its
+          layer's origin (`runtime/surface_layers.rs`), keeps a damage tracker and a renderer per layer key (as
+          `LayerState` does for the raised layer), draws a layer only where it changed, at its layout size whatever
+          its animated values, and hands the window system the layers' frames, rects and looks with the window's frame
+          (`WindowSystem::present_surface_layers`, `Capabilities::surface_layers`; unsupported by default, where the
+          subtree paints in place and the application draws its motion itself, as today). Layout, hit-testing and
+          semantics never see the split. The headless window system keeps every list of layers presented
+          (`HeadlessWindowSystem::surface_layers`). Tests over the in-memory window system
+          (`runtime/surface-layer-tests.rs`):
+          `a_marked_subtree_draws_in_its_surface_layer_at_its_layout_size_and_not_in_the_window`,
+          `a_repaint_elsewhere_leaves_the_layer_and_one_inside_it_draws_only_the_layer_s_damage`,
+          `a_change_of_a_layer_s_properties_alone_draws_no_frame`,
+          `without_surface_layers_the_marked_subtree_paints_in_place`.
+    - [x] The shared-memory presenter: each layer a `wl_surface` made a `cupertino_layer_v1` of the window's surface
+          (`cupertino-ui-wayland`'s `surface_layers.rs`), its frame copied into buffers of its own as the raised layer's
+          is, at the window's scale (an external role that names the surface it is drawn with,
+          `ExternalRole::drawn_with`, takes no configure and leases buffers at that surface's scale), its rect and look
+          sent as the layer's values and the application's changes as its requests, so they apply with the window's
+          next commit (a change alone commits the window without a buffer, as a presentation's does); its animations
+          followed through `finished`, `replaced` and `settled`, so `presentation_settled` waits for them. Needs the
+          global at version 4; below it the capability is off and marked subtrees paint in place. Checked against the
+          server with the toolkit's window system (`cupertino-ui-wayland`'s `surface-layers` example): the layer shows
+          at its rect from a 180 x 90 buffer at scale 1.5, and its fade runs on the server's clock with no new buffer of
+          the window
+          (`a_toolkit_window_s_surface_layer_shows_at_its_rect_and_fades_on_the_server_clock_without_a_window_buffer`).
+    - [x] The GPU presenter: the layers' frames drawn from the GPU renderer's textures into dmabufs of their own, as
+          the raised layer's subsurface is (the same `GpuPath::present`, on the layer's surface), and the GPU
+          renderer's frame split by layer as the CPU renderer's is (the runtime makes each layer's renderer with the
+          window's factory, a GPU renderer on the GPU). The example's `--renderer` draws the layer with the toolkit's
+          GPU renderer on the presenter's device; the server shows it from dmabufs of the layer's own surface, every
+          frame handed over, at its rect in points at 1, 1.5 and 2 as from shared memory
+          (`a_toolkit_window_s_surface_layer_drawn_on_the_gpu_shows_from_dmabufs_of_its_own`, the local GPU tier). A
+          layer's dmabuf was first shown at one buffer pixel per point, as large as the output's scale too large: its
+          viewport took the frame's pixel size for the layer's size, which a layer's role leaves to the client, and now
+          takes the layer's size in points (`GpuFrame::preferred`).
+  - The launcher's open and close as compositor layers, keeping its look (the owner's choice: the look as it is drawn
+    now, run by the compositor). Split:
+    - [x] Glass groups (version 3, `set_glass_group`): the layers of one group draw their glass as one container of
+          their shapes as shown each frame, blended over the group's spacing, so a button grows out of the field's
+          glass as the layers move (`a_glass_group_joins_the_glass_of_its_layers_into_one_shape_as_they_move`).
+    - [x] Content blur (version 4, `content_blur`): an animatable property that blurs a layer's own content (not its
+          glass nor what lies behind it) by a Gaussian in the layer's points, 0 to 64, ended at its target under Reduce
+          Motion. The compositor draws each surface of the layer into a texture with room for three deviations around
+          it, blurs it by the backdrop passes' pyramid and separable Gaussian and draws it in the content's place through
+          the layer's mask, scale and opacity (`render/content_blur.rs`), keeping a blur until the surface, the deviation
+          or the scale changes. The backdrop passes wrote an opaque result; under a new pass flag (`PASS_KEEP_ALPHA`)
+          the downsample and the blur keep the premultiplied alpha of what they blur, the colour within it, and a
+          backdrop's passes are as they were. A vibrant layer draws its content sharp. Across a straight edge the blurred
+          content is within 3/255 of the Gaussian's integral
+          (`a_layer_s_content_blurs_past_its_edges_by_the_gaussian_on_the_server_clock_and_the_parent_stays_sharp`,
+          `content_blur_is_a_property_from_version_4_from_sharp_to_its_widest_and_reduced_motion_ends_it`); at scale
+          1.5 a deviation of 4 points is 6 pixels, and a layer scaled to half blurs half as wide about the edge its
+          content is drawn at (`a_layer_s_content_blur_is_in_points_and_scales_with_the_layer_at_a_fractional_scale`);
+          the client side is `LayerProperty::ContentBlur`.
+    - The launcher as layers: the enclosure a layer whose width, height and corner animate with its glass, its
+      content a sibling that does not scale, the search field's layer animating its width, each mode button a layer on
+      its own spring in a glass group with the field, and the close animating the content blur; its look at every
+      moment that of the launcher's drawing within the goldens' tolerance, and no application buffer for the open or the
+      close (counted as the control panel's is, a test like
+      `shell_processes::the_control_panel_fades_on_the_compositor_s_clock_without_a_new_buffer`). It needs the subtree
+      layers above. Not every value the launcher draws is one curve of one property: where the search field opens with
+      its mode buttons, the enclosure's drawn width is the opening spring's scale (response 0.30, damping 0.74, from
+      1.1) times the field's width drawing back on a spring of its own (0.305, 0.68), a button's centre is that scale
+      times its place along the split spring (0.575, 0.69), and a button's size is a clamped ramp of the split spring
+      (`modes::button_rect`, `bud_size`); its corner radius is the radius times the smaller of the two axes' scales. A
+      timed curve or a spring per property cannot carry a product or a clamp of two curves, so these need the
+      protocol to carry them first. Split:
+      - [x] Curves the protocol carries as samples: version 4's `animate_samples(serial, property, duration,
+            samples)` takes 2 to 1000 values at even steps of a duration of 1 ms to 10 s (32-bit floats in the host's
+            byte order, each in the property's range), which the server follows in straight lines on its clock from
+            the first to the last, where the property rests; an animation that replaces it starts from the value and
+            the slope shown, and reduce motion ends a spatial one at its last value
+            (`a_property_moves_through_samples_in_straight_lines_on_the_server_clock_from_its_first_to_its_last`;
+            the animator's `samples_are_followed_in_straight_lines_from_the_first_to_the_last_whatever_was_shown`).
+            The client sends it with `Layer::animate_samples`, a toolkit window with `LayerChange::through` in a
+            `WindowRequest::Layer`; the surface layers example moves its layer's content blur up and back down through
+            samples while it fades, and the server sees the blur reach 7.96 of its 8 points with no window buffer
+            (`a_toolkit_window_s_surface_layer_shows_at_its_rect_and_fades_on_the_server_clock_without_a_window_buffer`).
+            Every value the launcher draws can now be carried exactly, on the compositor's clock.
+      - [x] The edge drawn by the compositor (version 5, `set_glass_edge(width, red, green, blue, alpha)`): a line up
+            to 4 points wide just outside a layer's glass, or along the outline of its glass group's joined shape with
+            the group's first layer's edge, drawn by the glass composite over what lies there and over the glass's own
+            antialiased edge as a stroke is, at the output's scale so its width stays as the layer scales, and left out
+            where the group's shapes join (`cupertino_glass::glass::GlassEdge`, stage 10 of the glass; the toolkit's
+            `SurfaceLayerLook::edge` under `Capabilities::surface_layer_edges`). On the server it runs two device
+            pixels wide at scale 2 along a capsule's top, keeps them scaled by 1.5, and runs round a button budding out
+            of a field's end but not inside either shape
+            (`a_glass_edge_runs_outside_the_group_s_joined_outline_at_its_width_whatever_the_scale`); the glass's model
+            covers each pixel by the band's overlap with it and lays it over the glass's edge pixel
+            (`the_edge_is_a_stroke_of_its_width_outside_the_outline_over_the_glass_s_own_edge`,
+            `a_joined_container_s_edge_follows_the_union_and_not_each_shape`). Against the launcher's own edge at rest
+            (`layers::glass_edge` in the glass layers' looks), at 1, 1.5 and 2 in both appearances: within 4 of 255
+            along the search field and its mode button (capsules) and along every straight side
+            (`the_edge_the_compositor_draws_along_the_glass_is_the_edge_the_panel_draws`). At a scope's corners it was
+            not: the glass's corners are continuous, and the launcher stroked its edge along circular arcs that stood
+            up to 0.57 points off the glass where each corner starts to curve, so there the two parted by up to the
+            line's own opacity (32 of 255 at 1 and 52 at 1.5 in the light appearance, 109 and 178 in the dark, 67 and
+            230 at 2). Decided by the owner: the edge follows the glass's continuous outline, the dark boundary being
+            the silhouette of the one enclosure, a change of the launcher's look at a scope's corners. The launcher
+            now strokes it there (below, "The edge follows the glass"): within 1 of 255 along every side and corner.
+            A glass group's edge is a stroke round each shape cut by the others (`Container::edge_alpha_at`, the
+            glass's stage 8, the same in the shader): each shape's band from its outline to the edge's width outside
+            it, left out by the share of the pixel each other shape covers, laid over each other. It ran along the
+            outline of the blended union, which parts from the panel's own edges while the field's buttons bud out of
+            it by up to 178 of 255 in the dark and 52 in the light at 1.5 (the union's neck outlined where the panel
+            draws each shape's outline across the neck); cut by the others it is within 17 and 7 of the panel's
+            (where two strokes cross, which the panel draws as two antialiased strokes and clips)
+            (`a_joined_container_s_edge_is_each_shape_s_outline_cut_by_the_others`).
+      - [x] The close: the enclosure's opacity on the ease-out over 0.1 s, its width and height growing to 1.02 of
+            the shape on the same curve (a timed curve per property, exact), and the content's blur to 4 points on it
+            (`CLOSE_BLUR` is a blur radius of 8 points, a deviation of 4); no buffer for it. The panel at rest is
+            drawn as layers (`view::layers`): the enclosure's glass (a layer that draws only glass, through
+            `PaintCx::layer_glass`, so the window shows none and the content keeps the glass's foreground), the
+            content unscaled, the dark edge as a layer of its own on a 4 pt grid with room for the stroke outside the
+            shape and centred on the point the panel grows about, and each mode button's glass at its rect and its
+            face (edge, focus ring, symbol) above. The close sends each its curves (`layers::close_changes`): the
+            glass to the close's end rect, the edge scaled to 1.02 and blurred through samples of the content blur
+            divided by its scale, the content blurred and moved where the drawing moves it, the buttons moved, all
+            faded on the ease-out; the panel goes when the compositor is done (`Message::CloseOver`). At rest the
+            layers laid over the window are the panel's drawing within 1 of 255 at 1, 1.5 and 2 in both appearances,
+            and their glass is the regions it stands on in place
+            (`a_resting_panel_s_layers_carry_the_pixels_and_the_glass_it_draws_in_place`); the close presents no
+            frame of the window or a layer (`a_resting_panel_closes_on_the_compositor_s_clock_without_a_frame`, the
+            real process against the server in
+            `shell_processes::the_launcher_closes_on_the_compositor_s_clock_without_a_new_buffer`); under Reduce
+            Motion, while the panel moves and without the capability it draws its own close
+            (`under_reduce_motion_the_panel_draws_its_own_close`). A settled spring now rests exactly at its
+            target, so the resting panel lost a float tail: at 1.5 the caret sits one device pixel further right
+            than before and the mode buttons' rims moved by a few hundredths of a point ("Measurements", "Step 9").
+            What is not exact: the field's edge grows by a uniform scale where the drawing grows its width alone
+            (under a device pixel at the ends: within 3 of 255 at 1.5 at the close's first frame and within 1 after,
+            measured at the same moment below, so it stays); content that moves lands on whole device pixels (the
+            mode button's face, up to 33 of 255 part way). A caret blink
+            that falls inside the close draws nothing: the field holds its caret while the compositor runs the close
+            (`BareField::hold_caret`; `a_close_in_the_caret_s_fade_draws_no_frame`,
+            `a_held_caret_draws_no_frame_until_it_is_let_go`).
+      - [ ] A scope's open and folding (the browser, the files scope): the enclosure's width, height, corner and
+            place on the opening and shape springs, which are linear in the springs' values (exact); the content layer
+            unscaled, its fade on the content's curve; the files scope's width dip as samples. Not reached in this
+            run; split by what each needs:
+        - [x] The open from hidden (`ToggleApplications`, the files scope's shortcut): the shape is set at once and
+              only the scale moves (1.1 to 1 on the open spring, both ways), and every value the open draws is affine
+              in that scale, so each property is the open spring from where the first frame has it: the glass's place,
+              size and corner, the edge layer's scale about the pivot, the content's place (it keeps its size), all
+              faded in on the linear 0.1 s (`layers::open_changes`, `Model::hand_scope_opens`). The edge stays the
+              edge layer, scaled, not the compositor's: a scope's corners are continuous, and the compositor's edge
+              would follow them where the panel strokes circular arcs (above), so the scaled layer is the nearer of
+              the two (its stroke a tenth wider at the first frame); since the panel's edge follows the glass, the
+              edge is the compositor's along the glass and the edge layer is gone (below). Done: the panel draws its layers once, at rest,
+              in the open's first frame (1 window frame and 3 layer frames), then no frame of its window or a layer
+              and asks for none until the open is over, the browser's scroll indicator kept meanwhile
+              (`a_scope_opens_from_hidden_on_the_compositor_s_clock_without_a_frame`, the browser and the files
+              scope); under Reduce Motion nothing is handed over
+              (`under_reduce_motion_a_scope_s_open_is_the_panel_s_own`). The mid-way difference (up to 255 of 255)
+              had three causes, each closed: the compositor puts the content's layer on whole device pixels, where
+              the panel drew its text snapped to the pixels glyph by glyph and its shapes and images at the fraction
+              (the content now lies on whole device pixels as one picture while the panel scales,
+              `Widget::on_pixels`); the glass, smaller than the content while it grows in, laid the content out
+              narrower, where the layer keeps its size (an absolute container that crops now keeps a child's own
+              size past its edge, `Overflow::Crop`, set while the panel scales); and the compositor's spring comes to
+              rest within a thousandth of the property's unit, the scaled edge then 172 of 255 off at 317 ms, and its
+              glass 0.05 points off at 500 ms where the panel's spring had settled (the glass and the edge's scale
+              now go through 1000 samples of the panel's own values, `layers::OPEN_SAMPLES`, as many as one request
+              carries: the protocol had allowed 1024, which no request of at most 4096 bytes can carry, and the
+              server cut the launcher off at its first such request). The at-rest drawing
+              and every golden are unchanged. At the same moments, every other frame of the open and its last at 1.5
+              in both scopes and appearances: the glass is the panel's own (rect, corner, opacity, within 0.05) at
+              every frame, the first frame and the last the panel's pixels within 0, and part way every pixel
+              outside two device pixels of the outline within 1 of 255. Along the outline the edge, the resting
+              stroke scaled (a half-point line the scale puts between device pixels, which the panel strokes afresh
+              at each scale), differs by up to 90 of 255 in the dark and 26 in the light, bounded by two fifths of
+              the line's opacity (95 and 28)
+              (`the_open_the_compositor_runs_is_the_panel_s_own_drawing_at_the_same_moments`, run with
+              `CUPERTINO_LAUNCHER_MOMENTS` for the pairs). The handover is on in the process
+              (`hand_scope_opens`). The real process against the server: no buffer of the window or its layers while
+              the open is part way, 0 in 3 runs over 92 to 93 server steps part way
+              (`shell_processes::the_launcher_opens_a_scope_on_the_compositor_s_clock_without_a_new_buffer`, the
+              browser opened once and closed first, as a resident launcher's has been, so the renderer's warm-up,
+              whose first frames the CPU draws and the GPU then draws again, is behind it).
+        - [x] The fold and the unfold: the header switches part way (the query row's symbol and placeholder), a frame
+              of the content's layer, and the content's body fades on its own curve while the query row does not, so
+              the row and the body are layers of their own; the shape changes both ways with its corner held to half
+              its height, which a fixed frame of the edge cannot follow: it needs the edge drawn by the compositor.
+              Split, in order:
+          - [x] The query row and the body as layers of their own in place of the one content layer
+                (`layers::ROW_LAYER`, `layers::BODY_LAYER`, the body's layer from the content's top), at rest the
+                panel's pixels within 1 of 255 at 1, 1.5 and 2 in both appearances
+                (`a_resting_panel_s_layers_carry_the_pixels_and_the_glass_it_draws_in_place` over the field, its
+                results, the browser and the files scope); the opens and the close as before, and against the server
+                the close 0 buffers over 14 to 16 steps part way, the browser's open 0 over 91 to 96.
+          - [x] The fold: the glass's place, size and corner through samples of the panel's own values on the shape
+                spring (`layers::fold_changes` over the enclosure's motion, `Motion::shaping_left`, the corner the
+                panel's, held to half the height), the body's opacity through samples of its own curve, the row's
+                frame drawn again once at the header's switch (one buffer of the row's layer, the only one the fold
+                makes part way; the first frame commits the glass's look with the compositor's edge, no pixels)
+                (`a_scope_folds_on_the_compositor_s_clock_drawing_its_row_once`). At the same moments, 1.5, both
+                scopes and appearances, the glass the panel's at every moment, away from the outline and the caret
+                within 0 of 255, along the outline 178 and 52 of 255 (dark, light) while the corners are a scope's and
+                within 1 from 300 ms, at the field's capsule
+                (`the_fold_the_compositor_runs_is_the_panel_s_own_drawing_at_the_same_moments`). Behind
+                `Model::hand_folds`, off in the process until the edge followed the glass (below), on since: along
+                the outline then within 2 of 255 in the dark and 1 in the light.
+          - [x] The unfold: the scope's body drawn into the body's layer at its first frame, as the scope rests, and
+                masked to the glass as it grows (the mask on the device pixels the content lies on, as the panel's own
+                drawing cuts it), and the mode buttons' layers carried through their merge
+                (`the_search_field_unfolds_on_the_compositor_s_clock_drawing_its_row_at_most_once`); under Reduce
+                Motion nothing is handed over. The browser's view options button is a layer of its own
+                (`layers::OPTIONS_LAYER`), which keeps to the row's end as the glass's width changes.
+          - [x] The edge follows the glass (decided by the owner: the edge follows the glass's continuous outline).
+                Through the fold the outline goes from a scope's continuous corners to the field's capsule, which only
+                the compositor's edge can follow. Split, in order:
+            - [x] The panel's own edge stroked along the glass's continuous outline (the shared distance of
+                  `cupertino-glass` and `ui_fill`) in place of the circular arcs that stand up to 0.57 points off it,
+                  under Reduce Motion and without the capability as well: the goldens that change at a scope's
+                  corners re-recorded and named with their pixel counts, and before and after pairs of a scope's
+                  corner at rest, both appearances at 1.5 and 2, in the sheet under "Edge follows the glass". The
+                  toolkit's `Shape::Superellipse` (a corner's extent and exponent and an outset along the distance),
+                  drawn by the CPU's analytic coverage and by `ui_fill` (the outset a new member of its block), and
+                  `cupertino_ui_core::glass_outline`, a glass shape's outline; the launcher strokes its edge along
+                  `glass_outline` moved out by half the line's width wherever it lies on glass. Against the
+                  compositor's edge at rest, 1, 1.5 and 2, both appearances: within 1 of 255 along every side and
+                  corner (corners 0.6 to 0.9). The GPU draws superellipses as the CPU does
+                  (`parity::superellipses_match_the_cpu`). No golden changed: the launcher's goldens draw without
+                  glass, where the edge keeps the opaque fill's circular corners, and the server's launcher golden is
+                  the search field, whose capsule is stroked as before.
+            - [x] The scopes' rest, open and close on the compositor's edge (`layers::glass_edge`, then within 4 of
+                  255 of the panel's along every side and corner), the scope's edge layer gone
+                  (`layers::compositor_edge`; the search field keeps its edge layer). At rest within 1 of 255 along
+                  every side and corner at 1, 1.5 and 2 in both appearances; the open from hidden at the same moments
+                  within 1 along the edge (it was up to 90 with the scaled edge layer); against the server the
+                  browser's open 0 buffers over 113 steps part way with 3 layers. The search field's rest too, its
+                  edge layer gone: within 1 of 255 along its capsule at 1, 1.5 and 2 in both appearances. A close
+                  blurs the compositor's edge with the content, as the panel's own close blurs its edge: from
+                  `cupertino_layers_v1` version 6 the line along a layer's glass softens by that layer's
+                  `content_blur` (the band blurred by the content's Gaussian in closed form, 0 the sharp band to the
+                  bit; `GlassEdge::soft`, `render::layers::edge_softness`), and `close_changes` blurs the glass layer
+                  as it blurs the content. At the same moments, 1.5, the field, the browser and the files scope in both
+                  appearances: within 1 apart from the outline, and along it 2 of 255 in the dark and 1 in the light
+                  at the close's first frame, 1 from 33 ms on, where the unblurred edge parted by up to 100 and 29
+                  (`the_close_the_compositor_runs_is_the_panel_s_own_drawing_at_the_same_moments`, bound 4).
+            - [x] The fold and unfold carry it, from here on in order with the items above and below. The fold does
+                  (`Model::hand_folds` on in the process; at the same moments along the outline 2 of 255 in the dark
+                  and 1 in the light, where it was 178 and 52), and so does the unfold.
+          - [x] Their same-moment test, as the open's (`open_moments` over `Escape` from a scope and the scope's
+                shortcut from the field), and the real process's count against the server, as
+                `shell_processes::the_launcher_opens_a_scope_on_the_compositor_s_clock_without_a_new_buffer` (one
+                buffer of the row's layer allowed, at the switch). The same-moment tests are made: the unfold's at 1.5,
+                both scopes and appearances, the glass the panel's at every moment, the last frame within 1 of 255,
+                apart from the outline and the caret within 1, along the outline up to 47 of 255 (the browser's body
+                cut by the moving edge a fraction of a device pixel apart, at one moment, where its scroll indicator
+                crosses the right edge) and 15 (the files scope's edge along the shape the panel draws and the glass
+                the compositor moves, as it grows out of the field's capsule), two bounds by cause, with the window
+                held at one size through the unfold; before, in a window that grew as it began, 20 and 18
+                (`the_unfold_the_compositor_runs_is_the_panel_s_own_drawing_at_the_same_moments`). Against the
+                server the fold holds, 1 buffer of the row's layer and none other over 83 to 94 steps in 3 runs
+                (`shell_processes::the_launcher_folds_a_scope_on_the_compositor_s_clock_drawing_its_row_at_most_once`),
+                and so does the unfold, now that the panel's window keeps the largest size the panel takes while the
+                window system shows layers (`Model::window_held`; it grew to the scope's size as the unfold began and
+                drew its first frame again at that size after the compositor started, 2 buffers of the row's layer and
+                7 of the rest): 0 buffers of the row's layer and 0 of the rest over 88 to 94 steps in 3 runs, the
+                window at one size throughout
+                (`shell_processes::the_launcher_unfolds_the_search_field_on_the_compositor_s_clock_drawing_its_row_at_most_once`,
+                `Model::hand_unfolds` on in the process).
+      - [ ] The search field's open with its mode buttons: the field's layer and each button's on sampled curves of
+            the products above, in one glass group with the field, each button's symbol sharpening as its layer's
+            content blur goes from its starting blur to 0 on `GLYPH_SHARPEN` after `GLYPH_DELAY`. Through the bud
+            the field's edge is left out inside each button and each button's inside the field and its neighbours
+            (`edge_cuts`), so the outline changes shape every frame, and a button's ring grows from 0.4 of its size
+            with a stroke that keeps its width; a layer is cut only to its own shape (`masks`). The compositor now
+            draws a glass group's edge along its joined outline at the output's scale (version 5, above), within 4 of
+            255 of the panel's along the field and its buttons at rest, which is what this needed. Split, in order:
+          - [x] The field's glass and each button's glass and face through samples of the panel's own values
+                (`layers::field_open_changes` over `layers::open_values`: the field's place, width and corner, each
+                button's rect and corner, the content's place, each face's place about its button's centre), left
+                out where a value never changes, everything faded in on the linear 0.1 s, in one glass group with the
+                field; while the open is the compositor's the field's glass carries the edge in its look
+                (`layers::glass_edge`, `PanelView::group_edge`), drawn round each shape cut by the others as the panel
+                cuts its own (above), and neither the edge layer nor a face draws one. The panel draws its layers once
+                at rest in the open's first frame and then no frame of its window or a layer until the open is over,
+                when the edge layer and the faces' edges draw it again
+                (`the_search_field_opens_from_hidden_on_the_compositor_s_clock_without_a_frame`); under Reduce Motion
+                nothing is handed over (`under_reduce_motion_the_search_field_s_open_is_the_panel_s_own`). What
+                changes where the panel comes to rest part way (a query that brings results) takes the open back, and
+                the panel draws the rest of it itself. `Model::hand_scope_opens` is now `Model::hand_opens`, the
+                field's open gated by `Model::hand_field_opens` (below).
+          - [x] Each button's symbol: its face's opacity (the panel's opacity times the symbol's sharpness) and content
+                blur (`layers::glyph_deviation`, half the symbol's blur radius) through samples, from its starting
+                blur of 3 points to 0 on `GLYPH_SHARPEN` after `GLYPH_DELAY`. The panel's own drawing puts a moving
+                button's symbol on whole device pixels as one picture where its face layer would lie
+                (`layers::symbol_in_place`), as the compositor moves the face: part way through the panel's own bud,
+                merge and close the symbol lands on whole device pixels; at rest it is drawn as before.
+          - [x] The same-moment test over `Toggle` from hidden, every other frame of the open's 61 and its last at
+                1.5 in both appearances, the compositor's edge worked out with the glass's own model on the shapes as
+                shown (`the_search_field_s_open_the_compositor_runs_is_the_panel_s_own_drawing_at_the_same_moments`):
+                the glass is the panel's at every moment, the first and last frames within 1, and apart from the caret
+                every frame within 17 of 255 in the dark and 7 in the light (where the bud's strokes cross, 117 to
+                250 ms; within 1 from 383 ms), bounded by an eighth of the line's opacity.
+          - [x] On in the process (`Model::hand_field_opens`). The stray buffers were one commit of the content's layer
+                about 700 ms in: a message part way (an earlier open's end timer, here) rebuilt the view, and the held
+                caret was painted where its fade had come to. A held caret now paints as it was last drawn
+                (`BareField::hold_caret`), the open ends when the compositor tells the window its layers came to rest
+                (`WindowEvent::LayersSettled`, `FrameClock::on_layers_settled`) instead of on the panel's own clock,
+                with a timer a second past the open's end that carries the open's number. Against the server, in a
+                variant not kept in the suite (`shell_processes::the_launcher_opens_a_scope_on_the_compositor_s_clock_without_a_new_buffer` over
+                `ToggleLauncher`, the window 760 points wide with 4 layers, `--no-files`, one button, the renderer
+                warmed to `gpu` first): 0 buffers of the window and its layers in each of 8 opens over two runs, over
+                186 to 188 server steps part way; the scope's open 0 in 3 runs over 92 to 95.
+          - [x] The caret's blink through the field's open. The caret is a layer of its own while the compositor
+                runs the open (`layers::CARET_LAYER`, over the query row's and at its rect, through the field's
+                `BareField::caret_layer` and the toolkit's `Widget::overlay_layer`), its opacity the content's fade
+                times the field's own blink from the open's start (`BareField::blink_start`, which no later focus
+                gain starts over) through samples, to where the blink holds past the open; a key part way takes the
+                caret back into the row's layer at once. At the same moments the caret is within 1 of 255 from 117 ms
+                on (was 255 from 550 to 1000 ms), 35 at most while the content fades in, where the caret's layer
+                fades over the row's and the panel's own drawing fades both as one group. Against the server the field's open makes 0 buffers of the window and its 6 layers over 183 server steps animating (`shell_processes::the_launcher_opens_the_search_field_on_the_compositor_s_clock_without_a_new_buffer`, its count of layers 6 with the caret's).
+      - [ ] The test that the open and the close make no new application buffer, and the look at several points of
+            each within the goldens' tolerance of the launcher's drawing. Split:
+        - [x] The close: no buffer of the window or its layers from Escape until the panel goes, 0 in 3 runs over
+              14 to 16 server steps part way
+              (`shell_processes::the_launcher_closes_on_the_compositor_s_clock_without_a_new_buffer`); settled, the
+              compositor's panel is the application's within 2 of 255 ("Measurements", "Step 9", "The sheet").
+        - [ ] The open: from hidden it holds, 0 new buffers in 3 runs over 92 to 93 server steps part way
+              (`shell_processes::the_launcher_opens_a_scope_on_the_compositor_s_clock_without_a_new_buffer`); the
+              fold and unfold and the search field's open with its buttons wait on their items above.
+        - [ ] The look mid-way within 2 of 255, compared at the same moment. Split:
+          - [x] The close: at each frame the launcher draws of its own close, the compositor's layers at that same
+                moment, worked out from the curves the panel sent with the compositor's own animator
+                (`cupertino_animation::LayerProperty`) and laid over each other as the compositor draws them
+                (origin on device pixels, scale about the device pixel nearest the bounds' centre, the shared
+                Gaussian for the content blur, opacity), are its pixels at 1.5 in both appearances, and their glass
+                is its glass, rect, corner and opacity, at every moment
+                (`the_close_the_compositor_runs_is_the_panel_s_own_drawing_at_the_same_moments`). Outside the mode
+                button's face and the caret: within 7 of 255 at 17 ms (two Gaussians of a pixel or two rounding
+                differently), 4 at 33 ms and 1 from 50 ms on; at rest within 1. The face, which the compositor moves
+                onto whole device pixels, differs by up to 33 part way; the caret, which the application's own drawing
+                moves a device pixel as its enclosure moves, by 44 at 17 ms and 1 from 50 ms on ("Measurements",
+                "Step 9", "The sheet").
+          - [ ] The open: from hidden, at each frame the launcher draws of its own open (every other one and its
+                last, at 1.5, both scopes and appearances), the compositor's layers at that moment are its pixels
+                within 1 of 255 but along the outline, where the scaled edge is within two fifths of the line's
+                opacity (90 and 26 of 255 at most), and their glass its glass at every moment
+                (`the_open_the_compositor_runs_is_the_panel_s_own_drawing_at_the_same_moments`); the fold and unfold
+                and the search field's open with its buttons wait on their items above.
+  - [x] Control transitions in popups: version 3 takes a popup's surface in `get_presentation`, its scale about the
+        centre of its window geometry, after its window's rescale or its layer surface's presentation
+        (`a_popup_s_presentation_scales_and_fades_it_on_the_server_clock`). The runtime hands a popover's growth out of
+        its anchor and its shrinking back and a closing menu's fade to it under `Capabilities::present_popups`, on the
+        curves it draws: the opening spring, `(1 - t)²` and `(1 - t)³` as cubic Béziers, the anchor kept by an offset on
+        the same curve (`the_compositor_grows_a_popover_on_the_spring_it_draws_and_out_of_the_same_point`,
+        `the_compositor_shrinks_a_popover_and_fades_a_menu_on_the_curves_they_draw`); the popup presents no frame for
+        them (`a_popover_grows_and_shrinks_and_a_menu_fades_on_the_compositor_s_clock_without_a_frame`). Under Reduce
+        Motion nothing is handed over, as nothing animates.
+  - [x] Desktop control reads whether every presentation and layer is settled: an observation waits until they show
+        their targets, a second of model time at most, so what it reads is what is shown
+        (`an_observation_waits_for_what_is_shown_to_settle_and_no_longer_than_its_wait`,
+        `desktop_control_reads_the_clients_layouts_once_their_layers_show_their_targets`).
+- [x] Vibrant foreground as a blend-role layer.
+- [x] Lifted thumbs and lenses as glass in a raised layer.
+- [x] Pointer-lit highlight and variable blur.
+
+Gate:
+
+- [ ] Opening the control panel and the launcher costs the application no repaint per frame, and each material effect is
+      reviewed by eye in both appearances. The control panel holds: its card draws no frame of its fade in or out (a single
+      frame after its first as it opens)
+      (`shell_processes::the_control_panel_fades_on_the_compositor_s_clock_without_a_new_buffer`, "Measurements",
+      "Step 9"). Popovers and menus hold: a popover's growth and shrinking and a menu's fade present no frame. The
+      launcher's close holds (no buffer of its window or layers), and so does a scope's open from hidden (no buffer
+      of its window or layers while the open is part way,
+      `shell_processes::the_launcher_opens_a_scope_on_the_compositor_s_clock_without_a_new_buffer`); the search
+      field's open with its mode buttons and the fold and unfold wait on their split items above. The owner approved the
+      sheet by eye on 2026-11-15; the pairs still missing are reviewed by the lead against the approved ones.
+- [ ] The before and after sheet of the control panel's fades and the launcher's open and close, mid-way and settled,
+      light and dark, from a headless server, for that review: "before" drawn by the application, "after" by the
+      compositor. It goes with the launcher's layers, whose "after" it shows; the control panel's "before" is the card's
+      own fade from before its presentation. The control panel's half is made ("Measurements", "Step 9", "The sheet");
+      the launcher's close is in it at the same moment, its own drawing against the compositor's layers, and at rest,
+      and so is a scope's open from hidden (the browser and the files scope, both appearances, 7 moments each from
+      50 ms to the open's last frame at 500 ms: within 1 of 255 apart from the outline, along it up to 90 of 255 in
+      the dark and 26 in the light, the last frame within 0); the search field's open with its mode buttons and the
+      fold and unfold are drawn by the application on both sides until their layers land, so they have no pairs.
+
+## Step 10: retire the duplicates
+
+- [x] Shadow, rounded-rectangle and wallpaper passes move to borrowed-context passes generated from WGSL. Split:
+  - [x] A borrowed device's pass can draw into the framebuffer its owner has bound, with its viewport and scissor
+        (the element's damage), under the state-restore contract: `Device::begin_owner_pass` keeps the owner's
+        framebuffer and viewport, sets a pass's fixed state, and `leave` puts everything back
+        (`gles::tests::a_borrowed_device_s_pass_draws_into_the_framebuffer_its_owner_bound_at_the_owner_s_viewport`).
+  - [x] The shadow pass, dithered as before: a flag of its placement block instead of a second program text.
+  - [x] The rounded-rectangle pass.
+  - [x] The wallpaper pass. The three are a third source set (`crates/cupertino-server/shaders/passes/`, one
+        placement block and vertex stage included by each, one quad per damage rectangle through the frame's
+        projection), drawn by `render::passes::Passes` on a device borrowed from the renderer's context; the
+        hand-written GLSL ES 1.00 copies are gone, and the tests that held them to the shared definitions
+        (`dither::`, `coverage_gl::`) hold the generated passes now.
+- [x] The hand-written GLSL ES 3.00 programs of the glass crate and the compositor replaced by generated ones; the
+      tests that pinned the copies pin the generated output. Split:
+  - [x] The build step generates a second set, `cupertino-glass`'s programs (the shared module ahead of each, include
+        files, and the assembled WGSL for the wgpu renderer); the backdrop passes (downsample, blur, colour, blit) are
+        generated, the compositor and the wgpu renderer draw them, their hand-written copies in both crates are gone,
+        and the blur's dither for 8-bit levels is a flag of its block instead of a second program.
+  - [x] The material region program (the glass crate's and the compositor's, which differ in how the region is placed
+        and sampled): one program, placed by a block of its own (the frame's projection, the quad and the dither
+        flag), the compositor's placement for both.
+  - [x] The vibrant program.
+  - [x] The glass program.
+  - [x] The compositor's mesh program of the minimize and close effects (GLSL ES 1.00, compiled by the compositor
+        itself, not through Smithay's interface).
+- [x] `wgpu` removed from `cupertino-glass`; the headless glass renderer and its tests run on `cupertino-gpu`.
+
+Gate:
+
+- [x] One WGSL source for every program of ours; the texture programs compiled through Smithay's shader interface
+      (clip, its vibrant variant, reduced copy, minification) stay GLSL ES 1.00 and are listed by name in the design.
+      The one hand-written program text left is `crates/cupertino-server/shaders/compositor/clip.frag` with its
+      distance (`sdf.glsl`), compiled as those four (`render::programs::tests`).
+
+## Step 11: output timing and depth on the target display
+
+- [x] Frame scheduling latches late only where presentation timestamps are real, from the recent maximum render time
+      plus a margin, never past half a period (`crates/cupertino-server/src/latch.rs`; `CUPERTINO_LATE_LATCH=0` turns
+      it off; "Measurements").
+- [x] Pointer-to-screen latency reported by the DRM backend's log (`pointer-to-flip`; the bench reports the headless
+      figure, `pointer_latency_p50_ms` and `_p95_ms`, `ptr95` in its table).
+- [x] 10-bit primary plane (`Abgr2101010`) behind `output_depth` in `compositor.json`, 8 bits by default at first (10 since,
+      below), falling back to 8 bits on a plane without a 10-bit format; capture paths never read the plane and stay
+      8-bit (`output_depth::tests`).
+- [x] 10 bits by default. Decided by the owner (2026-11-15): 10 bits on the target display, without waiting on the
+      step 0 probe (`Depth::from_setting` gives 10 bits without the key; "Measurements", "Turning 10 bits off").
+
+Gate:
+
+- [ ] In the live session over an hour: input-to-flip latency below the baseline and no more missed flips than the
+      baseline, from the DRM backend's log; the 10-bit decision recorded. DEFERRED by the owner (2026-11-15): it needs the
+      desktop session; the one command is under "Measurements", "The step 11 gate".
+
+## Step 12: Vulkan backend for the toolkit (gated)
+
+On hold (owner, 2026-11-15): stability across the whole desktop comes first. Steps 12 and 13 are not started until
+the owner lifts the hold, whatever the benchmarks show.
+
+- [ ] Entry: a named budget the GLES backend cannot meet, or a driver problem Vulkan avoids, recorded here.
+- [ ] The `wgpu` decision re-checked against the cost of a second hand-kept backend.
+- [ ] Vulkan backend: DRM format modifiers, dmabuf export, syncobj semaphores, SPIR-V from the generated shaders.
+
+Gate:
+
+- [ ] Same goldens and budgets as GLES, and the entry budget met.
+
+## Step 13: Vulkan renderer for the compositor (gated)
+
+On hold, as step 12.
+
+- [ ] Entry: as step 12, for the compositor.
+- [ ] Smithay's renderer traits implemented for Vulkan; `DrmCompositor` and damage tracking unchanged.
+- [ ] Material, glass and mesh passes on `cupertino-gpu`.
+
+Gate:
+
+- [ ] Goldens, GPU reset tests and the daily-driver checks pass on Vulkan, and the entry budget met.
+
+## Owner checks (deferred)
+
+The checks that need the owner's display and session to themselves. Deferred by the owner on 2026-11-15 (the desktop
+runs smoothly in daily use); each is ready to run as written under "Measurements", and none blocks other work:
+
+1. Presentation-time branch and plane assignment (step 0): a five-minute traced session, then the `drm_trace` lines
+   of the server log ("Presentation-time branch and plane assignment on the target driver").
+2. The 10-bit gradient (step 0): `tools/gpu-probes/depth.sh` from a text console, noting whether the 10-bit half of
+   each band is smoother ("10-bit gradient on the primary plane"). Informational: the owner chose 10 bits.
+3. The vertical slice for an hour beside a shared-memory control (step 3): `cupertino-gpu-slice --minutes 60
+   --control-shm` ("The live session and the one-hour gate").
+4. A week without a fallback to the CPU (step 7): `cupertino diagnose events --since 7d` lists none.
+5. Output timing (step 11): two traced one-hour sessions and the trace summary ("The step 11 gate").
+
+## Documentation
+
+- [x] Design page in the book, linked from `SUMMARY.md`.
+- [x] Rules in `docs/architecture/rendering.md`.
+- [x] Rendering paragraph of `docs/src/architecture.md`, the roadmap section and `docs/src/displays-and-gpus.md` point
+      here.
+- [x] Each step that changes behaviour updates the pages it affects (`apps-on-kit.md`, `kit-getting-started.md`,
+      `displays-and-gpus.md`, crate READMEs) in the same change.
+
+## Measurements
+
+Filled in as steps complete.
+
+### Step 0: instruments, probes and the idle desktop
+
+Taken at `624dab3b` on the target machine's GPU (GeForce RTX 3060, proprietary driver 615.78.08), with the
+desktop session running beside the runs.
+
+**Where the instruments are.**
+
+- the frame bench (headless sessions, every process measured).
+- `CUPERTINO_FRAME_TIMING=PATH`: every toolkit process appends one JSON line a presented frame with its phases
+  (update, view, layout, paint, raster, copy, commit, total). Without the variable no clock is read
+  (`runtime::tests::a_presented_frame_is_timed_phase_by_phase_and_nothing_is_timed_without_a_sink`).
+- `CUPERTINO_PROFILE=chrome:DIR/` (or `tracy`): every process, the server's too, records the spans of its frames as a
+  timeline, one Trace Event file per process for Perfetto (`docs/src/building.md`, *Frame timelines*). Without the
+  variable no layer is installed (`runtime::tests::the_frame_spans_cost_nothing_measurable_with_no_timeline_recorded`).
+- The frame statistics (`--frame-stats`, headless) end with the GPU time of the frame (timer queries), title bar and
+  HUD rasters and uploads with their bytes, and blur passes; a `# start_monotonic_ns` line lines other processes'
+  times up with them.
+- `CUPERTINO_DRM_TRACE=1` on the session server logs, under the `cupertino_server::drm_trace` target: the
+  presentation-time branch when it changes (`flip-timestamp` or `own-clock`), every missed flip with how many refresh
+  periods late, the plane assignment when it changes (direct scanout, cursor plane, overlays) and the input-to-flip
+  latency of each output (keys and pointer alike, an input whose flip was dropped reported at the output's next flip).
+  Without the variable nothing is kept.
+- the memory measurement reports private dirty memory beside Pss and Rss.
+- The probes live in `tools/gpu-probes`, a crate with a workspace of its own: never built by the workspace, never in
+  the packages. Build: `cargo build --release --offline --manifest-path tools/gpu-probes/Cargo.toml --target-dir
+  target/gpu-probes`; `target/gpu-probes/release/gpu-probes --help` lists the probes. Each probe runs its
+  measurements in fresh processes, with the driver's on-disk program cache off unless the probe says otherwise.
+
+**The baseline in one command.** The baseline runs (every scenario five times at scale 1.5 and at scale 2, on the
+target display's size) are:
+
+The frame bench, with `--size 3840x2160 --runs 5 --idle-seconds 60`, at `--scale 1.5` and at `--scale 2`, one JSON file each.
+
+Each JSON holds every run and, per scenario, the median of the runs with their spread (max - min, the noise):
+compositor frame interval p50/p99, missed refreshes, work and GPU time p50/p99, compositor CPU time, slow client frames
+per program, the per-phase client split (p50 and p99 of each phase), and per-program CPU and private memory. The
+scenarios: idle, drag (Settings over Files and its glass), hover (along the window buttons), resize (Files' corner),
+control-panel, launcher-typing and files-scroll.
+
+**Smoke run** (one run each, 1280 x 800 at scale 1, 60 Hz; it only shows that each scenario drives what it should):
+
+| Scenario | Frames | Missed | Work p50/p99 ms | GPU p99 ms | Server CPU ms/s | Blur passes/frame | Title bar rasters (upload) | Slow client frames | Client frame p99 ms |
+|---|---|---|---|---|---|---|---|---|---|
+| idle (15 s) | 2 | 0 | 0.75 / 1.35 | 0.61 | 1.3 | 0 | 0 | 0 | 0.38 (menu bar clock) |
+| drag | 180 | 0 | 0.76 / 2.19 | 1.72 | 60 | 7.6 | 0 | 0 | 0.48 |
+| hover | 288 | 0 | 0.52 / 0.83 | 0.30 | 42 | 0 | 36 (5.3 MiB) | 0 | 1.88 |
+| resize | 181 | 0 | 2.91 / 4.20 | 2.91 | 213 | 9.2 | 319 (284 MiB) | 0 | 5.43 |
+| control-panel | 86 | 0 | 1.13 / 2.30 | 1.64 | 22 | 6.8 | 0 | 0 | 8.24 |
+| launcher-typing | 240 | 0 | 0.91 / 2.26 | 1.11 | 45 | 3.5 | 0 | 0 | 2.99 |
+| files-scroll | 182 | 0 | 0.88 / 1.32 | 0.67 | 69 | 7.0 | 0 | 0 | 3.27 |
+
+The resize already shows what step 8 removes: a title bar raster and upload on every frame.
+
+**The baseline** (`96034ac4`, release build; 3840 x 2160 at 60 Hz, five runs a scenario, `--idle-seconds 60`; no
+build ran during the runs). Each figure is the median of the five runs, with the run-to-run spread (max - min, the
+noise) in brackets where it is not zero. "Compositor work" is the CPU time of a compositor frame, "Client" the
+program whose frames the scenario drives, "Slow client frames" those of every program longer than a refresh. No
+scenario missed a refresh at either scale.
+
+Scale 1.5:
+
+| Scenario | Frames | Missed | Compositor work p50 / p99 ms | Compositor GPU p50 / p99 ms | Server CPU ms/s | Slow client frames | Client | Client frame p50 / p99 ms |
+|---|---|---|---|---|---|---|---|---|
+| idle | 1 | 0 | 1.28 (0.13) / 1.28 (0.13) | 0.74 (0.01) / 0.74 (0.01) | 0.0 | 0 | menu bar (1 frame) | 0.46 (0.10) / 0.46 (0.10) |
+| drag | 180 | 0 | 1.32 (0.04) / 2.38 (0.28) | 1.01 / 2.07 (1.13) | 90.0 (3.3) | 0 | Settings (2 frames) | 0.59 (0.06) / 0.64 (0.06) |
+| hover | 288 | 0 | 1.14 (0.05) / 1.54 (0.03) | 0.69 / 0.78 | 77.1 (4.2) | 0 | Settings (12 frames) | 0.49 (0.05) / 1.09 (0.16) |
+| resize | 181 | 0 | 4.33 (0.15) / 7.41 (0.36) | 2.83 (0.20) / 4.35 (0.42) | 332.3 (12.9) | 2 (4) | Files (203 frames) | 9.63 (0.46) / 16.44 (0.83) |
+| control-panel | 85 (2) | 0 | 1.95 (0.02) / 2.60 (0.55) | 1.51 / 1.83 (0.21) | 31.7 (3.3) | 0 | Control panel (102 frames) | 12.84 (0.86) / 14.55 (0.54) |
+| launcher-typing | 242 (1) | 0 | 1.69 (0.06) / 2.98 (0.25) | 1.17 (0.04) / 1.64 (0.02) | 72.3 (1.5) | 0 | launcher (372 frames) | 1.67 (0.13) / 6.44 (0.05) |
+| files-scroll | 182 | 0 | 1.57 (0.01) / 2.47 (0.11) | 1.19 / 1.51 (0.01) | 105.5 (6.6) | 0 | Files (184 frames) | 5.44 (0.05) / 6.23 (0.40) |
+
+| Scenario | Client | update | view | layout | paint | raster | copy | commit |
+|---|---|---|---|---|---|---|---|---|
+| idle | menu bar | 0.17 / 0.17 | 0.02 / 0.02 | 0.03 / 0.03 | 0.04 / 0.04 | 0.15 / 0.15 | 0.03 / 0.03 | 0.02 / 0.02 |
+| drag | Settings | 0.01 / 0.02 | 0.00 / 0.00 | 0.09 / 0.09 | 0.18 / 0.19 | 0.26 / 0.26 | 0.02 / 0.07 | 0.02 / 0.02 |
+| hover | Settings | 0.02 / 0.02 | 0.00 / 0.00 | 0.09 / 0.13 | 0.16 / 0.24 | 0.18 / 0.22 | 0.01 / 0.58 | 0.02 / 0.03 |
+| resize | Files | 0.02 / 0.03 | 0.39 / 0.61 | 0.22 / 0.41 | 0.20 / 0.38 | 4.67 / 8.59 | 3.95 / 6.49 | 0.27 / 0.85 |
+| control-panel | Control panel | 0.01 / 0.02 | 0.03 / 0.11 | 0.02 / 0.11 | 0.07 / 0.35 | 12.09 / 13.05 | 0.61 / 1.75 | 0.01 / 0.05 |
+| launcher-typing | launcher | 0.01 / 0.11 | 0.01 / 0.07 | 0.03 / 0.10 | 0.03 / 0.21 | 1.18 / 6.19 | 0.28 / 2.20 | 0.01 / 0.28 |
+| files-scroll | Files | 0.00 / 0.01 | 0.00 / 0.38 | 0.08 / 0.19 | 0.20 / 0.30 | 4.66 / 5.02 | 0.47 / 0.61 | 0.01 / 0.02 |
+
+| Program | idle | drag | hover | resize | control-panel | launcher-typing | files-scroll | private MiB | private dirty MiB |
+|---|---|---|---|---|---|---|---|---|---|
+| Control panel | 0 | 0 | 0 | 0 | 20.7 (0.3) | 0 | 0 | 13.3 (0.4) | 4.3 |
+| dock | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 52.0 (1.6) | 41.2 (1.6) |
+| Files | 0 | 0 | 0 | 67.7 (1.6) | 0 | 0 | 37.6 (0.7) | 36.9 (3.6) | 33.8 (3.6) |
+| launcher | 0 | 0 | 0 | 0 | 0 | 12.0 (0.5) | 0 | 15.3 (0.2) | 4.9 |
+| menu bar | 0 | 0 | 0 | 0 | 0.2 (0.2) | 0 | 0 | 20.1 (0.1) | 5.9 |
+| notifications | 0 | 0 | 0 | 0 | 0.0 (0.2) | 0 | 0 | 13.6 (0.2) | 4.2 |
+| OSD | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 12.9 (0.3) | 4.3 (0.3) |
+| server | 0 | 9.0 (0.3) | 7.7 (0.4) | 33.2 (1.3) | 3.2 (0.3) | 7.2 (0.2) | 10.5 (0.7) | 179.3 (5.7) | 118.1 (6.0) |
+| Settings | 0 | 0.3 (0.7) | 0.4 (0.4) | 0 | 0 | 0 | 0 | 38.6 (5.6) | 22.4 (5.7) |
+| window manager | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1.0 | 0.2 |
+| bus daemon | 0 | 0 | 0 | 0 | 0.0 (0.2) | 0 | 0 | 0.8 | 0.6 |
+
+Scale 2:
+
+| Scenario | Frames | Missed | Compositor work p50 / p99 ms | Compositor GPU p50 / p99 ms | Server CPU ms/s | Slow client frames | Client | Client frame p50 / p99 ms |
+|---|---|---|---|---|---|---|---|---|
+| idle | 1 | 0 | 1.89 (0.19) / 1.89 (0.19) | 1.30 (0.07) / 1.30 (0.07) | 0.0 (0.2) | 0 | menu bar (1 frame) | 0.57 (0.06) / 0.57 (0.06) |
+| drag | 180 | 0 | 1.60 (0.02) / 1.97 (0.40) | 1.37 (0.01) / 1.43 (0.63) | 103.3 (3.3) | 0 | Settings (2 frames) | 0.62 (0.10) / 0.77 (0.22) |
+| hover | 288 | 0 | 1.35 (0.11) / 1.96 (0.11) | 1.03 / 1.14 (0.14) | 93.8 | 0 | Settings (12 frames) | 0.53 (0.03) / 1.44 (0.35) |
+| resize | 181 | 0 | 5.90 (0.44) / 10.48 (0.41) | 4.02 (0.12) / 6.80 (0.26) | 483.9 (12.9) | 61 (3) | Files (175 frames) | 13.55 (0.33) / 22.14 (1.27) |
+| control-panel | 81 (5) | 0 | 2.74 (0.04) / 3.73 (1.41) | 2.18 / 2.63 (0.64) | 40.0 (3.3) | 64 (57) | Control panel (76 frames) | 17.34 (1.20) / 19.58 (1.28) |
+| launcher-typing | 240 | 0 | 2.32 (0.06) / 5.15 (0.29) | 1.78 (0.04) / 2.83 (0.09) | 97.9 | 0 | launcher (362 frames) | 2.49 (0.13) / 10.94 (0.08) |
+| files-scroll | 182 | 0 | 2.25 (0.04) / 3.30 (0.09) | 1.77 / 2.05 (0.37) | 141.8 (9.9) | 0 | Files (184 frames) | 5.78 (0.17) / 6.98 (0.68) |
+
+| Scenario | Client | update | view | layout | paint | raster | copy | commit |
+|---|---|---|---|---|---|---|---|---|
+| idle | menu bar | 0.18 / 0.18 | 0.02 / 0.02 | 0.03 / 0.03 | 0.03 / 0.03 | 0.24 / 0.24 | 0.05 / 0.05 | 0.02 / 0.02 |
+| drag | Settings | 0.01 / 0.01 | 0.00 / 0.00 | 0.06 / 0.08 | 0.13 / 0.17 | 0.31 / 0.35 | 0.03 / 0.14 | 0.01 / 0.02 |
+| hover | Settings | 0.02 / 0.03 | 0.00 / 0.00 | 0.09 / 0.11 | 0.16 / 0.17 | 0.21 / 0.24 | 0.01 / 0.97 | 0.02 / 0.03 |
+| resize | Files | 0.02 / 0.04 | 0.41 / 0.63 | 0.22 / 0.44 | 0.21 / 0.35 | 5.27 / 8.89 | 7.08 / 11.62 | 0.43 / 1.22 |
+| control-panel | Control panel | 0.02 / 0.03 | 0.05 / 0.11 | 0.03 / 0.11 | 0.10 / 0.41 | 16.05 / 17.03 | 1.08 / 2.89 | 0.02 / 0.05 |
+| launcher-typing | launcher | 0.01 / 0.11 | 0.01 / 0.07 | 0.03 / 0.10 | 0.03 / 0.13 | 1.66 / 10.56 | 0.49 / 3.95 | 0.01 / 0.32 |
+| files-scroll | Files | 0.00 / 0.01 | 0.00 / 0.38 | 0.09 / 0.18 | 0.24 / 0.35 | 4.56 / 5.08 | 0.86 / 0.97 | 0.01 / 0.03 |
+
+| Program | idle | drag | hover | resize | control-panel | launcher-typing | files-scroll | private MiB | private dirty MiB |
+|---|---|---|---|---|---|---|---|---|---|
+| Control panel | 0 | 0 | 0 | 0 | 21.2 (0.3) | 0 | 0 | 13.2 (0.2) | 4.3 |
+| dock | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 54.4 (0.7) | 43.8 (0.7) |
+| Files | 0 | 0 | 0 | 83.2 (1.3) | 0 | 0 | 39.5 (2.0) | 44.7 (2.2) | 41.7 (1.8) |
+| launcher | 0 | 0 | 0 | 0 | 0 | 16.3 (0.3) | 0 | 15.4 (0.2) | 4.9 |
+| menu bar | 0 | 0 | 0 | 0 | 0.2 (0.2) | 0 | 0 | 20.2 (0.3) | 6.1 |
+| notifications | 0 | 0 | 0 | 0 | 0.0 (0.2) | 0 | 0 | 13.6 (0.1) | 4.2 |
+| OSD | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 12.8 (0.1) | 4.3 |
+| server | 0 | 10.3 (0.3) | 9.4 | 48.4 (1.3) | 4.0 (0.3) | 9.8 | 14.2 (1.0) | 191.8 (8.3) | 130.7 (8.1) |
+| Settings | 0 | 0.3 (0.3) | 0.4 (0.2) | 0 | 0 | 0 | 0 | 40.8 (1.2) | 24.6 (1.1) |
+| window manager | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1.0 | 0.2 |
+| bus daemon | 0 | 0 | 0 | 0 | 0.0 (0.2) | 0 | 0 | 0.8 | 0.6 |
+
+The tables above are, in order: the frames; the per-phase client split (p50 / p99 ms) of the scenario's client; each
+program's CPU (% of one core over the scenario) and its private memory at the end of the idle scenario.
+
+What the baseline shows:
+
+- **The control panel at scale 2** (slow frames 64, spread 57): its frames take 17.3 ms at p50, at the refresh's edge, so
+  the count swings between runs. Nearly all of it is raster (16.1 / 17.0 ms; 12.1 / 13.1 at 1.5): the card and its
+  soft shadow, redrawn whole on every frame of the opening. Its full-output click catcher is not repainted. No plain bug:
+  this is the work layers (step 4), the shared shadow (step 1) and the compositor's layers (step 9) remove.
+- **Resize at scale 2** (61 slow Files frames): raster 5.3 / 8.9 ms and copy 7.1 / 11.6 ms. The copy costs more than
+  the raster because every frame is a buffer of a new size, copied whole. Steps 6 and 7 remove it (size-stepped GPU
+  buffers, no copy).
+- **The drag** let go 7.5 pt from where it began at 3840 x 2160: the server anchored a move a client asks for after
+  its drag-start box at the pointer's position then, not at the press. A move or resize asked for past the drag
+  start is now anchored at the press
+  (`a_move_and_a_resize_asked_for_past_the_drag_start_keep_the_pressed_point_under_the_pointer`).
+- **A scroll of a full-screen grid** damaged 641–673 separate rectangles a frame at scale 1, each walking the whole
+  display list: 530–600 ms frames. More than 16 separate rectangles are now merged down to 16, the closest pairs first
+  (`a_scrolled_grid_of_separate_items_is_repainted_in_a_few_rows_not_one_rectangle_around_them`); the worst frame went
+  to about 80 ms.
+
+**Files at 3840 x 2160** (`--scenario files-full-repaint,files-full-scroll,files-scroll`, five runs a scale;
+`96034ac4`). Full screen: Files fills the output (`toggle-fullscreen`) on a folder of 3000 files; the repaint is
+three appearance switches, each repainting the whole window; the scroll is a two-finger (touchpad) scroll over the grid, as the bench sends it (`--scroll`). Default size:
+the baseline's `files-scroll` (a 400-file folder, the window at its default size). Client frame p50 / p99 ms, spread
+in brackets:
+
+| Scale | Full repaint, full screen | Raster / copy p50 | Two-finger scroll, full screen | Frames over a refresh | Two-finger scroll, default size |
+|---|---|---|---|---|---|
+| 1 | 82.5 (1.4) / 106.5 (1.4) | 52.0 / 13.6 | 56.7 (1.4) / 79.2 (5.1) | all (41 of 41) | 2.26 / 3.25 (0.32) |
+| 1.5 | 81.0 (2.0) / 106.2 (3.3) | 56.6 / 16.0 | 59.1 (6.9) / 77.9 (8.9) | all (42 of 42) | 5.44 / 6.23 (0.40) |
+| 2 | 57.4 (1.0) / 83.7 (2.1) | 36.0 / 18.5 | 34.0 (0.2) / 53.1 (0.6) | all (60 of 60) | 5.78 / 6.98 (0.68) |
+
+The full-screen scroll is raster (45 / 50 / 26 ms at p50) and copy (6.4 ms at p50, 19–25 ms at p99). A frame's cost
+follows the items in view, not the pixels: scale 2 shows a quarter of the items scale 1 does on the same pixels and is
+the fastest. The full-screen frames take so long that Files draws one frame in three refreshes (41 frames in 3 s).
+
+**Gate: update, view and layout in a Files scroll frame** (summed per frame, `logic_p50_ms` / `logic_p99_ms` of the
+bench; `scroll-*.json`, five runs a scale, the runs the machine disturbed left out):
+
+| Scale | Default size p50 / p99 ms | Full screen p50 / p99 ms |
+|---|---|---|
+| 1 | 0.09 / 0.48–0.96 | 1.0–1.2 / 5.6–6.1 |
+| 1.5 | 0.09 / 0.78–1.21 | 0.6–0.7 / 5.5–5.8 |
+| 2 | 0.09 / 0.57–0.72 | 0.33–0.36 / 0.43–2.53 |
+
+At the default size the three phases take 0.1 ms at p50 and under 1.3 ms at p99 (the 0.6 ms read earlier holds). With
+Files full screen on 3000 files the worst frame of the scroll spends 5.5–6.1 ms in them at scales 1 and 1.5 (view and
+layout about 3 ms each): above 4 ms, so step 4 gains the incremental view and layout item.
+
+**Budgets against the baseline** (the design's budgets table, each checked once):
+
+| Budget | Baseline | Verdict |
+|---|---|---|
+| Any frame inside one refresh; no missed refreshes or slow client frames | no missed refresh in any scenario; slow client frames only in resize and the control panel at scale 2 and in full-screen Files | confirmed: the scenarios that miss are the ones the owning steps fix |
+| Files two-finger scroll, p99 client CPU under 8 ms at scales 1 and 1.5 | default size 3.25 / 6.23 ms; full screen 79.2 / 77.9 ms | revised: the budget now names the window filling the output. At its default size Files meets it today, so only the full-screen scroll measures what step 4 must do |
+| Files live resize: client CPU excluding raster under 8 ms, GPU under 4 ms | p99 at 1.5: raster 8.6 ms, copy 6.5 ms, the other phases 2.3 ms together | confirmed: the copy is what the GPU path removes; the rest is a quarter of the budget |
+| Toolkit animation frame under 4 ms client CPU | Control panel 12.8 / 14.6 ms (raster 12.1 / 13.1); launcher p99 6.4 ms (raster 6.2) | confirmed: outside raster the phases' p99s add to 2.4 ms (the control panel) and 3.0 ms (launcher) at 1.5, most of it the copy the GPU path removes |
+| Client GPU time per frame under 4 ms | no client draws on the GPU yet; the compositor's whole output takes 0.7–6.8 ms of GPU at p99 | confirmed, checked from step 6 |
+| Compositor frame during a drag over glass: under 4 ms GPU, under 2 ms CPU | GPU p99 2.07 ms (1.5) / 1.43 ms (2); CPU p50 1.32 / 1.60 ms, p99 2.38 / 1.97 ms | confirmed: the CPU p99 at 1.5 is over, which step 2 fixes; the GPU room is for the compositor's own drawing that steps 8 and 9 move there. Revised in step 2: the CPU half is the time to compose and submit, without the wait for the GPU, each half against its own budget (Measurements, step 2) |
+| First frame of a GPU process; switch within 150 ms on a warm cache | context 57 ms, first program 0.4 ms from the driver's cache | confirmed |
+| Added private memory per GPU process under 80 MiB | 68.8 MiB after a context and a compiled first program; 21 MiB with the driver's cache | confirmed |
+| GPU memory per GPU window | a process's first 3840 x 2160 target adds 63.5 MiB for 31.6 MiB of pixels and keeps it | revised: the driver reserves one more target's size with a process's first one; the 32 MiB of atlases and pools cannot hold that at 4K, so the budget names it |
+| Client CPU after the look freeze: no scenario's client p99 more than 10% above its baseline | client p99 spreads: 1–10% for resize, the control panel, the launcher and the scrolls; 9–29% for the sub-millisecond drag and hover frames | revised: 10% or the recorded spread, whichever is larger, since 10% of a 0.6 ms frame is inside its noise |
+| Fence overhead under 1 byte a frame | -0.25 bytes a frame | confirmed |
+| Idle desktop: no frames, no GPU work; listed timers only | one menu bar frame and its composite a minute (the clock); wakeups as listed below | revised: the clock's one frame a minute is named as the exception |
+| Pointer motion to screen below the baseline; cursor on the cursor plane | DEFERRED by the owner (2026-11-15): the traced live session gives the baseline | confirmed as written; its baseline comes with the owner's trace |
+
+**Context, first program, later programs, teardown** (`gpu-probes context --runs 5`, median of five fresh processes,
+spread in brackets; private memory is clean + dirty, after each stage):
+
+| Stage | GBM: time | GBM: private after | EGL device: time | EGL device: private after |
+|---|---|---|---|---|
+| process start | | 0.3 MiB | | 0.3 MiB |
+| context (GLES 3, surfaceless) | 57.3 ms (17.4) | 20.0 MiB | 59.2 ms (6.1) | 20.0 MiB |
+| first program | 31.5 ms (0.8) | 68.8 MiB | 31.2 ms (1.2) | 68.8 MiB |
+| each later program (8) | 5.84 ms (0.05) | 68.9 MiB | 5.85 ms (0.03) | 68.9 MiB |
+| teardown | 13.0 ms (0.5) | 61.7 MiB | 12.9 ms (0.8) | 61.7 MiB |
+
+The first program costs 48.8 MiB of private memory (39 MiB of it dirty), the compiler loading; later programs cost
+almost nothing. Teardown gives back 7 MiB: a process that had a context keeps about 61 MiB until it exits. Both
+platforms are the same.
+
+**Render targets** (`gpu-probes texture --size 3840x2160 --count 4 --runs 5`, an RGBA8 texture and its framebuffer,
+total GPU memory from NVML; identical in all five runs):
+
+| Stage | Total GPU memory added | Process GPU memory |
+|---|---|---|
+| context and one program | 11.4 MiB | 2.7 MiB |
+| first 3840 x 2160 target (31.6 MiB of pixels) | 63.5 MiB | 66.2 MiB |
+| each later target | 32.0 MiB | +32.0 MiB |
+| all four deleted | 63.5 MiB stays | 66.2 MiB |
+
+The first target of a process costs twice its size: the driver reserves a pool the size of one more target, and keeps
+it when the targets are deleted. Later targets cost their size rounded up to 2 MiB.
+
+**A saved program binary** (`gpu-probes binary --runs 5`: the program saved once with `glGetProgramBinary` (9.6 KiB),
+then loaded as the first program of fresh processes; median of five):
+
+| First program of a fresh process | Time | Private memory added |
+|---|---|---|
+| compiled, driver's disk cache off | 32.5 ms | 46.7 MiB (38.6 MiB dirty) |
+| loaded from the saved binary, disk cache off | 4.95 ms | 6.2 MiB (0.6 MiB dirty) |
+| compiled, driver's disk cache on and filled | 0.40 ms | 0.7 MiB (0.2 MiB dirty) |
+
+**Native fence soak** (`gpu-probes fence --frames 10000000`, GBM, one small draw a frame, resident memory sampled and
+fitted by least squares after the first tenth):
+
+| Per frame | Resident growth | Run time |
+|---|---|---|
+| native fence: create, flush, export the fd, wait on it, close, destroy | 15.89 bytes | 305 s |
+| no fence (`glFinish`) | 16.15 bytes | 132 s |
+
+The fence adds nothing (-0.25 bytes a frame, inside the 1 byte a frame budget). Both grow about 16 bytes a frame,
+15.5 MiB a million frames, linearly: any draw without a present grows the driver's memory this way (no draw: no growth;
+the same on the EGL device platform and with the driver's threaded optimisations off). Step 3's slice presents every
+frame and must show whether presenting stops it; until then a GPU toolkit process that draws without presenting
+(offscreen work) is assumed to grow.
+
+**10-bit gradient on the primary plane.** DEFERRED by the owner (2026-11-15): it needs the display to itself. Tested as far as it
+goes without the display (`gpu-probes depth --dry-run`): the primary plane of the connected DisplayPort output takes
+`AB30` and `XR24`, both 3840 x 2160 framebuffers are made, the connector offers `dithering mode` (auto now; the probe
+sets off) and no `max bpc`; the CRTC has 1024-entry gamma and degamma tables. To run it: log out, switch to a text
+console (Ctrl+Alt+F3), log in, and from the checkout run `tools/gpu-probes/depth.sh`; then note for each band whether
+the 10-bit half is smoother than the 8-bit half, beside `target/gpu-probes/depth.jsonl`.
+
+**Presentation-time branch and plane assignment on the target driver.** DEFERRED by the owner (2026-11-15): it needs the session
+server on the display. With a build that has the trace installed: log out, switch to a text console, log in, run
+`CUPERTINO_DRM_TRACE=1 CUPERTINO_SESSION_LIMIT=300 cupertino-server --session`, use the desktop for a few minutes (move and
+resize a window, scroll in Files, play a video full screen), let it end, then
+`grep drm_trace ~/.local/state/cupertino/server.log`. The lines name the branch, missed flips, planes and latencies.
+
+**Timers that wake an idle desktop.** The bench's idle scenario counts, per thread, its voluntary context switches,
+samples where it sleeps (the call and its timeout) and reads each timerfd's period and count. Headless, Files and
+Settings open (Settings on its first pane, Account), nobody touching the desktop for 60 s. Before this step's changes
+(1280 x 800, 30 s): every process with a bus connection woke twice a second in its pool thread (120 a minute each,
+10 processes), the server's main loop woke 242 times a minute, Settings drew a frame a second.
+
+Removed:
+
+- The pool thread that bus connections run their blocking calls on stayed for good after its first call and woke twice
+  a second, in every process with a bus connection: its 1.7.0 release never ends an idle thread. Held at 1.6.2, which
+  ends it after half a second without work, by a normal dependency of `cupertino-peer`
+  (`tests::the_blocking_pool_ends_its_threads_once_idle` there; the gate fails on any other locked version).
+- Hung-application pings: the server pinged every client with a mapped window once a second, and each woke to answer.
+  Pings now go out only after input since the last one (the first input after a rest pings at once), so a desktop
+  nobody touches pings no one (`hung::tests`, `hung_apps::a_desktop_nobody_uses_pings_no_one_and_the_first_input_pings_at_once`).
+- The main loops' one-second backstop (session and headless): every time-driven piece of work names its deadline (the
+  tick's calls are audited), so the backstop is now a minute (`a_session_at_rest_sleeps_and_wakes_its_loop_once_a_minute_at_most`).
+- Settings drew a frame every second on a pane of readings (Account, 15 frames in 15 s): its rows all share one
+  control, so they shared one key and were mounted again at every refresh. Each row now has a key of its own and a
+  refresh that changes no reading draws nothing (`the_rows_of_a_section_have_keys_of_their_own_though_readings_share_their_control`,
+  `a_turn_that_changes_no_reading_presents_nothing_on_a_pane_of_readings`).
+- Settings re-read every pane once a second, whatever it showed: the appearance from the session service over the
+  bus (which woke the server and the bus daemon each time), and on a machine without a system bus (the headless runs)
+  a connect attempt and a listing of the bus's names a second. Settings now listens: one thread a bus asks the bus
+  daemon for the signals of the services it reads (the session and notification services' owner and property
+  changes; for the network, Bluetooth, power and power-profile services on the system bus, their owner and their
+  signals on the objects the panes read only, so an access point's strength or a single power device's update never
+  reaches it) and reads them from one queue it drains while it subscribes, so a burst at start cannot stall the
+  connection. A signal the shown pane does not read is dropped in that thread and never wakes the window; one it
+  reads wakes it once a burst. The appearance is read when the session service starts or says it changed. A device
+  plugged in or removed (input, power supply, network, sound, display, Bluetooth) is heard from udev's
+  announcements and reads the hardware again whatever the pane; a watch that ends with its connection starts again
+  on a new one, then after 1 s, doubling up to a minute. A pane whose readings all have a change signal, or that
+  shows none, arms no timer (`a_pane_whose_readings_have_change_signals_or_that_shows_none_arms_no_timer_and_a_polling_pane_one`,
+  `the_watch_tells_a_service_starting_its_property_changes_and_a_system_service_signal`,
+  `a_signal_the_shown_pane_does_not_read_never_reaches_the_window`,
+  `a_burst_of_signals_while_the_watch_starts_stalls_neither_the_watch_nor_the_connection`,
+  `a_device_plugged_in_adds_its_row_whatever_pane_shows`,
+  `a_watch_that_ends_watches_the_bus_again_and_keeps_trying_while_the_bus_is_gone`,
+  `a_failure_while_the_window_reads_the_background_queue_keeps_its_wait`).
+- The settings file watch of every process woke whenever any process opened or read a file beside the settings or in
+  the folder above them (`~/.config`, `/etc`; `/tmp` in the headless runs): its library always asks the kernel for
+  open events and drops them only after waking. The watch now asks only for changes, and the folder above only for
+  entries appearing and going (`opening_and_reading_files_in_the_watched_directories_wakes_nothing`).
+
+At 3840 x 2160 before these last two changes, a minute of rest woke Settings 480–1140 times over its threads (its
+async-io thread 240–780, its main thread 180, its bus thread 60–180), the server's async-io thread 145–216 times and
+its bus thread 60, and the bus daemon 129. After them (`idle-1.5.json`, `idle-2.json`, five runs a scale): Settings 0,
+the server 1, the bus daemon 9, and no settings watch thread in any run. Those runs have no system bus; with only
+Settings given the machine's own (NetworkManager, BlueZ, UPower, the power and power-profile services running, Account
+shown), its idle minute is the same: Settings 0 over all its threads, its two bus watch threads and the hot-plug
+thread included (the idle scenario at 60 s, and each thread's voluntary context switches over a further 60 s).
+
+Kept, with what they cost per minute after the changes (Settings open on Account, 60 s, both scales):
+
+| Who | Every | Why | Wakeups a minute |
+|---|---|---|---|
+| Settings, while Sound, Displays, Wi-Fi, Network or Notifications shows | 1 s (100 ms while the input level meter shows) | readings without a change signal: the sound server's volume and outputs, the display list (a fresh connection to the display server), the kernel's interface addresses (Wi-Fi also scans every 10 s), a new notification's application | Settings one refresh a period; no other pane arms a timer |
+| Settings, while Focus or Battery shows | 60 s | the durations offered follow the time of day; the charge history | Settings 1 |
+| menu bar clock | at each minute | the clock; it reads do-not-disturb and the control panel's state with it | menu bar 21–26 over its threads, notifications 8–17, the control panel 2, bus daemon 9 |
+| session and headless main loop | 60 s | backstop for a deadline left unnamed | server 1 |
+| Files' folder watches and the dock's trash watch | on activity only | their file watch library asks for open events too; they wake only when a process opens a file in the shown folder or the trash, which nothing does on an idle desktop | 0 |
+
+The whole desktop at rest wakes about 50 times a minute, all of it the clock's minute and the backstop. Two timerfds
+stay armed without firing in a minute (one in the server, one in the menu bar): long deadlines, not periods. The
+headless sessions keep the server's settings in a folder of their own, as a machine does (`/etc/cupertino`): beside
+`/tmp` every file another process made there woke the settings watch.
+
+### Step 3: the vertical slice
+
+Taken at `7f54f6b8` on the target machine's GPU (GeForce RTX 3060, proprietary driver 615.78.08), headless.
+
+**Where it is.** `cupertino-gpu-slice` (`crates/cupertino-gpu-slice`, a development binary, never packaged): a window
+drawing solid rectangles with GLES (scissored clears) into dmabufs. It reads the compositor's default dmabuf feedback,
+opens the main device's render node, makes a GLES 3 context on its GBM device (or, without one, on the surfaceless
+platform with texture export), and allocates ARGB8888 buffers with the modifiers both the feedback offers and the
+driver renders to (`model::usable_modifiers`: linear only when both list it). With `linux-drm-syncobj-v1` it keeps two
+buffers, each with a timeline: the frame's native fence is imported into a binary syncobj and transferred to the
+acquire point, the release point is waited for through an eventfd in its poll loop. Without the protocol it keeps
+three, waits for its own fence before each commit (on a driver without native fences, for the GPU on the CPU), and
+reuses a buffer only after its release and one further commit. `--shm-every K` draws every K-th frame from shared
+memory, destroying the syncobj surface object first and making it again on the next dmabuf frame. Presentation
+feedback counts missed refreshes from sequence gaps (or from the times over the refresh period when the compositor
+does not number its refreshes); the headless backend now numbers them (refreshes since its clock started). Every
+frame lays 24 overlapping rectangles in colours never shown at rest, then one flat colour over the window.
+
+The headless session offers explicit sync when its device has a render node and the kernel waits on timeline points
+through an eventfd; `--no-explicit-sync` withholds it.
+
+**Headless session tests** (`gpu_slice::`, the long-running group but the first two; on the NVIDIA GPU with
+`CUPERTINO_GPU_REQUIRED=1`, which turns every skip into a failure):
+
+| Test | What it shows |
+|---|---|
+| `a_headless_session_offers_explicit_sync_with_a_render_node_and_withholds_it_when_told` | offered with the render node, withheld with the flag |
+| `a_headless_presentation_numbers_its_refresh` | the sequence a headless presentation carries |
+| `the_slice_attaches_dmabufs_with_acquire_and_release_points_in_the_driver_s_layout` | 180 dmabuf frames, two buffers, no CPU wait, every buffer but the last two back through its release point; the compositor's buffer has the client's modifier, `0x0300000000e08014` (the driver's default) on the NVIDIA GPU, never linear |
+| `the_slice_destroys_its_syncobj_surface_before_a_shared_memory_frame_and_makes_it_again_after` | 6 shared-memory frames in 60, the object destroyed 6 times and made 6 times; the session never shows a shared-memory buffer on a surface that has the object |
+| `the_slice_without_explicit_sync_waits_for_its_own_fence_and_keeps_three_buffers` | 180 commits, 180 fence waits, three buffers, captures uniform |
+| `the_slice_counts_no_missed_refresh_when_the_session_keeps_up_and_every_overdraw_capture_is_flat` | 8 captures of the window, each one flat colour; missed refreshes counted |
+
+Missed refreshes headless: none in 59 frames when nothing holds the loop up; the captures (each a whole-output render
+and a PNG written by the session) hold it for a few refreshes each (15 in 107 frames with 8 captures).
+
+**The driver's default modifier.** The compositor imports the slice's buffers in `0x0300000000e08014`, the layout the
+driver picks among those both sides list (linear is import-only on this driver, so never offered to the allocator).
+
+**The fence budget** (`cupertino-gpu-slice --offscreen 10000000`, two GBM buffers, one full-buffer draw a frame,
+resident memory sampled 200 times and fitted after the first tenth):
+
+| Per frame | Resident growth | Run time |
+|---|---|---|
+| the window's fence path: native fence, import into a syncobj, transfer to a timeline point, eventfd wait | 15.95 bytes | 443 s |
+| no fence (`glFinish`) | 15.99 bytes | 262 s |
+
+The fence path adds nothing (-0.04 bytes a frame; the budget is under 1). Both grow about 16 bytes a frame, as the
+step 0 probe found for drawing without presenting.
+
+**llvmpipe and texture export.** On the host's llvmpipe (`LIBGL_ALWAYS_SOFTWARE=1`, the Mesa EGL vendor forced, the
+headless server on the surfaceless platform): the compositor offers dmabuf version 3 without feedback, with linear
+and the implicit layout; the slice allocates by texture export (linear), and 120 of 120 frames were dmabufs the
+compositor imported, each waited for by its fence. In the goldens image (`cupertino-goldens:7153b7a8…`, no device
+passed in): llvmpipe has neither native fences nor texture export, so the slice falls back to shared memory for its
+surface (120 shared-memory frames). With `/dev/udmabuf` passed into the same image (`docker run --device
+/dev/udmabuf`), texture export works: 120 of 120 dmabuf frames, linear, imported. So the dmabuf presenter can run
+in CI on llvmpipe only where the runner gives the container `/dev/udmabuf`.
+
+**The live session and the one-hour gate.** DEFERRED by the owner (2026-11-15): it needs the desktop session. From a terminal in
+the session, in the checkout:
+
+```sh
+cargo build --release -p cupertino-gpu-slice
+target/release/cupertino-gpu-slice --minutes 60 --control-shm --size 1280x800 --report ~/gpu-slice-hour.txt
+```
+
+Two windows open side by side (place them so neither covers the other): the slice and a shared-memory control
+window of the same size, drawing a frame every refresh for an hour. At the end both reports are printed (the control's
+lines start `control_`) with `comparison gpu_missed=N control_missed=M pass|fail`; pass is the gate's first half.
+For the second, take a few screenshots of the slice window while it runs: inside its rounded corners each must be one
+flat colour (blue or orange). The report also names the modifier and whether explicit sync was used.
+
+### Step 5: `cupertino-gpu` and the shader toolchain
+
+Taken at `0c12d235` on the target machine's GPU (GeForce RTX 3060, proprietary driver 615.78.08) and on llvmpipe.
+
+**Where it is.** `crates/cupertino-gpu` (graphics layer, MPL-2.0, depends on `glow` and `libloading` only):
+
+- `Device`: made on a render node through GBM (`Platform::RenderNode`) or on the surfaceless platform
+  (`Platform::Surfaceless`), or borrowed from the context current on the thread (`Device::borrow`, unsafe: the owner
+  keeps it alive and current). `DeviceInfo` says what it is: renderer, software or not, allocator (GBM, texture
+  export or none), native fences, fence import, robustness, purge notification, float targets.
+- Resources from descriptions, destroyed explicitly: `Buffer` (uniform, vertex, index), `Texture` (`R8`, `Rgba8`,
+  `Rgba16Float`, `Rgba32Float`; sampled and render targets), `Sampler`, `BindGroupLayout`, `BindGroup`, `Pipeline`
+  (program, layouts, vertex buffers, blending, topology, all fixed at creation), `Fence`.
+- External memory: `allocate_dmabuf` (a GBM buffer object with an offered modifier, or a texture exported in a layout
+  the offer holds) gives an `ExternalImage` (its texture and its `Dmabuf`); `import_dmabuf` makes a texture of
+  another device's or process's dmabuf.
+- Passes: `begin_pass(target, LoadOp)` gives a `Pass` (`set_pipeline`, `set_bind_group`, `set_vertex_buffer`,
+  `set_index_buffer`, `set_scissor`, `draw`, `draw_indexed`, `end`). `submit` gives a fence, `submit_exported` a fence
+  and its sync file, `wait_sync_file` makes later work wait on another's sync file on the GPU.
+- Loss: `status` reads the driver's reset status (`Loss::Reset { guilty }` or `Loss::Purge`; a purge does not count
+  toward the CPU fallback); a lost device refuses every call with `Error::Lost`. `inject_loss` is the test hook.
+  Every missing library, platform or device is `Error::Unavailable`, never a failed start.
+- Borrowed contexts: `enter` saves and `leave` restores the state listed in `gles::state` (program, framebuffers,
+  viewport, scissor, blending, colour mask, clear colour, depth, stencil and cull enables, the first 16 texture units'
+  textures and samplers, array and uniform buffer bindings and the first 16 uniform ranges, the vertex array, pack and
+  unpack alignment and row length); the device draws with a vertex array of its own.
+- `atlas`: coverage, colour and path mask atlases (shelf-packed pages with a one-pixel gap, a page used least
+  recently emptied when an entry fits nowhere at the cap, never one used in the current frame). `pool`: render
+  targets kept and handed out again by size and format, with a cap.
+- `shaders`: the generated programs (`shape`, `blit`, `blur_halve`, `blur_gauss`, `dither_fill`, and the test
+  programs `probe_coverage`, `probe_shadow`, `probe_gradient`, `probe_dither`). Sources in
+  `crates/cupertino-gpu/shaders/*.wgsl`, the shared module in `shared.wgsl`; `cargo run -p cupertino-gpu-shaders`
+  generates `generated/` (GLSL ES 3.00 for each stage, SPIR-V, the binding names), `--check` compares.
+  `cupertino-gpu-shaders` uses `naga` 24, the version already locked for the glass crate.
+
+**Caps** (each a multiple of the 2 MiB the driver rounds a render target up to, step 0's "Render targets"):
+
+| What | Size | Cap |
+|---|---|---|
+| Coverage atlas | 2048 x 1024 8-bit pages (2 MiB) | 2 pages, 4 MiB |
+| Colour glyph atlas | 1024 x 1024 RGBA pages (4 MiB) | 2 pages, 8 MiB |
+| Path mask atlas | 2048 x 1024 8-bit pages (2 MiB) | 2 pages, 4 MiB |
+| Render target pool | each target its bytes rounded up to 2 MiB | 16 MiB in use and free together |
+
+Together 32 MiB, the design's "32 MiB of atlases and pools" for a GPU window. The window's buffers and its
+window-sized layer are outside the pool, and a process's first render target makes the driver reserve one more
+target's size beside it, which no cap can hold (step 0); the budget names both separately. A target the pool cannot
+hold (one 3840 x 2160 RGBA target alone is 32 MiB) is refused with `Error::OverBudget`, so a full-window intermediate
+is the renderer's own, not the pool's.
+
+**Tests.** The device tests (`cupertino-gpu::suite` and the borrowed-context test in the library) run in the slow
+tier; the models of the atlases, the pool and the binding names, and the generator's tests, in the quick group.
+
+| Where | What ran | Result |
+|---|---|---|
+| NVIDIA, GBM on the render node, `CUPERTINO_GPU_REQUIRED=1` | both crates, both tiers (`--profile ci`) | 35 of 35 passed, none skipped |
+| host llvmpipe (`LIBGL_ALWAYS_SOFTWARE=1`, the Mesa EGL vendor forced, surfaceless, texture export), `CUPERTINO_EGL_REQUIRED=1` | the same | 35 of 35 passed, none skipped |
+| the CI image (the goldens image, no device passed in), `CUPERTINO_EGL_REQUIRED=1`, `cargo test` | the same | 35 passed; the two dmabuf tests and the native fence test skipped: llvmpipe there has neither texture export nor native fences, as step 3 found |
+
+What the tests show: every generated program compiles and links; the shape program's rectangles, circular and
+continuous corners match the shared coverage within 2/255 at every pixel; premultiplied blending and the scissor;
+a shape at the top left lands in the first rows, a texture's first row on the target's first row, and dithering is
+keyed to the pixel counted from the first row; the coverage, shadow, gradient and dither programs match their vectors
+(distances and shadows within 2·10⁻³, gradients within 10⁻⁵, the dither matrix exactly and its stores within a step);
+the blur's halving and Gaussian programs match the blur vectors at both edge rules in half floats (within 2·10⁻³) and
+8 bits (within a step); a dmabuf drawn on one device is imported and sampled on a second after its sync file, in the
+driver's modifier, never linear on the NVIDIA GPU; fences and sync files signal; an injected reset of each kind and a
+purge are reported and the lost device refuses work; a borrowed device leaves its owner's state exactly as it found
+it; atlas eviction reuses a page's texture and the cap holds within a frame; a released pooled target comes back.
+
+### Step 6: the presenter and the process
+
+Taken on the target machine's GPU (GeForce RTX 3060, proprietary driver 615.78.08), headless sessions, scale 1.
+
+**Where it is.**
+
+- `cupertino-ui-wayland::renderer`: the fallback rule as functions of what the process found (`start`, `settle`,
+  `LossHistory`), the switch `GPU_BY_DEFAULT` (off), `CUPERTINO_RENDERER`, the process's current renderer and why
+  (`active`), logged as `renderer: <cpu|gpu> (<reason>)` on every change and recorded in
+  `$XDG_RUNTIME_DIR/cupertino/renderers/<pid>` for `cupertino diagnose` (`gpu.client_renderers`). The frame
+  statistics carry `renderer` on every line and the frame bench lists each program's renderers.
+- `cupertino-ui-wayland::gpu_path`: the warm-up thread (device on the feedback's render node, saved programs, the blit
+  program, one draw with each of the renderers' programs so the driver finishes them before the first frame,
+  `GpuPrograms::prime`; the context released and taken over by the main thread), the switch (`PlatformEvent::RendererChanged`,
+  on which the runtime drops each window's renderer and draws whole frames with a new one), losses (every surface's
+  buffers freed, a new warm-up, the CPU for good after three resets within a minute; purges never counted), the
+  per-surface fallback to shared memory and `buffers_lost`.
+- `cupertino-ui-wayland::gpu_present`: one surface's buffers. A frame's damage is uploaded into a staging texture and
+  drawn into a dmabuf allocated in 128-pixel steps (a buffer serves a frame that fits and is less than two steps
+  smaller; the viewport crops it), in a modifier both the compositor offers and the driver renders to. With
+  `linux-drm-syncobj-v1` the frame's native fence becomes the acquire point of a timeline per buffer and its release
+  point is waited for through an eventfd, two buffers; without, the commit waits for the own fence and a buffer is
+  reused one commit after its release, three buffers.
+- Transport (`cupertino-wayland-client`): dmabuf feedback (format table, main device, tranches), buffers the
+  compositor may refuse (`create`, not `create_immed`), syncobj timelines and points, frames cropped to their size; the
+  syncobj surface object is destroyed before any shared-memory or one-colour commit.
+- `cupertino-gpu`: syncobj timelines on the render node (`syncobj`), the saved program binaries (`program_cache`), and
+  a device made on one thread and used on another (`Device::detach`, `DetachedDevice::attach`).
+- `cupertino_app_effects_v1` version 21: `cupertino_appearance_v1.buffers_lost`, sent by the server after its own
+  reset or purge to every observer of version 21 or later. It goes on the appearance observer because every toolkit
+  process, third-party ones included, already holds that surface-less object for session-wide events that need a
+  repaint, so no new global is needed and `cupertino_shell_v1` (shell processes only) is not the place.
+
+**First frame and warm-up** (the check window, 320 x 240, three runs each; the first frame went out on the CPU every
+time):
+
+| Program cache | First frame (shared memory) | GPU ready after the start | Context | Programs |
+|---|---|---|---|---|
+| empty (compiled, then saved) | 29.7–30.2 ms | 99–103 ms | 62.9–66.5 ms | 35.9–36.7 ms |
+| filled by the run before (loaded) | 28.9–29.3 ms | 65–73 ms | 64.6–72.1 ms | 0.3 ms |
+
+With the renderer's programs made in the warm-up too (`118b31cd`, the presenter's tests' window, 3 runs): first frame
+29.8–30.5 ms; empty cache, GPU ready after 233–237 ms (context 64–69 ms, programs 168–169 ms, once per driver and
+cache); filled cache 69–78 ms (context 65–74 ms, programs 4 ms).
+
+**Tests.** The presenter's GPU tier is `cupertino-server`'s `gpu_presenter` (long-running group) with
+`cupertino-ui-wayland`'s `gpu-window` as its client; the rule, the size steps, the reuse, the records and the switch
+in the runtime are fast tests.
+
+| Test | What it shows on the NVIDIA GPU (`CUPERTINO_GPU_REQUIRED=1`) |
+|---|---|
+| warm-up and syncobj | first frames in shared memory, then 2 buffers in the driver's tiled modifier (`0x0300000000e08014`) imported as drawn, every buffer back through its release point, no CPU fence wait, one syncobj surface object, the record says `gpu` |
+| program cache | the second start loads the program the first compiled and compiles none |
+| without explicit sync | 3 buffers, one fence wait a frame, no syncobj object |
+| resets | a new device after each, the CPU for good after the third (reason "the context was lost 3 times within 60 s"), the syncobj object destroyed before every shared-memory frame |
+| purges | four purges, five devices, the process stays on the GPU and the later devices load the saved program |
+| refused import | the surface moves to shared memory with its syncobj object destroyed first; the process stays on the GPU |
+| resize storm | 183 sizes in 233 frames from 13 buffers |
+| short soak | 900 frames, 2 buffers, every release point signalled, no fence wait |
+
+8 of 8 passed; `gpu_slice` (6 of 6) and `gpu_reset` (3 of 3) still pass beside them.
+
+### Step 6: Files on the GPU path
+
+Taken at `999c46f2` on the target machine (GeForce RTX 3060, proprietary driver), release builds,
+`CUPERTINO_RENDERER=gpu`, the frame bench with `--size 3840x2160 --scale S --scenario files-full-scroll --runs 3`, other
+checkouts building beside it (load 5 to 9). Every Files frame counted was drawn by `GpuRenderer` (the frame lines'
+`renderer`). Medians of the three runs, the range of the runs after them; the phases are the Files client's own. The
+CPU column is the CPU path in the same hour at `68ff5660` (one run, load over 10).
+
+| Files two-finger scroll, client frame ms | GPU, scale 1.5 | GPU, scale 1 | CPU, scale 1.5 |
+|---|---|---|---|
+| Frames drawn in the scroll | 184 | 158 | 80 |
+| Frame p50 / p99 | 2.8 / 7.7 (7.2–10.8) | 6.3 / 37.5 (25.9–39.5) | 32.0 / 52.5 |
+| Update + view + layout p99 | 4.6 | 25.4 | |
+| Paint p50 / p99 | 1.5 / 2.0 | 4.0 / 12.3 | |
+| Raster p50 / p99 | 0.8 / 2.2 | 1.1 / 4.6 | 11.3 / 16.1 |
+| Copy p50 / p99 | 0.09 / 0.65 | 0.11 / 0.59 | 13.3 / 29.8 |
+| Commit p99 | 0.0 | 0.0 | |
+
+How it came there, at 1.5:
+
+| Commit | Frame p50 / p99 | Raster p50 / p99 | Copy p50 / p99 | Commit p99 |
+|---|---|---|---|---|
+| `68ff5660` (the content painted in place) | 7.8 / 15.0 | 5.9 / 7.4 | 0.07 / 0.53 | |
+| kept scroll layers on the GPU | 4.1 / 14.6 | 0.9 / 2.2 | 0.14 / 0.73 | 5.6 |
+| the raised layer from GPU buffers (`06898193`) and `999c46f2` | 2.8 / 7.7 | 0.8 / 2.2 | 0.09 / 0.65 | 0.0 |
+
+The scroll's budget (8 ms p99) is met at 1.5 in two runs of three. What is left of a frame is the toolkit's: at scale
+1 the frames that show other rows make the view again (view and layout together 16–26 ms p99, paint 8.5–12.5 ms
+p99), step 4's open items. The renderer's own part of a frame (raster and copy) stays under 6 ms p99 at both scales.
+
+### Step 6: the renderer
+
+Taken at `27c8c02c` on the target machine's GPU (GeForce RTX 3060, proprietary driver) and on the host's llvmpipe
+(`LIBGL_ALWAYS_SOFTWARE=1`, the Mesa EGL vendor forced, surfaceless), release builds.
+
+**Where it is.** `cupertino-ui-gpu`: `GpuRenderer` records a frame's draws (`record`) and then runs them (`exec`): its
+uniforms and instances in one buffer each, a pass per target. Three programs, written in WGSL and generated like the
+others: `ui_fill` (a rectangle's or rounded rectangle's distance, or a coverage image, under up to four analytic clips
+and a clip mask, in solid or gradient paint, all in the CPU renderer's byte arithmetic), `ui_texture` (colour glyphs,
+layers, images) and `ui_effect` (a blurred level resolved into a blur, drop shadow or inner shadow). Glyphs go into a
+coverage and a colour atlas, path masks and clip masks into a mask atlas, images into textures kept by revision under a
+byte budget; layers and blur levels (32-bit floats where the device renders to them) come from the target pool. A frame
+repaints the rectangles every renderer repaints (`cupertino_ui_render::damage_rects`). `ui-render` gained the shared
+request check and damage rectangles, its golden scenes in their own file for both suites, and one fix found by the
+comparison: under a stretch (different horizontal and vertical scales) its span path laid pixels at full coverage
+that its general path covers a little less, so a stretched node keeps its scratch image.
+
+**Goldens** (`goldens::every_golden_scene_matches_its_baseline_on_the_gpu`, the CPU renderer's 13 scenes against its
+baselines, tolerance 2/255): all within 1/255 on the NVIDIA GPU (`CUPERTINO_GPU_REQUIRED=1`) and on llvmpipe
+(`CUPERTINO_EGL_REQUIRED=1`); the incremental clip frames included.
+
+**Parity** (`parity::*`, 9 tests, 76 seeds, 3 scales, 3 frames each, the last two repainting one to three damaged
+rectangles after a change): every pixel within 2/255 of the CPU renderer, but for at most 4 pixels a frame at 3/255
+(`STRAY_PIXELS`). Those few come from what the CPU renderer lays through its rasterizer's own pipeline, an operation's
+layer (`PushLayer`) and a solid stroke along a path, whose products round each piece apart; the GPU renderer lays the
+stroke drawn by the same stroker and the layer with exact products. The same on both devices.
+
+**A large window** (`timing::a_large_windows_damaged_frame_stays_within_the_gpu_budget`: 1600 x 1000 points at 1.5,
+2400 x 1500 pixels, tiled with the golden scenes, 325 nodes; medians; a GPU frame timed from the request to the
+device finishing it):
+
+| | NVIDIA GPU | llvmpipe | CPU renderer |
+|---|---|---|---|
+| making the renderer (its programs) | 16.7 ms | 12.6 ms | |
+| first frame (caches and atlases filled) | 16.4 ms | 75.3 ms | 14.7 ms |
+| whole frame | 13.4 ms, of which 13.3 ms before the request returns (2.5 ms at `88f056ec`) | 42.3 ms | 10.8 ms |
+| a control's worth of damage | 0.24 ms, of which 0.17 ms before the request returns | 1.7 ms | 0.51 ms |
+
+The GPU's own share of a frame is under a tenth of a millisecond after the request returns: client GPU time is far
+under its 4 ms. The whole frame's time is the recording and issuing of its draws on the CPU, one draw and bind group
+per operation, and above all the 117 of its 125 offscreen targets made and destroyed every frame: with a finished
+target's texture serving the next of its size (`88f056ec`) the whole frame takes 2.5 ms, 2.3 ms before the request
+returns, no target made; a control's worth of damage 0.24 ms. The first frame still goes out on the CPU while the device
+warms (step 6's presenter), so the first-frame budget holds; a switch with a warm cache costs making the renderer and
+its first frame, about 33 ms on the NVIDIA GPU, within the 150 ms. Under heavy load from other builds the GPU
+renderer's whole frame once took 420 ms on the CPU side, the driver's threads starved; the CPU renderer's did not
+move.
+
+### Step 7: turn it on
+
+Taken on the target machine (GeForce RTX 3060, proprietary driver), release builds, headless at 3840 x 2160 and 60
+Hz, the frame bench (`--runs 3`); medians of the three runs, their range after them; client frame times are each
+process's own. "Both renderers" is the merge before this step (`1fa757fe`) with `CUPERTINO_RENDERER=gpu` and with
+`cpu`; "classes" is this step at `d3b7846b`, no override, each process on its class's renderer. The load average (1, 5
+and 15 minutes) before and after each run is given.
+
+| Client frame ms, scale 1.5 | GPU | CPU | Classes | Assigned |
+|---|---|---|---|---|
+| Files live resize: frame p50 / p99 | 2.3 / 5.1 (4.5–5.3) | 9.6 / 15.8 | GPU 3.0 / 5.3 (5.0–5.4) | GPU |
+| Files live resize: raster p99, copy p99, beyond the raster p99 | 2.9, 2.8, 4.7 | 8.9, 5.8, 6.8 (1 slow frame) | 2.8, 3.0, 3.8 | |
+| Control panel, six frames (two an opening, none at the close): p50 / p99 | 11.8 / 17.9 (17.7–28.0), raster p50 11.3 | 14.7 / 16.9 (16.6–17.4), raster p50 12.5 | CPU 14.7 / 16.9 (15.8–22.3) | CPU |
+| Dock sweep p99 | 1.7 | 0.5 | GPU 1.6 | GPU |
+| Overview: p50 / p99, slow frames | 0.7 / 2.0, 0 | 19.1 / 27.7 (27.3–33.3), 4 (copy p99 17.3) | GPU 0.7 / 2.0, 0 | GPU |
+| Overview: compositor work p99 | 4.1 | 9.2 | 3.8 | |
+| Launcher open and close p99 | 1.9 | 6.9 (raster 6.6) | GPU 2.1 | GPU |
+| Launcher typing p99 | 1.7 | 5.4 (raster 5.3) | GPU 1.9 | GPU |
+
+Scale 1, live resize: GPU p99 4.3 ms (3.1 beyond the raster), CPU 7.8 ms (4.1); classes 4.5 ms. No missed refresh by
+the compositor in any run. Loads: both renderers 2.3 / 6.1 / 7.4 falling to 0.6 / 3.4 / 6.1 (resize) and 0.6 / 3.4 /
+6.1 to 1.5 / 1.8 / 4.2 (shell scenarios); classes at 1.5 from 7.7 / 7.5 / 6.1 to 1.9 / 3.4 / 4.6, at 1 to 0.9 / 2.9 /
+4.3.
+
+**Memory**, private MiB at the end of each scenario, medians (private dirty in brackets):
+
+| Process | All on the CPU | All on the GPU | Classes | Added by the GPU |
+|---|---|---|---|---|
+| Dock | 54.9 (42.4) | 131.5 (119.8) | 133.4 (121.0) | 78.5 |
+| Launcher | 16.1 (4.9) | 91.8 (80.7) | 92.1 (80.6) | 76.0 |
+| Settings | 37.5–42.2 (20.4–25.7) | 113.8 (97.0) | 106.6 (89.5) | 64–69 |
+| Files, window and desktop together | 55.9 (53.0) | 184.0 (180.6) | 111.0 (107.9) | 55 (the window only) |
+| Control panel | 13.9 (4.3) | 87.1 (77.5) | 13.9 (4.3) | none: CPU |
+| Menu bar | 21.2 (6.7) | 97.1 (82.3) | 21.1 (6.7) | none: CPU |
+| Notifications | 14.3 (4.3) | 86.8 (76.8) | 14.3 (4.3) | none: CPU |
+| OSD | 13.6 (4.4) | 89.5 (80.2) | 14.0 (4.4) | none: CPU |
+| Server | 177.7–188.9 | 122.5–124.7 | 124.6 | |
+
+A GPU process costs 64–78 MiB of private memory more than on the CPU, nearly all of it dirty: the driver's context
+and the toolkit's pools. The CPU-class processes are unchanged. The server's private memory falls by about 55 MiB
+once the large windows come as dmabufs.
+
+**Idle** (the bench's idle scenario, 60 s, classes at 1.5): one menu bar frame and its composite in two runs of three,
+none in the third (no minute turned). Wakeups a minute over each process's threads: menu bar 44 (0–56), notifications
+16 (0–30), the control panel 4, the server 2, the bus daemon 18, all the clock's minute; the GPU-class processes 0.
+
+**A full session** (the headless session at scale 1.5, Files and Settings opened, then the
+launcher with two letters typed, the control panel opened and closed, the volume raised and lowered, the screenshot
+toolbar, a banner; load 0.5 / 2.6 / 4.2 to 0.3 / 2.1 / 3.9, and 0.7 / 1.4 / 2.8 to 0.5 / 1.2 / 2.6 for the same
+session with `CUPERTINO_RENDERER=cpu`). The renderer records:
+
+| Process | Renderer, reason | Private MiB, classes | Private MiB, all on the CPU | Added | GPU memory (`nvidia-smi`) |
+|---|---|---|---|---|---|
+| Dock | gpu, the GPU | 133.7 | 52.7 | 81.0 | 16 MiB |
+| Launcher | gpu, the GPU | 109.6 | 22.2 | 87.4 | 28 MiB |
+| Files window | gpu, the GPU | 101.4 | 26.0 | 75.4 | 45 MiB |
+| Settings | gpu, the GPU | 114.5 | 42.7 | 71.8 | 45 MiB |
+| Menu bar | cpu, its class draws on the CPU | 20.6 | 20.5 | | |
+| Notifications (a banner shown) | cpu, its class draws on the CPU | 18.9 | 19.1 | | |
+| Control panel | cpu, its class draws on the CPU | 25.8 | 25.5 | | |
+| OSD | cpu, its class draws on the CPU | 16.3 | 16.3 | | |
+| Files desktop | cpu, its class draws on the CPU | 17.0 | 16.9 | | |
+| Screenshot toolbar | cpu, its class draws on the CPU | | | | |
+
+Over the session's last 30 s at rest no process woke. The GPU was ready 180–302 ms after each GPU process started (a
+cold program cache in the session's own home; the first frames go out on the CPU meanwhile). No fallback was recorded.
+
+**After the split items** (one-off checks of single processes; the bench's numbers are measured at the end).
+Memory: one headless session at 3840 x 2160 and 1.5, `--spawn cupertino-files --spawn cupertino-settings`, private
+MiB 20 s in (`/proc/<pid>/smaps`, clean + dirty); the warm cache is the cold run's `.cache` copied into the next
+session's home, both the program binaries and the driver's own cache.
+
+| Process | All on the CPU | GPU, warm cache | GPU, cold cache, before | GPU, cold cache, in turn | GPU memory (`nvidia-smi`) |
+|---|---|---|---|---|---|
+| Dock | 53.5 | 77.6 | 133.6 | 132.5 compiling, 92.1 loading | 16–17 MiB |
+| Launcher (not opened) | 15.9 | 38.7 | 92.0 | 91.9 compiling, about 40 loading | 2 MiB |
+| Files window | 29.4 | 37.8 | 97.2 | 49.8–53 | 51 MiB |
+| Settings | 44.4 | 51.3 | 103.7 | 63.4–74.8 | 48 MiB |
+
+In the cold sessions with turns the GPU was ready 161–387 ms after each process started, one process compiling
+("1 loaded and 7 compiled"), the others loading ("8 loaded and 0 compiled"). Files' GPU memory with a second window
+opened and closed twice (warm cache): 51, 116, 84, 116, 84 MiB.
+
+The control panel: a whole frame of the panel at rest at 1.5 (654 x 969 pixels, dark), in the panel's test driver with
+a timing renderer, release build: 13.8 ms on a new renderer and 8.1–9.0 ms warm before (the shadow's rings 7.8 ms of
+it); after, 2.5–3.2 ms on the new renderer each opening makes (the shadow's picture laid over 0.9 ms; the first
+opening of a process 5.0 ms).
+
+### Step 8: the compositor's own drawing
+
+the frame bench (`--size 3840x2160 --scale 1.5 --runs 3 --scenario drag,hover`), release builds, NVIDIA RTX 3060,
+medians of three sessions. The baseline is a release build of main before step 8 (`37c9d374c`); its hover cannot run
+with the bench of this step (it moves the pointer with `--pointer-on`, which that server does not know), so its hover
+row is the run that found the window buttons before step 8 (above). Load averages (1, 5, 15 minutes) at the start
+and end of each bench.
+
+| Scenario, build | Load | work p50 | work p99 | CPU p99 | GPU p99 | Title bars: rasters / uploads / GPU draws |
+|---|---|---|---|---|---|---|
+| drag, baseline | 1.23 3.97 6.41 to 1.35 3.56 6.12 | 1.43 ms | 2.52 ms | 2.42 ms | 2.23 ms | 0 / 0 / - |
+| drag, step 8 before its HUD part | 1.79 5.09 7.24 to 1.38 4.14 6.50 | 1.41 ms | 2.46 ms | 1.81 ms | 1.61 ms | 0 / 0 / 0 |
+| drag, baseline | 3.27 5.60 6.47 to 4.88 5.69 6.45 | 1.65 ms | 3.14 ms | 2.68 ms | 2.44 ms | 0 / 0 / - |
+| drag, step 8 (`2f67e576e`) | 4.88 5.69 6.45 to 6.10 5.87 6.47 | 1.64 ms | 2.90 ms | 2.76 ms | 2.42 ms | 0 / 0 / 0 |
+| hover, baseline | (before step 8) | 1.31 ms | 1.99 ms | 1.44 ms | 1.09 ms | 36 / 36 (12 MiB) / - |
+| hover, step 8 (`2f67e576e`) | 4.13 6.61 6.86 to 3.12 5.61 6.48 | 1.28 ms | 1.66 ms | 0.92 ms | 1.19 ms | 0 / 0 / 36 |
+
+The second pair ran back to back while other builds loaded the machine. CPU p99 is the compositor's compose and
+submit time without the wait for the GPU. The drag's p99 is set by a stall of about 2 ms inside the driver about once
+a second, in which the submit time follows the GPU time, so it moves with the machine's load more than with the
+compositor: at a load of 1 to 2 it is under 2 ms with step 8 and 2.4 ms without; at a load of 5 the two are the same
+within the noise. Reading the state once a frame (`4ee84aeb3`) took the passes' own share away: each element's read
+and restore of the context's state had cost 4 to 6 µs, about 25 µs a frame of five passes. One session each,
+alternating builds, at a load of about 10 (5 to 7 for the last pair): baseline 2.45 and 2.66 ms, `4ee84aeb3` 2.34 and
+2.37 ms.
+
+Gate: the hover draws its 36 title bars on the GPU with no CPU raster and no upload (`deco r/u/g 0/0/36`).
+The keyboard HUDs are not in these scenarios; `coverage_gl` checks them as it checks the chrome.
+
+### Step 9: layers and animation in the compositor
+
+Headless server, the `controlcenter` component of `cupertino-shell` on a private bus, debug builds, counted by
+`shell_processes::the_control_panel_fades_on_the_compositor_s_clock_without_a_new_buffer` (its trace with
+`--no-capture`): the buffers the card committed between its first frame and the end of each fade, against the server
+steps that showed the fade part way.
+
+| Control panel | Server steps part way | New buffers of the card |
+|---|---|---|
+| Fade in, with the compositor's presentation | 58 | 1 |
+| Fade out, with the compositor's presentation | 27 | 0 |
+
+The one buffer of the fade in is a single frame the card draws after its first as it opens; the fade's steps draw
+none, where without the presentation each step is a frame. Taken at the branch's commit, on the machine shared with other builds.
+
+Without the presentation the card draws one frame per frame callback through each fade
+(`the_fade_steps_at_each_frame_of_the_card_s_window_until_it_ends`): about 14 at 60 Hz for the 0.23 s fade in and 11
+for the 0.18 s fade out.
+
+Popups, counted by `a_popover_grows_and_shrinks_and_a_menu_fades_on_the_compositor_s_clock_without_a_frame` (the
+toolkit's runtime over its in-memory window system, frame callbacks answered every 16 ms):
+
+| Popup | Frames answered | Frames presented, handed over | Without the handover |
+|---|---|---|---|
+| Popover growing (0.35 s) | 25 | 0 | one per frame until it rests |
+| Popover shrinking (0.22 s) | 14 | 0 | one per frame until it goes |
+| Menu fading (0.236 s) | 14 | 0 | one per frame until it goes |
+
+**The sheet.** Headless server at 1280 x 720 points, scale 1.5, release builds, recorded at 60 frames a second:
+"before" from the commit before the control panel's presentation (the card drawing its own fade), "after" from this step's
+branch (the compositor fading the card). Each pair is taken the same number of frames after the first frame that
+changes, the after frame the closest of that frame and its two neighbours, as the two runs start up to a frame apart;
+the number is the largest difference of any channel in the crop, out of 255.
+
+| Control panel | Mid-way pairs (frames after the start) | Largest mid-way | Settled |
+|---|---|---|---|
+| Open, dark | 1, 2, 4, 7, 10 | 7 | 1 |
+| Close, dark | 1, 3, 5, 8 | 14 | 0 |
+| Open, light | 1, 2, 4, 7, 10 | 10 | 0 |
+| Close, light | 1, 3, 5, 8 | 19 | 0 |
+
+Settled, the card is the same within a step of one channel. Mid-way, the two fades sit at slightly different moments:
+each run's frames land at their own phase of the fade's clock (the card's own frames before, the compositor's after),
+so a pair compares two moments up to a frame apart, and the differences fall to 2 or 3 as the fade slows.
+
+The launcher's close at the same moment, from
+`the_close_the_compositor_runs_is_the_panel_s_own_drawing_at_the_same_moments` (`--no-capture`; the pictures with
+`CUPERTINO_LAUNCHER_MOMENTS`): the launcher at 1.5 on the toolkit's in-memory window system, its clock stepped in
+16 ms frames. "Own" is each frame the application draws of its close with the layers off; "layers" is the compositor's
+layers at the same moment of the close, worked out from the curves the panel sent with the compositor's animator and
+laid over each other as the compositor draws them. The glass is the compositor's in both and matches in rect, corner
+and opacity at every moment. The largest channel difference over the window, then without the mode button's face and
+the caret:
+
+| Launcher close | 17 ms | 33 ms | 50 ms | 67 ms | 83 ms | At rest |
+|---|---|---|---|---|---|---|
+| Dark | 44 / 7 | 15 / 4 | 33 / 1 | 22 / 1 | 6 / 1 | 1 |
+| Light | 44 / 7 | 13 / 4 | 10 / 1 | 22 / 1 | 6 / 1 | 1 |
+
+The 44 is the caret at the close's first frame: the application's own drawing moves it a device pixel to the left as
+its enclosure moves (it lies on whole device pixels of the window), where the content's layer keeps it in place; by
+50 ms the blur has taken it under 2. The 33 and 22 are the mode button's ring and symbol, which the compositor moves
+onto whole device pixels while the drawing places them between pixels. The 7 is the text under the close's first, one
+or two pixel wide blur, where two Gaussians of the same deviation round differently. The earlier recording of two runs,
+whose pairs landed up to a frame apart, put the close's first frame at 83 to 109.
+
+A scope's open from hidden at the same moment, from
+`the_open_the_compositor_runs_is_the_panel_s_own_drawing_at_the_same_moments`, the same way: every other frame the
+application draws of its open (of 30) and its last, against the compositor's layers at that moment. The largest
+channel difference over the window, then apart from two device pixels either side of the outline:
+
+| Launcher open | 50 ms | 83 ms | 150 ms | 183 ms | 283 ms | 317 ms | 500 ms (last) |
+|---|---|---|---|---|---|---|---|
+| Browser, dark | 43 / 0 | 73 / 1 | 84 / 0 | 84 / 0 | 63 / 0 | 88 / 0 | 0 |
+| Browser, light | 12 / 0 | 21 / 1 | 25 / 0 | 24 / 0 | 19 / 0 | 26 / 0 | 0 |
+| Files, dark | 45 / 0 | 73 / 1 | 78 / 0 | 83 / 0 | 71 / 0 | 90 / 0 | 0 |
+| Files, light | 12 / 0 | 21 / 1 | 23 / 0 | 24 / 0 | 21 / 0 | 26 / 0 | 0 |
+
+Every difference over 1 is along the outline: the edge is the resting stroke scaled, a half-point line that the
+scale puts between device pixels, where the application strokes it afresh at each scale; it is bounded by two fifths
+of the line's opacity (95 in the dark, 28 in the light). The first frame is the same in all four.
+
+A scope's open, counted by `shell_processes::the_launcher_opens_a_scope_on_the_compositor_s_clock_without_a_new_buffer`
+(the real process on a private bus, debug builds, the browser opened and closed once first): 0 buffers of the window
+and its three layers while the open is part way, in each of 3 runs, over 92 to 93 server steps that showed it part
+way.
+
+The launcher's close, counted by `shell_processes::the_launcher_closes_on_the_compositor_s_clock_without_a_new_buffer`
+(the real process on a private bus, debug builds): 0 buffers of the window and its five layers from Escape until the
+panel goes, in each of 3 runs, over 14 to 16 server steps that showed it part way. Without the layers the panel draws a
+frame per frame callback through the close, about 6 at 60 Hz.
+
+### Step 1: the look freeze
+
+the frame bench (`--size 3840x2160 --scale 1.5 --runs 3 --idle-seconds 30`), the base commit's programs and then the
+freeze's, one after the other on the same machine (other builds ran beside them; drag and idle were measured again
+after a run the machine disturbed, whose spread was 0.6 and 0.8 ms). Client frame p99 ms, median of the three runs
+(spread):
+
+| Scenario | Client | Before | After | After / before |
+|---|---|---|---|---|
+| idle | menu bar | 0.49 (0.07) | 0.44 (0.09) | 0.90 |
+| drag | Settings | 0.75 (0.03) | 0.77 (0.26) | 1.02 |
+| hover | Settings | 1.27 (0.05) | 0.96 (0.00) | 0.76 |
+| resize | Files | 17.61 (6.16) | 17.05 (2.61) | 0.97 |
+| control-panel | Control panel | 14.99 (18.08) | 16.12 (5.88) | 1.08 |
+| launcher-typing | launcher | 6.77 (0.46) | 5.99 (0.55) | 0.88 |
+| files-scroll | Files | 7.64 (6.06) | 8.03 (2.20) | 1.05 |
+
+No scenario is more than 10% above its before. The first run of the freeze put launcher-typing at 8.51 ms (1.26): its
+open and close blur the whole panel as a group, and the Gaussian's first version split, read back and rounded every
+pixel through the general paths (46 ms for a 1000 x 640 layer at the widest blur, against the box blur's 21). Rounding a
+store without the library call, splitting the planes in one pass and reading back and dithering a row at a time, with
+the same bytes, brought it to 21 ms at the widest and less below it, and a drop shadow from 15 to 3 ms.
+
+### Step 2: compositor wins
+
+Taken on the target machine's GPU, release builds, the frame bench (`--scenario drag --size 3840x2160 --scale 1.5
+--runs 3`), no build running. Before is `2b119fa4` with only the counter of texels the blurs write added; after is the
+step's last commit. Medians of the three runs, spread in brackets where it is not zero.
+
+| Drag over glass | Before | After |
+|---|---|---|
+| Blur passes per frame | 9.36 | 9.33 |
+| Texels the blurs write per frame | 1 221 263 | 561 017 |
+| Backdrops blurred again / reused per frame | 4.69 / 4.31 | 2.79 / 6.21 |
+| Compositor work p50 / p99 ms | 1.25 (0.02) / 2.33 (0.11) | 1.39 (1.12) / 2.42 (0.24) |
+| Compositor GPU p50 / p99 ms | 1.01 / 2.09 (1.03) | 1.06 (0.37) / 1.49 (0.76) |
+| Server CPU ms/s | 86.7 (3.3) | 93.3 (53.3) |
+| Missed refreshes | 0 | 0 |
+
+The GPU p99 is not the overlap-limited generation's. It moves between runs of one build by more than any change of
+the step: `2b119fa4` measured 0.94 ms one session, 1.53 to 5.55 ms and 1.16 to 2.19 ms on two later ones, and a build
+of the step without the overlap-limited generation 2.11 to 5.89 ms. The frames past 2 ms are one to three a run,
+where the blur passes alone take 1.65 to 1.8 ms of GPU time against 0.23 ms in the frames around them, with the same
+passes, crops and backdrops made again, at full clocks, in every build. The GPU is shared with the desktop session
+while the bench runs, and the slow frames come with it, not with a build.
+
+Every frame of the drag uncovers something under the backdrops the window passes or carries, so every frame runs the
+passes of a blur for them: 9.33 passes a frame is the drag's own, and making a backdrop again in parts adds passes
+(a capture and a pyramid a part) while each covers less. What the step cuts is how much the passes cover: a
+backdrop whose region moved, or whose scene changed in part, keeps its pyramid's last level and makes again only the
+texels whose squares changed or newly lie under it, then filters the whole level as after a whole capture. Since
+each texel of the last level is the mean of its own square of pixels, the result is the whole capture's texel for
+texel (`material::tests::a_backdrop_made_again_where_it_changed_or_newly_reaches_is_the_blur_of_the_whole`, and on the
+GPU `window_popup_backdrop::a_sidebar_dragged_over_a_window_is_blurred_again_in_part_and_looks_as_if_blurred_whole`,
+worst difference 1 of 255). A window's shadow and outline draw nothing under the window, so their move changes only
+the ring around it. The texels written fall by 54 %; the glass containers, whose passes are most of the count, still
+blur their whole sampled area.
+
+The gate is not met as written: the passes are inherent to the drag, and the compositor work p99 stays over the
+2 ms budget (2.33 ms before, 2.42 ms after, which includes waiting for the GPU). Proposed revision of the gate, for
+the lead:
+
+- Old: "Window drag over glass meets its budget with fewer blur passes than the baseline; the shimmer and banding
+  checks pass."
+- New: "Window drag over glass meets its budget with fewer texels written by blur passes per frame than the baseline;
+  the shimmer and banding checks pass."
+- Reason: each frame of a drag uncovers new backdrop, so the pass count is set by how many backdrops the window
+  touches, not by how they are made; the texels written are what a cheaper blur saves, and are measured per frame by
+  the bench (`blurKt/f`).
+
+Even revised, the budget half stays open: the work p99 at 1.5 is over 2 ms before and after.
+
+The revision was accepted. A second round on main as of `8603ae73`, five runs, other checkouts building and testing
+throughout (8 to 19 compilers and test runners beside the bench, no other headless session):
+
+| Drag over glass, 5 runs | Before (3 runs, quiet) | After: median (spread) |
+|---|---|---|
+| Compositor work p99 ms | 2.33 (0.11) | 7.08 (6.34); the two runs with the least beside it 2.65 and 2.95 |
+| Compositor GPU p99 ms | 2.09 (1.03) | 5.40 (5.69); 2.32 and 2.58 |
+| Texels the blurs write per frame | 1 221 263 | 561 233 (3 425) |
+| Blur passes per frame | 9.36 | 9.42 (0.11) |
+
+What remains of the work is waiting for the GPU. The compose is 40 µs a frame; the render is the GPU's frame plus
+0.5 ms (p50, 1.6 ms p99 with the compilers beside it). The frames past 2 ms are those whose blur passes take
+1.6 to 2 ms of GPU time instead of 0.3 ms for the same ten passes.
+
+The glass containers do not take the partial re-blur. In this drag every glass backdrop made again belongs to the
+dragged window: its sidebar (492 by 1266 pixels), its toolbar and its title area. Each moves with the window, and its
+capture is its own area at half scale, with the window's edge repeated past it. A move shifts each texel's place under
+the screen by a fraction of a texel and moves the repeated edge with it, so no texel of the last blur is one of the
+new blur, and there is nothing to keep. The same holds for the stationary dock while it resizes.
+
+Next steps, as proposed then:
+
+1. Capture a window's glass on a grid fixed to the output, with a margin as the materials have, and repeat the
+   window's edge in the composite rather than in the capture. A dragged window's glass then keeps every texel away
+   from the edges it uncovers, as its material does. This changes pixels at the glass edges, so it re-records the
+   goldens that show window glass.
+2. Measure the work without waiting for the GPU: CPU time to submit, GPU time from timestamps, each against its own
+   budget. The budget then holds unless the GPU itself is over.
+3. Bench on a quiet machine before ticking the gate.
+
+**Third round: the budget split, and why the grid capture waits.**
+
+The budget is split, as accepted by the lead. The frame line gains `submit_us`, the time from the start of the
+frame's drawing until its commands are issued, before the wait for the GPU; the bench reports the CPU's part of a
+frame as compose plus submit (`submit_p50_ms`, `submit_p99_ms`, table column `cpu99`) beside the GPU time from
+timestamps.
+
+- Old budget: "Compositor frame while a window is dragged over glass: under 4 ms GPU, under 2 ms CPU", checked as the
+  compositor's work p99 (compose and render, the render waiting for the GPU to finish) against 2 ms.
+- New budget: "p99 GPU time per frame (timestamps) under 4 ms; p99 CPU time to compose and submit a frame, not
+  counting the wait for the GPU, under 2 ms".
+- Reason: the work time holds the GPU's own time, so a shared or busy GPU put it over the CPU budget while the CPU did
+  no more work (the second round's 7.08 ms work p99 were 5.40 ms of GPU time). Each half is now measured against its
+  own budget, and the GPU half has the 4 ms it was given.
+
+Five runs on main as of `383368e8` with the split measured (4K, 1.5), on a quiet machine: load average 1.3 to 2.6,
+no compiler or test runner, no headless session but the bench's own. A second five runs after the change below,
+with other checkouts building and testing beside it (load average up to 9.2, up to 5 compilers, 2 test runners and
+one other headless session):
+
+| Drag over glass, 5 runs: median (spread) | Quiet | Parts in kept targets, busy machine |
+|---|---|---|
+| CPU time to compose and submit, p50 / p99 ms (budget 2) | 0.61 (0.19) / 2.34 (0.43) | 0.59 (0.41) / 2.35 (0.69) |
+| GPU time, p50 / p99 ms (budget 4) | 1.06 (0.00) / 2.20 (0.87) | 1.06 (0.01) / 2.11 (0.58) |
+| Work p99 ms (compose and render, with the wait) | 2.49 (0.25) | 2.42 (1.25) |
+| Targets created per frame | 0.49 | 0.04 |
+| Texels the blurs write per frame | 561 017 | 561 017 |
+| Blur passes per frame | 9.33 | 9.33 |
+| Missed refreshes | 0 | 0 |
+
+The GPU half holds with room. The CPU half is over at p99: 2.34 ms against 2 ms. The frames that pass 2 ms are
+those whose GPU time does as well, and their CPU time is the drawing (lowering the scene takes 0.1 ms of them), so a
+GL call during the drawing waits for the GPU. An earlier cause of the same frames is gone: a part of a backdrop made
+again had a pyramid of its own size, and the parts change size every frame, so each frame created and deleted
+textures (13 to 27 in the slowest frames, 1 to 3 ms of CPU time). The parts' levels are now made at the corner of
+targets whose sides are rounded up (to a multiple of 64 texels, or of a quarter of the power of two below), which
+later frames find again (`material::tests::the_parts_of_a_drag_are_made_in_targets_of_few_sizes_that_hold_them`; the
+drag still matches a whole blur within 1 of 255). Targets created per frame fall by 92 %; the CPU p99 does not move,
+so the wait for the GPU inside the drawing is what holds it over.
+
+A last run of the committed build (one run; the machine is shared all night, so its times are taken under load:
+load average 2.7 to 3.2, no compiler at that moment): 561 017 texels written by the blurs per frame against the
+baseline's 1 221 263 (54 % fewer), 9.33 blur passes per frame, 0.04 targets created per frame, CPU p99 2.31 ms,
+GPU p99 2.10 ms, no missed refresh. The texel count does not depend on the load.
+
+The gate stays open. Next: find which call in the drawing waits for the GPU (timing the glass and material passes'
+GL calls on the CPU, as was done for the textures) and remove the wait, then bench again on a quiet machine.
+
+**Fourth round: no call waits for the GPU.** Taken at `4e1bf610` with a temporary build that timed, on the CPU, each
+part of the drawing (lowering, binding, every element kind, every blit by its place, every pass's binding, uniform
+upload and draw, target creation and deletion, the tone readback, the composite) and, around the whole submit, the
+render thread's own CPU time (`CLOCK_THREAD_CPUTIME_ID`), its user and system time, page faults and voluntary and
+involuntary context switches. The probe was removed afterwards; nothing of it is committed. One run each (`--runs 1`,
+4K, scale 1.5), the frames of the scenario's span only (180), other checkouts building beside it; load average at
+start and end of each run:
+
+| Run | Condition | Load | CPU p99 ms | Frames with one call over 1 ms | CPU p99 without them ms |
+|---|---|---|---|---|---|
+| 1 | as committed | 1.05, 0.81 | 2.37 | 3 | 1.39 |
+| 2 | as committed | 4.44, 5.10 | 2.54 | 5 | 1.85 |
+| 3 | the driver told to sleep, not spin, while it waits (`__GL_YIELD=USLEEP`) | 6.00, 5.31 | 2.36 | 3 | 1.51 |
+| 4 | no timer queries at all (frame timestamps and pass timers off) | 2.48, 1.91 | 2.35 | 3 | 1.34 |
+| 5 | as committed | 3.49, 2.86 | 2.40 | 2 | 1.33 |
+| 6 | the driver's threaded dispatch on (`__GL_THREADED_OPTIMIZATIONS=1`) | 2.66, 2.31 | 2.42 | 2 | 1.46 |
+
+What holds the p99 over 2 ms is two to five frames a run in which one single GL call takes 1.7 to 2.0 ms of CPU,
+where the same call takes 5 to 60 µs in every other frame: a framebuffer blit (the first level of a material's
+pyramid, a glass capture or one of its edge strips), once the tone readback, once a glass composite, once a call of
+the renderer's own outside our passes. In those frames:
+
+- the render thread's CPU time equals the submit's wall time within 1 %, almost all of it user time, with no
+  voluntary and at most one involuntary context switch and no page faults: the thread is not sleeping, waiting in the
+  kernel or preempted;
+- with the driver told to sleep while it waits, the frames are the same and still switch no context, so the time is
+  not the driver waiting on a fence or the GPU;
+- turning every timer query off changes nothing, nor does the driver's threaded dispatch;
+- the blit's sizes and filter were each seen in earlier frames, no target is created or deleted in or around those
+  frames, and the frames before and after draw the same passes in the usual time;
+- they come about once a second (in four runs at 9.24, 10.19 and 11.25 s of the session, give or take one frame), and
+  the server's other threads use no CPU meanwhile.
+
+So no call of ours waits for the GPU. Each frame's GPU time rises with them because the GPU has nothing to do while
+the CPU is held: the timestamps span the gap, and the GPU p99 (2.2 ms) is these frames too. The earlier reading, that a
+call in the drawing waits for the GPU because the CPU time follows the GPU time, had cause and effect reversed.
+Without those frames, the CPU p99 is 1.33 to 1.51 ms on a lightly loaded machine (1.85 ms at a load of 5) against the
+2 ms budget, and the GPU p99 under 1.2 ms. At 60 Hz, 180 frames and a stall a second, three frames are enough to
+own the p99, whatever the drawing costs.
+
+The stall is driver CPU work on the calling thread at a period of its own, and nothing in what the drawing issues
+moves it. The gate is not ticked: BLOCKED until the cause inside the driver is found or the gate's p99 is taken over a
+span long enough to measure a once-a-second event as such (the drag scenario's 180 frames cannot), which is the
+lead's call. The texel count, the shimmer and the banding checks pass as before.
+
+The grid capture for window glass (next step 1) is not built: it would change the glass edges and keep nothing in the
+drag it is for. A dragged window's glass reads the window under it, and the window's own surface is one of the
+elements below the glass. A moved element changes its whole place, where it was and where it is
+(`backdrop_change`), so every frame of the drag marks the whole area of each of the window's glass as changed, and a
+capture on a fixed grid would make all of its texels again, as today. It would keep texels only where the moved
+surface draws nothing, and the compositor does not know where that is: the sidebar window paints nothing under its
+sidebar, whose glass therefore shows the windows and the wallpaper behind it, but its buffer has an alpha channel and
+no region says so. (A window's shadow and outline have known holes only because the compositor draws them.)
+
+What would let the drag keep the glass's texels, for the lead to choose:
+
+1. The application says where it paints nothing: with its glass request, the rectangle under the glass its window
+   leaves empty. The compositor gives the window's surface that rectangle as a hole, as it does for shadows, so a move
+   changes only the ring the hole does not share; the grid capture with a margin then keeps everything inside it.
+   A wrong rectangle can only spoil the look of that application's own glass, which reads only its own window.
+2. The compositor finds the empty rectangle itself, from the alpha of a shared-memory buffer where a commit damaged
+   it. No change to the protocol; a scan of each damaged region on commit, and nothing for buffers on the GPU.
+
+Either is a change of its own, then the grid capture and its goldens. No golden changes in this round, so none is
+listed for re-recording and there is no before and after sheet.
+
+Goldens (the golden run): the overview (561 027 pixels over tolerance, the dimmed wallpaper behind it lighter) and
+the launcher's structure (its panel 176 to 177 rows) fail, and fail the same way at `2b119fa4`; no golden shows a
+window drawn below half its size. Nothing is re-recorded.
+
+**Checks of our own output** (headless, GPU tier):
+
+- A window of one-pixel stripes shown at 0.27 of its size in the overview, against its box-filtered picture computed in
+  Rust: mean difference 6.0, worst 10.7 of 255 (plain filtered lookups: 37.5 and 112). While it moves into place, the
+  stripes stray 0.5 of 255 from their average on every frame (plain lookups: 63), so nothing shimmers
+  (`headless::a_window_shown_well_below_its_size_matches_its_box_filtered_picture_and_does_not_shimmer`). The copy is
+  made once and kept while the window does not commit.
+- A scale 2 window on a scale 1.5 output against its box-filtered picture: mean 0.29, worst 0.5 of 255 (plain lookups:
+  9.4 and 20.8) (`headless::a_scale_2_window_on_a_scale_1_5_output_matches_its_box_filtered_picture`).
+- A grey gradient (64 to 96 over the output's height) under a large glass panel: down the panel the value steps one
+  level at a time, the longest run 35 rows where its 3 levels over 90 rows give 30 a level; the bare wall beside it
+  runs 16 rows over 6 levels (`backdrop_tone::a_gradient_under_glass_shows_no_bands`). The check passes without
+  dithering: the glass adds no bands of its own. The glass halves the gradient's contrast, so its 8-bit steps are
+  twice as tall as the wall's; dithering is what breaks those up.
+- One snapshot a minimize and one a restore, whatever the frames in between
+  (`headless::a_minimize_captures_the_window_once_and_a_restore_once_more`); a steady frame copies no cursor image
+  (`scene_cost::a_steady_frame_copies_no_cursor_image`), an overlay's signature allocates nothing
+  (`scene_cost::an_overlay_signature_allocates_nothing`) and a frame that changes nothing copies no wallpaper path
+  (`wallpaper::tests::a_frame_that_changes_nothing_copies_no_wallpaper_path`).
+
+### Step 10: retire the duplicates
+
+**The backdrop passes generated.** Pixels, on the target machine's GPU: a headless shot of Settings alone and of Files
+alone, 1920 x 1200 at scale 1.5, dark and light, drawn by the compositor with the hand-written passes and with the
+generated ones (the same build otherwise): no pixel differs by more than 2 of 255 outside the menu bar's clock, whose
+minute changed between the shots. The server's material, glass, tone and dither tests and the glass crate's GPU
+tests (its colour pass within one level of the CPU chain, PSNR 60 dB and more) pass unchanged. The blur's 8-bit
+dither is now a flag of `PassParams` (`flags[0]`) set by the compositor when its levels have 8 bits, instead of a
+second program text; the levels have half floats on the target machine, so the flag is off there, as the dither
+was.
+
+The assembled WGSL leaves out every function its entry points do not reach: the Vulkan driver of the target machine
+crashed (a segmentation fault in its SPIR-V compiler, inside pipeline creation) on the backdrop passes with the whole
+shared module in them, and no longer does once the unused gradient function, which takes arrays by value, is left out.
+A Vulkan backend (step 12) compiling `cupertino-gpu`'s own SPIR-V, which keeps every function, will meet the same.
+
+**The region programs generated, `wgpu` gone.** The material, glass, vibrant and mesh programs are generated from
+WGSL; the compositor links them and binds by the generated names, and the headless glass renderer draws the same
+material and glass programs on `cupertino-gpu` (Cargo.lock: 378 lines and every `wgpu` crate gone). Material and
+glass are placed by one block (`ops::Placement`: the projection, the quad, the dither flag), so the compositor's
+dithered and plain variants are one program each instead of two texts. The GLSL writer named a second local `gl` of
+the glass program `gl_1`, which GLSL reserves: the target machine's driver refused it and the compositor fell back
+to plain fills with no error a test saw; the generator now refuses such a name. Pixels: the
+server's headless goldens pass unchanged in the pinned image, and every preview scenario, shot headless on the target
+machine's GPU with a build of the commit before the step and with this one (118 shots, 1, 1.5 and 2 times, light and
+dark), is unchanged except where two runs of the same build differ too: which of two windows started together holds
+the focus in the overview scenarios (the set of changed shots moves between runs), and the caret's blink in the
+launcher.
+
+**The rectangle passes generated.** The shadow, outline, rounded rectangle and wallpaper are drawn by three generated
+passes on a device borrowed from the compositor's context (`render/passes.rs`), into the framebuffer the frame has
+bound (`Device::begin_owner_pass`), one instance per damage rectangle. Pixels: the server's headless goldens pass
+unchanged in the pinned image (4 of 4); the preview scenarios, shot headless on the target machine's GPU with a
+release build of `main` before the change and with this one (118 shots), are unchanged except the overview scenarios
+(the focus, as above), the dead-key caret at 1.5 and 2 times (18 to 105 pixels; unchanged, 6 of 6, when shot again)
+and the menu bar's clock in one launcher shot. The dither and coverage tests hold the generated shadow and rounded
+rectangle with their old bounds.
+
+A program the driver refuses is now an error in the log, once, with the program's name and the driver's message, and
+a GPU-tier test (`window_popup_backdrop::every_compositor_program_links_on_the_driver_and_the_glass_and_material_passes_draw`)
+links every compositor program, generated and hand-written, dithered and not, on the machine's driver, and checks
+that a window's sidebar glass and content material were drawn by their passes (`MaterialStats::glass_composites`
+and `composites`), not by the fallback fill.
+
+Cost (the frame bench, 3840 x 2160 at 1.5, 3 runs, the same machine, `main` before the change against this one):
+compose work p50 1.12 to 1.38 ms and p99 1.98 to 2.24 ms in the hover scenario, p50 1.45 to 1.57 ms and p99 2.48 to
+3.38 ms in the drag, compose CPU p99 2.40 to 2.97 ms in the drag (over its 2 ms budget before the change too). Each
+pass draw enters and leaves the borrowed device, which reads and puts back the context's state (about 80 queries) for
+every shadow, outline and rounded rectangle element; the per-run p50 is 0.2 to 0.3 ms higher in every run. Drawing
+all of a frame's rectangle passes inside one enter and leave needs the frame's elements drawn by the device, not one
+by one by the renderer: that is step 8's title bar work, which moves the same elements, and is measured again there.
+
+### Step 11: output timing and depth
+
+**The late start.** On the DRM backend, after a vblank whose flip reported the driver's timestamp (the
+`flip-timestamp` branch), the display's next frame does not start at once but at
+
+    vblank + min(period - (recent maximum render time + margin), period / 2), and at once when that is not positive
+
+with the recent maximum the longest of the last 60 frames' render times (one second at 60 Hz) and a margin of 2 ms
+(the commit, the flip's own latency and the loop's wake-up). A frame's render time runs from the start of drawing to
+the moment its render fence signalled: the commit returns before the GPU is done where the plane takes an in-fence,
+so the time to the flip being queued alone missed the GPU's work. The backend keeps the fence the primary plane waits
+for as a sync file and reads its signal time, which the kernel keeps, without waiting once the flip has come
+(`sync_file.rs`). Where the renderer waited for the GPU, or a client buffer is scanned out, the CPU time is the
+render time; where the fence cannot be exported or read, the render time is the CPU time plus a kept estimate of the
+GPU's part, which a late-started frame that still missed raises to at least the time it had less its CPU time, and
+which stays for the session. A flip shown after the vblank its frame was drawn for counts as a whole period in the
+window and turns the delay off for 60 frames; a miss within 60 frames of the delay coming back turns it off for twice
+as long as the last time, up to 960 frames (16 s at 60 Hz). Without render times yet, on the `own-clock` branch, with a test's fixed
+time, on the headless and nested backends, and with `CUPERTINO_LATE_LATCH=0` (or `off`), frames start at once as
+before. At 60 Hz with frames under 6.3 ms the delay is the half period, 8.33 ms: an input in the first half of a
+period is drawn into the frame flipped at the period's end instead of the one after it. Tests: `latch::tests` (the
+delay, the half-period cap, the window, a miss, the branch and the switch; a frame cheap on the CPU and heavy on the
+GPU gets no late start, or one that leaves its GPU time and the margin; a display whose GPU time cannot be read misses
+once in ten seconds rather than once a second; misses that follow one another lengthen the off period),
+`sync_file::tests` and
+`schedule::tests::a_held_frame_waits_for_its_late_start_and_the_next_cycle_ends_the_hold`.
+
+**What the DRM trace adds.** `missed` now also counts a flip shown after the vblank its frame was drawn for (before,
+only flips so late their clients were called back without them); `start-delay output=… delay_us=…` when the delay
+changes by a millisecond or more; `pointer-to-flip output=… latency_us=…` beside `input-to-flip`, from pointer motion
+alone; `count flips=… missed_total=…` every 3600 flips, so a summary has the rate of missed refreshes. The server
+logs at start whether the late start is on (`late_latch=`) and the depth asked for, and for each display the format
+its primary plane got (`output initialised … format=… bits=…`). the trace summary reads a log.
+
+**Turning 10 bits off.** 10 bits are the default, decided by the owner (2026-11-15) without waiting on the step 0
+probe (`tools/gpu-probes/depth.sh`, above): `Depth::from_setting` in `crates/cupertino-server/src/output_depth.rs`
+gives 10 bits when `output_depth` is absent, and a plane without a 10-bit format falls back to 8 bits. To turn it
+off, add `"output_depth": 8` to `~/.config/cupertino/compositor.json` (a JSON object; keep the other keys) and start
+a new session; the server log's `output initialised` line then names an 8-bit format (`AB24` or `AR24`) and
+`bits=8`, where it said `format=AB30 bits=10`. To turn it back on, remove the key or set it to 10. Screenshots,
+screen sharing and recordings draw the scene into 8-bit targets of their own and read those back, so they are the
+same at either depth (`output_depth::tests::every_capture_reads_back_8_bits_whatever_the_plane_s_depth` pins every
+read back in the server to an 8-bit format). A display on a second card shows the render GPU's 8-bit copy whatever
+its plane's depth.
+
+**The step 11 gate.** DEFERRED by the owner (2026-11-15): it needs the desktop session, two hours of it. Install a package built
+from `main` (`makepkg -si` in `packaging/arch/cupertino`, then `pacman -U`), log out, switch to a text console (Ctrl+Alt+F3), log in,
+and from the checkout run:
+
+```sh
+CUPERTINO_DRM_TRACE=1 CUPERTINO_SESSION_LIMIT=3600 CUPERTINO_LATE_LATCH=0 cupertino-server --session; CUPERTINO_DRM_TRACE=1 CUPERTINO_SESSION_LIMIT=3600 cupertino-server --session; the trace summary on ~/.local/state/cupertino/server.log.1 (baseline) and ~/.local/state/cupertino/server.log
+```
+
+The first session is the baseline (frames start at once), the second has the late start; each ends after an hour.
+Use the desktop the same way in both (move the pointer, drag and resize windows, scroll in Files, type). The summary
+prints each session's branch, planes, flips, missed refreshes per thousand flips, start delays, and input-to-flip and
+pointer-to-flip p50, p95 and p99, then `pass` when the second session's input-to-flip p50 and p95 are below the
+baseline's and it missed no more refreshes per thousand flips; record its output here. If the branch is `own-clock`,
+the late start never engaged and the gate cannot pass on this driver.
+
+### Step 4: retained layers
+
+Taken on the target machine, release builds, CPU renderer, the frame bench (`--size 3840x2160 --scale S --scenario
+files-full-scroll --runs 3`), other checkouts building beside it. Before is `6e9ab377`; after is `e4c989bc`. The
+step's commits are `96c21721`, `0059c4cb`, `89f790a7`, `e4c989bc`, `a6d1ec27` (a layer new to a frame, which no scroll
+frame has) and `1a070506`. Medians of the three runs; the phases are the Files client's own.
+
+| Files two-finger scroll, client frame ms | Scale 1 before | Scale 1 after | Scale 1.5 before | Scale 1.5 after |
+|---|---|---|---|---|
+| Frames drawn in the scroll | 40 | 94 | 32 | 98 |
+| Frame p50 / p99 | 60.8 / 79.3 | 29.5 / 41.2 | 77.0 / 126.4 | 24.6 / 44.1 |
+| Update + view + layout p99 | 11.4 | 11.3 | 21.0 | 6.8 |
+| Paint p50 / p99 | 4.4 / 5.5 | 4.3 / 6.5 | 1.9 / 4.6 | 1.8 / 2.8 |
+| Raster p50 / p99 | 36.5 / 46.4 | 7.2 / 10.1 | 50.6 / 76.3 | 9.2 / 13.5 |
+| Copy p50 / p99 | 12.2 / 28.6 | 8.8 / 19.9 | 17.1 / 47.3 | 9.7 / 25.5 |
+
+The budget (p99 under 8 ms) is not met. What a scroll frame costs now:
+
+- Painting into the layer: the rows that came into view and what changed in the layer, nothing else. The renderer's
+  frame statistics (`layer_pixels`) count about 80 000 pixels a frame at scale 1 (a dozen rows of the 3617-pixel
+  viewport and the strip under the scroll bars), against 7.5 million before the scroll bars moved beside the layer.
+- Compositing the layer: the whole viewport is laid over every frame the layer moves, about 33 MB at scale 1, and the
+  background under it is filled first. Most of the raster that is left.
+- The copy into the shared-memory buffer: the damage of a scroll is the whole moved viewport, so the copy stays at
+  about 9 ms p50 however little is painted.
+- Paint: the toolkit builds and compares the whole paint tree of about 5000 nodes every frame. An early cut of the
+  damage tracker searched every node for each node's layer; with the lookup by node (`e4c989bc`) the paint phase at
+  scale 1 is back from 11.2 to 4.3 ms p50.
+- View and layout: the view is made again for every frame that shows other rows. More frames are drawn in the same
+  scroll (94 against 40), so more of them pay for it.
+
+The layer's pixels are those of the content drawn in place: kept rows are the bytes of a layer drawn whole at the same
+offset (`a_scrolled_layer_has_the_bytes_of_one_drawn_whole_at_its_offset`, seeds 0 to 3, scales 1, 1.5 and 2, plain and
+rounded clips, effects and a translucent bar over the layer's edge). Pixels at fractional clip edges are painted in
+place through the frame, as without layers. Inside, the composite rounds once where painting in place rounds node by
+node, within the goldens' 2 of 255 (`a_kept_layer_draws_the_picture_of_its_content_drawn_in_place`). No golden is
+re-recorded.
+
+#### Second round: copy, composite, kept groups and rows
+
+The same scenario and machine, release builds, other agents building and benchmarking beside it; the load average is
+recorded at the start and end of each scale's three runs. Before is `b4774447b` (load 6.1 then 2.9 and 2.5); after is
+`d0016e41c`, measured twice (loads 6.2 to 4.9, then 7.3 to 3.6). The round's commits are `ea4669d77` (the copy
+converts each pixel once), `8ac300a25` (the scroll layer laid over its background in one pass, opaque runs copied),
+`0db51815d` (the server suspends windows nobody sees), `e06873ab9` (icons made only for built cells), `21f6b794a`
+(`Layer::Transform`), `a0605b3e3` (kept group images), `764d806f4` (`Element::kept`) and `d0016e41c` (the grid keeps
+its cells). Medians of the three runs; the two after columns are the two measurements.
+
+| Files two-finger scroll, client frame ms | Scale 1 before | Scale 1 after | Scale 1.5 before | Scale 1.5 after |
+|---|---|---|---|---|
+| Frames drawn in the scroll | 92 | 88 / 117 | 89 | 93 / 96 |
+| Frame p50 / p99 | 30.1 / 41.2 | 19.0 / 38.0, 19.5 / 36.7 | 18.5 / 42.8 | 13.9 / 36.9, 13.1 / 37.2 |
+| View p50 / p99 | 3.7 / 6.3 | 1.4 / 2.8, 1.4 / 2.4 | 0.0 / 4.5 | 0.0 / 2.5, 0.0 / 2.3 |
+| Layout p50 / p99 | 3.3 / 5.9 | 3.1 / 5.7, 3.1 / 6.2 | 0.6 / 2.0 | 0.7 / 2.8, 0.6 / 1.6 |
+| Paint p50 / p99 | 4.3 / 6.2 | 4.7 / 12.0, 4.4 / 6.7 | 1.8 / 2.9 | 1.8 / 2.7, 1.7 / 2.7 |
+| Raster p50 / p99 | 7.5 / 10.3 | 7.2 / 10.6, 5.9 / 10.0 | 9.1 / 16.6 | 7.5 / 11.2, 7.1 / 11.6 |
+| Copy p50 / p99 | 8.9 / 20.2 | 4.6 / 20.6, 3.2 / 20.3 | 7.1 / 21.0 | 3.9 / 20.9, 3.5 / 20.4 |
+
+The spread between runs is wide under this load (frames drawn 88 against 117, the paint p99 12.0 against 6.7); the
+view, raster and copy p50 fall in both. What a scroll frame costs now, at scale 1, timed inside the client on a build
+with temporary timers (not committed):
+
+- The copy: p50 is down to the moved viewport converted once. Its p99, about 20 ms, is the frames that convert a
+  whole buffer: a buffer new to the window or one whose pixels are unknown. It alone is over the budget.
+- View: the application's view 1.6 ms p50 and the reconcile 2.5 ms p50 (7.4 p99) before the kept cells; after them
+  the whole view is 1.4 ms p50.
+- Layout: the cached solve and the placement of every node 2.1 ms p50 (5.7 p99), the window's placements 0.5 and its
+  semantics 0.6.
+- Paint: the walk over every node 2.0 ms p50 (5.2 p99) and the comparison with the last frame's paint tree 1.0 ms
+  (3.1 p99).
+- Raster: the layer laid over the viewport and the subtrees around it painted again where the scroll damaged them
+  (1.4 ms p50, 7.7 p99).
+
+No pixel changed: the composite in one pass has the bytes of the background written and the layer laid over it, the
+copy converts the same pixels, a kept group is laid over only where it was painted and at the same subtree, and a cell
+kept unbuilt is the node a build would have left unchanged. No golden is re-recorded.
+
+#### Third round: kept paint and node maps
+
+The same scenario and machine, release builds, three runs per configuration, other agents building and testing beside
+it; the load average is recorded before and after each configuration's runs. Before is `d6fd6eaa0`; after is
+`0059ca5ec`, measured twice. The round's commits are `706cfb6d5` (maps keyed by node id hash it with a rotate and one
+multiply) and `0059ca5ec` (a kept subtree that did not change is laid into the paint unwalked). Medians of the three
+runs, the frame p99's range across them in brackets; the two after values are the two measurements.
+
+| Files two-finger scroll, client frame ms | Before | After |
+|---|---|---|
+| CPU, scale 1: load | 11.5 to 9.9 | 1.5 to 13.0; 8.0 to 8.7 |
+| CPU, scale 1: frames, frame p50, p99 | 116, 19.6, 36.4 (34.9–37.5) | 102, 22.4, 45.9 (39.3–67.5); 84, 17.7, 62.6 (49.9–66.4) |
+| CPU, scale 1: layout, paint p50 | 3.2, 4.4 | 2.7, 3.1; 1.5, 3.2 |
+| CPU, scale 1: raster, copy p99 | 8.8, 21.0 | 17.8, 21.3; 17.4, 26.4 |
+| GPU, scale 1: load | 9.9 to 4.0 | 13.0 to 17.5; 8.7 to 8.1 |
+| GPU, scale 1: frames, frame p50, p99 | 183, 5.3, 9.4 (8.4–10.6) | 165, 5.6, 23.7 (21.4–57.6); 172, 6.1, 13.4 (11.4–17.8) |
+| GPU, scale 1: layout, paint p50 | 1.0, 3.3 | 1.3, 2.9; 1.4, 3.1 |
+| CPU, scale 1.5: load | 4.0 to 4.5 | 17.5 to 13.8; 8.1 to 6.9 |
+| CPU, scale 1.5: frames, frame p50, p99 | 90, 15.7, 40.3 (36.6–41.0) | 90, 17.8, 44.9 (41.3–63.4); 107, 18.7, 46.5 (42.6–64.8) |
+| CPU, scale 1.5: layout, paint p50 | 0.8, 1.9 | 1.2, 1.2; 1.2, 1.3 |
+| CPU, scale 1.5: raster, copy p99 | 12.7, 22.3 | 14.3, 23.4; 19.8, 24.8 |
+| GPU, scale 1.5: load | 4.5 to 11.0 | 13.8 to 11.3; 6.9 to 7.3 |
+| GPU, scale 1.5: frames, frame p50, p99 | 155, 6.6, 23.0 (21.6–35.3) | 176, 4.0, 16.9 (14.4–19.4); 182, 4.1, 11.2 (10.8–14.8) |
+| GPU, scale 1.5: layout, paint p50 | 1.2, 3.0 | 0.6, 1.2; 0.6, 1.1 |
+
+Paint p50 falls on both paths at both scales (by a third at scale 1 on the CPU, by more than half at 1.5); the p99s
+follow the load, which was heavier for the after runs, and the CPU path's raster and copy p99, which this round did
+not touch, rise with it. Timed inside the client at scale 1 on a build with temporary timers (not committed), headless
+Files in its icon view over 3000 items, 20-point steps of a two-finger scroll, on the thread's CPU clock at a load of
+about 4: the cached solve 0.8 ms p50, the window's placements 0.5, its semantics 0.6, the paint walk 0.95 (1.20 with
+the kept runs turned off) and the comparison with the last frame's paint tree 0.7. A frame walks about 60 of the 3700
+nodes and lays the rest in as kept runs. At a load of about 30, before the id hash, the same frames took 2.9 ms to
+solve, 1.8 to place, 1.5 for semantics and 2.0 to compare, and the walk 3.6 ms without kept runs and 1.8 with them.
+
+No pixel changed: a kept run is laid in only where the subtree, its ground and its order in the paint are those it was
+painted with, and each node of it is built by the same function a walk uses; the test compares the list, the own
+pixels and the blank region with a new painter's after every scroll. No golden is re-recorded.
+
+#### Fourth round: damage runs, the buffer's byte order and its pages
+
+The same scenario and machine, release builds, three runs per configuration, other agents building and testing beside
+it; the load average is recorded before and after each configuration's runs. Before is the third round's after
+(`0059ca5ec`, its second measurement); after is `61777874d`. The round's commits are `bdb49dcd3` (`abgr8888` copied as
+it is, the next buffer's pages made on a thread of their own), `10e965481` (scene 910: a kept layer's groups read what
+the window holds) and `af6708a74` (kept subtrees compared in one go); `db9b9199e` (the first frame after a pause that
+makes a buffer starts the next one's) came after the three runs and is measured in one run below. Medians of the three
+runs, the frame p99's range across them in brackets.
+
+| Files two-finger scroll, client frame ms | Before | After |
+|---|---|---|
+| CPU, scale 1: load | 8.0 to 8.7 | 13.3 to 10.1 |
+| CPU, scale 1: frames, frame p50, p99 | 84, 17.7, 62.6 (49.9–66.4) | 77, 22.0, 40.0 (38.9–62.7) |
+| CPU, scale 1: layout, paint, raster, copy p50 | 1.5, 3.2, –, – | 3.1, 3.1, 8.3, 4.9 |
+| CPU, scale 1: raster, copy p99 | 17.4, 26.4 | 13.9, 20.3 |
+| CPU, scale 1.5: load | 8.1 to 6.9 | 10.1 to 7.9 |
+| CPU, scale 1.5: frames, frame p50, p99 | 107, 18.7, 46.5 (42.6–64.8) | 109, 17.9, 39.8 (34.3–39.9) |
+| CPU, scale 1.5: layout, paint, raster, copy p50 | 1.2, 1.3, –, – | 1.2, 1.2, 8.7, 4.8 |
+| CPU, scale 1.5: raster, copy p99 | 19.8, 24.8 | 13.4, 19.6 |
+| GPU, scale 1: load | 8.7 to 8.1 | 7.9 to 4.6 |
+| GPU, scale 1: frames, frame p50, p99 | 172, 6.1, 13.4 (11.4–17.8) | 183, 3.2, 5.9 (5.6–11.7) |
+| GPU, scale 1: layout, paint, raster, copy p50 | 1.4, 3.1, –, – | 0.7, 1.5, 0.9, 0.1 |
+| GPU, scale 1.5: load | 6.9 to 7.3 | 4.6 to 5.3 |
+| GPU, scale 1.5: frames, frame p50, p99 | 182, 4.1, 11.2 (10.8–14.8) | 183, 2.6, 8.5 (7.2–10.0) |
+| GPU, scale 1.5: layout, paint, raster, copy p50 | 0.6, 1.1, –, – | 0.4, 1.1, 0.9, 0.1 |
+
+The after runs' phase p99s: CPU at scale 1 update 0.7, view 4.6, layout 8.2, paint 5.7; at 1.5 0.3, 3.3, 3.2, 2.9;
+GPU at scale 1 view 1.3, layout 1.5, paint 2.0, raster 2.3, copy 0.6; at 1.5 2.2, 1.8, 1.5, 2.6, 0.8.
+
+The CPU copy's p50 and p99 barely moved: copied as it is or converted, the moved viewport of a scroll frame is about
+33 MB at scale 1, and beside the other builds the copy is bound by memory more than by the conversion. Single CPU
+runs at scale 1 with each frame's timings kept: at `61777874d` (load 6.8 to 9.3) frame p50 22.3, p99 68.0, copy p50
+5.3 and p99 31.4; at `db9b9199e` (load 8.6 to 4.9) frame p50 12.2, p99 32.8, copy p50 3.1 and p99 19.4. In both, the
+copies over 8 ms are the scroll's first two frames (19–36 ms) and frames in its middle, all three buffers made, whose
+copy took 6–25 ms with the raster around them slow as well; the spare made at the first frame of the scroll did not
+bring its second under 19 ms at that load. The frame p99s follow the load more than any change of this round.
+
+No pixel changed: the byte copy writes the bytes the conversion wrote in the compositor's other order
+(`every_buffer_shown_holds_the_whole_frame_in_either_byte_order`), the damage runs damage and commit what comparing every
+node apart does, and the scene 910 change makes the kept image the picture painted in place. No golden is re-recorded.
+
+#### Fifth round: the opaque region and kept placements
+
+The same scenario and machine, release builds, three runs per configuration, other agents building and testing beside
+it; the load average is recorded before and after each configuration's runs. Before is the merge the round started
+from (`bdbc354b7`, measured again on the GPU path at scale 1 only, after the round's runs); after is `1f7756f80`. The
+round's commits are `dfd7cffbc` (transform animations closed as moot), `b5962a7a4` and `904037c85` (the opaque region,
+and its pass looking only at large nodes and fills) and `1f7756f80` (kept placements). Medians of the three runs, the
+frame p99's range across them in brackets.
+
+| Files two-finger scroll, client frame ms | Before | After |
+|---|---|---|
+| CPU, scale 1: load | – | 7.0 to 9.1 |
+| CPU, scale 1: frames, frame p50, p99 | – | 86, 16.1, 41.2 (41.1–51.4) |
+| CPU, scale 1: layout, paint, raster, copy p50 | – | 1.2, 2.6, 7.4, 4.8 |
+| CPU, scale 1: raster, copy p99 | – | 16.6, 21.3 |
+| CPU, scale 1.5: load | – | 9.1 to 11.3 |
+| CPU, scale 1.5: frames, frame p50, p99 | – | 92, 13.5, 36.7 (33.8–78.0) |
+| CPU, scale 1.5: layout, paint, raster, copy p50 | – | 0.5, 1.1, 7.7, 3.9 |
+| CPU, scale 1.5: raster, copy p99 | – | 13.2, 22.4 |
+| GPU, scale 1: load | 10.7 to 7.6 | 4.7 to 5.5 |
+| GPU, scale 1: frames, frame p50, p99 | 183, 4.7, 10.8 (9.9–11.5) | 181, 5.0, 12.3 (11.5–18.8) |
+| GPU, scale 1: layout, paint, raster, copy p50 | 1.1, 2.3, 1.1, 0.2 | 1.1, 2.4, 1.1, 0.2 |
+| GPU, scale 1.5: load | – | 5.5 to 7.0 |
+| GPU, scale 1.5: frames, frame p50, p99 | – | 181, 2.8, 12.3 (10.4–14.9) |
+| GPU, scale 1.5: layout, paint, raster, copy p50 | – | 0.4, 1.1, 0.9, 0.2 |
+
+The after runs' phase p99s: CPU at scale 1 update 1.1, view 4.6, layout 13.8, paint 7.8; at 1.5 0.3, 1.8, 1.6, 1.8;
+GPU at scale 1 view 2.9, layout 3.9, paint 3.8, raster 3.2, copy 0.7; at 1.5 3.2, 3.2, 3.5, 3.1, 0.8. Before, GPU at
+scale 1: view 2.2, layout 3.3, paint 3.1, raster 2.3, copy 0.6.
+
+The budget is not met on either path at these loads: the GPU path's frame p99 is 10.4–18.8 ms at both scales, no run
+under 8 ms, so the three more runs at a load under 4 were not taken; the CPU path's copy p99 alone is over it. At the
+same scale and renderer the round's commits leave every phase where the merge it started from has it: the opaque
+region's pass takes about 16 microseconds of the paint phase on Files' list of about 3700 nodes (265 before it looked
+only at nodes and fills of 128 points a side or more), and kept placements spare the walk of a cell's descendants,
+a part of the layout phase too small to show in its p50 beside the solve and the semantics. Both renderers' p50s at
+scale 1 are above the fourth round's (frame 4.7–5.0 against 3.2 ms on the GPU, paint 2.3–2.4 against 1.5) before the
+round's commits as after them.
+
+No pixel changed: the opaque region is a request beside the frame, kept placements are those of placing every node
+(`a_kept_subtree_that_did_not_change_is_placed_from_its_run_as_placing_every_node_places_it`), and the compositor's
+culling leaves drawn what a backdrop reads. No golden is re-recorded.
+
+## Decisions taken
+
+- Shared maths and one look freeze come first; goldens are not re-recorded per step afterwards.
+- Retained layers come before the GPU renderer.
+- Surface classes: small, rare, must-draw and static surfaces stay on the CPU.
+- Own GPU layer shaped for Vulkan; GLES first; `wgpu` not used for windows (reviewed before step 12).
+- WGSL is the single source of our own programs; GLSL ES and SPIR-V are generated; texture programs through Smithay's
+  interface stay GLSL ES 1.00.
+- The CPU reference computes what the GPU computes.
+- No implicit synchronisation; explicit sync or a client-side fence wait.
+- Vulkan steps are gated on measured need.
+
+## Open questions
+
+- Does a program binary cache avoid the compiler's start-up memory and time? (step 0) Answered: yes. The first
+  program of a fresh process costs 32.5 ms and 46.7 MiB compiled, 4.95 ms and 6.2 MiB loaded from a saved binary,
+  and 0.4 ms and 0.7 MiB when the driver's own disk cache holds it ("Measurements").
+- Is the panel truly 10-bit, and is a 10-bit plane visibly better than the driver's own dithering? (step 0) The
+  plane takes 10-bit formats; the look needs the owner's run of `tools/gpu-probes/depth.sh` ("Measurements").
+- Are the driver's flip timestamps real? (step 0) The trace that answers it is in place; it needs the owner's
+  traced session ("Measurements").
+- Does the dmabuf slice run on llvmpipe inside the goldens container? (step 3) Answered: only with `/dev/udmabuf`
+  passed in; without it llvmpipe has no texture export and the slice falls back to shared memory ("Measurements").

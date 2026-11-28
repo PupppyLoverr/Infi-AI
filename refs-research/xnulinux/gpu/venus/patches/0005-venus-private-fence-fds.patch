@@ -1,0 +1,107 @@
+Upstream: Mesa 26.3.1 (https://archive.mesa3d.org/mesa-26.3.1.tar.xz)
+Upstream-License: MIT
+Patch-License: MIT (provided under the same license as upstream)
+Subject: venus: fence fds over the xnulinux DRM bridge are private, and their errors are errors
+
+A fence fd is a stand-in that only this driver can wait on (gpu/xnu-drm/darwin), so no external sync fds are offered over
+the bridge. A poll() on one that fails is no answer: report it (VK_ERROR_DEVICE_LOST) instead of waiting on.
+
+--- a/src/virtio/vulkan/vn_renderer_sim_syncobj.c
++++ b/src/virtio/vulkan/vn_renderer_sim_syncobj.c
+@@ -89,7 +89,8 @@
+    return 0;
+ }
+ 
+-static bool
++/* 1 signaled, 0 not yet, -errno when it cannot be told */
++static int
+ sim_syncobj_poll(int fd, int poll_timeout)
+ {
+    struct pollfd pollfd = {
+@@ -101,19 +102,27 @@
+       ret = poll(&pollfd, 1, poll_timeout);
+    } while (ret == -1 && (errno == EINTR || errno == EAGAIN));
+ 
++   if (ret < 0)
++      return -errno;
++
+    return ret > 0 && (pollfd.revents & POLLIN);
+ }
+ 
+-static void
++static int
+ sim_syncobj_update_locked(struct sim_syncobj *syncobj, int poll_timeout)
+ {
+    if (syncobj->pending_fd >= 0) {
+-      if (sim_syncobj_poll(syncobj->pending_fd, poll_timeout)) {
++      const int ret = sim_syncobj_poll(syncobj->pending_fd, poll_timeout);
++      if (ret < 0)
++         return ret;
++      if (ret) {
+          close(syncobj->pending_fd);
+          syncobj->pending_fd = -1;
+          syncobj->signaled = true;
+       }
+    }
++
++   return 0;
+ }
+ 
+ static struct sim_syncobj *
+@@ -171,9 +180,13 @@
+          return -1;
+ 
+       mtx_lock(&syncobj->mutex);
+-      sim_syncobj_update_locked(syncobj, 0);
++      const int ret = sim_syncobj_update_locked(syncobj, 0);
+       points[i] = syncobj->signaled;
+       mtx_unlock(&syncobj->mutex);
++      if (ret < 0) {
++         errno = -ret;
++         return ret;
++      }
+    }
+ 
+    return 0;
+@@ -203,8 +216,14 @@
+          return -1;
+ 
+       mtx_lock(&syncobj->mutex);
+-      if (!syncobj->signaled)
+-         sim_syncobj_update_locked(syncobj, poll_timeout);
++      const int ret = syncobj->signaled
++                         ? 0
++                         : sim_syncobj_update_locked(syncobj, poll_timeout);
++      if (ret < 0) {
++         mtx_unlock(&syncobj->mutex);
++         errno = -ret;
++         return ret;
++      }
+ 
+       if (!syncobj->signaled) {
+          if (!wait_all && i < num_handles - 1 && syncobj->pending_fd < 0) {
+--- a/src/virtio/vulkan/vn_renderer_virtgpu.c
++++ b/src/virtio/vulkan/vn_renderer_virtgpu.c
+@@ -320,6 +320,10 @@
+       ret = gpu->sync->query(gpu->sync, &sync->syncobj_handle, val, 1, 0);
+    } else {
+       ret = gpu->sync->wait(gpu->sync, &sync->syncobj_handle, 1, 0, 0, NULL);
++#ifdef VN_XNUDRM /* (a DRM syncobj with no fence yet is EINVAL here) */
++      if (ret && errno != ETIME)
++         return VK_ERROR_DEVICE_LOST;
++#endif
+       *val = !ret;
+       ret = 0;
+    }
+@@ -889,7 +893,11 @@
+    }
+ 
+    info->has_dma_buf_import = true;
++#ifdef VN_XNUDRM /* a fence fd means something to this driver only: nothing to export or import */
++   info->has_external_sync = false;
++#else
+    info->has_external_sync = true;
++#endif
+ 
+    assert(gpu->sync);
+    info->has_timeline_sync =

@@ -1,0 +1,7 @@
+/target
+/crates/*/output/
+__pycache__/
+
+# mdBook output
+docs/book/
+

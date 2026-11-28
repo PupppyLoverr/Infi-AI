@@ -1,0 +1,34 @@
+[package]
+name = "cupertino-peer"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Who is on the other end of a session bus call: the process behind a connection from the daemon's pidfd, its sandbox (Flatpak, Snap) and parent, and the error names a refused caller gets"
+autotests = false
+
+[package.metadata.cupertino]
+layer = "system"
+
+[lib]
+test = false
+
+[dependencies]
+async-lock = "3"
+libc = "0.2"
+rustix = { version = "1", features = ["event", "process"] }
+tracing = "0.1"
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+ordered-stream = "0.2"
+# The pool the bus connections run their blocking calls on. 1.7.0 keeps an idle thread for good, waking it twice a
+# second in every process with a bus connection; 1.6.2 ends it after half a second without work. A normal dependency
+# of the bus crate, so the exact version holds the shipped programs and the whole lockfile there;
+# `tests::the_blocking_pool_ends_its_threads_once_idle` checks it, and the gate fails on any other locked version.
+blocking = "=1.6.2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[[test]]
+# Every file of `tests/` is a module of this one binary (`tests/main.rs`).
+name = "tests"
+path = "tests/main.rs"

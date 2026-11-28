@@ -1,0 +1,35 @@
+Upstream: Mesa 26.3.1 (https://archive.mesa3d.org/mesa-26.3.1.tar.xz)
+Upstream-License: MIT
+Patch-License: MIT (provided under the same license as upstream)
+Subject: venus: one queue of each family on macOS
+
+Each queue a device is created with is one the host's driver makes. NVIDIA's (GB10, 580) takes about 150 ms to create
+a queue and 40 ms to destroy one: a device with the 16 queues of its first family takes 2.6 s to create, one with a
+single queue 0.33 s. The Metal layer asks for every queue a family offers, in every process that makes a Metal device,
+so each application spent its first seconds there with its main thread waiting. One queue of a family is offered;
+VN_QUEUES_PER_FAMILY=n offers up to n.
+
+--- a/src/virtio/vulkan/vn_physical_device.c
++++ b/src/virtio/vulkan/vn_physical_device.c
+@@ -1005,6 +1005,21 @@
+       }
+    }
+ 
++#if DETECT_OS_APPLE
++   /* A queue asked for is a queue the host driver makes, and some take long over each: NVIDIA's 150 ms to create and
++    * 40 ms to destroy (a device with the 16 queues of its first family: 2.6 s). An application that takes every queue
++    * on offer pays that at each start, so one queue of a family is offered (VN_QUEUES_PER_FAMILY=n for more).
++    */
++   {
++      const char *limit_str = os_get_option("VN_QUEUES_PER_FAMILY");
++      const uint32_t limit = limit_str && atoi(limit_str) > 0 ? (uint32_t)atoi(limit_str) : 1;
++      for (uint32_t i = 0; i < count; i++) {
++         if (qfp[i].queueFamilyProperties.queueCount > limit)
++            qfp[i].queueFamilyProperties.queueCount = limit;
++      }
++   }
++#endif
++
+    if (VN_DEBUG(NO_SPARSE))
+       physical_dev->sparse_binding_disabled = true;
+ 

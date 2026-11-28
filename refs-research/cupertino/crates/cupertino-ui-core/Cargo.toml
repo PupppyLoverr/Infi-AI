@@ -1,0 +1,47 @@
+[package]
+name = "cupertino-ui-core"
+version = "0.1.0"
+edition.workspace = true
+license = "MPL-2.0"
+description = "CupertinoKit runtime: the application model, elements and the retained node tree, event routing, focus, commands and tasks, the accessibility tree, layout and the window-system interface"
+autotests = false
+
+[package.metadata.cupertino]
+layer = "ui"
+
+[lib]
+test = false
+
+[dependencies]
+bumpalo = { version = "3.20", features = ["collections"] }
+cupertino-app-protocols = { path = "../cupertino-app-protocols" }
+async-task = "4.7"
+cupertino-animation = { path = "../cupertino-animation" }
+cupertino-defaults = { path = "../cupertino-defaults" }
+cupertino-geometry = { path = "../cupertino-geometry" }
+cupertino-keyboard = { path = "../cupertino-keyboard" }
+cupertino-menu-model = { path = "../cupertino-menu-model" }
+cupertino-ui-render = { path = "../cupertino-ui-render" }
+cupertino-ui-text = { path = "../cupertino-ui-text" }
+cupertino-theme = { path = "../cupertino-theme" }
+rustix = { version = "1", features = ["time"] }
+smallvec = "1.16"
+tracing = "0.1"
+
+[dev-dependencies]
+cupertino-assets = { path = "../cupertino-assets" }
+cupertino-ui-test = { path = "../cupertino-ui-test" }
+gungraun = "=0.20.0"
+
+[[bench]]
+name = "layout"
+harness = false
+
+[[bench]]
+name = "instructions"
+harness = false
+
+[[test]]
+# Every file of `tests/` is a module of this one binary (`tests/main.rs`).
+name = "tests"
+path = "tests/main.rs"

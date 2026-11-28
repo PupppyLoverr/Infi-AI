@@ -1,0 +1,37 @@
+# Apple's kexts the hosted macOS keeps from macOS 27.2's kernelcache (bundle IDs, one per line), with every kext they
+# depend on (scripts/kclink/kclink.py --keep)
+com.apple.security.AppleImage4
+com.apple.driver.AppleMobileFileIntegrity
+com.apple.security.sandbox
+com.apple.security.quarantine
+com.apple.AppleSystemPolicy
+com.apple.kec.pthread
+com.apple.filesystems.apfs
+com.apple.AppleFSCompression.AppleFSCompressionTypeZlib
+com.apple.AppleFSCompression.AppleFSCompressionTypeDataless
+com.apple.iokit.IOHIDFamily
+com.apple.iokit.IOTimeSyncFamily
+com.apple.plugin.IOgPTPPlugin
+com.apple.driver.AppleDiskImages2
+com.apple.filesystems.hfs.kext
+com.apple.driver.AppleMultitouchDriver
+com.apple.iokit.IOBluetoothFamily
+com.apple.driver.driverkit.serial
+# hdiutil's disk images (IOHDIXController)
+com.apple.driver.DiskImages
+com.apple.driver.DiskImages.FileBackingStore
+com.apple.driver.DiskImages.KernelBacked
+com.apple.driver.DiskImages.RAMBackingStore
+com.apple.driver.DiskImages.ReadWriteDiskImage
+com.apple.driver.DiskImages.UDIFDiskImage
+# IOSurface for actool, the graphics families XnuDisplay and XnuCpuMetal subclass, and lifs
+com.apple.iokit.IOSurface
+com.apple.iokit.IOGraphicsFamily
+com.apple.filesystems.lifs
+com.apple.iokit.IOMobileGraphicsFamily
+com.apple.iokit.IOAVFamily
+# the keystore of Apple's virtual platform (VirtualMac): AppleKeyStore and AppleCredentialManager in software, no SEP
+# hardware; AppleVirtualPlatform is their library
+com.apple.driver.AppleVirtualPlatform
+com.apple.driver.AppleVPCredentialManager
+com.apple.driver.AppleVPKeyStore

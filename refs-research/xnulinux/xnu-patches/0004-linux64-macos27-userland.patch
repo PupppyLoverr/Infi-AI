@@ -1,0 +1,295 @@
+What macOS 27's userland needs of xnu-12377: the system calls its libsystem_kernel calls (pipe2, dup3, fchflagsat,
+getumask; ENOSYS without SIGSYS for the ones it probes), a vnode table and workqueue limits for a full userland on one
+CPU, and a log line for fatal exceptions and missing system calls. Other Darwin userlands (PureDarwin) also call vfork,
+which Apple's arm64 configuration leaves out: it is a fork here.
+
+diff --git a/bsd/dev/arm/systemcalls.c b/bsd/dev/arm/systemcalls.c
+index 5a7b717..5c12c8f 100644
+--- a/bsd/dev/arm/systemcalls.c
++++ b/bsd/dev/arm/systemcalls.c
+@@ -132,6 +132,10 @@ unix_syscall(
+ 
+ 	uthread->uu_flag |= UT_NOTCANCELPT;
+ 	uthread->syscall_code = code;
++	if (__improbable(callp->sy_call == (sy_call_t *)nosys)) {	/* LINUX64: who calls a system call this kernel does not have */
++		kprintf("linux64: nosys %d from pid %d %s pc 0x%llx lr 0x%llx\n", code, proc_pid(proc), proc->p_comm,
++		    (unsigned long long)get_saved_state_pc(state), (unsigned long long)get_saved_state_lr(state));
++	}
+ 
+ 	uthread->uu_rval[0] = 0;
+ 
+diff --git a/bsd/dev/unix_startup.c b/bsd/dev/unix_startup.c
+index ec19ee7..0bbea03 100644
+--- a/bsd/dev/unix_startup.c
++++ b/bsd/dev/unix_startup.c
+@@ -33,6 +33,7 @@
+  */
+ 
+ #include <mach/mach_types.h>
++#include <linux64/linux64.h>
+ 
+ #include <kern/startup.h>
+ #include <vm/vm_kern_xnu.h>
+@@ -186,6 +187,20 @@ bsd_startupearly(void)
+ 			}
+ #endif
+ 		}
++		{
++			/* LINUX64 (xnulinux): hosted, size the vnode table from the DRAM xnu.ko gave us (sane_size may not be set yet) */
++			extern uint64_t max_mem;
++			if (linux64_hook) {
++				kprintf("linux64: desiredvnodes %d (sane_size 0x%llx max_mem 0x%llx)\n", desiredvnodes, (uint64_t)sane_size, (uint64_t)max_mem);
++				/* the k27 config's CONFIG_VNODES (1024) is for a small device; a full macOS userland needs far more */
++				if (desiredvnodes < (int)(max_mem / 65536) + 1024) {
++					desiredvnodes = (int)(max_mem / 65536) + 1024;
++					if (desiredvnodes > 263168) {
++						desiredvnodes = 263168;
++					}
++				}
++			}
++		}
+ 		vnodes_sized = 1;
+ 	}
+ }
+diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
+index 6e740c2..bfbdd29 100644
+--- a/bsd/kern/kern_exit.c
++++ b/bsd/kern/kern_exit.c
+@@ -3792,6 +3792,9 @@ exit_with_mach_exception(
+ 
+ 	printf("[%s: killed] exiting with signal %d, force exiting the process\n",
+ 	    proc_best_name(p), SIGKILL);
++	kprintf("linux64: [%s] fatal mach exception type %d code 0x%llx subcode 0x%llx reason ns %u code 0x%llx\n",
++	    proc_best_name(p), (int)exception.exception_type, (unsigned long long)exception.mx_code,
++	    (unsigned long long)exception.mx_subcode, reason->osr_namespace, (unsigned long long)reason->osr_code);
+ 
+ 	/* consumes reason */
+ 	return exit_with_reason(p, W_EXITCODE(0, SIGKILL), NULL,
+diff --git a/bsd/kern/kern_fork.c b/bsd/kern/kern_fork.c
+index 1d8db27..06c3a8d 100644
+--- a/bsd/kern/kern_fork.c
++++ b/bsd/kern/kern_fork.c
+@@ -631,6 +631,19 @@ fork(proc_t parent_proc, __unused struct fork_args *uap, int32_t *retval)
+ 	return err;
+ }
+ 
++#if !CONFIG_VFORK
++/*
++ * LINUX64 (xnulinux): vfork, system call 66, which Apple's arm64 kernels leave out (CONFIG_VFORK) but other Darwin
++ * userlands still call (PureDarwin's launchd and launchctl). It is a fork: POSIX lets vfork be one, and libsyscall's
++ * vfork stub reads the same parent/child flag (x1) as fork's.
++ */
++int
++sys_vfork(proc_t parent_proc, __unused struct vfork_args *uap, int32_t *retval)
++{
++	return fork(parent_proc, NULL, retval);
++}
++#endif
++
+ 
+ /*
+  * cloneproc
+diff --git a/bsd/kern/sys_pipe.c b/bsd/kern/sys_pipe.c
+index bd682ab..64d7fa9 100644
+--- a/bsd/kern/sys_pipe.c
++++ b/bsd/kern/sys_pipe.c
+@@ -388,8 +388,29 @@ expand_pipespace(struct pipe *p, int target_size)
+  */
+ 
+ /* ARGSUSED */
++static int pipe_flags(proc_t p, int32_t *retval, int flags);
++
+ int
+ pipe(proc_t p, __unused struct pipe_args *uap, int32_t *retval)
++{
++	return pipe_flags(p, retval, 0);
++}
++
++/*
++ * LINUX64: pipe2(fildes, flags), system call 148 in macOS 27's libsystem_kernel (__pipe2 returns the two descriptors in
++ * x0/x1 as __pipe does, then stores them). Flags: O_CLOEXEC and O_NONBLOCK, on both ends.
++ */
++int
++pipe2(proc_t p, struct pipe2_args *uap, int32_t *retval)
++{
++	if (uap->flags & ~(O_CLOEXEC | O_NONBLOCK)) {
++		return EINVAL;
++	}
++	return pipe_flags(p, retval, uap->flags);
++}
++
++static int
++pipe_flags(proc_t p, int32_t *retval, int flags)
+ {
+ 	struct fileproc *rf, *wf;
+ 	struct pipe *rpipe, *wpipe;
+@@ -409,7 +430,10 @@ pipe(proc_t p, __unused struct pipe_args *uap, int32_t *retval)
+ 	if (error) {
+ 		goto freepipes;
+ 	}
+-	rf->f_flag = FREAD;
++	rf->f_flag = FREAD | ((flags & O_NONBLOCK) ? FNONBLOCK : 0);
++	if (flags & O_CLOEXEC) {
++		rf->fp_flags |= FP_CLOEXEC;
++	}
+ 	rf->f_ops = &pipeops;
+ 	fp_set_data(rf, rpipe);
+ 
+@@ -418,7 +442,10 @@ pipe(proc_t p, __unused struct pipe_args *uap, int32_t *retval)
+ 		fp_free(p, retval[0], rf);
+ 		goto freepipes;
+ 	}
+-	wf->f_flag = FWRITE;
++	wf->f_flag = FWRITE | ((flags & O_NONBLOCK) ? FNONBLOCK : 0);
++	if (flags & O_CLOEXEC) {
++		wf->fp_flags |= FP_CLOEXEC;
++	}
+ 	wf->f_ops = &pipeops;
+ 	fp_set_data(wf, wpipe);
+ 
+diff --git a/bsd/kern/syscalls.master b/bsd/kern/syscalls.master
+index c08a74c..9bdafba 100644
+--- a/bsd/kern/syscalls.master
++++ b/bsd/kern/syscalls.master
+@@ -120,7 +120,7 @@
+ #if CONFIG_VFORK
+ 66	AUE_VFORK	ALL	{ int vfork(void) NO_SYSCALL_STUB; }
+ #else
+-66	AUE_NULL	ALL	{ int nosys(void); }   { old vfork }
++66	AUE_FORK	ALL	{ int sys_vfork(void); }	{ LINUX64 vfork as fork for userlands that call it such as PureDarwin }
+ #endif
+ 67	AUE_NULL	ALL	{ int oslog_coproc_reg(const char *uuid, const char *file_path, size_t file_path_len) NO_SYSCALL_STUB; }
+ 68	AUE_NULL	ALL	{ int oslog_coproc(void *buff, uint64_t buff_len, uint32_t type, const char *uuid, uint64_t timestamp, uint32_t offset, uint32_t stream_log) NO_SYSCALL_STUB; }
+@@ -229,8 +229,8 @@
+ 145	AUE_NULL	ALL	{ int nosys(void); }   { old setrlimit }
+ 146	AUE_NULL	ALL	{ int nosys(void); }   { old killpg }
+ 147	AUE_SETSID	ALL	{ int setsid(void); }
+-148	AUE_NULL	ALL	{ int nosys(void); }   { old setquota }
+-149	AUE_NULL	ALL	{ int nosys(void); }   { old qquota }
++148	AUE_PIPE	ALL	{ int pipe2(user_addr_t fildes, int flags) NO_SYSCALL_STUB; }	{ LINUX64 macOS 27 pipe2 }
++149	AUE_DUP2	ALL	{ int sys_dup3(u_int from, u_int to, int flags); }	{ LINUX64 macOS 27 dup3 }
+ 150	AUE_NULL	ALL	{ int nosys(void); }   { old getsockname }
+ 151	AUE_GETPGID	ALL	{ int getpgid(pid_t pid); }
+ 152	AUE_SETPRIVEXEC	ALL	{ int setprivexec(int flag); }
+@@ -309,8 +309,8 @@
+ 212	AUE_NULL	ALL	{ int nosys(void); } { old ATgetrsp }
+ 213	AUE_NULL	ALL	{ int nosys(void); } 	{ Reserved for AppleTalk }
+ 
+-214	AUE_NULL	ALL	{ int nosys(void); }
+-215	AUE_NULL	ALL	{ int nosys(void); }
++214	AUE_CHFLAGS	ALL	{ int fchflagsat(int fd, user_addr_t path, int flags, int atflag); }	{ LINUX64 macOS 27 fchflagsat }
++215	AUE_UMASK	ALL	{ int getumask(void); }	{ LINUX64 macOS 27 getumask }
+ 
+ ; System Calls 216 - 230 are reserved for calls to support HFS/HFS Plus
+ ; file system semantics. Currently, we only use 215-227.  The rest is
+@@ -351,8 +351,8 @@
+ 243	AUE_INITGROUPS	ALL	{ int initgroups(u_int gidsetsize, gid_t *gidset, int gmuid) NO_SYSCALL_STUB; }
+ 244	AUE_POSIX_SPAWN	ALL	{ int posix_spawn(pid_t *pid, const char *path, const struct _posix_spawn_args_desc *adesc, char **argv, char **envp) NO_SYSCALL_STUB; }
+ 245	AUE_FFSCTL	ALL	{ int ffsctl(int fd, u_long cmd, caddr_t data, u_int options); }
+-246	AUE_NULL	ALL	{ int nosys(void); }
+-247	AUE_NULL	ALL	{ int nosys(void); } { old nfsclnt }
++246	AUE_NULL	ALL	{ int enosys(void); }	{ LINUX64 macOS 27 aio_readv ENOSYS without SIGSYS }
++247	AUE_NULL	ALL	{ int enosys(void); } { LINUX64 macOS 27 aio_writev ENOSYS without SIGSYS }
+ 
+ #if NFSSERVER	/* XXX */
+ 248	AUE_FHOPEN	ALL	{ int fhopen(const struct fhandle *u_fhp, int flags); } 
+@@ -360,7 +360,7 @@
+ 248	AUE_NULL	ALL	{ int nosys(void); } 
+ #endif
+ 
+-249	AUE_NULL	ALL	{ int nosys(void); }
++249	AUE_NULL	ALL	{ int enosys(void); }	{ LINUX64 macOS 27 fsctlat ENOSYS without SIGSYS }
+ 250	AUE_MINHERIT	ALL	{ int minherit(caddr_ut addr, size_ut len, int inherit); }
+ #if SYSV_SEM
+ 251	AUE_SEMSYS	ALL	{ int semsys(u_int which, int a2, int a3, int a4, int a5) NO_SYSCALL_STUB; }
+@@ -530,7 +530,7 @@
+ 349	AUE_NULL	ALL	{ int __pthread_fchdir(int fd); }
+ 350	AUE_AUDIT	ALL	{ int audit(void *record, int length); }
+ 351	AUE_AUDITON	ALL	{ int auditon(int cmd, void *data, int length); }
+-352	AUE_NULL	ALL	{ int nosys(void); }
++352	AUE_NULL	ALL	{ int enosys(void); }	{ LINUX64 macOS 27 guarded_ftruncate_np ENOSYS without SIGSYS }
+ 353	AUE_GETAUID	ALL	{ int getauid(au_id_t *auid); }
+ 354	AUE_SETAUID	ALL	{ int setauid(au_id_t *auid); }
+ 355	AUE_NULL	ALL	{ int nosys(void); }	{ old getaudit }
+diff --git a/bsd/pthread/pthread_workqueue.c b/bsd/pthread/pthread_workqueue.c
+index cb27db6..924caf2 100644
+--- a/bsd/pthread/pthread_workqueue.c
++++ b/bsd/pthread/pthread_workqueue.c
+@@ -28,6 +28,7 @@
+ /* Copyright (c) 1995-2018 Apple, Inc. All Rights Reserved */
+ 
+ #include <sys/cdefs.h>
++#include <linux64/linux64.h>
+ 
+ #include <kern/assert.h>
+ #include <kern/ast.h>
+@@ -2117,6 +2118,20 @@ workq_open(struct proc *p, __unused struct workq_open_args *uap,
+ 		}
+ 
+ 		wq_max_cooperative_threads = num_cpus;
++		{
++			/*
++			 * LINUX64 (xnulinux): hosted XNU has one CPU. With a parallelism of 1 a process whose main thread waits
++			 * on work it queued (ld's layout: dispatch_group_wait) never got a worker admitted; allow a few
++			 * constrained threads per QoS bucket (the cooperative pool stays at the CPU count), as a small multi-core machine would.
++			 */
++			if (linux64_hook) {
++				for (int b = 0; b < WORKQ_NUM_QOS_BUCKETS; b++) {
++					if (wq_max_parallelism[b] < 4) {
++						wq_max_parallelism[b] = 4;
++					}
++				}
++			}
++		}
+ 
+ 		wq_init_constrained_limit = 0;
+ 	}
+diff --git a/bsd/vfs/vfs_syscalls.c b/bsd/vfs/vfs_syscalls.c
+index 873eb8f..a15ea6b 100644
+--- a/bsd/vfs/vfs_syscalls.c
++++ b/bsd/vfs/vfs_syscalls.c
+@@ -8018,6 +8018,44 @@ chflags(__unused proc_t p, struct chflags_args *uap, __unused int32_t *retval)
+ 	return error;
+ }
+ 
++/*
++ * LINUX64: fchflagsat(fd, path, flags, atflag), system call 214 in macOS 27's libsystem_kernel: chflags relative to fd
++ * (AT_FDCWD for the working directory), not following a final symlink with AT_SYMLINK_NOFOLLOW.
++ */
++int
++fchflagsat(__unused proc_t p, struct fchflagsat_args *uap, __unused int32_t *retval)
++{
++	vnode_t vp;
++	vfs_context_t ctx = vfs_context_current();
++	int error;
++	struct nameidata nd;
++
++	if (uap->atflag & ~AT_SYMLINK_NOFOLLOW) {
++		return EINVAL;
++	}
++	AUDIT_ARG(fflags, uap->flags);
++	NDINIT(&nd, LOOKUP, OP_SETATTR, ((uap->atflag & AT_SYMLINK_NOFOLLOW) ? NOFOLLOW : FOLLOW) | AUDITVNPATH1,
++	    UIO_USERSPACE, uap->path, ctx);
++	error = nameiat(&nd, uap->fd);
++	if (error) {
++		return error;
++	}
++	vp = nd.ni_vp;
++	nameidone(&nd);
++	/* chflags1 drops the vnode reference */
++	return chflags1(vp, uap->flags, ctx);
++}
++
++/*
++ * LINUX64: getumask(), system call 215 in macOS 27's libsystem_kernel: the file creation mask, unchanged.
++ */
++int
++getumask(proc_t p, __unused struct getumask_args *uap, int32_t *retval)
++{
++	*retval = p->p_fd.fd_cmask;
++	return 0;
++}
++
+ /*
+  * Change flags of a file given a file descriptor.
+  */

@@ -1,0 +1,2302 @@
+//! The widgets the screens are made of besides the standard controls: the backdrop with the screen's wallpaper picture,
+//! the fading parts of the interface, absolute placement, text at a size of its own, the avatar, the field's frame on its
+//! material and its adornment, the buttons beside it and the power item.
+
+use std::sync::Arc;
+
+use cupertino_geometry::rounded::{PathSeg, RoundedRect};
+use cupertino_kit::core::{
+    AccessibleStates, Action, Change, Element, Event, EventCx, Live, MeasureCx, PaintCx, Phase,
+    Propagation, Role, SemanticsCx, Widget,
+};
+use cupertino_kit::geometry::{Insets, Point, Rect, Size};
+use cupertino_kit::layout::{
+    Align, Axis, Constraints, ContainerKind, Justify, LayoutSpec, Measured, SizeSpec,
+};
+use cupertino_kit::platform::{Keysym, Mods, MouseButton, PointerEvent};
+use cupertino_kit::render::{Effect, FillRule, Paint, PaintOp, PathVerb, Sampling, Shape};
+use cupertino_kit::text::{
+    AttributedText, FontWeight, ParagraphLayout, ParagraphStyle, TextAlign, TextStyle, TextSystem,
+    Wrap,
+};
+use cupertino_kit::theme::{Color, ColorRole, StateVariant};
+
+use super::pictures::{Glass as GlassSpec, Laid, Whole, PICTURE_TILE};
+use crate::layout::{BUTTON_GLYPH, PILL_RADIUS};
+use crate::spinner;
+
+const RETURN: Keysym = Keysym(0xff0d);
+const KP_ENTER: Keysym = Keysym(0xff8d);
+const SPACE: Keysym = Keysym(0x20);
+pub(crate) const ESCAPE: Keysym = Keysym(0xff1b);
+/// Return or Enter with Option held, as the screens' keys see it first: no key has this symbol. A screen that does
+/// not take it gets the plain key.
+pub(crate) const OPTION_RETURN: Keysym = Keysym(0x0100_ff0d);
+
+/// Fill behind the initials (approximate).
+const AVATAR_FILL: [f32; 3] = [0.60, 0.62, 0.66];
+/// The mark on the avatar of a user who has a session: a disc of this fill with a white check, at its lower right.
+const LOGGED_IN_FILL: [f32; 3] = [0.20, 0.72, 0.35];
+const LOGGED_IN_RADIUS: f64 = 9.0;
+const LOGGED_IN_CHECK_WIDTH: f64 = 1.8;
+
+/// The tint over the control material of the field and its buttons: the secondary label colour (white at this alpha in
+/// the dark appearance), the tertiary one when disabled, laid over at this strength, with a darken layer of this
+/// alpha inside the tint, which takes its white down to a light grey (approximate); with Increase Contrast black at
+/// this alpha; with Reduce Transparency an opaque light field of this grey (approximate).
+const TINT_SECONDARY_ALPHA: f32 = 0.55;
+const TINT_TERTIARY_ALPHA: f32 = 0.25;
+const TINT_STRENGTH: f32 = 0.2;
+const TINT_DARKEN: f32 = 0.4;
+const TINT_CONTRAST_ALPHA: f32 = 0.4;
+const OPAQUE_FIELD: f32 = 0.92;
+/// The text of an opaque field: black at these alphas, its text and its placeholder.
+pub(crate) const OPAQUE_TEXT_ALPHA: f32 = 0.75;
+pub(crate) const OPAQUE_PLACEHOLDER_ALPHA: f32 = 0.45;
+
+/// The display options the screens follow.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Access {
+    pub increase_contrast: bool,
+    pub reduce_transparency: bool,
+}
+
+/// How the tint over a control's material looks.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum FieldTint {
+    /// The secondary label colour; the tertiary one when disabled.
+    Label { disabled: bool },
+    /// Increase Contrast: black.
+    Contrast,
+    /// Reduce Transparency: an opaque light field, its text dark.
+    Opaque,
+}
+
+impl FieldTint {
+    pub(crate) fn of(access: Access, disabled: bool) -> FieldTint {
+        if access.reduce_transparency {
+            FieldTint::Opaque
+        } else if access.increase_contrast {
+            FieldTint::Contrast
+        } else {
+            FieldTint::Label { disabled }
+        }
+    }
+
+    /// The colour laid over the material.
+    pub(crate) fn color(self) -> Color {
+        match self {
+            FieldTint::Label { disabled } => {
+                let alpha = if disabled {
+                    TINT_TERTIARY_ALPHA
+                } else {
+                    TINT_SECONDARY_ALPHA
+                };
+                let grey = 1.0 - TINT_DARKEN;
+                Color::new(grey, grey, grey, alpha * TINT_STRENGTH)
+            }
+            FieldTint::Contrast => Color::new(0.0, 0.0, 0.0, TINT_CONTRAST_ALPHA),
+            FieldTint::Opaque => Color::new(OPAQUE_FIELD, OPAQUE_FIELD, OPAQUE_FIELD, 1.0),
+        }
+    }
+}
+
+/// Caps Lock badge: a rounded square of corner radius 4 in 16-unit space, centred in the field's trailing slot.
+const CAPS_BADGE_UNITS: f64 = 16.0;
+const CAPS_BADGE_RADIUS: f64 = 4.0;
+/// The up arrow over a bar that is cut out of the badge, in badge units.
+const CAPS_GLYPH: [&[(f64, f64)]; 2] = [
+    &[
+        (8.0, 3.0),
+        (12.5, 8.5),
+        (10.0, 8.5),
+        (10.0, 11.0),
+        (6.0, 11.0),
+        (6.0, 8.5),
+        (3.5, 8.5),
+    ],
+    &[(5.5, 12.5), (10.5, 12.5), (10.5, 14.0), (5.5, 14.0)],
+];
+/// Edge of the spinner square in the field's trailing slot.
+const SPINNER_SIZE: f64 = 16.0;
+/// Edge of the padlock of a locked account.
+const PADLOCK_SIZE: f64 = 14.0;
+
+/// The power glyph: the ring's radius, stroke and the angle of its gap at the top, and how many segments draw the
+/// ring.
+const POWER_RADIUS: f64 = 5.5;
+const POWER_STROKE: f64 = 1.6;
+const POWER_GAP_DEGREES: f64 = 60.0;
+const POWER_RING_STEPS: usize = 30;
+/// The power item's fill while it has the keyboard focus or its menu is open (white at this alpha).
+const POWER_HIGHLIGHT_ALPHA: f32 = 0.2;
+
+/// The selected picker row: its frame with continuous corners of this radius, outlined 1 pt in white at this alpha.
+const SELECTION_RADIUS: f64 = 12.0;
+const SELECTION_BORDER_WIDTH: f64 = 1.0;
+const SELECTION_BORDER_ALPHA: f32 = 0.1;
+
+/// The user name's shadow: black at this opacity, not offset, of this blur radius in points. A blur radius is a
+/// Gaussian of half its deviation (`sigma_for_radius`), so this is a deviation of 3 pt: a soft glow that hugs the
+/// letters, gone about 9 pt from them.
+const NAME_SHADOW_ALPHA: f32 = 0.5;
+pub(crate) const NAME_SHADOW_BLUR: f64 = 6.0;
+
+/// The glyphs of the submit and help buttons, in a square of [`BUTTON_GLYPH`] points: the ring's stroke, white at this
+/// alpha (the help button's alpha is approximate, the submit button's).
+const GLYPH_STROKE: f64 = 1.5;
+const GLYPH_ALPHA: f32 = 0.5;
+/// How many segments draw a glyph's curves.
+const GLYPH_STEPS: usize = 32;
+
+pub(crate) const WHITE: Color = Color::new(1.0, 1.0, 1.0, 1.0);
+
+fn no_measure() -> Measured {
+    Measured {
+        size: Size::ZERO,
+        baseline: None,
+    }
+}
+
+fn rgba(c: [f32; 3], alpha: f32) -> Color {
+    Color::new(c[0], c[1], c[2], alpha)
+}
+
+fn fill(cx: &mut PaintCx<'_>, shape: Shape, color: Color) {
+    cx.push(PaintOp::Fill {
+        shape,
+        paint: Paint::Solid(color),
+    });
+}
+
+fn circle(center: Point, radius: f64) -> Shape {
+    Shape::RoundedRect {
+        rect: Rect::new(
+            center.x - radius,
+            center.y - radius,
+            2.0 * radius,
+            2.0 * radius,
+        ),
+        radius,
+    }
+}
+
+/// What a full screen stands on: a screen of `size` points and the picture it was last given; black until it has one.
+#[derive(Clone)]
+pub(crate) struct Ground {
+    pub size: Size,
+    pub picture: Option<Arc<Whole>>,
+}
+
+/// Whether two pictures are the same one.
+fn same_picture(a: &Option<Arc<Whole>>, b: &Option<Arc<Whole>>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// The squares of [`PICTURE_TILE`] points that cover a screen of `size`, row by row; those at the right and bottom edges
+/// are cut to the screen.
+fn tiles(size: Size) -> impl Iterator<Item = Rect> {
+    let count = |side: f64| (side.max(0.0) / PICTURE_TILE).ceil() as usize;
+    let (columns, rows) = (count(size.width), count(size.height));
+    (0..rows).flat_map(move |row| {
+        (0..columns).map(move |column| {
+            let (x, y) = (column as f64 * PICTURE_TILE, row as f64 * PICTURE_TILE);
+            Rect::new(
+                x,
+                y,
+                PICTURE_TILE.min(size.width - x),
+                PICTURE_TILE.min(size.height - y),
+            )
+        })
+    })
+}
+
+/// One square of the screen's picture, at `rect`: the picture's pixels under it, one a device pixel, copied and never
+/// resampled. Its edges are on device pixels, so neighbouring squares meet without a seam at any scale. Black while the
+/// screen has no picture, so a lock surface never shows what lies under it.
+struct PictureTile {
+    picture: Option<Arc<Whole>>,
+    rect: Rect,
+}
+
+impl<M: 'static> Widget<M> for PictureTile {
+    type State = ();
+
+    fn layout(&self) -> LayoutSpec {
+        LayoutSpec {
+            width: SizeSpec::Fixed(self.rect.width()),
+            height: SizeSpec::Fixed(self.rect.height()),
+            position: self.rect.origin,
+            ..LayoutSpec::new(ContainerKind::Leaf)
+        }
+    }
+
+    fn state(&self) {}
+
+    fn update(&self, old: &Self, _: &mut ()) -> Change {
+        if self.rect != old.rect {
+            Change::Layout
+        } else if !same_picture(&self.picture, &old.picture) {
+            Change::Paint
+        } else {
+            Change::None
+        }
+    }
+
+    fn measure(&self, _: &(), _: Constraints, _: &mut MeasureCx<'_>) -> Measured {
+        Measured {
+            size: self.rect.size,
+            baseline: None,
+        }
+    }
+
+    fn event(&self, _: &mut (), _: &Event, _: &mut EventCx<'_, M>) -> Propagation {
+        Propagation::Continue
+    }
+
+    fn paint(&self, _: &(), cx: &mut PaintCx<'_>) {
+        let Some(picture) = &self.picture else {
+            let local = Rect::new(0.0, 0.0, self.rect.width(), self.rect.height());
+            fill(cx, Shape::Rect(local), Color::new(0.0, 0.0, 0.0, 1.0));
+            return;
+        };
+        let scale = picture.scale();
+        let (width, height) = picture.size();
+        let edge = |v: f64, limit: u32| (v * scale).round().clamp(0.0, f64::from(limit));
+        let (x0, y0) = (
+            edge(self.rect.min_x(), width),
+            edge(self.rect.min_y(), height),
+        );
+        let (x1, y1) = (
+            edge(self.rect.max_x(), width),
+            edge(self.rect.max_y(), height),
+        );
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        let Some(band) = picture.band(y0 as u32, y1 as u32) else {
+            return;
+        };
+        // a picture made at another scale (the output's scale just changed) is drawn smoothly until its own is in
+        let sampling = if scale == cx.env().scale {
+            Sampling::Nearest
+        } else {
+            Sampling::Linear
+        };
+        cx.image_part(
+            band.id,
+            &band.image,
+            Rect::new(x0, y0 - f64::from(band.region[1]), x1 - x0, y1 - y0),
+            Rect::new(
+                x0 / scale - self.rect.min_x(),
+                y0 / scale - self.rect.min_y(),
+                (x1 - x0) / scale,
+                (y1 - y0) / scale,
+            ),
+            sampling,
+        );
+    }
+
+    fn semantics(&self, _: &(), cx: &mut SemanticsCx<'_>) {
+        cx.hidden();
+    }
+}
+
+/// `rect` with continuous corners of `radius`, as a path to fill or clip by.
+pub(crate) fn continuous(rect: Rect, radius: f64) -> Shape {
+    let verbs = RoundedRect::continuous(rect, radius)
+        .path()
+        .segments
+        .into_iter()
+        .map(|segment| match segment {
+            PathSeg::MoveTo(p) => PathVerb::MoveTo(p),
+            PathSeg::LineTo(p) => PathVerb::LineTo(p),
+            PathSeg::CubicTo(a, b, c) => PathVerb::CubicTo(a, b, c),
+            PathSeg::Close => PathVerb::Close,
+        })
+        .collect();
+    Shape::Path {
+        verbs,
+        fill_rule: FillRule::NonZero,
+    }
+}
+
+/// The content of a full-screen window: the wallpaper's kept picture under everything, and the first look at every key
+/// and press. Any of them is activity; while the interface is hidden the key or press only shows it again and goes no
+/// further. Escape and the keys `keys` maps go to the application instead of the focused control.
+pub(crate) struct Backdrop<M> {
+    /// What the lock screen and the greeter stand on; a panel paints nothing.
+    pub ground: Option<Ground>,
+    pub hidden: bool,
+    pub on_activity: Option<M>,
+    /// What a key the application takes means; `None` passes the key on to the focus.
+    pub keys: Box<dyn Fn(Keysym, Option<char>) -> Option<M>>,
+    /// What assistive technology calls the screen, and says of it.
+    pub label: String,
+    pub description: Option<String>,
+    pub role: Role,
+    pub modal: bool,
+    pub children: Vec<Element<M>>,
+}
+
+impl<M: Clone + 'static> Widget<M> for Backdrop<M> {
+    type State = ();
+
+    fn layout(&self) -> LayoutSpec {
+        LayoutSpec {
+            width: SizeSpec::Fill,
+            height: SizeSpec::Fill,
+            ..LayoutSpec::new(ContainerKind::Absolute)
+        }
+    }
+
+    fn take_children(&mut self) -> Vec<Element<M>> {
+        let mut children: Vec<Element<M>> = self
+            .ground
+            .as_ref()
+            .map(|ground| {
+                tiles(ground.size)
+                    .map(|rect| {
+                        Element::new(PictureTile {
+                            picture: ground.picture.clone(),
+                            rect,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        children.append(&mut self.children);
+        children
+    }
+
+    fn state(&self) {}
+
+    fn update(&self, _: &Self, _: &mut ()) -> Change {
+        // the squares of the picture follow the ground themselves
+        Change::None
+    }
+
+    fn measure(&self, _: &(), _: Constraints, _: &mut MeasureCx<'_>) -> Measured {
+        no_measure()
+    }
+
+    fn event(&self, _: &mut (), event: &Event, cx: &mut EventCx<'_, M>) -> Propagation {
+        // on the way to what has the focus, or as the target itself when nothing under it has the focus (the picker
+        // just back from the password screen)
+        if !matches!(cx.phase(), Phase::Capture | Phase::Target) {
+            return Propagation::Continue;
+        }
+        let activity = |cx: &mut EventCx<'_, M>| {
+            if let Some(message) = &self.on_activity {
+                cx.emit(message.clone());
+            }
+        };
+        match event {
+            Event::Key(key, _) if key.pressed => {
+                activity(cx);
+                if self.hidden {
+                    return Propagation::Stop;
+                }
+                let option_return = key.mods.contains(Mods::ALT)
+                    && matches!(key.keysym, Keysym(0xff0d) | Keysym(0xff8d));
+                let taken = option_return
+                    .then(|| (self.keys)(OPTION_RETURN, None))
+                    .flatten()
+                    .or_else(|| (self.keys)(key.keysym, key.text));
+                match taken {
+                    Some(message) => {
+                        cx.emit(message);
+                        Propagation::Stop
+                    }
+                    None => Propagation::Continue,
+                }
+            }
+            Event::Pointer(PointerEvent::Button { pressed: true, .. }, _) => {
+                activity(cx);
+                if self.hidden {
+                    Propagation::Stop
+                } else {
+                    Propagation::Continue
+                }
+            }
+            Event::Pointer(PointerEvent::Motion { .. }, _) => {
+                activity(cx);
+                Propagation::Continue
+            }
+            _ => Propagation::Continue,
+        }
+    }
+
+    fn paint(&self, _: &(), cx: &mut PaintCx<'_>) {
+        // the lock screen and the greeter stand on a darkened picture whatever the session's appearance
+        if self.ground.is_some() {
+            cx.pin_appearance(true);
+        }
+    }
+
+    fn semantics(&self, _: &(), cx: &mut SemanticsCx<'_>) {
+        cx.role(self.role);
+        cx.name(self.label.clone());
+        if let Some(description) = &self.description {
+            cx.description(description.clone());
+        }
+        if self.modal {
+            cx.states(AccessibleStates {
+                modal: true,
+                ..AccessibleStates::default()
+            });
+        }
+    }
+}
+
+/// A part of a screen at `rect` (its children placed in it), drawn as one layer the size of `rect` while it is partly
+/// faded; fully shown it is drawn straight over the wallpaper, which looks the same, so a change in it repaints only what
+/// it covers. A fade composites the layer over the kept picture, which it does not make again.
+pub(crate) struct Fade<M> {
+    pub rect: Rect,
+    pub opacity: f64,
+    /// Its first control takes the focus when the window opens.
+    pub initial: bool,
+    /// A focus scope: Tab goes round its controls, and a new one, by its key, takes the focus as it opens.
+    pub scope: bool,
+    pub children: Vec<Element<M>>,
+}
+
+impl<M> Fade<M> {
+    pub(crate) fn new(rect: Rect, opacity: f64, children: Vec<Element<M>>) -> Self {
+        Fade {
+            rect,
+            opacity,
+            initial: false,
+            scope: false,
+            children,
+        }
+    }
+}
+
+impl<M: 'static> Widget<M> for Fade<M> {
+    type State = ();
+
+    fn layout(&self) -> LayoutSpec {
+        LayoutSpec {
+            width: SizeSpec::Fixed(self.rect.width()),
+            height: SizeSpec::Fixed(self.rect.height()),
+            position: self.rect.origin,
+            ..LayoutSpec::new(ContainerKind::Absolute)
+        }
+    }
+
+    fn take_children(&mut self) -> Vec<Element<M>> {
+        std::mem::take(&mut self.children)
+    }
+
+    fn state(&self) {}
+
+    fn update(&self, old: &Self, _: &mut ()) -> Change {
+        if self.rect != old.rect {
+            Change::Layout
+        } else if self.opacity != old.opacity {
+            Change::Paint
+        } else {
+            Change::None
+        }
+    }
+
+    fn measure(&self, _: &(), _: Constraints, _: &mut MeasureCx<'_>) -> Measured {
+        Measured {
+            size: self.rect.size,
+            baseline: None,
+        }
+    }
+
+    fn event(&self, _: &mut (), _: &Event, _: &mut EventCx<'_, M>) -> Propagation {
+        Propagation::Continue
+    }
+
+    fn paint(&self, _: &(), cx: &mut PaintCx<'_>) {
+        let opacity = self.opacity.clamp(0.0, 1.0);
+        if opacity < 1.0 {
+            cx.set_group(opacity as f32, Vec::new());
+        }
+    }
+
+    fn semantics(&self, _: &(), cx: &mut SemanticsCx<'_>) {
+        if self.initial {
+            cx.initial_focus();
+        }
+        if self.scope {
+            cx.focus_scope();
+        }
+    }
+}
+
+/// Its children at `rect` in an absolute parent, stacked along `axis` and placed across it by `align`. `initial` gives
+/// its first control the focus when the window opens.
+pub(crate) struct Place<M> {
+    pub rect: Rect,
+    pub axis: Axis,
+    pub align: Align,
+    pub justify: Justify,
+    pub initial: bool,
+    pub children: Vec<Element<M>>,
+}
+
+impl<M: 'static> Place<M> {
+    /// Centred both ways.
+    pub(crate) fn new(rect: Rect, children: Vec<Element<M>>) -> Self {
+        Place {
+            rect,
+            axis: Axis::Vertical,
+            align: Align::Center,
+            justify: Justify::Center,
+            initial: false,
+            children,
+        }
+    }
+
+    /// From the top, against the leading edge, as a paragraph.
+    pub(crate) fn text(rect: Rect, children: Vec<Element<M>>) -> Self {
+        Place {
+            align: Align::Start,
+            justify: Justify::Start,
+            ..Place::new(rect, children)
+        }
+    }
+}
+
+impl<M: 'static> Widget<M> for Place<M> {
+    type State = ();
+
+    fn layout(&self) -> LayoutSpec {
+        LayoutSpec {
+            width: SizeSpec::Fixed(self.rect.width()),
+            height: SizeSpec::Fixed(self.rect.height()),
+            position: self.rect.origin,
+            ..LayoutSpec::new(ContainerKind::Stack {
+                axis: self.axis,
+                spacing: 0.0,
+                align: self.align,
+                justify: self.justify,
+            })
+        }
+    }
+
+    fn take_children(&mut self) -> Vec<Element<M>> {
+        std::mem::take(&mut self.children)
+    }
+
+    fn state(&self) {}
+
+    fn update(&self, old: &Self, _: &mut ()) -> Change {
+        if self.rect != old.rect
+            || self.axis != old.axis
+            || self.align != old.align
+            || self.justify != old.justify
+        {
+            Change::Layout
+        } else {
+            Change::None
+        }
+    }
+
+    fn measure(&self, _: &(), _: Constraints, _: &mut MeasureCx<'_>) -> Measured {
+        Measured {
+            size: self.rect.size,
+            baseline: None,
+        }
+    }
+
+    fn event(&self, _: &mut (), _: &Event, _: &mut EventCx<'_, M>) -> Propagation {
+        Propagation::Continue
+    }
+
+    fn paint(&self, _: &(), _: &mut PaintCx<'_>) {}
+
+    fn semantics(&self, _: &(), cx: &mut SemanticsCx<'_>) {
+        if self.initial {
+            cx.initial_focus();
+        }
+    }
+}
+
+/// Text at a size and weight of its own, in `color` or the theme's text colour, centred in its box. Its first
+/// baseline sits `ascent` below the box's top, so a caller places it by its baseline.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Label {
+    pub text: String,
+    pub size: f64,
+    pub weight: FontWeight,
+    pub color: Option<Color>,
+    /// The box, in the parent's points.
+    pub rect: Rect,
+    /// From the box's top to the first baseline.
+    pub ascent: f64,
+    /// Wraps at the box's width; otherwise one line that ends in an ellipsis.
+    pub wrap: bool,
+    /// Read out as soon as it shows or changes.
+    pub live: Option<Live>,
+    /// Drawn over a soft black shadow (the user name).
+    pub shadow: bool,
+    /// How its lines stand in its box.
+    pub align: TextAlign,
+    /// Drawn lower by [`Shift::by`] when the text of [`Shift`] wraps (the sub hint under a main hint of two lines).
+    pub shift: Option<Shift>,
+}
+
+/// Another label's text, at its width and size: when it wraps, the label that carries this is drawn lower.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Shift {
+    pub text: String,
+    pub width: f64,
+    pub size: f64,
+    pub by: f64,
+}
+
+impl Label {
+    /// The label's text laid out in `text`.
+    pub(crate) fn laid_out(&self, text: &TextSystem) -> Option<ParagraphLayout> {
+        let content = AttributedText::plain(
+            self.text.clone(),
+            TextStyle {
+                weight: self.weight,
+                ..TextStyle::new(self.size as f32)
+            },
+        );
+        let style = ParagraphStyle {
+            align: self.align,
+            wrap: if self.wrap { Wrap::Word } else { Wrap::None },
+            ellipsis: !self.wrap,
+            ..ParagraphStyle::default()
+        };
+        let paragraph = text.paragraph(&content, &style).ok()?;
+        Some(paragraph.layout(Some(self.rect.width() as f32)))
+    }
+}
+
+impl<M: 'static> Widget<M> for Label {
+    type State = ();
+
+    fn layout(&self) -> LayoutSpec {
+        LayoutSpec {
+            width: SizeSpec::Fixed(self.rect.width()),
+            height: SizeSpec::Fixed(self.rect.height()),
+            position: self.rect.origin,
+            ..LayoutSpec::new(ContainerKind::Leaf)
+        }
+    }
+
+    fn state(&self) {}
+
+    fn update(&self, old: &Self, _: &mut ()) -> Change {
+        if self.rect != old.rect {
+            Change::Layout
+        } else if self != old {
+            Change::Paint
+        } else {
+            Change::None
+        }
+    }
+
+    fn measure(&self, _: &(), _: Constraints, _: &mut MeasureCx<'_>) -> Measured {
+        Measured {
+            size: self.rect.size,
+            baseline: Some(self.ascent),
+        }
+    }
+
+    fn event(&self, _: &mut (), _: &Event, _: &mut EventCx<'_, M>) -> Propagation {
+        Propagation::Continue
+    }
+
+    fn paint(&self, _: &(), cx: &mut PaintCx<'_>) {
+        let Some(layout) = self.laid_out(&cx.env().text) else {
+            return;
+        };
+        let color = self.color.or_else(|| {
+            cx.env()
+                .theme
+                .colors
+                .get(ColorRole::Text, StateVariant::NORMAL)
+        });
+        let Some(color) = color else {
+            return;
+        };
+        if self.shadow {
+            cx.set_group(
+                1.0,
+                vec![Effect::DropShadow {
+                    offset: Point::new(0.0, 0.0),
+                    blur: NAME_SHADOW_BLUR,
+                    color: Color::new(0.0, 0.0, 0.0, NAME_SHADOW_ALPHA),
+                }],
+            );
+        }
+        let first = layout.lines().first().map_or(0.0, |line| line.baseline);
+        let dropped = self.shift.as_ref().map_or(0.0, |shift| {
+            let above = Label {
+                text: shift.text.clone(),
+                size: shift.size,
+                rect: Rect::new(0.0, 0.0, shift.width, 0.0),
+                wrap: true,
+                shift: None,
+                ..self.clone()
+            };
+            let wraps = above
+                .laid_out(&cx.env().text)
+                .is_some_and(|layout| layout.lines().len() > 1);
+            if wraps {
+                shift.by
+            } else {
+                0.0
+            }
+        });
+        let origin = Point::new(0.0, self.ascent - first + dropped);
+        // a wrapped label draws the lines its box holds, so it never runs into what stands under it
+        let shown = layout
+            .lines()
+            .iter()
+            .take_while(|line| !self.wrap || origin.y + line.baseline <= self.rect.height());
+        for line in shown {
+            for run in &line.runs {
+                cx.push(PaintOp::Glyphs {
+                    origin: origin + run.origin,
+                    run: run.run.clone(),
+                    color,
+                });
+            }
+        }
+    }
+
+    fn semantics(&self, _: &(), cx: &mut SemanticsCx<'_>) {
+        cx.role(Role::StaticText);
+        cx.name(self.text.clone());
+        if let Some(live) = self.live {
+            cx.live(live);
+        }
+    }
+}
+
+/// Text in glass letters (the large time): the screen's own picture under the letters, blurred and lifted toward
+/// white, with a light rim along their top and left edges and a dark one along their bottom and right
+/// (`wallpaper::glass_letters`), made on the CPU pool ([`super::ScreenPictures`]) from the screen's picture, never from
+/// what lies under the window. `letters` are the last the screen was given: at a minute change those of the minute
+/// before show until the new ones are in. Without any, nothing is drawn.
+#[derive(Clone, Debug)]
+pub(crate) struct GlassText {
+    pub glass: GlassSpec,
+    pub letters: Option<Laid>,
+}
+
+impl<M: 'static> Widget<M> for GlassText {
+    type State = ();
+
+    fn layout(&self) -> LayoutSpec {
+        LayoutSpec {
+            width: SizeSpec::Fixed(self.glass.rect.width()),
+            height: SizeSpec::Fixed(self.glass.rect.height()),
+            position: self.glass.rect.origin,
+            ..LayoutSpec::new(ContainerKind::Leaf)
+        }
+    }
+
+    fn state(&self) {}
+
+    fn update(&self, old: &Self, _: &mut ()) -> Change {
+        if self.glass.rect != old.glass.rect {
+            Change::Layout
+        } else if self.glass != old.glass || self.letters != old.letters {
+            Change::Paint
+        } else {
+            Change::None
+        }
+    }
+
+    fn measure(&self, _: &(), _: Constraints, _: &mut MeasureCx<'_>) -> Measured {
+        Measured {
+            size: self.glass.rect.size,
+            baseline: Some(self.glass.ascent),
+        }
+    }
+
+    fn event(&self, _: &mut (), _: &Event, _: &mut EventCx<'_, M>) -> Propagation {
+        Propagation::Continue
+    }
+
+    fn paint(&self, _: &(), cx: &mut PaintCx<'_>) {
+        let Some(letters) = &self.letters else {
+            return;
+        };
+        let scale = letters.scale;
+        let at = self.glass.at();
+        let dst = Rect::new(
+            f64::from(letters.region[0]) / scale - at.x,
+            f64::from(letters.region[1]) / scale - at.y,
+            f64::from(letters.image.width) / scale,
+            f64::from(letters.image.height) / scale,
+        );
+        cx.image(letters.id, &letters.image, dst, sampling(scale, cx));
+    }
+
+    fn semantics(&self, _: &(), cx: &mut SemanticsCx<'_>) {
+        cx.role(Role::StaticText);
+        cx.name(self.glass.text.clone());
+    }
+}
+
+/// How a picture made at `scale` is drawn: copied where the window's scale is its own, else smoothly until the
+/// picture of the window's scale is in.
+fn sampling(scale: f64, cx: &PaintCx<'_>) -> Sampling {
+    if scale == cx.env().scale {
+        Sampling::Nearest
+    } else {
+        Sampling::Linear
+    }
+}
+
+/// A plain label of `text` at `size` and `weight` in `rect`, its first baseline `ascent` below its top.
+pub(crate) fn label_of(
+    text: &str,
+    size: f64,
+    weight: FontWeight,
+    rect: Rect,
+    ascent: f64,
+) -> Label {
+    Label {
+        text: text.to_owned(),
+        size,
+        weight,
+        color: None,
+        rect,
+        ascent,
+        wrap: false,
+        live: None,
+        shadow: false,
+        align: TextAlign::Center,
+        shift: None,
+    }
+}
+
+/// An avatar at `rect`: a plain disc, its picture or initials as children, with no ring and no shadow, and the mark
+/// of a user with a session.
+pub(crate) struct Avatar<M> {
+    pub rect: Rect,
+    /// No picture: the disc is filled behind the initials.
+    pub filled: bool,
+    pub logged_in: bool,
+    pub children: Vec<Element<M>>,
+}
+
+impl<M: 'static> Widget<M> for Avatar<M> {
+    type State = ();
+
+    fn layout(&self) -> LayoutSpec {
+        LayoutSpec {
+            width: SizeSpec::Fixed(self.rect.width()),
+            height: SizeSpec::Fixed(self.rect.height()),
+            position: self.rect.origin,
+            // the initials' line box sits at its own place in the disc
+            ..LayoutSpec::new(ContainerKind::Absolute)
+        }
+    }
+
+    fn take_children(&mut self) -> Vec<Element<M>> {
+        std::mem::take(&mut self.children)
+    }
+
+    fn state(&self) {}
+
+    fn update(&self, old: &Self, _: &mut ()) -> Change {
+        if self.rect != old.rect {
+            Change::Layout
+        } else if self.filled != old.filled || self.logged_in != old.logged_in {
+            Change::Paint
+        } else {
+            Change::None
+        }
+    }
+
+    fn measure(&self, _: &(), _: Constraints, _: &mut MeasureCx<'_>) -> Measured {
+        Measured {
+            size: self.rect.size,
+            baseline: None,
+        }
+    }
+
+    fn event(&self, _: &mut (), _: &Event, _: &mut EventCx<'_, M>) -> Propagation {
+        Propagation::Continue
+    }
+
+    fn paint(&self, _: &(), cx: &mut PaintCx<'_>) {
+        let radius = self.rect.width() / 2.0;
+        let center = Point::new(radius, radius);
+        if self.filled {
+            fill(cx, circle(center, radius), rgba(AVATAR_FILL, 1.0));
+        }
+        if self.logged_in {
+            let mark = Point::new(
+                2.0 * radius - LOGGED_IN_RADIUS,
+                2.0 * radius - LOGGED_IN_RADIUS,
+            );
+            fill(
+                cx,
+                circle(mark, LOGGED_IN_RADIUS),
+                rgba(LOGGED_IN_FILL, 1.0),
+            );
+            let at = |dx: f64, dy: f64| {
+                Point::new(
+                    mark.x + LOGGED_IN_RADIUS * dx,
+                    mark.y + LOGGED_IN_RADIUS * dy,
+                )
+            };
+            cx.push(PaintOp::Stroke {
+                shape: Shape::Path {
+                    verbs: vec![
+                        PathVerb::MoveTo(at(-0.45, 0.02)),
+                        PathVerb::LineTo(at(-0.1, 0.38)),
+                        PathVerb::LineTo(at(0.5, -0.35)),
+                    ],
+                    fill_rule: FillRule::NonZero,
+                },
+                width: LOGGED_IN_CHECK_WIDTH,
+                paint: Paint::Solid(WHITE),
+            });
+        }
+    }
+
+    fn semantics(&self, _: &(), _: &mut SemanticsCx<'_>) {}
+}
+
+/// Fill of the field's capsule where there is no picture to make its material from: white at this opacity.
+const FIELD_FILL_ALPHA: f32 = 0.18;
+
+/// The control material under a field or a button: made from the screen's picture over `strip` (screen points, wide
+/// enough for the field's shake) on the CPU pool ([`super::ScreenPictures`]) and laid where it lies on the screen,
+/// whatever the frame's own place, `origin` (screen points). It is never what lies under the window: under a lock
+/// surface that is the unlocked session. `laid` is the material the screen was last given, `None` before it has one.
+#[derive(Clone, Debug)]
+pub(crate) struct FieldMaterial {
+    pub strip: Rect,
+    pub origin: Point,
+    pub laid: Option<Laid>,
+}
+
+impl FieldMaterial {
+    /// What tells one material's look from another's.
+    fn look(&self) -> (Rect, Point, Option<cupertino_kit::render::ResourceId>) {
+        (self.strip, self.origin, self.laid.as_ref().map(|l| l.id))
+    }
+}
+
+/// The capsule of a field or a button at `rect` with continuous corners, on the control material: its field (if any)
+/// inside it by `insets`, and for a field (`initial`) the stop its scope gives the focus to as it opens.
+pub(crate) struct FieldFrame<M> {
+    pub rect: Rect,
+    pub insets: Insets,
+    pub material: Option<FieldMaterial>,
+    pub tint: FieldTint,
+    pub initial: bool,
+    /// The submit button's glyph at this box (the frame's points): drawn under the field, whose submit strip takes
+    /// the press there.
+    pub submit: Option<Rect>,
+    pub children: Vec<Element<M>>,
+}
+
+impl<M: 'static> Widget<M> for FieldFrame<M> {
+    type State = ();
+
+    fn layout(&self) -> LayoutSpec {
+        LayoutSpec {
+            width: SizeSpec::Fixed(self.rect.width()),
+            height: SizeSpec::Fixed(self.rect.height()),
+            position: self.rect.origin,
+            insets: self.insets,
+            ..LayoutSpec::new(ContainerKind::Stack {
+                axis: Axis::Vertical,
+                spacing: 0.0,
+                align: Align::Stretch,
+                justify: Justify::Center,
+            })
+        }
+    }
+
+    fn take_children(&mut self) -> Vec<Element<M>> {
+        std::mem::take(&mut self.children)
+    }
+
+    fn state(&self) {}
+
+    fn update(&self, old: &Self, _: &mut ()) -> Change {
+        let material = |m: &Option<FieldMaterial>| m.as_ref().map(FieldMaterial::look);
+        if self.rect != old.rect || self.insets != old.insets {
+            Change::Layout
+        } else if self.tint != old.tint
+            || self.submit != old.submit
+            || material(&self.material) != material(&old.material)
+        {
+            Change::Paint
+        } else {
+            Change::None
+        }
+    }
+
+    fn measure(&self, _: &(), _: Constraints, _: &mut MeasureCx<'_>) -> Measured {
+        Measured {
+            size: self.rect.size,
+            baseline: None,
+        }
+    }
+
+    fn event(&self, _: &mut (), _: &Event, _: &mut EventCx<'_, M>) -> Propagation {
+        Propagation::Continue
+    }
+
+    fn paint(&self, _: &(), cx: &mut PaintCx<'_>) {
+        let size = cx.size();
+        let radius = PILL_RADIUS.min(size.height / 2.0);
+        // a button as wide as it is tall is a circle, as the ring of its glyph is; continuous corners of half its side
+        // would make it a rounded square
+        let capsule = if size.width <= size.height {
+            circle(
+                Point::new(size.width / 2.0, size.height / 2.0),
+                size.width / 2.0,
+            )
+        } else {
+            continuous(Rect::new(0.0, 0.0, size.width, size.height), radius)
+        };
+        let laid = self
+            .material
+            .as_ref()
+            .and_then(|m| m.laid.as_ref().map(|laid| (m, laid)));
+        match laid {
+            Some((m, laid)) => {
+                let scale = laid.scale;
+                cx.push(PaintOp::PushClip(capsule.clone()));
+                let dst = Rect::new(
+                    f64::from(laid.region[0]) / scale - m.origin.x,
+                    f64::from(laid.region[1]) / scale - m.origin.y,
+                    f64::from(laid.image.width) / scale,
+                    f64::from(laid.image.height) / scale,
+                );
+                cx.image(laid.id, &laid.image, dst, sampling(scale, cx));
+                cx.push(PaintOp::PopClip);
+            }
+            None => fill(
+                cx,
+                capsule.clone(),
+                Color::new(1.0, 1.0, 1.0, FIELD_FILL_ALPHA),
+            ),
+        }
+        fill(cx, capsule, self.tint.color());
+        // an opaque light field takes dark text
+        if self.tint == FieldTint::Opaque {
+            cx.pin_appearance(false);
+        }
+        if let Some(button) = self.submit {
+            paint_glyph(cx, GlyphKind::Submit, button, self.tint);
+        }
+    }
+
+    fn semantics(&self, _: &(), cx: &mut SemanticsCx<'_>) {
+        if self.initial {
+            cx.initial_focus();
+        }
+    }
+}
+
+/// The selection's border along the inside of a tile of `size`: whole device pixels wide (at least one), so its straight
+/// edges cover whole pixels and stay sharp at any scale.
+fn selection_border(cx: &mut PaintCx<'_>, size: Size) {
+    let scale = cx.env().scale.max(f64::MIN_POSITIVE);
+    let width = (SELECTION_BORDER_WIDTH * scale).round().max(1.0) / scale;
+    let half = width / 2.0;
+    cx.push(PaintOp::Stroke {
+        shape: continuous(
+            Rect::new(half, half, size.width - width, size.height - width),
+            SELECTION_RADIUS - half,
+        ),
+        width,
+        paint: Paint::Solid(Color::new(1.0, 1.0, 1.0, SELECTION_BORDER_ALPHA)),
+    });
+}
+
+/// A glyph of the buttons beside the field.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum GlyphKind {
+    /// An arrow pointing right in a ring: submit.
+    Submit,
+    /// An arrow pointing left in a ring: back to the picker.
+    Back,
+    /// A question mark in a ring: the password help.
+    Help,
+}
+
+/// A curve sampled into line segments: `f(t)` for `t` from 0 to 1.
+fn sampled(verbs: &mut Vec<PathVerb>, f: impl Fn(f64) -> Point) {
+    for step in 0..=GLYPH_STEPS {
+        let point = f(step as f64 / GLYPH_STEPS as f64);
+        verbs.push(if step == 0 {
+            PathVerb::MoveTo(point)
+        } else {
+            PathVerb::LineTo(point)
+        });
+    }
+}
+
+/// `kind`'s glyph centred in `area`, [`BUTTON_GLYPH`] points across: a ring and its mark, stroked in white at
+/// [`GLYPH_ALPHA`].
+fn paint_glyph(cx: &mut PaintCx<'_>, kind: GlyphKind, area: Rect, tint: FieldTint) {
+    let unit = BUTTON_GLYPH / 22.0;
+    let (cx0, cy0) = (
+        area.min_x() + area.width() / 2.0,
+        area.min_y() + area.height() / 2.0,
+    );
+    // the glyph's own 22-unit square, centred
+    let at = |x: f64, y: f64| Point::new(cx0 + (x - 11.0) * unit, cy0 + (y - 11.0) * unit);
+    let color = if tint == FieldTint::Opaque {
+        Color::new(0.0, 0.0, 0.0, OPAQUE_TEXT_ALPHA)
+    } else {
+        Color::new(1.0, 1.0, 1.0, GLYPH_ALPHA)
+    };
+    let ring_radius = 11.0 - GLYPH_STROKE / 2.0 / unit;
+    let mut verbs = Vec::new();
+    sampled(&mut verbs, |t| {
+        let a = t * std::f64::consts::TAU;
+        at(11.0 + ring_radius * a.cos(), 11.0 + ring_radius * a.sin())
+    });
+    verbs.push(PathVerb::Close);
+    match kind {
+        GlyphKind::Submit => {
+            verbs.extend([
+                PathVerb::MoveTo(at(6.5, 11.0)),
+                PathVerb::LineTo(at(15.5, 11.0)),
+                PathVerb::MoveTo(at(11.8, 7.2)),
+                PathVerb::LineTo(at(15.6, 11.0)),
+                PathVerb::LineTo(at(11.8, 14.8)),
+            ]);
+        }
+        GlyphKind::Back => {
+            verbs.extend([
+                PathVerb::MoveTo(at(15.5, 11.0)),
+                PathVerb::LineTo(at(6.5, 11.0)),
+                PathVerb::MoveTo(at(10.2, 7.2)),
+                PathVerb::LineTo(at(6.4, 11.0)),
+                PathVerb::LineTo(at(10.2, 14.8)),
+            ]);
+        }
+        GlyphKind::Help => {
+            // the hook: most of a circle above the stem, from its left round over the top to its right and down
+            let (hx, hy, hr) = (11.0, 8.4, 3.0);
+            sampled(&mut verbs, |t| {
+                let a = (200.0 + t * 230.0f64).to_radians();
+                at(hx + hr * a.cos(), hy + hr * a.sin())
+            });
+            verbs.extend([
+                PathVerb::LineTo(at(11.0, 11.6)),
+                PathVerb::LineTo(at(11.0, 13.0)),
+            ]);
+            fill(cx, circle(at(11.0, 15.8), 1.05 * unit), color);
+        }
+    }
+    cx.push(PaintOp::Stroke {
+        shape: Shape::Path {
+            verbs,
+            fill_rule: FillRule::NonZero,
+        },
+        width: GLYPH_STROKE,
+        paint: Paint::Solid(color),
+    });
+}
+
+/// A button's glyph at `rect`, drawn over its material; it takes nothing, its button does.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Glyph {
+    pub rect: Rect,
+    pub kind: GlyphKind,
+    pub tint: FieldTint,
+}
+
+impl<M: 'static> Widget<M> for Glyph {
+    type State = ();
+
+    fn layout(&self) -> LayoutSpec {
+        LayoutSpec {
+            width: SizeSpec::Fixed(self.rect.width()),
+            height: SizeSpec::Fixed(self.rect.height()),
+            position: self.rect.origin,
+            ..LayoutSpec::new(ContainerKind::Leaf)
+        }
+    }
+
+    fn state(&self) {}
+
+    fn update(&self, old: &Self, _: &mut ()) -> Change {
+        if self.rect != old.rect {
+            Change::Layout
+        } else if self != old {
+            Change::Paint
+        } else {
+            Change::None
+        }
+    }
+
+    fn measure(&self, _: &(), _: Constraints, _: &mut MeasureCx<'_>) -> Measured {
+        Measured {
+            size: self.rect.size,
+            baseline: None,
+        }
+    }
+
+    fn event(&self, _: &mut (), _: &Event, _: &mut EventCx<'_, M>) -> Propagation {
+        Propagation::Continue
+    }
+
+    fn paint(&self, _: &(), cx: &mut PaintCx<'_>) {
+        let size = cx.size();
+        paint_glyph(
+            cx,
+            self.kind,
+            Rect::new(0.0, 0.0, size.width, size.height),
+            self.tint,
+        );
+    }
+
+    fn semantics(&self, _: &(), cx: &mut SemanticsCx<'_>) {
+        cx.hidden();
+    }
+}
+
+/// What the field's trailing slot shows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Adornment {
+    /// The spinner at this frame: an attempt is being checked.
+    Spinner(u32),
+    CapsLock,
+    /// The account is locked: a padlock.
+    Locked,
+}
+
+/// The field's trailing slot at `rect`, drawn over the field in the theme's secondary text colour.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Slot {
+    pub rect: Rect,
+    pub adornment: Adornment,
+    /// What assistive technology hears of it.
+    pub label: &'static str,
+}
+
+impl Slot {
+    fn caps(&self, cx: &mut PaintCx<'_>, color: Color) {
+        let size = cx.size();
+        let side = CAPS_BADGE_UNITS;
+        let (left, top) = ((size.width - side) / 2.0, (size.height - side) / 2.0);
+        let r = CAPS_BADGE_RADIUS;
+        let k = 0.552_284_75 * r;
+        let (x0, y0, x1, y1) = (left, top, left + side, top + side);
+        let mut verbs = vec![
+            PathVerb::MoveTo(Point::new(x0 + r, y0)),
+            PathVerb::LineTo(Point::new(x1 - r, y0)),
+            PathVerb::CubicTo(
+                Point::new(x1 - r + k, y0),
+                Point::new(x1, y0 + r - k),
+                Point::new(x1, y0 + r),
+            ),
+            PathVerb::LineTo(Point::new(x1, y1 - r)),
+            PathVerb::CubicTo(
+                Point::new(x1, y1 - r + k),
+                Point::new(x1 - r + k, y1),
+                Point::new(x1 - r, y1),
+            ),
+            PathVerb::LineTo(Point::new(x0 + r, y1)),
+            PathVerb::CubicTo(
+                Point::new(x0 + r - k, y1),
+                Point::new(x0, y1 - r + k),
+                Point::new(x0, y1 - r),
+            ),
+            PathVerb::LineTo(Point::new(x0, y0 + r)),
+            PathVerb::CubicTo(
+                Point::new(x0, y0 + r - k),
+                Point::new(x0 + r - k, y0),
+                Point::new(x0 + r, y0),
+            ),
+            PathVerb::Close,
+        ];
+        for polygon in CAPS_GLYPH {
+            for (i, &(x, y)) in polygon.iter().enumerate() {
+                let point = Point::new(left + x, top + y);
+                verbs.push(if i == 0 {
+                    PathVerb::MoveTo(point)
+                } else {
+                    PathVerb::LineTo(point)
+                });
+            }
+            verbs.push(PathVerb::Close);
+        }
+        // even-odd: the glyph polygons lie inside the body, so they are holes
+        fill(
+            cx,
+            Shape::Path {
+                verbs,
+                fill_rule: FillRule::EvenOdd,
+            },
+            color,
+        );
+    }
+
+    fn spinner(&self, cx: &mut PaintCx<'_>, color: Color, frame: u32) {
+        let size = cx.size();
+        let center = Point::new(size.width / 2.0, size.height / 2.0);
+        let unit = SPINNER_SIZE / spinner::CANVAS;
+        let half_width = spinner::SPOKE_WIDTH / 2.0;
+        for spoke in 0..spinner::SPOKES {
+            // clockwise from 12 o'clock
+            let angle = spoke as f64 * std::f64::consts::TAU / spinner::SPOKES as f64;
+            let (sin, cos) = angle.sin_cos();
+            let at = |radius: f64| {
+                Point::new(
+                    center.x + sin * radius * unit,
+                    center.y - cos * radius * unit,
+                )
+            };
+            cx.push(PaintOp::Stroke {
+                shape: Shape::Path {
+                    verbs: vec![
+                        PathVerb::MoveTo(at(spinner::INNER_RADIUS + half_width)),
+                        PathVerb::LineTo(at(spinner::OUTER_RADIUS - half_width)),
+                    ],
+                    fill_rule: FillRule::NonZero,
+                },
+                width: spinner::SPOKE_WIDTH * unit,
+                paint: Paint::Solid(Color::new(
+                    color.r,
+                    color.g,
+                    color.b,
+                    color.a * spinner::opacity(frame, spoke),
+                )),
+            });
+        }
+    }
+}
+
+impl<M: 'static> Widget<M> for Slot {
+    type State = ();
+
+    fn layout(&self) -> LayoutSpec {
+        LayoutSpec {
+            width: SizeSpec::Fixed(self.rect.width()),
+            height: SizeSpec::Fixed(self.rect.height()),
+            position: self.rect.origin,
+            ..LayoutSpec::new(ContainerKind::Leaf)
+        }
+    }
+
+    fn state(&self) {}
+
+    fn update(&self, old: &Self, _: &mut ()) -> Change {
+        if self.rect != old.rect {
+            Change::Layout
+        } else if self != old {
+            Change::Paint
+        } else {
+            Change::None
+        }
+    }
+
+    fn measure(&self, _: &(), _: Constraints, _: &mut MeasureCx<'_>) -> Measured {
+        Measured {
+            size: self.rect.size,
+            baseline: None,
+        }
+    }
+
+    fn event(&self, _: &mut (), _: &Event, _: &mut EventCx<'_, M>) -> Propagation {
+        Propagation::Continue
+    }
+
+    fn paint(&self, _: &(), cx: &mut PaintCx<'_>) {
+        let Some(color) = cx
+            .env()
+            .theme
+            .colors
+            .get(ColorRole::SecondaryText, StateVariant::NORMAL)
+        else {
+            return;
+        };
+        match self.adornment {
+            Adornment::CapsLock => self.caps(cx, color),
+            Adornment::Spinner(frame) => self.spinner(cx, color, frame),
+            Adornment::Locked => {
+                let size = cx.size();
+                padlock(cx, color, size)
+            }
+        }
+    }
+
+    fn semantics(&self, _: &(), cx: &mut SemanticsCx<'_>) {
+        match self.adornment {
+            Adornment::CapsLock | Adornment::Locked => cx.role(Role::StaticText),
+            Adornment::Spinner(_) => {
+                cx.role(Role::ProgressIndicator);
+                cx.states(AccessibleStates {
+                    busy: true,
+                    ..AccessibleStates::default()
+                });
+            }
+        }
+        cx.name(self.label);
+    }
+}
+
+/// The padlock of a locked account, [`PADLOCK_SIZE`] square and centred in `size`: a body with rounded corners and a
+/// shackle over it, in `color`.
+fn padlock(cx: &mut PaintCx<'_>, color: Color, size: Size) {
+    let s = PADLOCK_SIZE / 14.0;
+    let (x0, y0) = (
+        (size.width - PADLOCK_SIZE) / 2.0,
+        (size.height - PADLOCK_SIZE) / 2.0,
+    );
+    let at = |x: f64, y: f64| Point::new(x0 + x * s, y0 + y * s);
+    fill(
+        cx,
+        Shape::RoundedRect {
+            rect: Rect::new(x0 + 2.0 * s, y0 + 6.0 * s, 10.0 * s, 8.0 * s),
+            radius: 1.5 * s,
+        },
+        color,
+    );
+    let mut verbs = vec![
+        PathVerb::MoveTo(at(4.2, 6.5)),
+        PathVerb::LineTo(at(4.2, 4.6)),
+    ];
+    sampled(&mut verbs, |t| {
+        let a = std::f64::consts::PI * (1.0 + t);
+        at(7.0 + 2.8 * a.cos(), 4.6 + 2.8 * a.sin())
+    });
+    verbs.push(PathVerb::LineTo(at(9.8, 6.5)));
+    cx.push(PaintOp::Stroke {
+        shape: Shape::Path {
+            verbs,
+            fill_rule: FillRule::NonZero,
+        },
+        width: 1.5 * s,
+        paint: Paint::Solid(color),
+    });
+}
+
+/// A control drawn by the screen itself at `rect`: the power item (a glyph) or a picker tile (a selection square and
+/// its children). A click, Return, Space or assistive technology's click send `on_press`; gaining the focus sends
+/// `on_focus`; the pointer over it sends `on_hover`.
+pub(crate) struct Pressable<M> {
+    pub rect: Rect,
+    pub look: Look,
+    pub label: String,
+    pub description: Option<String>,
+    pub on_press: M,
+    pub on_focus: Option<M>,
+    pub on_hover: Option<M>,
+    /// A Tab stop; one that is not leaves the focus where it is when pressed (the help button, so typing goes on in
+    /// the field).
+    pub focusable: bool,
+    pub children: Vec<Element<M>>,
+}
+
+/// How a [`Pressable`] draws itself.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Look {
+    /// The power glyph, highlighted while the menu is open.
+    Power { open: bool },
+    /// A picker tile: its frame with continuous corners, filled and outlined while selected.
+    Tile { selected: bool },
+    /// The help button: its children are its material and its glyph; `open` while the help shows.
+    Help { open: bool },
+    /// The accessibility item, highlighted while its menu is open.
+    Access { open: bool },
+}
+
+#[derive(Default)]
+pub(crate) struct PressState {
+    focused: bool,
+}
+
+impl<M: Clone + 'static> Widget<M> for Pressable<M> {
+    type State = PressState;
+
+    fn layout(&self) -> LayoutSpec {
+        LayoutSpec {
+            width: SizeSpec::Fixed(self.rect.width()),
+            height: SizeSpec::Fixed(self.rect.height()),
+            position: self.rect.origin,
+            ..LayoutSpec::new(ContainerKind::Absolute)
+        }
+    }
+
+    fn take_children(&mut self) -> Vec<Element<M>> {
+        std::mem::take(&mut self.children)
+    }
+
+    fn state(&self) -> PressState {
+        PressState::default()
+    }
+
+    fn update(&self, old: &Self, _: &mut PressState) -> Change {
+        if self.rect != old.rect {
+            Change::Layout
+        } else if self.look != old.look || self.label != old.label {
+            Change::Paint
+        } else {
+            Change::None
+        }
+    }
+
+    fn measure(&self, _: &PressState, _: Constraints, _: &mut MeasureCx<'_>) -> Measured {
+        Measured {
+            size: self.rect.size,
+            baseline: None,
+        }
+    }
+
+    fn event(&self, state: &mut PressState, event: &Event, cx: &mut EventCx<'_, M>) -> Propagation {
+        if cx.phase() == Phase::Capture {
+            return Propagation::Continue;
+        }
+        match event {
+            Event::Focus { gained, visible } => {
+                state.focused = *gained;
+                cx.request_paint();
+                // a picker tile draws no focus ring: the keyboard bringing the focus to it selects it, which shows
+                let message = match self.look {
+                    Look::Tile { .. } if *visible => self.on_hover.as_ref(),
+                    _ => self.on_focus.as_ref(),
+                };
+                if let (true, Some(message)) = (*gained, message) {
+                    cx.emit(message.clone());
+                }
+                Propagation::Continue
+            }
+            Event::Pointer(PointerEvent::Enter { .. } | PointerEvent::Motion { .. }, _) => {
+                if let Some(message) = &self.on_hover {
+                    cx.emit(message.clone());
+                }
+                Propagation::Continue
+            }
+            Event::Pointer(
+                PointerEvent::Button {
+                    button: MouseButton::Left,
+                    pressed: true,
+                    ..
+                },
+                _,
+            ) => {
+                cx.emit(self.on_press.clone());
+                Propagation::Stop
+            }
+            Event::Key(key, _)
+                if key.pressed
+                    && cx.node() == cx.target()
+                    && matches!(key.keysym, RETURN | KP_ENTER | SPACE) =>
+            {
+                cx.emit(self.on_press.clone());
+                Propagation::Stop
+            }
+            Event::Action(request) if request.action == Action::Click => {
+                cx.emit(self.on_press.clone());
+                Propagation::Stop
+            }
+            _ => Propagation::Continue,
+        }
+    }
+
+    fn paint(&self, state: &PressState, cx: &mut PaintCx<'_>) {
+        let size = cx.size();
+        match self.look {
+            Look::Power { open } => {
+                if open || (state.focused && cx.focus_visible()) {
+                    fill(
+                        cx,
+                        Shape::RoundedRect {
+                            rect: Rect::new(0.0, 0.0, size.width, size.height),
+                            radius: size.height / 2.0,
+                        },
+                        Color::new(1.0, 1.0, 1.0, POWER_HIGHLIGHT_ALPHA),
+                    );
+                }
+                power_glyph(cx, Point::new(size.width / 2.0, size.height / 2.0));
+            }
+            Look::Access { open } => {
+                if open || (state.focused && cx.focus_visible()) {
+                    fill(
+                        cx,
+                        Shape::RoundedRect {
+                            rect: Rect::new(0.0, 0.0, size.width, size.height),
+                            radius: size.height / 2.0,
+                        },
+                        Color::new(1.0, 1.0, 1.0, POWER_HIGHLIGHT_ALPHA),
+                    );
+                }
+                access_glyph(cx, Point::new(size.width / 2.0, size.height / 2.0));
+            }
+            // the selection is the row's frame outlined, with no fill and no shadow, and the only mark a tile shows
+            Look::Tile { selected } => {
+                if selected {
+                    selection_border(cx, size);
+                }
+            }
+            // its children draw it: its material and its glyph
+            Look::Help { .. } => {}
+        }
+    }
+
+    fn semantics(&self, _: &PressState, cx: &mut SemanticsCx<'_>) {
+        cx.role(Role::Button);
+        cx.name(self.label.clone());
+        if let Some(description) = &self.description {
+            cx.description(description.clone());
+        }
+        if let Look::Tile { selected, .. } = self.look {
+            cx.states(AccessibleStates {
+                selected,
+                ..AccessibleStates::default()
+            });
+        }
+        if let Look::Power { open } | Look::Help { open } | Look::Access { open } = self.look {
+            cx.states(AccessibleStates {
+                expanded: Some(open),
+                ..AccessibleStates::default()
+            });
+        }
+        if self.focusable {
+            cx.focusable();
+        }
+        cx.action(Action::Click);
+    }
+}
+
+/// The power glyph centred on `center`: a ring open at the top with a bar through the gap, white, round caps.
+fn power_glyph(cx: &mut PaintCx<'_>, center: Point) {
+    let mut verbs = Vec::new();
+    for step in 0..=POWER_RING_STEPS {
+        let angle = (POWER_GAP_DEGREES / 2.0
+            + step as f64 * (360.0 - POWER_GAP_DEGREES) / POWER_RING_STEPS as f64)
+            .to_radians();
+        let point = Point::new(
+            center.x + POWER_RADIUS * angle.sin(),
+            center.y - POWER_RADIUS * angle.cos(),
+        );
+        verbs.push(if step == 0 {
+            PathVerb::MoveTo(point)
+        } else {
+            PathVerb::LineTo(point)
+        });
+    }
+    verbs.push(PathVerb::MoveTo(Point::new(
+        center.x,
+        center.y - POWER_RADIUS - 1.0,
+    )));
+    verbs.push(PathVerb::LineTo(Point::new(center.x, center.y - 1.0)));
+    cx.push(PaintOp::Stroke {
+        shape: Shape::Path {
+            verbs,
+            fill_rule: FillRule::NonZero,
+        },
+        width: POWER_STROKE,
+        paint: Paint::Solid(WHITE),
+    });
+}
+
+/// A card's fill where its material is not made (a screen too large for a picture): white at this alpha over the
+/// treated wallpaper (approximate); and the alpha of its secondary text.
+const NOTICE_FILL_ALPHA: f32 = 0.18;
+const NOTICE_SECONDARY_ALPHA: f32 = 0.75;
+
+/// A notification on the lock screen, in the column of cards: its application, its title and its body, left-aligned,
+/// each cut with an ellipsis where it does not fit. It is as tall as its text, and the gap below it is its own. It is
+/// one node for assistive technology, named by `speech` and said politely as it arrives; it takes no input, so the
+/// password field keeps the focus. It stands on the control material the field does, with the field's tint, made
+/// from the screen's own picture.
+pub(crate) struct NoticeCard {
+    pub app: String,
+    pub title: String,
+    pub body: String,
+    pub speech: String,
+    pub ascent: f64,
+    pub descent: f64,
+    /// The material of the column of cards, its origin the column's.
+    pub material: Option<FieldMaterial>,
+    /// The bodies of the cards above it in the column, which place it.
+    pub above: Vec<String>,
+}
+
+/// A line of a card's text: its size, weight and how many lines it may take.
+struct Line {
+    size: f64,
+    weight: FontWeight,
+    lines: u32,
+}
+
+impl NoticeCard {
+    fn laid_out(&self, text: &TextSystem, words: &str, line: &Line) -> Option<ParagraphLayout> {
+        use crate::lock_notices::{CARD_PADDING, CARD_WIDTH};
+        let content = AttributedText::plain(
+            words.to_owned(),
+            TextStyle {
+                weight: line.weight,
+                ..TextStyle::new(line.size as f32)
+            },
+        );
+        let style = ParagraphStyle {
+            align: TextAlign::Start,
+            wrap: if line.lines > 1 {
+                Wrap::Word
+            } else {
+                Wrap::None
+            },
+            max_lines: Some(line.lines),
+            ellipsis: true,
+            ..ParagraphStyle::default()
+        };
+        let paragraph = text.paragraph(&content, &style).ok()?;
+        Some(paragraph.layout(Some((CARD_WIDTH - 2.0 * CARD_PADDING) as f32)))
+    }
+
+    const BODY: Line = Line {
+        size: crate::lock_notices::BODY_SIZE,
+        weight: FontWeight::REGULAR,
+        lines: crate::lock_notices::BODY_LINES,
+    };
+
+    /// How far down the column the card stands: the heights of the cards above it, each with its gap.
+    fn offset_in_column(&self, text: &TextSystem) -> f64 {
+        use crate::lock_notices::{card_height, CARD_GAP};
+        self.above
+            .iter()
+            .map(|body| {
+                let card = NoticeCard {
+                    body: body.clone(),
+                    above: Vec::new(),
+                    material: None,
+                    app: String::new(),
+                    title: String::new(),
+                    speech: String::new(),
+                    ..*self
+                };
+                card_height(card.body_lines(text), self.ascent, self.descent) + CARD_GAP
+            })
+            .sum()
+    }
+
+    /// How many lines the body takes: none without one.
+    fn body_lines(&self, text: &TextSystem) -> u32 {
+        if self.body.trim().is_empty() {
+            return 0;
+        }
+        self.laid_out(text, &self.body, &Self::BODY)
+            .map_or(Self::BODY.lines, |l| l.lines().len() as u32)
+            .clamp(1, Self::BODY.lines)
+    }
+
+    /// Paint `words` with its first line's top at `top`; returns the top of what follows.
+    fn paint_text(
+        &self,
+        cx: &mut PaintCx<'_>,
+        words: &str,
+        line: &Line,
+        top: f64,
+        color: Color,
+    ) -> f64 {
+        use crate::lock_notices::CARD_PADDING;
+        let Some(layout) = self.laid_out(&cx.env().text, words, line) else {
+            return top;
+        };
+        let first = layout.lines().first().map_or(0.0, |l| l.baseline);
+        let origin = Point::new(CARD_PADDING, top + self.ascent * line.size - first);
+        let shown = layout.lines().len().min(line.lines as usize).max(1);
+        for l in layout.lines().iter().take(shown) {
+            for run in &l.runs {
+                cx.push(PaintOp::Glyphs {
+                    origin: origin + run.origin,
+                    run: run.run.clone(),
+                    color,
+                });
+            }
+        }
+        top + shown as f64 * (self.ascent + self.descent) * line.size
+    }
+}
+
+impl<M: 'static> Widget<M> for NoticeCard {
+    type State = ();
+
+    fn layout(&self) -> LayoutSpec {
+        LayoutSpec {
+            width: SizeSpec::Fixed(crate::lock_notices::CARD_WIDTH),
+            height: SizeSpec::Fit,
+            ..LayoutSpec::new(ContainerKind::Leaf)
+        }
+    }
+
+    fn state(&self) {}
+
+    fn update(&self, old: &Self, _: &mut ()) -> Change {
+        fn text(c: &NoticeCard) -> (&String, &String, &String, &String, f64, f64) {
+            (&c.app, &c.title, &c.body, &c.speech, c.ascent, c.descent)
+        }
+        let material = |m: &Option<FieldMaterial>| m.as_ref().map(FieldMaterial::look);
+        if text(self) != text(old) {
+            Change::Layout
+        } else if self.above != old.above || material(&self.material) != material(&old.material) {
+            Change::Paint
+        } else {
+            Change::None
+        }
+    }
+
+    fn measure(&self, _: &(), _: Constraints, cx: &mut MeasureCx<'_>) -> Measured {
+        use crate::lock_notices::{card_height, CARD_GAP, CARD_WIDTH};
+        let lines = self.body_lines(&cx.env().text);
+        Measured {
+            size: Size::new(
+                CARD_WIDTH,
+                card_height(lines, self.ascent, self.descent) + CARD_GAP,
+            ),
+            baseline: None,
+        }
+    }
+
+    fn event(&self, _: &mut (), _: &Event, _: &mut EventCx<'_, M>) -> Propagation {
+        Propagation::Continue
+    }
+
+    fn paint(&self, _: &(), cx: &mut PaintCx<'_>) {
+        use crate::lock_notices::{
+            APP_SIZE, CARD_GAP, CARD_PADDING, CARD_RADIUS, LINE_GAP, TITLE_SIZE,
+        };
+        let size = cx.size();
+        let card = Shape::RoundedRect {
+            rect: Rect::new(0.0, 0.0, size.width, (size.height - CARD_GAP).max(0.0)),
+            radius: CARD_RADIUS,
+        };
+        let tint = FieldTint::Label { disabled: false };
+        let laid = self
+            .material
+            .as_ref()
+            .and_then(|m| m.laid.as_ref().map(|laid| (m, laid)));
+        match laid {
+            Some((m, laid)) => {
+                let scale = laid.scale;
+                // the card's place in the column: under the cards above it
+                let offset = self.offset_in_column(&cx.env().text);
+                cx.push(PaintOp::PushClip(card.clone()));
+                let dst = Rect::new(
+                    f64::from(laid.region[0]) / scale - m.origin.x,
+                    f64::from(laid.region[1]) / scale - m.origin.y - offset,
+                    f64::from(laid.image.width) / scale,
+                    f64::from(laid.image.height) / scale,
+                );
+                cx.image(laid.id, &laid.image, dst, sampling(scale, cx));
+                cx.push(PaintOp::PopClip);
+                fill(cx, card, tint.color());
+            }
+            None => fill(cx, card, Color::new(1.0, 1.0, 1.0, NOTICE_FILL_ALPHA)),
+        }
+        let secondary = Color::new(1.0, 1.0, 1.0, NOTICE_SECONDARY_ALPHA);
+        let app = Line {
+            size: APP_SIZE,
+            weight: FontWeight::REGULAR,
+            lines: 1,
+        };
+        let title = Line {
+            size: TITLE_SIZE,
+            weight: FontWeight::SEMIBOLD,
+            lines: 1,
+        };
+        let top = self.paint_text(cx, &self.app, &app, CARD_PADDING, secondary);
+        let top = self.paint_text(cx, &self.title, &title, top + LINE_GAP, WHITE);
+        if !self.body.trim().is_empty() {
+            self.paint_text(cx, &self.body, &Self::BODY, top + LINE_GAP, secondary);
+        }
+    }
+
+    fn semantics(&self, _: &(), cx: &mut SemanticsCx<'_>) {
+        cx.role(Role::StaticText);
+        cx.name(self.speech.clone());
+        cx.live(Live::Polite);
+    }
+}
+
+/// The status bar's row of items that show a state and take no input, at the trailing end of `rect`, `STATUS_GAP` apart
+/// and centred on the bar's height.
+pub(crate) struct StatusRow<M> {
+    pub rect: Rect,
+    pub children: Vec<Element<M>>,
+}
+
+/// The gap between the status items.
+const STATUS_GAP: f64 = 14.0;
+
+impl<M: 'static> Widget<M> for StatusRow<M> {
+    type State = ();
+
+    fn layout(&self) -> LayoutSpec {
+        LayoutSpec {
+            width: SizeSpec::Fixed(self.rect.width()),
+            height: SizeSpec::Fixed(self.rect.height()),
+            position: self.rect.origin,
+            ..LayoutSpec::new(ContainerKind::Stack {
+                axis: Axis::Horizontal,
+                spacing: STATUS_GAP,
+                align: Align::Center,
+                justify: Justify::End,
+            })
+        }
+    }
+
+    fn take_children(&mut self) -> Vec<Element<M>> {
+        std::mem::take(&mut self.children)
+    }
+
+    fn state(&self) {}
+
+    fn update(&self, old: &Self, _: &mut ()) -> Change {
+        if self.rect != old.rect {
+            Change::Layout
+        } else {
+            Change::None
+        }
+    }
+
+    fn measure(&self, _: &(), _: Constraints, _: &mut MeasureCx<'_>) -> Measured {
+        Measured {
+            size: self.rect.size,
+            baseline: None,
+        }
+    }
+
+    fn event(&self, _: &mut (), _: &Event, _: &mut EventCx<'_, M>) -> Propagation {
+        Propagation::Continue
+    }
+
+    fn paint(&self, _: &(), _: &mut PaintCx<'_>) {}
+
+    fn semantics(&self, _: &(), _: &mut SemanticsCx<'_>) {}
+}
+
+/// What a status item shows.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum StatusKind {
+    Wifi(crate::status::WifiState),
+    Battery(crate::status::BatteryState),
+    /// A line of text in the menu bar's font: the input source, a line about the machine.
+    Text(String),
+}
+
+/// A status item: a glyph of our own or a line of text, white, as tall as the bar's items; named for assistive
+/// technology by `label`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct StatusItem {
+    pub kind: StatusKind,
+    pub label: String,
+    pub ascent: f64,
+    pub descent: f64,
+}
+
+/// The status items' size: as tall as the power item, the Wi-Fi glyph square, the battery wider; their text the menu
+/// bar's 13 pt.
+const STATUS_ITEM_HEIGHT: f64 = 22.0;
+const STATUS_BATTERY_WIDTH: f64 = 27.0;
+const STATUS_TEXT_SIZE: f64 = 13.0;
+/// The Wi-Fi glyph: the radius of its outer arc, the gap between arcs, its stroke, the half angle of its fan, degrees,
+/// and the alpha of an arc beyond the signal's bars.
+const WIFI_RADIUS: f64 = 8.0;
+const WIFI_STEP: f64 = 3.2;
+const WIFI_STROKE: f64 = 1.7;
+const WIFI_HALF_ANGLE: f64 = 45.0;
+const WIFI_DIM_ALPHA: f32 = 0.3;
+/// The battery glyph: its body, corner radius and stroke, the cap's size, and the inset of the charge's fill.
+const BATTERY_BODY: Size = Size::new(22.0, 11.0);
+const BATTERY_RADIUS: f64 = 3.0;
+const BATTERY_STROKE: f64 = 1.0;
+const BATTERY_CAP: Size = Size::new(1.5, 4.0);
+const BATTERY_INSET: f64 = 2.0;
+/// The charge's fill at or below this share: red.
+const BATTERY_LOW: f64 = 0.2;
+const BATTERY_LOW_FILL: [f32; 3] = [1.0, 0.27, 0.23];
+
+impl StatusItem {
+    fn laid_out(&self, text: &TextSystem, words: &str) -> Option<ParagraphLayout> {
+        let content = AttributedText::plain(
+            words.to_owned(),
+            TextStyle {
+                weight: FontWeight::REGULAR,
+                ..TextStyle::new(STATUS_TEXT_SIZE as f32)
+            },
+        );
+        let style = ParagraphStyle {
+            wrap: Wrap::None,
+            ..ParagraphStyle::default()
+        };
+        Some(text.paragraph(&content, &style).ok()?.layout(None))
+    }
+
+    fn width(&self, text: &TextSystem) -> f64 {
+        match &self.kind {
+            StatusKind::Wifi(_) => STATUS_ITEM_HEIGHT,
+            StatusKind::Battery(_) => STATUS_BATTERY_WIDTH,
+            StatusKind::Text(words) => self
+                .laid_out(text, words)
+                .and_then(|l| {
+                    l.lines()
+                        .iter()
+                        .map(|line| line.rect.max_x())
+                        .reduce(f64::max)
+                })
+                .unwrap_or(0.0)
+                .ceil(),
+        }
+    }
+}
+
+impl<M: 'static> Widget<M> for StatusItem {
+    type State = ();
+
+    fn layout(&self) -> LayoutSpec {
+        LayoutSpec::new(ContainerKind::Leaf)
+    }
+
+    fn state(&self) {}
+
+    fn update(&self, old: &Self, _: &mut ()) -> Change {
+        if self.kind != old.kind || self.ascent != old.ascent || self.descent != old.descent {
+            Change::Layout
+        } else if self.label != old.label {
+            Change::Paint
+        } else {
+            Change::None
+        }
+    }
+
+    fn measure(&self, _: &(), _: Constraints, cx: &mut MeasureCx<'_>) -> Measured {
+        Measured {
+            size: Size::new(self.width(&cx.env().text), STATUS_ITEM_HEIGHT),
+            baseline: None,
+        }
+    }
+
+    fn event(&self, _: &mut (), _: &Event, _: &mut EventCx<'_, M>) -> Propagation {
+        Propagation::Continue
+    }
+
+    fn paint(&self, _: &(), cx: &mut PaintCx<'_>) {
+        let size = cx.size();
+        let middle = Point::new(size.width / 2.0, size.height / 2.0);
+        match &self.kind {
+            StatusKind::Wifi(state) => wifi_glyph(cx, middle, *state),
+            StatusKind::Battery(battery) => battery_glyph(cx, middle, *battery),
+            StatusKind::Text(words) => {
+                let Some(layout) = self.laid_out(&cx.env().text, words) else {
+                    return;
+                };
+                let line = (self.ascent + self.descent) * STATUS_TEXT_SIZE;
+                let top = (size.height - line) / 2.0;
+                let first = layout.lines().first().map_or(0.0, |l| l.baseline);
+                let origin = Point::new(0.0, top + self.ascent * STATUS_TEXT_SIZE - first);
+                for l in layout.lines() {
+                    for run in &l.runs {
+                        cx.push(PaintOp::Glyphs {
+                            origin: origin + run.origin,
+                            run: run.run.clone(),
+                            color: WHITE,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    fn semantics(&self, _: &(), cx: &mut SemanticsCx<'_>) {
+        cx.role(Role::StaticText);
+        cx.name(self.label.clone());
+    }
+}
+
+/// An arc of the circle about `center` of `radius`, from `from` to `to` degrees clockwise from 12 o'clock.
+fn arc(center: Point, radius: f64, from: f64, to: f64) -> Vec<PathVerb> {
+    const STEPS: usize = 16;
+    (0..=STEPS)
+        .map(|step| {
+            let angle = (from + (to - from) * step as f64 / STEPS as f64).to_radians();
+            let point = Point::new(
+                center.x + radius * angle.sin(),
+                center.y - radius * angle.cos(),
+            );
+            if step == 0 {
+                PathVerb::MoveTo(point)
+            } else {
+                PathVerb::LineTo(point)
+            }
+        })
+        .collect()
+}
+
+/// The Wi-Fi glyph about `middle`: a dot and three arcs fanning up from it; the arcs past the signal's bars, and all of
+/// them with the radio off or joined to nothing, dimmed.
+fn wifi_glyph(cx: &mut PaintCx<'_>, middle: Point, state: crate::status::WifiState) {
+    use crate::status::WifiState;
+    let lit = match state {
+        WifiState::Connected { bars } => usize::from(bars.max(1)),
+        WifiState::NotConnected | WifiState::Off => 0,
+    };
+    let center = Point::new(middle.x, middle.y + WIFI_RADIUS / 2.0 + 1.0);
+    let dot_alpha = if state == WifiState::Off {
+        WIFI_DIM_ALPHA
+    } else {
+        1.0
+    };
+    fill(
+        cx,
+        circle(center, WIFI_STROKE * 0.9),
+        Color::new(1.0, 1.0, 1.0, dot_alpha),
+    );
+    for ring in 1..=3usize {
+        let radius = WIFI_RADIUS - (3 - ring) as f64 * WIFI_STEP;
+        let alpha = if ring <= lit { 1.0 } else { WIFI_DIM_ALPHA };
+        cx.push(PaintOp::Stroke {
+            shape: Shape::Path {
+                verbs: arc(center, radius, -WIFI_HALF_ANGLE, WIFI_HALF_ANGLE),
+                fill_rule: FillRule::NonZero,
+            },
+            width: WIFI_STROKE,
+            paint: Paint::Solid(Color::new(1.0, 1.0, 1.0, alpha)),
+        });
+    }
+}
+
+/// The battery glyph about `middle`: an outlined body with a cap, filled to the charge (red when low), and a bolt over
+/// it while it charges.
+fn battery_glyph(cx: &mut PaintCx<'_>, middle: Point, battery: crate::status::BatteryState) {
+    let width = BATTERY_BODY.width + BATTERY_CAP.width;
+    let body = Rect::new(
+        middle.x - width / 2.0,
+        middle.y - BATTERY_BODY.height / 2.0,
+        BATTERY_BODY.width,
+        BATTERY_BODY.height,
+    );
+    let half = BATTERY_STROKE / 2.0;
+    cx.push(PaintOp::Stroke {
+        shape: Shape::RoundedRect {
+            rect: body.inset(Insets {
+                top: half,
+                left: half,
+                bottom: half,
+                right: half,
+            }),
+            radius: BATTERY_RADIUS,
+        },
+        width: BATTERY_STROKE,
+        paint: Paint::Solid(Color::new(1.0, 1.0, 1.0, 0.5)),
+    });
+    fill(
+        cx,
+        Shape::RoundedRect {
+            rect: Rect::new(
+                body.max_x() + 0.5,
+                middle.y - BATTERY_CAP.height / 2.0,
+                BATTERY_CAP.width,
+                BATTERY_CAP.height,
+            ),
+            radius: BATTERY_CAP.width / 2.0,
+        },
+        Color::new(1.0, 1.0, 1.0, 0.5),
+    );
+    let share = (battery.percentage / 100.0).clamp(0.0, 1.0);
+    let inner = body.inset(Insets {
+        top: BATTERY_INSET,
+        left: BATTERY_INSET,
+        bottom: BATTERY_INSET,
+        right: BATTERY_INSET,
+    });
+    let color = if share <= BATTERY_LOW && !battery.charging {
+        rgba(BATTERY_LOW_FILL, 1.0)
+    } else {
+        WHITE
+    };
+    if share > 0.0 {
+        fill(
+            cx,
+            Shape::RoundedRect {
+                rect: Rect::new(
+                    inner.x(),
+                    inner.y(),
+                    (inner.width() * share).max(1.0),
+                    inner.height(),
+                ),
+                radius: (BATTERY_RADIUS - BATTERY_INSET).max(1.0),
+            },
+            color,
+        );
+    }
+    if battery.charging {
+        // a bolt over the body, drawn dark on the fill
+        let (x, y, h) = (body.center().x, body.center().y, body.height() - 1.0);
+        let bolt = [
+            Point::new(x + 1.0, y - h / 2.0),
+            Point::new(x - 3.0, y + 0.8),
+            Point::new(x - 0.2, y + 0.8),
+            Point::new(x - 1.0, y + h / 2.0),
+            Point::new(x + 3.0, y - 0.8),
+            Point::new(x + 0.2, y - 0.8),
+        ];
+        let mut verbs: Vec<PathVerb> = bolt
+            .iter()
+            .enumerate()
+            .map(|(i, &p)| {
+                if i == 0 {
+                    PathVerb::MoveTo(p)
+                } else {
+                    PathVerb::LineTo(p)
+                }
+            })
+            .collect();
+        verbs.push(PathVerb::Close);
+        cx.push(PaintOp::Fill {
+            shape: Shape::Path {
+                verbs,
+                fill_rule: FillRule::NonZero,
+            },
+            paint: Paint::Solid(Color::new(0.0, 0.0, 0.0, 0.75)),
+        });
+    }
+}
+
+/// The accessibility glyph about `center`: a ring with a figure, arms out, inside it.
+fn access_glyph(cx: &mut PaintCx<'_>, center: Point) {
+    const RING: f64 = 7.5;
+    const STROKE: f64 = 1.5;
+    cx.push(PaintOp::Stroke {
+        shape: circle(center, RING),
+        width: STROKE,
+        paint: Paint::Solid(WHITE),
+    });
+    fill(cx, circle(Point::new(center.x, center.y - 3.6), 1.4), WHITE);
+    let limbs = vec![
+        // the arms
+        PathVerb::MoveTo(Point::new(center.x - 4.2, center.y - 1.4)),
+        PathVerb::LineTo(Point::new(center.x + 4.2, center.y - 1.4)),
+        // the body and the legs
+        PathVerb::MoveTo(Point::new(center.x, center.y - 1.4)),
+        PathVerb::LineTo(Point::new(center.x, center.y + 1.2)),
+        PathVerb::LineTo(Point::new(center.x - 2.4, center.y + 4.6)),
+        PathVerb::MoveTo(Point::new(center.x, center.y + 1.2)),
+        PathVerb::LineTo(Point::new(center.x + 2.4, center.y + 4.6)),
+    ];
+    cx.push(PaintOp::Stroke {
+        shape: Shape::Path {
+            verbs: limbs,
+            fill_rule: FillRule::NonZero,
+        },
+        width: STROKE,
+        paint: Paint::Solid(WHITE),
+    });
+}

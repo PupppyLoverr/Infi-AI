@@ -1,0 +1,59 @@
+//! Typed access to the design tokens, material recipes and animation presets of the theme data
+//! (`data/theme/{tokens,materials,animations}.json`), and the theme tokens the toolkit's controls draw with.
+//!
+//! * [`Theme::from_strs`] parses the three documents it is given; every part also has a `from_str` constructor. The
+//!   crate reads no files: `cupertino-assets` finds the theme data and loads a [`Theme`] from it.
+//! * [`Appearance`] selects one of four catalogs (light/dark, normal/high contrast).
+//! * [`tokens::DesignTokens`]: semantic colours (sRGB `f32` + alpha) by name.
+//! * [`metrics`]: control alignment heights per size class and shape tokens, as data.
+//! * [`control_sizes`]: each control family's height, fixed width, corners and label room at the five control sizes,
+//!   with the normal and the compact metrics.
+//! * [`typography::Typography`]: substitute font family, size presets, the tracking table with
+//!   linear interpolation and line metrics.
+//! * [`animation::AnimationPresets`]: springs, timing functions, momentum and rubber-band settings
+//!   converted to `cupertino-animation` types.
+//! * [`window_shadow`]: the verified window shadow parameter table (32 rows) and the window corner radii.
+//! * [`recipe`]: material recipes (backdrop filter chain + fill layers) including opaque variants
+//!   for reduce-transparency and the high-contrast catalogs.
+//! * [`glass`]: glass recipes (background pass and foreground matrix) per appearance, system glass variant and its
+//!   modifiers (the legacy styles map onto variants), accessibility option and
+//!   shape size.
+//! * [`ui`]: the toolkit's theme tokens: semantic colours per control state ([`ui::ColorRole`], [`ui::StateVariant`]),
+//!   control metrics, type scale, focus ring and motion ([`ui::ThemeTokens`]), from the neutral built-in theme or the
+//!   theme data.
+
+pub mod animation;
+pub mod appearance;
+pub mod color;
+pub mod control_sizes;
+pub mod error;
+pub mod evidence;
+pub mod glass;
+pub mod metrics;
+pub mod recipe;
+pub mod theme;
+pub mod tokens;
+pub mod typography;
+pub mod ui;
+pub mod window_shadow;
+
+pub use animation::{AnimationPresets, Easing, TimingPreset};
+pub use appearance::Appearance;
+pub use color::{AccentColor, Color, SemanticColor};
+pub use control_sizes::{control_geometry, ControlFamily, ControlGeometry, Corners};
+pub use error::{Error, Result};
+pub use evidence::Evidence;
+pub use glass::{GlassMode, GlassModifiers, GlassParams, GlassSize, GlassStyle, GlassVariant};
+pub use metrics::{ControlSize, ShapeTokens, WindowShadowPreset};
+pub use recipe::{
+    kept_when_inactive, Backdrop, Blend, Catalog, ColorOp, CornerCurve, Fill, Interaction,
+    MaterialLibrary, MaterialOptions, Recipe, WindowState, KEPT_WHEN_INACTIVE,
+};
+pub use theme::Theme;
+pub use tokens::DesignTokens;
+pub use typography::Typography;
+pub use window_shadow::{
+    rim_radius, sigma_to_radius_px, window_shadow, ShadowOption, WindowCornerSize,
+    WindowShadowEntry, SHADOW_SIGMA_MAXIMUM, SIGMA_TO_RADIUS_FACTOR, WINDOW_CORNER_RADIUS_REGULAR,
+    WINDOW_CORNER_RADIUS_SMALL, WINDOW_SHADOW_TABLE,
+};

@@ -1,0 +1,241 @@
+From: xnulinux
+Subject: [PATCH] linux64: on a pure EL0 host too, the physical aperture goes below the kernel
+
+0009 moved the physical aperture below the kernel for a host that runs XNU at EL1, and left a pure EL0 host as it
+was: there the aperture is not XNU's to place, it is the host's permanent linear mapping of all of DRAM, and xnu.ko
+put that at the kernel's base, so it took its room from the 48 GiB after the kernel's link address and the kernel
+map's ranges did not fit above about 8 GiB of DRAM.
+
+xnu.ko now puts that mapping at LINUX64_EL0_APERTURE_VA (linux64_abi.h, version 5), which is VM_MIN_KERNEL_ADDRESS, and
+maps the image and the boot data (up to topOfKernelData, rounded up to 2 MiB) a second time at the kernel's base,
+where the kernel is linked to run. Here:
+
+- physmap_base is that address and physmap_end is real_phys_size above it; the kernel's static range ends with the
+  boot data again (rounded up to a twig), and the heap follows it.
+- The table of the aperture has what the static range does not, as on every other system: the memory before the image
+  and everything after the boot data. Its second entry is set before the first page table page is allocated, because
+  that memory is no longer mapped at the kernel's base.
+- The addresses the host maps for good, which XNU's tables only describe and never mirror to the host, are now two
+  ranges, the aperture and the kernel's static range: linux64_el0_va_permanent.
+- ml_static_mfree keeps freeing the static range on this host, as it always did there.
+---
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -662,6 +662,18 @@ pte_is_xs(const pt_attr_t *pt_attr, pt_entry_t pte)
+ 	arm64_sync_tlb(strong);                                                                               \
+ }
+ 
++/*
++ * Pure EL0 host: the kernel addresses the host maps for good, and XNU's tables only describe: the physical aperture
++ * (all of DRAM, in 2 MiB frames) and the kernel's static range at its base (the image and the boot data). The two
++ * were one range while the aperture began at the kernel's base.
++ */
++static inline bool
++linux64_el0_va_permanent(vm_map_address_t va)
++{
++	return (physmap_end > physmap_base && va >= physmap_base && va < physmap_end) ||
++	       (va >= gVirtBase && va < static_memory_end);
++}
++
+ static inline void
+ linux64_el0_mirror_pte(pmap_t pmap, vm_map_address_t va, pt_entry_t pte, uint64_t size)
+ {
+@@ -670,7 +682,7 @@ linux64_el0_mirror_pte(pmap_t pmap, vm_map_address_t va, pt_entry_t pte, uint64_
+ 	}
+ 	__builtin_arm_dmb(DMB_ISH);
+ 	if (pmap == kernel_pmap) {
+-		if (physmap_end > physmap_base && va >= physmap_base && va < physmap_end) {
++		if (linux64_el0_va_permanent(va)) {
+ 			return;
+ 		}
+ 		struct linux64_map_req req = { .va = va, .size = size };
+@@ -741,7 +753,7 @@ pmap_el0_kmap_range_supported(vm_map_address_t va, pmap_paddr_t pa, vm_map_size_
+ 	for (vm_map_size_t off = 0; off < size; off += PAGE_SIZE) {
+ 		vm_map_address_t cva = va + off;
+ 		pmap_paddr_t cpa = pa + off;
+-		if (physmap_end > physmap_base && cva >= physmap_base && cva < physmap_end) {
++		if (linux64_el0_va_permanent(cva)) {
+ 			continue;
+ 		}
+ 		if (!pa_valid(cpa)) {
+@@ -759,7 +771,7 @@ pmap_el0_kmap_pte_supported(pmap_t pmap, vm_map_address_t va)
+ 	if (!linux64_el0 || pmap != kernel_pmap) {
+ 		return true;
+ 	}
+-	if (physmap_end > physmap_base && va >= physmap_base && va < physmap_end) {
++	if (linux64_el0_va_permanent(va)) {
+ 		return true;
+ 	}
+ 	pn = pmap_find_phys(pmap, va);
+@@ -786,7 +798,7 @@ pmap_el0_kmap_pte_ready(pmap_t pmap, vm_map_address_t va, vm_prot_t req_prot)
+ 	if (!pte_is_valid(pte)) {
+ 		return false;
+ 	}
+-	if (!(physmap_end > physmap_base && va >= physmap_base && va < physmap_end) &&
++	if (!(linux64_el0_va_permanent(va)) &&
+ 	    !pa_valid(pte_to_pa(pte))) {
+ 		return false;
+ 	}
+@@ -7784,7 +7796,7 @@ static bool
+ linux64_el0_kpage_check_locked(vm_offset_t addr, bool require_write, pmap_paddr_t *pa_out)
+ {
+ 	vm_map_address_t va = (vm_map_address_t)(addr & ~0xfffULL);
+-	bool in_physmap = (physmap_end > physmap_base && va >= physmap_base && va < physmap_end);
++	bool in_physmap = (linux64_el0_va_permanent(va));
+ 	tt_entry_t *ttep = pmap_tte(kernel_pmap, va);
+ 	if (!ttep) {
+ 		return false;
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -414,7 +414,12 @@ linux64_el0_ptov_vtop(vm_offset_t va)
+ 			return (pmap_paddr_t)(va - ptov_table[i].va) + ptov_table[i].pa;
+ 		}
+ 	}
+-	if ((va >= gVirtBase) && (va < (gVirtBase + real_phys_size))) {
++	/*
++	 * The kernel's static range (the image and the boot data, which the host maps at the kernel's base) is linear
++	 * from gVirtBase; the rest of that range is the heap's. Before arm_vm_init has set static_memory_end nothing
++	 * else is mapped there.
++	 */
++	if ((va >= gVirtBase) && (va < (static_memory_end ? static_memory_end : (gVirtBase + real_phys_size)))) {
+ 		return (pmap_paddr_t)(va - gVirtBase) + gPhysBase;
+ 	}
+ 	return 0;
+@@ -1658,19 +1663,35 @@ arm_vm_physmap_init(boot_args *args)
+ 
+ 	if (linux64_el0) {
+ 		/*
+-		 * Pure EL0 host: reuse the permanent 2 MiB linear aperture
+-		 * [gVirtBase, gVirtBase + real_phys_size) directly as physmap so
+-		 * large-RAM boots (>= 6 GiB) do not duplicate physmap VA space.
++		 * Pure EL0 host: the physical aperture is the host's permanent linear mapping of all of DRAM at
++		 * LINUX64_EL0_APERTURE_VA (physmap_base), below the kernel, so that it takes none of the heap's room
++		 * whatever the DRAM size (it was at the kernel's base, and above about 8 GiB the kernel map's ranges no
++		 * longer fit after it). The table has what the kernel's static range does not: the memory before the
++		 * image and everything after the boot data. The image and the boot data keep their addresses at the
++		 * kernel's base, where the host maps them a second time.
+ 		 */
+-		if (segLOWEST > gVirtBase) {
+-			arm_vm_page_granular_RWNX(gVirtBase, segLOWEST - gVirtBase,
+-			    ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT);
++		const vm_offset_t top_of_kernel_data = gVirtBase + (args->topOfKernelData - gPhysBase);
++		const pmap_paddr_t el0_pa[2] = { gPhysBase, args->topOfKernelData };
++		const vm_size_t el0_len[2] = { segLOWEST - gVirtBase, real_avail_end - args->topOfKernelData };
++		unsigned int n = 0;
++
++		arm_vm_page_granular_RWNX(end_kern, top_of_kernel_data - end_kern,
++		    ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT); /* Device Tree, RAM Disk (if present), bootArgs */
++		for (unsigned int i = 0; i < 2; i++) {
++			if (el0_len[i] == 0) {
++				continue;
++			}
++			temp_ptov_table[n].pa = el0_pa[i];
++			temp_ptov_table[n].va = physmap_base + (el0_pa[i] - gPhysBase);
++			temp_ptov_table[n].len = round_page(el0_len[i]);
++			/* pa_offset as arm_vm_physmap_slide has it: the aperture's address less the one at the kernel's base */
++			arm_vm_page_granular_prot(temp_ptov_table[n].va, temp_ptov_table[n].len,
++			    temp_ptov_table[n].va - (el0_pa[i] - gPhysBase + gVirtBase), 1, AP_RWNA, 1,
++			    ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT, ARM64_PAGE_UNGUARDED);
++			assert((temp_ptov_table[n].va + temp_ptov_table[n].len) <= physmap_end);
++			n++;
+ 		}
+-		arm_vm_page_granular_RWNX(end_kern, (gVirtBase + real_phys_size) - end_kern,
+-		    ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT);
+-		temp_ptov_table[0].pa = gPhysBase;
+-		temp_ptov_table[0].va = gVirtBase;
+-		temp_ptov_table[0].len = real_phys_size;
++		qsort(temp_ptov_table, PTOV_TABLE_SIZE, sizeof(temp_ptov_table[0]), cmp_ptov_entries);
+ 		memcpy(ptov_table, temp_ptov_table, sizeof(ptov_table));
+ 		return;
+ 	}
+@@ -1922,10 +1943,10 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 	 * pmap_virtual_region already keeps out of the heap). After the kernel it took as much of the 48 GiB between the
+ 	 * kernel's link address and VM_MAX_KERNEL_ADDRESS as there is DRAM, and the rest had to hold the zone map's 24 GiB
+ 	 * and the compressor's range: with more than about 8 GiB of DRAM the boot ended in kmem_range_init
+-	 * ("vm_map_store_lookup_hole() failing for claim ..."). Not on a pure EL0 host, whose aperture is the linear
+-	 * mapping at the kernel's base (below).
++	 * ("vm_map_store_lookup_hole() failing for claim ..."). On a pure EL0 host too: there the aperture is the
++	 * host's own linear mapping of DRAM, which xnu.ko puts at the same address (below).
+ 	 */
+-	if (linux64_hook && !linux64_el0) {
++	if (linux64_hook) {
+ 		physmap_base = VM_MIN_KERNEL_ADDRESS;
+ 	}
+ #endif
+@@ -1939,10 +1960,11 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 	physmap_base += physmap_slide;
+ 	if (linux64_el0) {
+ 		/*
+-		 * Pure EL0 host: reuse the already-mapped permanent 2 MiB linear
+-		 * aperture [gVirtBase, gVirtBase + real_phys_size) as physmap.
++		 * Pure EL0 host: the physmap is the host's permanent linear mapping of DRAM (2 MiB frames), which
++		 * xnu.ko puts at LINUX64_EL0_APERTURE_VA: no slide, the host chose the address.
+ 		 */
+-		physmap_base = gVirtBase;
++		_Static_assert(LINUX64_EL0_APERTURE_VA == VM_MIN_KERNEL_ADDRESS, "the EL0 host's aperture starts the kernel's window");
++		physmap_base = LINUX64_EL0_APERTURE_VA;
+ 	}
+ 
+ #if XNU_MONITOR
+@@ -1965,8 +1987,22 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 	physmap_end = physmap_base + real_phys_size;
+ #else
+ 	if (linux64_el0) {
+-		physmap_end = gVirtBase + real_phys_size;
+-		static_memory_end = ROUND_TWIG(gVirtBase + real_phys_size);
++		/*
++		 * The host maps the image and the boot data at the kernel's base as well, up to the next 2 MiB boundary
++		 * (xnu.ko): the kernel's static range ends there, or at the next twig boundary where that is further, and
++		 * the heap follows. Until arm_vm_physmap_init has
++		 * the whole table, memory after the boot data (the page tables allocated below) is reached through the
++		 * aperture already: at the kernel's base the host does not map it.
++		 */
++		physmap_end = physmap_base + real_phys_size;
++		static_memory_end = ROUND_TWIG(gVirtBase + (args->topOfKernelData - gPhysBase));
++		if (physmap_end > LOW_GLOBAL_BASE_ADDRESS) {
++			panic("LINUX64: no room below the kernel for a physical aperture of %llu MiB",
++			    (unsigned long long)(real_phys_size >> 20));
++		}
++		ptov_table[0].pa = args->topOfKernelData;
++		ptov_table[0].va = physmap_base + (args->topOfKernelData - gPhysBase);
++		ptov_table[0].len = gPhysBase + real_phys_size - args->topOfKernelData;
+ 	} else {
+ 		static_memory_end = physmap_base + mem_size + (PTOV_TABLE_SIZE * ARM_TT_TWIG_SIZE); // worst possible case for block alignment
+ 		physmap_end = physmap_base + real_phys_size + (PTOV_TABLE_SIZE * ARM_TT_TWIG_SIZE);
+@@ -2077,7 +2113,7 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 	init_ptpages(cpu_tte, physmap_base, ROUND_L1(physmap_end), TRUE, ARM_DYNAMIC_TABLE_XN | ARM_TTE_TABLE_AP(ARM_TTE_TABLE_AP_USER_NA));
+ 	port_crumb = 33;
+ #else
+-	if (linux64_hook && !linux64_el0) {
++	if (linux64_hook) {
+ 		/* LINUX64: the tables of the physical aperture below the kernel (it is no longer inside the range above) */
+ 		init_ptpages(cpu_tte, physmap_base, ROUND_L1(physmap_end), TRUE,
+ 		    ARM_DYNAMIC_TABLE_XN | ARM_TTE_TABLE_AP(ARM_TTE_TABLE_AP_USER_NA));
+@@ -2280,11 +2316,11 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 			} else {
+ 				/*
+ 				 * Pure EL0 host: mirror any ptov_table[] entry outside the already-mapped
+-				 * permanent linear aperture [gVirtBase, gVirtBase + real_phys_size).
++				 * permanent linear aperture [physmap_base, physmap_end).
+ 				 */
+ 				for (size_t i = 0; (i < PTOV_TABLE_SIZE) && (ptov_table[i].len != 0); i++) {
+-					if (ptov_table[i].va >= gVirtBase &&
+-					    ptov_table[i].va + ptov_table[i].len <= gVirtBase + real_phys_size) {
++					if (ptov_table[i].va >= physmap_base &&
++					    ptov_table[i].va + ptov_table[i].len <= physmap_end) {
+ 						continue;
+ 					}
+ 					struct linux64_map_req req = {
+--- a/osfmk/arm64/machine_routines.c
++++ b/osfmk/arm64/machine_routines.c
+@@ -2247,7 +2247,9 @@ ml_static_mfree(
+ 	/*
+ 	 * LINUX64: with the physical aperture below the kernel, the kernel's own static range is above physmap_base.
+ 	 * It was never freed while the aperture came after it (the test above), and it is not freed now. On a pure EL0
+-	 * host the aperture is the linear mapping from gVirtBase and static_memory_end is its end: nothing to keep.
++	 * host it is freed, as it always was there (the aperture began at gVirtBase): the host keeps its own mapping of
++	 * the static range for good, and that is where phystokv finds these pages, which the table of the aperture
++	 * leaves out.
+ 	 */
+ 	if (linux64_hook && !linux64_el0 && vaddr >= gVirtBase && vaddr < static_memory_end) {
+ 		return;

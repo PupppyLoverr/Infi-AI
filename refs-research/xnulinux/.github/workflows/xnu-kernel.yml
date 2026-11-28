@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# The hosted kernel builds: scripts/vm-xnu-build.sh on a new arm64 Ubuntu 24.04 machine, as README step 1 runs it in
+# the VM. macOS-DroidVM's toolchain, the k27 tree, xnu-patches applied in order, xnulinux's corecrypto in place of
+# XNU's, the kernel compiled with its own flags (warnings are errors) and linked. Nothing else in CI compiles
+# xnu-patches. The build fetches what the script fetches (macOS-DroidVM, Apple's open sources and command line
+# tools) onto the runner and keeps none of it: no artifact, no cache.
+name: xnu-kernel
+on:
+  push:
+    paths:
+      - .github/workflows/xnu-kernel.yml
+      - xnu-patches/**
+      - scripts/vm-xnu-build.sh
+      - scripts/vm-xnu-rebuild.sh
+  pull_request:
+    paths:
+      - .github/workflows/xnu-kernel.yml
+      - xnu-patches/**
+      - scripts/vm-xnu-build.sh
+      - scripts/vm-xnu-rebuild.sh
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: The machine
+        run: |
+          uname -srm; nproc; free -g | sed -n 2p; df -h / "$HOME" | sed -n '2,3p'
+      - name: scripts/vm-xnu-build.sh
+        run: |
+          sudo mkdir -p /lib/firmware/xnu   # where the rebuild installs the kernel; a new machine has none
+          scripts/vm-xnu-build.sh > "$RUNNER_TEMP/build.log" 2>&1 || { tail -80 "$RUNNER_TEMP/build.log"; exit 1; }
+          grep -E '^(applied|kernel:|collection:)|kext .* failed' "$RUNNER_TEMP/build.log" || true
+          tail -5 "$RUNNER_TEMP/build.log"
+      - name: The kernel
+        run: |
+          python3 - ~/w/dvm/out/k27/kernel-k27.macho /lib/firmware/xnu/kernel.macho xnu-patches "$RUNNER_TEMP/build.log" <<'PY'
+          import glob, os, struct, sys
+          built, installed, patches, log = sys.argv[1:5]
+          # every patch of the series was applied, in order, by the build that just ran
+          want = [os.path.basename(p) for p in sorted(glob.glob(patches + '/*.patch'))]
+          have = [l.split(None, 1)[1].strip() for l in open(log, errors='replace') if l.startswith('applied ')]
+          assert have == want, f'applied {have}, the series is {want}'
+          d = open(built, 'rb').read()
+          magic, cputype, cpusubtype, filetype, ncmds = struct.unpack_from('<IiiII', d, 0)
+          assert magic == 0xfeedfacf and cputype == 0x0100000c and filetype == 2, (hex(magic), hex(cputype), filetype)
+          assert d == open(installed, 'rb').read(), 'the installed kernel is not the one just built'
+          assert os.path.getmtime(built) >= os.path.getmtime(log) - 3600, 'the kernel is older than this build'
+          off = 32
+          for _ in range(ncmds):
+              cmd, size = struct.unpack_from('<II', d, off)
+              if cmd == 0x19:
+                  print('%-18s %#x %#x' % ((d[off + 8:off + 24].rstrip(b'\0').decode(),) + struct.unpack_from('<QQ', d, off + 24)))
+              off += size
+          print(f'{len(want)} patches applied; kernel of {len(d)} bytes built and installed')
+          PY

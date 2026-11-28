@@ -1,0 +1,41 @@
+[package]
+name = "cupertino-sessiond"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Session manager: owns the login screen's socket and the console, authenticates through PAM in a worker per attempt, opens and supervises user sessions, and returns to the login screen"
+autotests = false
+[package.metadata.cupertino]
+layer = "services"
+
+[lib]
+test = false
+
+[features]
+default = []
+# the `cupertino-sessiond` process: the manager and its worker
+app = ["dep:pam-client2", "dep:zbus", "dep:cupertino-seat", "dep:cupertino-peer", "dep:cupertino-diagnostic-events"]
+
+[dependencies]
+cupertino-diagnostic-events = { path = "../cupertino-diagnostic-events", optional = true }
+cupertino-defaults = { path = "../cupertino-defaults" }
+cupertino-login-ipc = { path = "../cupertino-login-ipc" }
+cupertino-peer = { path = "../cupertino-peer", optional = true }
+cupertino-seat = { path = "../cupertino-seat", optional = true }
+libc = "0.2"
+pam-client2 = { version = "0.5.5", optional = true }
+rustix = { version = "1", features = ["event", "fs", "net", "process", "stdio"] }
+serde = { version = "1", features = ["derive"] }
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"], optional = true }
+zeroize = "1"
+
+[[bin]]
+name = "cupertino-sessiond"
+path = "src/main.rs"
+required-features = ["app"]
+test = false
+
+[[test]]
+# Every file of `tests/` is a module of this one binary (`tests/main.rs`).
+name = "tests"
+path = "tests/main.rs"

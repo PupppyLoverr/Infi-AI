@@ -1,0 +1,238 @@
+# cupertino-glass
+
+Material rendering for the Cupertino compositor: backdrop blur, colour filter chains, fill layers with compositing
+filters and vibrant blending, driven by the recipes of `cupertino-theme`.
+
+## Public API
+
+| Item | Role |
+|---|---|
+| `MaterialRenderer` | headless renderer on a `cupertino-gpu` `Device`; `render` draws a `FrameDesc` (source and target textures) and a list of `MaterialRegion`s with the same generated programs the compositor links; `destroy` releases its objects |
+| `glass-renderer` | headless binary (`--demo`, `--cpu-check`, `--bench N`) |
+| `cpu` | f32 CPU reference of the same pipeline (half-float intermediates emulated); `apply_color_ops` runs a recipe's colour chain on one colour, which the server uses to measure the wallpaper as the menu bar's material shows it |
+| `shaders` | the generated programs (the backdrop passes, the material region, the glass composite and the vibrant glyphs: GLSL ES 3.00, SPIR-V, binding names and WGSL from one WGSL source each) |
+| `glass` | the glass background pass: `Container` (shapes joined by a smooth union whose blend width is the container's spacing, each with the recipe of its size from `cupertino-theme`), `Container::shade` (the CPU model of every stage, for tests), `GlassUniform` (the std140 block of `shaders/glass.wgsl`) |
+| `display_filter` | the display's colour filter, invert and contrast as a colour chain over a whole output (settings from `cupertino-defaults`) |
+
+## Usage
+
+```rust
+use cupertino_glass::{FrameDesc, MaterialRegion, MaterialRenderer, TargetInit};
+use cupertino_geometry::CornerStyle;
+
+let mut renderer = MaterialRenderer::new(&device)?;
+let regions = [
+    MaterialRegion::new([60.0, 80.0, 220.0, 420.0], &sidebar_recipe)
+        .with_corner(12.0, CornerStyle::continuous()),
+];
+let stats = renderer.render(&device, &FrameDesc {
+    source: &scene, source_size: (w, h),
+    target: &target, target_size: (w, h),
+    display_scale: 1.0,
+    damage_generation: generation,   // bump when the source content changes
+    tint_color: wallpaper_average,
+    init: TargetInit::Keep,
+}, &regions)?;
+renderer.destroy(&device);
+```
+
+## How it works
+
+### Regions and caching
+
+- Each region has a rectangle (target pixels), a `Recipe`, a corner radius and style (circular or continuous, from
+  `cupertino-geometry`) and an opacity.
+- The processed backdrop (downsample pyramid, separable Gaussian, colour filter chain) depends only on the recipe's
+  backdrop settings, the display scale and the source size. Regions share it, and it is cached across frames keyed by
+  `damage_generation`. While the counter is unchanged, no blur pass is encoded (`RenderStats::backdrop_hits` /
+  `backdrop_misses` / `passes_encoded`). Entries unused for 120 frames are dropped, and `invalidate clears the cache.
+- The rounded mask is a signed distance field evaluated in the fragment shader, and anti-aliasing is a one-pixel linear
+  ramp. The shader uses the closed-form first-order distance of `RoundedRect::sdf_approx`.
+- `render` draws as it records (the device submits or reads back). `source` and `target` must be different textures in
+  non-sRGB formats (values are blended gamma-encoded); the target is a render target, the backdrop's levels are half
+  floats where the device renders to them. Every texture's first row is the top of the image, as everywhere on
+  `cupertino-gpu`.
+- `draw_vibrant` draws premultiplied template glyphs with the vibrant blend functions (lighten-sover over
+  colour dodge;: darken-sover over colour burn, plus the reversed nesting). The
+  effect constants `c0`/`c1` are unknown and default to the identity multiplier. `backdrop` must hold a copy of the target
+  content.
+
+### Pipeline
+
+```
+source ─(2× box)→ capture @ backdrop scale ─(2× box pyramid while σ² > 64)→ separable Gaussian
+       ─→ colour chain (luminance curve, saturation, monochrome, display filter ops) ─→ cached backdrop (rgba16float)
+region quad ─ SDF mask ─ base = backdrop (or source) ─ fills with blend modes ─ alpha blend
+```
+
+All stages are full-screen fragment passes (no compute), each a generated program. The tint layer colour (wallpaper average) is
+approximate and supplied by the caller.
+
+### Display filters
+
+`display_filter::display_filter_ops(&AccessibilitySettings) gives the chain the compositor runs over a whole output
+(backdrop at scale 1 with no blur, then the chain), in the design's order:
+
+| Op | Slots | Effect |
+|---|---|---|
+| `LinearMatrix(m) | 2 (`[4, m00, m01, m02] [m10, m11, m12, m20]`, tail `[7, m21, m22, 0]) | sRGB decode, `m. rgb`, clamp, encode |
+| `Invert` | 1 (`[5, 0, 0, 0]) | `1 - rgb` on encoded values |
+| `Contrast(c) | 1 (`[6, c, 0, 0]) | encoded `[c/2, 1 - c/2]` stretched to `[0, 1]`; `c = 1` is a threshold at 0.5 |
+
+`filter_matrix` builds grayscale, the protanopia / deuteranopia / tritanopia corrections and the tint (HSV hue sector
+table) with the design's `Normalize`. Channel gains, fade, post offsets and reduce white point are not in the chain
+(the design drops the offsets on this path).
+
+### Glass
+
+`src/glass.rs` is the model of the glass background pass and `shaders/glass.wgsl` draws
+it, one draw per container over its sampled area (the shapes grown by the reach of the blur,
+`Container::sample_area`). The backdrop is read at the recipe's capture scale (half for most styles) into up to four blurred copies and a blur fill; the
+program also reads the edge bleed's blur and the capture itself (`shaders::GLASS_TEXTURES`, the sampler beside the
+placement block at `GLASS_SAMPLER`), which only a recipe that turns those stages on makes. The composite then, per pixel:
+
+1. evaluates the field: the smooth union of the shapes' rounded-rectangle distances (`GlassShape::corner`: continuous
+   corners by default, a superellipse quadrant of exponent 3.33 reaching 1.53 times the radius along each side, its
+   distance to first order; past half the short side the reach stays there and the exponent eases to 2, so a capsule
+   has round ends; `Circular` keeps quarter circles; straight edges stay exact, so a pixel-aligned edge covers whole
+   pixels), polynomial blend of width
+   `spacing` (0 is a hard union, at most `MAX_SPACING`, 64 points), with each shape's size-dependent values mixed by
+   the same weights; the union bulges up to a quarter of the spacing past the shapes, which the sampled area includes;
+2. refraction: inside the band along the edge, the sample point moves `amount · g(t)` points along the outward normal,
+   t the depth into the band and g(t) = 0.9·e^(−4.2t)·(1 − t⁴) (`refraction_profile`), nothing from t = 1 on: the
+   negative strengths of the recipes read the face further inside, so the edge magnifies what lies just inside it;
+3. blur and blur fill: each shape's backdrop is one Gaussian, its deviation twice the recipe's radius scaled by the first
+   level's opacity (4 points for a small regular control, 8 for a regular panel 160 points high, 1.4 for clear glass);
+   the container blurs once per distinct deviation of its shapes (at most four copies, a shape between two
+   mixing them), then the fill, a Gaussian of twice its radius, darkens, lightens or covers;
+4. face colour: saturation about the luma of the encoded colour (so the weaker channels of a strong colour keep a milky
+   floor rather than dropping to black, as they would in linear light), then the luma compression
+   `c − (1 − max_luma)·L·(0.75c + 0.25L)` (a grey x becomes `x − (1 − max_luma)·x²`), the levels, one shift
+   `black·(1 − L) − (1 − white)·L` added to every channel (L the luma after the compression), all on encoded values
+   (`face_tone`);
+5. edge bleed, fill and tint: inside the bleed band (`GlassBleed::height` points, t the depth into it), the backdrop
+   `amount · (1 − t)` points outside the pixel along the outward normal, read from a Gaussian of deviation
+   `GlassBleed::blur` (`BLEED_LEVEL`: the blurred copy or blur fill whose deviation lies within a tenth of it,
+   `BLEED_SHARE_TOLERANCE`, else a copy of its own; `Container::bleed_source`), saturated about its luma and through its own levels `black`/`white`
+   (`bleed_tone`), blends into the face at `opacity · (1 − t)²`, by the smaller channel (`darken`, light glass) or
+   normally (dark glass) (`bleed_read`, `bleed_into`); the regular glass bleeds at 0.2. Then the face's fill and the tint
+   (`GlassParams::tint`, straight, its alpha the tint's times the face opacity its caller asks for,
+   `GlassParams::with_tint`) over it in normal blending (`fill_and_tint`);
+6. soft band and rim: the soft band, a Gaussian about the edge where the highlight matrix is applied to the face, lit
+   by a raised-cosine lobe around each end of the light's axis (the top and the bottom edge, not the sides), drawn for
+   interaction states and for the surfaces that ask for it; then the rim, a shift added to each channel,
+   `amount × colour bias × g(c) × w(φ)` in a band 1.7 × the highlight height deep, g the response to that channel's own
+   value c (0, 0.63, 1, 1.13, 1 at 0, ¼, ½, ¾, 1), so a coloured face keeps its hue, and w = 0.15 + 0.85·sin²(2φ) of the edge's direction (darkening most on the
+   diagonal corners when the bias is negative; a rim outside the edge draws none here, see 8); then the control outline (`GlassBorder`: black at `opacity`, `width`
+   points wide centred on the edge, `opacity · clamp(width/2 + ½ − |d|)`, `border_line`) darkens the face, and the key
+   and fill light (`GlassSpecular`) add white over it (`specular_light`): `amount · (key · band + glow)`, the band
+   `1 − smoothstep(0, height, depth)`, each arc `1 − smoothstep(0, spread, a)` of the angle between the edge's normal
+   and the key (at `angle`, y up) or the fill light opposite it (at `fill` of the key), and the glow
+   `amount_scale · arcs′ · (1 − depth / (height · height_scale))²` over arcs `spread_scale` as wide; where the light
+   falls the outline keeps a fifth (`BORDER_LIT_SHARE`). By its `matrix_share` the light lays the highlight matrix's
+   colour of the face over it at its strength (at most all of it) instead of adding white, so it keeps the hue of what
+   lies under it (the Dock bar). The regular glass lights its edge so, a toolbar item draws the outline (`cupertino-theme`'s variants);
+7. the ring shadow, a stroke inside the outline moved down by its offset and blurred by a Gaussian of its radius,
+   darkens the face by its opacity: a soft shade a little below the top edge and down the sides, none along the bottom
+   (the regular glass's 4-point stroke 8 points down, its deviation 5 points, at 0.06); outside the shape, the drop shadow at its opacity, over the backdrop bent outside
+   the edge (`outer_read`): `d` points outside the outline, t = d / `outer_height`, the capture (`SHARP_LEVEL`) read
+   `outer_amount · g(t)` points along the outward normal, laid at `outer_opacity · (1 − smoothstep(0, 1, t))` (the
+   application switcher only, at 0.2); the control outline's outer half lies over all of it;
+8. the edge line, one pixel wide just outside the outline: black at the recipe's `edge_line` opacity times the rim's
+   response g to the luma of the blurred backdrop there, fading out over the pixel and a half past the outline, so the
+   outline shows over light content and vanishes over black. A recipe can keep it to the sides (`edge_line_sides`, the
+   width of arcs facing left and right): it then shows at a raised cosine of the outline's angle from the horizontal,
+   all of it along a straight side, none along the top and bottom (module tiles: a dark line down their sides under a
+   bright line along their top and bottom), and keep it even (`edge_line_even`: the same strength over any backdrop,
+   without the response g). Clear glass and the Dock have none. Under it, a rim outside the edge (`GlassHighlight::outside`,
+   `rim_outside`): in the share of the pixel inside a strip `height` wide about `−offset` outside the outline, on the
+   arcs facing either end of the highlight's axis (`1 − smoothstep(0, ¾·spread, a)`), each channel v of the blurred
+   backdrop shifted by `2 · amount · colour bias · g(v)`, laid as the colour and the least alpha that bring the backdrop
+   there to it (`over_backdrop`), exact where what lies there is that colour (the Dock bar: 0.5 pt wide, 0.5 pt out,
+   across its ends);
+9. the veil (after the rim, before the ring): the face times `1 − v`, `v` running linearly from the recipe's top value
+   at the top of the shapes' bounds to its bottom value at their bottom (`Container::veil`; the uniform's `fill.w` and
+   `levels.y`).
+10. the container's edge, where it carries one (`Container::edge`, a `GlassEdge` of a width and a straight colour; the
+   uniform's `lens.w` in pixels and `edge`): a stroke of its width just outside each shape's own outline, its share of
+   each pixel the band's overlap with the pixel across the shape's distance (`edge_share`), left out by the share of
+   the pixel each other shape covers and the shapes' bands laid over each other (`Container::edge_alpha_at`), laid
+   over everything above and over the glass's own antialiased edge (`over_edge`), as a stroke around each shape cut by
+   the others is. Where the shapes overlap only the outline of the whole shows; where two only blend (a neck of glass
+   between them) each keeps its own outline. A soft edge (`GlassEdge::soft`, a Gaussian's deviation, the uniform's
+   `uv_x.w` in pixels) is that band blurred by the Gaussian in closed form (`soft_edge_share`: `σ·ψ(x/σ)`,
+   `ψ(u) = u·Φ(u) + φ(u)`, over the pixel and the band), so it softens as content blurred by the same deviation does,
+   with no pass of its own; a deviation of 0 is the sharp band to the bit, and the glass draws three deviations further
+   for it. The compositor draws a layer's `set_glass_edge` through it, softened by the layer's content blur.
+
+**Each shape's glass.** A shape of a container can carry a recipe of its own (`Container::with_shape_mode`,
+`with_shape_recipe`; the server gives a member of another glass style than the container's first its own): its look
+(`ShapeLook`: face, fill, tint, rim, key and fill light, ring, control outline, the bleed's and the bend's opacities, one
+array per value in the uniform) and its size-dependent values mix across the union with the field's weights, and where
+the looks differ (`Container::looks_differ`, the uniform's `uv_y.w`) each shape's look is laid over that back to front
+by the share of the pixel it covers, so a selected segment inside its toolbar group shows its own glass, antialiased
+along its outline, though the group's outline is the nearer one. The blur fill, the soft band and its light, the drop
+shadow, the outline hairline, the edge line, the veil and the bleed's colour stay the container's, and the bleed reads
+one blur for the container (the widest of its bleeding shapes').
+
+**Frame cost.** A recipe that leaves these stages off adds no texture or pass, and the composite skips every such stage on its
+values. A bleeding container reads a blurred copy it makes already when one has the bleed's deviation
+(`Container::bleed_source`: a level or the blur fill), else blurs once more; a bend outside the edge reads the capture,
+kept instead of freed, with no pass. Containers whose shapes differ in look loop over their shapes once more per pixel.
+
+On the model, a one-dimensional run of stages 3 and 4, the blur and the
+fill each a Gaussian of its deviation, shows the large panel blurring a step over twice the distance of regular glass of its
+size and a 6 point bright stripe coming through at about half the height, and body text (black at 85 %) on light regular glass stays at 4.5:1 or more over the darkest backdrops at every panel size and accessibility recipe.
+
+**Foreground.** `cupertino-theme` holds the foreground matrices (`foreground_matrix`, lifting the face under a glyph to
+white on dark glass and dropping it to black on light glass) and `adapts_foreground` (shapes whose shorter side is under
+64 points choose the matrix from what is behind them, larger bars and panels keep their appearance's); `glass::foreground`
+is their CPU model. The toolkit draws its text in the client, which never sees the backdrop, so the server tells it:
+
+1. after it blurs a container whose union of shapes adapts, the server reads the widest blur level back into a grid of
+   at most 32 × 32 texels through a pixel buffer, without stalling (the fence is polled after later frames), takes the
+   mean under each shape, runs it through `face_color` and sends the `tone` event of `cupertino_backdrop_v1` (version 7)
+   when the face's luminance crosses `FACE_TONE_THRESHOLD` by more than `FACE_TONE_HYSTERESIS`. Nothing is read or sent
+   while the backdrop does not change; a shape that stops adapting is told `appearance` once;
+2. the toolkit gives a glass node and everything drawn on it (its subtree, and later nodes inside its shape) the theme
+   of text on glass (`ThemeTokens::on_glass`): neutral labels take `foreground_rgb` of the tone at the vibrant levels
+   (`VIBRANT_PRIMARY`, `vibrant_secondary`, `VIBRANT_PLACEHOLDER`); accents, fills and selected labels keep theirs.
+
+The alternative, drawing glass text in the compositor as the menu bar's vibrant text is (`draw_vibrant`), needs the
+glyphs on a surface of their own and is not planned.
+
+### Generated programs
+
+The backdrop passes are written once in WGSL: `shaders/downsample.wgsl`, `blur.wgsl`, `color.wgsl` and `blit.wgsl`,
+each including `shaders/include/pass.wgsl` (the `PassParams` block, the source texture and the full-screen triangle)
+through a `// include pass.wgsl` line, with the shared module of `cupertino-gpu` ahead of it. `cargo run -p
+cupertino-gpu-shaders` generates `shaders/generated/`: GLSL ES 3.00 of each stage, SPIR-V, the GLSL names of the block
+and sampler by WGSL group and binding (`NAME.bindings`), and the assembled WGSL without the functions the program
+never calls (`NAME.wgsl`), for a backend that compiles WGSL itself. The generated files are committed. `shaders::DOWNSAMPLE`, `BLUR`, `COLOR` and `BLIT` hold them; the
+compositor links their GLSL and binds `PassParams` and the source by `Program::block` and `Program::sampler`. The blur
+dithers its result by pixel when `PassParams::flags[0]` is `PASS_DITHER` (set by the compositor for 8-bit levels).
+
+The region programs are generated the same way: `shaders/material.wgsl` (the rounded mask, the backdrop and the fill
+layers), `shaders/glass.wgsl` (the glass composite) and `shaders/vibrant.wgsl` (template glyphs over a copy of the
+target). Material and glass include `shaders/include/place.wgsl`, the placement block (`ops::Placement`): the quad drawn
+mapped through a projection from target pixels to clip space, and the dither flag, so the compositor draws one quad per
+damage rectangle through its frame projection and the headless renderer one padded quad per region through its own.
+The backdrop is sampled at the framebuffer-normalised coordinate mapped into the area it covers (`Region.info.zw`, its
+origin, and `Region.sizes.zw`, its size, in target pixels). A region with a blur ramp (a variable blur,
+`MaterialRegion::with_blur_ramp`, `RegionParams::set_blur_ramp`) mixes the processed backdrop with the capture at the
+recipe's scale before its filter (group 0 binding 3, `shaders::REGION_CAPTURE`) by a weight that runs from the top of
+the region to its bottom along a smoothstep; `cpu::render_regions` weighs it the same way (`MaterialRegion::blur_weight`).
+Uniform blocks are std140 and byte-identical to the Rust structs.
+
+## Binary
+
+```
+cargo run --release -p cupertino-glass --bin glass-renderer -- --demo
+cargo run --release -p cupertino-glass --bin glass-renderer -- --material Sidebar --appearance dark \
+    --size 1920x1080 --continuous --radius 12 --cpu-check --bench 200
+```
+
+Images are written to `output/`. `--appearance` accepts `light`, `dark`, `light-high-contrast`,
+`dark-high-contrast`; `--reduce-transparency`, `--window inactive` and `--interaction rollover|pressed`
+select the other recipe variants.
+

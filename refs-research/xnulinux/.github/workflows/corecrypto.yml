@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# The corecrypto kext's tests (kexts/free/corecrypto/test/run.sh): its sources in user space, through the interface's
+# calls against OpenSSL, with AddressSanitizer and UndefinedBehaviorSanitizer. The arm64 runners test the code the hosted
+# kernel runs (Mbed TLS's AES and SHA-256 with the CPU's instructions only: mbedtls_config_xnulinux.h), x86_64 the
+# portable C.
+name: corecrypto
+on:
+  push:
+    paths:
+      - .github/workflows/corecrypto.yml
+      - kexts/free/corecrypto/**
+      - xnu-patches/corecrypto/**
+  pull_request:
+    paths:
+      - .github/workflows/corecrypto.yml
+      - kexts/free/corecrypto/**
+      - xnu-patches/corecrypto/**
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compiler and OpenSSL's headers
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang libssl-dev >/dev/null
+      - name: Host
+        run: uname -sm; clang --version | head -1; openssl version
+      - name: Tests
+        run: kexts/free/corecrypto/test/run.sh

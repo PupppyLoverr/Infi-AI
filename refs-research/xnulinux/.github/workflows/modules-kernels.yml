@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# fki.ko and xnu.ko build against every kernel series Ubuntu 24.04 has for arm64: the one its images boot (6.8) and each
+# HWE kernel since. modules.yml builds against the newest only, and the kernel calls fki uses changed between them.
+name: modules on Ubuntu 24.04's kernels
+on:
+  push:
+  pull_request:
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: The newest headers of each series
+        run: |
+          sudo apt-get update -qq
+          apt-cache search --names-only '^linux-headers-[0-9.]+-[0-9]+-generic$' | awk '{print $1}' | sort -V > all
+          sed -E 's/^linux-headers-([0-9]+\.[0-9]+)\..*/\1/' all | sort -uV > series
+          for s in $(cat series); do grep -E "^linux-headers-${s/./\\.}\.[0-9]+-" all | tail -1; done > pkgs
+          echo "series: $(tr '\n' ' ' < series)"; cat pkgs
+          [ "$(wc -l < pkgs)" -ge 2 ]  # 6.8 and at least one HWE kernel: fewer means the list is not what this job is for
+          sudo apt-get install -y -qq $(cat pkgs) >/dev/null
+      - name: fki.ko and xnu.ko against each
+        run: |
+          bad=""
+          for p in $(cat pkgs); do
+            v=${p#linux-headers-}; k=/usr/src/$p; b=$RUNNER_TEMP/$v; mkdir -p "$b"; cp -r fki-ko xnu-ko xnu-patches "$b/"
+            echo "::group::$v"
+            if make -C "$k" M="$b/fki-ko" modules &&
+               make -C "$k" M="$b/xnu-ko" KBUILD_EXTRA_SYMBOLS="$b/fki-ko/Module.symvers" modules &&
+               [ -e "$b/fki-ko/fki.ko" ] && [ -e "$b/xnu-ko/xnu.ko" ]; then r=built; else r=FAILED; bad="$bad $v"; fi
+            echo "::endgroup::"
+            echo "$v: $r"
+          done
+          [ -z "$bad" ] || { echo "did not build against:$bad"; exit 1; }

@@ -1,0 +1,54 @@
+From: xnulinux
+Subject: [PATCH] linux64: up to 32 CPUs
+
+The virtual board's kernel was built for 8 CPUs (MAX_CPUS, the SM8550's and SM8350's eight cores), and xnu.ko gave
+XNU up to 16. A host asked for 12 ended the boot: the device tree's topology stopped at 8, XnuCPU registered the
+ninth CPU, and ml_processor_register read CpuDataEntries[8] (cpu_datap) before its own range check: a data abort at
+address 0 ("XNU took a fault it cannot handle", pc in _ml_processor_register).
+
+MAX_CPUS is now 32, and LINUX64_MAX_CPUS (linux64_abi.h) names the same limit for the host: xnu.ko gives XNU no more,
+and a static assertion here keeps the two together. ml_processor_register checks the CPU's number before it reads the
+entry, so a CPU beyond the topology is refused (KERN_FAILURE, which XnuCPU logs) instead of faulting.
+---
+--- a/pexpert/pexpert/arm64/board_config.h
++++ b/pexpert/pexpert/arm64/board_config.h
+@@ -308,7 +308,12 @@
+ #include <pexpert/arm64/BCM2837.h>
+ 
+ #define MAX_L2_CLINE                   6
+-#define MAX_CPUS                       8 /* SM8550 (sheng) and SM8350 (zeta) have eight cores */
++/*
++ * LINUX64 (xnulinux): as many as the hosted system can be given (LINUX64_MAX_CPUS in linux64_abi.h, which
++ * machine_routines.c checks against this). With 8, the SM8550's and SM8350's eight cores, a host that gave XNU more
++ * ended the boot: XnuCPU registered the ninth, and ml_processor_register read past CpuDataEntries.
++ */
++#define MAX_CPUS                       32
+ /*
+  * Two clusters: the device tree's cpus carry cluster-type 'E' or 'P' from the host's cpu capacities (make-droidvm-adt.py; all
+  * 'P' when the host gives every vCPU the same). The AMP scheduler (sched_amp, not Edge: Edge places threads by CLPC's thread group
+--- a/osfmk/arm64/machine_routines.c
++++ b/osfmk/arm64/machine_routines.c
+@@ -1527,6 +1527,8 @@
+ }
+ 
+ static_assert(MAX_CPUS <= 256, "MAX_CPUS must fit in _COMM_PAGE_CPU_TO_CLUSTER; Increase table size if needed");
++/* LINUX64 (xnulinux): the host gives XNU up to LINUX64_MAX_CPUS CPUs (xnu.ko), and the per-CPU tables must hold them */
++static_assert(MAX_CPUS >= LINUX64_MAX_CPUS, "MAX_CPUS (board_config.h) is below LINUX64_MAX_CPUS (linux64_abi.h)");
+ 
+ void
+ ml_map_cpus_to_clusters(uint8_t *table)
+@@ -1690,6 +1692,14 @@
+     processor_t *processor_out, ipi_handler_t *ipi_handler_out,
+     perfmon_interrupt_handler_func *pmi_handler_out)
+ {
++	/*
++	 * LINUX64 (xnulinux): a CPU the topology does not have is refused before its entry is read. The check below came
++	 * after cpu_datap(), which reads CpuDataEntries[log_id]: a device tree with more CPUs than MAX_CPUS (a host
++	 * giving XNU more than it was built for) took a data abort here instead of KERN_FAILURE.
++	 */
++	if (in_processor_info->log_id > (uint32_t)ml_get_max_cpu_number()) {
++		return KERN_FAILURE;
++	}
+ 	cpu_data_t *this_cpu_datap = cpu_datap(in_processor_info->log_id);
+ 	assert3u(this_cpu_datap->cpu_number, ==, in_processor_info->log_id); /* from ml_bootstrap_processors() */
+ 

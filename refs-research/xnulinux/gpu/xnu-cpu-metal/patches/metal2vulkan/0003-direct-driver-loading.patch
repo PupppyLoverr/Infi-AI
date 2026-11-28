@@ -1,0 +1,167 @@
+diff --git a/crates/metal2vulkan-runtime/src/device/adopt.rs b/crates/metal2vulkan-runtime/src/device/adopt.rs
+index 4a81bc8..57c84bf 100644
+--- a/crates/metal2vulkan-runtime/src/device/adopt.rs
++++ b/crates/metal2vulkan-runtime/src/device/adopt.rs
+@@ -329,6 +329,7 @@ impl Device {
+                 relay: None,
+                 settings: [0; 32],
+                 dropped_layers: Vec::new(),
++                direct_driver: false,
+             }),
+             physical: raw.physical_device,
+             raw: device,
+diff --git a/crates/metal2vulkan-runtime/src/device/create.rs b/crates/metal2vulkan-runtime/src/device/create.rs
+index 7d83e3f..76e9c9d 100644
+--- a/crates/metal2vulkan-runtime/src/device/create.rs
++++ b/crates/metal2vulkan-runtime/src/device/create.rs
+@@ -123,6 +123,9 @@ pub struct DeviceOptions {
+     /// Homebrew's `/opt/homebrew/lib` and `/usr/local/lib`. A loader that opens from none of
+     /// them is [`Error::LoaderNotFound`], naming each.
+     pub loader: Option<PathBuf>,
++    /// Optional `PFN_vkGetInstanceProcAddr` pointer (as `usize`) for `VK_LUNARG_direct_driver_loading`
++    /// in exclusive mode, bypassing loader ICD manifest/environment discovery.
++    pub direct_driver_pfn: Option<usize>,
+     /// Only physical devices of these kinds qualify; empty admits every kind.
+     pub kinds: Vec<DeviceKind>,
+     /// Where the devices keep translated shaders: by default, the platform's per-user cache
+@@ -406,6 +409,7 @@ impl std::fmt::Debug for DeviceOptions {
+             withheld_extensions,
+             messages,
+             loader,
++            direct_driver_pfn,
+             kinds,
+             shader_cache,
+             withhold_generated_commands,
+@@ -439,6 +443,7 @@ impl std::fmt::Debug for DeviceOptions {
+             .field("withheld_extensions", withheld_extensions)
+             .field("messages", messages)
+             .field("loader", loader)
++            .field("direct_driver_pfn", direct_driver_pfn)
+             .field("kinds", kinds)
+             .field("shader_cache", shader_cache)
+             .field("withhold_generated_commands", withhold_generated_commands)
+@@ -489,6 +494,7 @@ impl Default for DeviceOptions {
+             withheld_extensions: Default::default(),
+             messages: Default::default(),
+             loader: Default::default(),
++            direct_driver_pfn: Default::default(),
+             kinds: Default::default(),
+             shader_cache: Default::default(),
+             withhold_generated_commands: Default::default(),
+@@ -962,22 +968,35 @@ pub(crate) fn instance_of(
+     entry: ash::Entry,
+     options: &DeviceOptions,
+ ) -> Result<Arc<InstanceShared>, Error> {
+-    let listed = ListedExtensions::of(&entry)?;
+-    let portability = listed.lists(ash::khr::portability_enumeration::NAME);
++    let (portability, relays, asks) = if options.direct_driver_pfn.is_some() {
++        // Direct driver loading bypasses `vkEnumerateInstanceExtensionProperties(NULL)` so the
++        // loader never scans `icd.d` manifests or dlopens unused ICDs (e.g., lavapipe).
++        // Khronos Vulkan-Loader always exposes portability_enumeration, debug_utils, and
++        // lunarg_direct_driver_loading directly from the loader.
++        (true, true, false)
++    } else {
++        let listed = ListedExtensions::of(&entry)?;
++        (
++            listed.lists(ash::khr::portability_enumeration::NAME),
++            listed.lists(ash::ext::debug_utils::NAME),
++            listed.lists(ash::ext::layer_settings::NAME),
++        )
++    };
+     let mut extensions: Vec<&CStr> = Vec::new();
+     if portability {
+         extensions.push(ash::khr::portability_enumeration::NAME);
+     }
++    if options.direct_driver_pfn.is_some() {
++        extensions.push(vk::LUNARG_DIRECT_DRIVER_LOADING_NAME);
++    }
+     // The relay of a driver's command-buffer failures needs a messenger of its own
+     // (`relay.rs`): debug utils wherever the instance lists them.
+-    let relays = listed.lists(ash::ext::debug_utils::NAME);
+     if options.messages.is_some() || relays {
+         extensions.push(ash::ext::debug_utils::NAME);
+     }
+     // MoltenVK's Metal argument buffers, asked for where the instance can take layer settings,
+     // ahead of the consumer's own, which win (`argument_buffers.rs`); and, where the relay hears
+     // its failures, that it keep a device after a command buffer fails (`relay.rs`).
+-    let asks = listed.lists(ash::ext::layer_settings::NAME);
+     let chained_settings: Vec<LayerSetting> = asks
+         .then(super::argument_buffers::setting)
+         .into_iter()
+@@ -1019,6 +1038,15 @@ pub(crate) fn instance_of(
+     let (bools, strings) = setting_values(&chained_settings);
+     let settings = layer_settings(&chained_settings, &bools, &strings);
+     let mut settings_info = vk::LayerSettingsCreateInfoEXT::default().settings(&settings);
++    let direct_driver_infos = options.direct_driver_pfn.map(|pfn_addr| {
++        let pfn: vk::PFN_vkGetInstanceProcAddrLUNARG = unsafe { std::mem::transmute(pfn_addr) };
++        [vk::DirectDriverLoadingInfoLUNARG::default().pfn_get_instance_proc_addr(pfn)]
++    });
++    let mut direct_driver_list = direct_driver_infos.as_ref().map(|infos| {
++        vk::DirectDriverLoadingListLUNARG::default()
++            .mode(vk::DirectDriverLoadingModeLUNARG::EXCLUSIVE)
++            .drivers(infos)
++    });
+     let layer_names: Vec<*const c_char> = options.layers.iter().map(|n| n.as_ptr()).collect();
+     let mut info = vk::InstanceCreateInfo::default()
+         .application_info(&application)
+@@ -1039,6 +1067,9 @@ pub(crate) fn instance_of(
+     if !settings.is_empty() {
+         info = info.push_next(&mut settings_info);
+     }
++    if let Some(ddl) = direct_driver_list.as_mut() {
++        info = info.push_next(ddl);
++    }
+     // A layer the loader cannot provide is not something the device lacks: the layers are
+     // diagnostics, so a caller that asked for a device gets one. The instance of the layers asked
+     // for and, where the loader answers `VK_ERROR_LAYER_NOT_PRESENT` ([`drops_layers`]), of no
+@@ -1106,6 +1137,7 @@ pub(crate) fn instance_of(
+         relay,
+         settings,
+         dropped_layers: dropped,
++        direct_driver: options.direct_driver_pfn.is_some(),
+     }))
+ }
+ 
+@@ -2725,6 +2757,7 @@ fn same_options(a: &DeviceOptions, b: &DeviceOptions) -> bool {
+         withheld_extensions,
+         messages: _,
+         loader,
++        direct_driver_pfn,
+         kinds,
+         shader_cache,
+         withhold_generated_commands,
+@@ -2756,6 +2789,7 @@ fn same_options(a: &DeviceOptions, b: &DeviceOptions) -> bool {
+         && *withheld_features == b.withheld_features
+         && *withheld_extensions == b.withheld_extensions
+         && *loader == b.loader
++        && *direct_driver_pfn == b.direct_driver_pfn
+         && *kinds == b.kinds
+         && *shader_cache == b.shader_cache
+         && *withhold_generated_commands == b.withhold_generated_commands
+diff --git a/crates/metal2vulkan-runtime/src/device/keeper.rs b/crates/metal2vulkan-runtime/src/device/keeper.rs
+index 42b0ec6..dc07754 100644
+--- a/crates/metal2vulkan-runtime/src/device/keeper.rs
++++ b/crates/metal2vulkan-runtime/src/device/keeper.rs
+@@ -83,6 +83,9 @@ static KEEPERS: Kept<usize, Keeper> = Kept::new();
+ /// that device is primed (the module docs). A keeper that cannot be made leaves the device as it
+ /// is, and the next device tries again.
+ pub(super) fn keep_drivers_loaded(instance: &InstanceShared) {
++    if instance.direct_driver {
++        return;
++    }
+     let entry = &instance.entry;
+     let library = entry.static_fn().get_instance_proc_addr as usize;
+     let portability = instance
+diff --git a/crates/metal2vulkan-runtime/src/device/mod.rs b/crates/metal2vulkan-runtime/src/device/mod.rs
+index 03073ee..a7fa608 100644
+--- a/crates/metal2vulkan-runtime/src/device/mod.rs
++++ b/crates/metal2vulkan-runtime/src/device/mod.rs
+@@ -205,6 +205,8 @@ pub(super) struct InstanceShared {
+     /// instance created with every layer asked for, for one adopted, and where none was asked
+     /// for.
+     pub(super) dropped_layers: Vec<std::ffi::CString>,
++    /// True when the instance was created via `VK_LUNARG_direct_driver_loading` exclusive mode.
++    pub(super) direct_driver: bool,
+ }
+ 
+ impl InstanceShared {

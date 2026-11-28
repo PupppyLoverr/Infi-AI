@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# What xnu-patches/include/linux64.h tells the compiler about a call into the host is what the host does (it keeps none of
+# the FP/SIMD registers): tests/xnu-patches/hostcall-fp.sh builds a small program against the header alone and runs it on
+# arm64 with a hook that returns with v0-v31 changed. Linux (gcc) and macOS (clang).
+name: linux64-hostcall
+on:
+  push:
+    paths:
+      - .github/workflows/linux64-hostcall.yml
+      - tests/xnu-patches/hostcall*
+      - xnu-patches/include/**
+  pull_request:
+    paths:
+      - .github/workflows/linux64-hostcall.yml
+      - tests/xnu-patches/hostcall*
+      - xnu-patches/include/**
+jobs:
+  fp:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: A host call that changes every FP/SIMD register
+        run: uname -sm; cc --version | head -1; bash tests/xnu-patches/hostcall-fp.sh

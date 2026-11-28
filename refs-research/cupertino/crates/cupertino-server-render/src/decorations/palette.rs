@@ -1,0 +1,324 @@
+//! Colours of the decorations, resolved once from the theme tokens.
+//!
+//! Sources (all straight RGBA, sRGB):
+//! * titlebar fills: opaque titlebar material recipes of the specification (the
+//!   choice of the opaque variant is), `Titlebar-Opaque` for standard and
+//!   `SeamlessWindowTitlebar-Opaque` for unified titlebars;
+//! * title text: the window frame text colour (active) and the tertiary label colour (inactive), so the title of a
+//!   window that is not active recedes as its toolbar's does;
+//! * rim: the window rim colour token and its 2× variant;
+//! * button colours: the face (its upper, centre and lower colours, per appearance), the ring just inside the
+//!   edge, the fill while pressed and the glyph shown while the group is hovered, each its own value per button; inactive and disabled buttons are one translucent disc,
+//!   white at 17 % (dark) or black at 10 % (light), laid over whatever the window draws under them, so a tinted
+//!   sidebar shows through them; Increase Contrast deepens them to 30 % and 18 %;
+//! * separator: the grid colour (approximate).
+//!
+//! [`Palette::builtin`] carries the same numbers for use without the specification files; a test
+//! compares it with the values loaded from the specification.
+
+use crate::decorations::metrics::TitlebarStyle;
+use cupertino_theme::recipe::{MaterialOptions, WindowState};
+use cupertino_theme::{Appearance, SemanticColor, Theme};
+
+pub type Rgba = [f32; 4];
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Palette {
+    pub dark: bool,
+    pub titlebar_active: Rgba,
+    pub titlebar_inactive: Rgba,
+    pub unified_active: Rgba,
+    pub unified_inactive: Rgba,
+    pub separator: Rgba,
+    pub title_active: Rgba,
+    pub title_inactive: Rgba,
+    /// The colour at the centre of each button's face (close, minimise, zoom).
+    pub close: Rgba,
+    pub minimize: Rgba,
+    pub zoom: Rgba,
+    /// Each button's face from top to bottom: its upper colour, its centre and its lower colour, in the order close,
+    /// minimise, zoom. The centre is the button's colour above.
+    pub button_face: [[Rgba; 3]; 3],
+    pub button_inactive: Rgba,
+    /// The ring of each button just inside its edge, in the order close, minimise, zoom.
+    pub button_rim: [Rgba; 3],
+    /// The colour each button's edge takes where its ring is strongest.
+    pub button_edge: [Rgba; 3],
+    /// Whether the edge rings are strongest at the top and the bottom of each button (a light ring, in the dark
+    /// appearance) rather than at its two sides (a deep ring, in the light one).
+    pub edge_at_poles: bool,
+    /// The fill of each button while it is pressed.
+    pub button_pressed: [Rgba; 3],
+    /// The glyph each button shows while the group is hovered.
+    pub button_glyph: [Rgba; 3],
+    pub rim_1x: Rgba,
+    pub rim_2x: Rgba,
+    pub shadow: Rgba,
+    pub window_background: Rgba,
+}
+
+/// Each button's face in the light appearance, its upper, centre and lower colour (close, minimise, zoom): a slightly
+/// deeper upper part that lightens towards the bottom, the zoom button a yellowish green.
+const FACE_LIGHT: [[[u8; 4]; 3]; 3] = [
+    [
+        [252, 110, 101, 255],
+        [248, 122, 114, 255],
+        [246, 136, 129, 255],
+    ],
+    [
+        [252, 188, 43, 255],
+        [253, 198, 56, 255],
+        [253, 209, 71, 255],
+    ],
+    [
+        [104, 208, 56, 255],
+        [127, 212, 88, 255],
+        [150, 217, 119, 255],
+    ],
+];
+/// The same in the dark appearance: deeper, more saturated discs, whose minimise and zoom faces hold no blue above
+/// their centre.
+const FACE_DARK: [[[u8; 4]; 3]; 3] = [
+    [[246, 85, 72, 255], [243, 90, 80, 255], [240, 103, 95, 255]],
+    [[251, 178, 0, 255], [253, 190, 0, 255], [253, 204, 43, 255]],
+    [[13, 191, 0, 255], [35, 192, 0, 255], [79, 195, 55, 255]],
+];
+/// In the dark appearance a button's edge is a light ring, brightest at its top and bottom: the outer ring and the
+/// one just inside it (close, minimise, zoom).
+const EDGE_DARK: [[u8; 4]; 3] = [
+    [255, 196, 186, 255],
+    [246, 246, 118, 255],
+    [171, 248, 142, 255],
+];
+const RIM_DARK: [[u8; 4]; 3] = [
+    [255, 153, 145, 255],
+    [255, 231, 76, 255],
+    [123, 238, 100, 255],
+];
+/// The glyphs of the minimise and zoom buttons.
+const MINIMIZE_GLYPH: [u8; 4] = [199, 56, 0, 255];
+const ZOOM_GLYPH: [u8; 4] = [0, 118, 0, 255];
+/// The close glyph of the light appearance.
+const CLOSE_GLYPH_LIGHT: [u8; 4] = [165, 0, 0, 255];
+/// The deepest colour of each button's edge, at its two sides (close, minimise, zoom).
+const EDGE: [[u8; 4]; 3] = [[175, 3, 0, 255], [118, 20, 0, 255], [0, 78, 0, 255]];
+
+fn faces(table: [[[u8; 4]; 3]; 3]) -> [[Rgba; 3]; 3] {
+    table.map(|face| face.map(rgba8))
+}
+
+fn rgba8(c: [u8; 4]) -> Rgba {
+    [
+        c[0] as f32 / 255.0,
+        c[1] as f32 / 255.0,
+        c[2] as f32 / 255.0,
+        c[3] as f32 / 255.0,
+    ]
+}
+
+/// A window button of a window that is not active, or a disabled one: white at 17 % in the dark appearance, laid over
+/// what is under it, so the sidebar's tint shows through.
+pub const INACTIVE_BUTTON_DARK: Rgba = [1.0, 1.0, 1.0, 0.17];
+/// The same in the light appearance: black at 10 %.
+pub const INACTIVE_BUTTON_LIGHT: Rgba = [0.0, 0.0, 0.0, 0.1];
+/// With Increase Contrast: deeper, white at 30 % and black at 18 %.
+pub const INACTIVE_BUTTON_DARK_HIGH_CONTRAST: Rgba = [1.0, 1.0, 1.0, 0.3];
+pub const INACTIVE_BUTTON_LIGHT_HIGH_CONTRAST: Rgba = [0.0, 0.0, 0.0, 0.18];
+
+fn gray(v: f32) -> Rgba {
+    [v, v, v, 1.0]
+}
+
+/// Source-over of `top` (straight alpha) on an opaque `bottom`.
+pub fn over(top: Rgba, bottom: Rgba) -> Rgba {
+    let a = top[3];
+    [
+        top[0] * a + bottom[0] * (1.0 - a),
+        top[1] * a + bottom[1] * (1.0 - a),
+        top[2] * a + bottom[2] * (1.0 - a),
+        1.0,
+    ]
+}
+
+impl Palette {
+    /// Palette without specification files; equal to [`Palette::from_theme`] (tested).
+    pub fn builtin(dark: bool) -> Self {
+        if dark {
+            // an inactive window's title bar is the active one's: only its title and buttons change
+            let titlebar_inactive = gray(0.149);
+            let face = faces(FACE_DARK);
+            Self {
+                dark,
+                titlebar_active: gray(0.149),
+                titlebar_inactive,
+                unified_active: gray(0.169),
+                unified_inactive: gray(0.169),
+                separator: rgba8([0x1A, 0x1A, 0x1A, 255]),
+                title_active: rgba8([255, 255, 255, 216]),
+                title_inactive: rgba8([255, 255, 255, 63]),
+                close: face[0][1],
+                minimize: face[1][1],
+                zoom: face[2][1],
+                button_face: face,
+                button_inactive: INACTIVE_BUTTON_DARK,
+                button_rim: RIM_DARK.map(rgba8),
+                button_edge: EDGE_DARK.map(rgba8),
+                edge_at_poles: true,
+                button_pressed: [
+                    rgba8([255, 141, 133, 255]),
+                    rgba8([255, 234, 92, 255]),
+                    rgba8([86, 246, 110, 255]),
+                ],
+                button_glyph: [
+                    rgba8([153, 0, 0, 255]),
+                    rgba8(MINIMIZE_GLYPH),
+                    rgba8(ZOOM_GLYPH),
+                ],
+                rim_1x: rgba8([0, 0, 0, 89]),
+                rim_2x: rgba8([0, 0, 0, 89]),
+                shadow: [0.0, 0.0, 0.0, 1.0],
+                window_background: rgba8([30, 30, 30, 255]),
+            }
+        } else {
+            let titlebar_inactive = gray(1.0);
+            let face = faces(FACE_LIGHT);
+            Self {
+                dark,
+                titlebar_active: gray(1.0),
+                titlebar_inactive,
+                unified_active: gray(0.957),
+                unified_inactive: gray(0.957),
+                separator: rgba8([0xE6, 0xE6, 0xE6, 255]),
+                title_active: rgba8([0, 0, 0, 216]),
+                title_inactive: rgba8([0, 0, 0, 66]),
+                close: face[0][1],
+                minimize: face[1][1],
+                zoom: face[2][1],
+                button_face: face,
+                button_inactive: INACTIVE_BUTTON_LIGHT,
+                button_rim: [
+                    rgba8([243, 76, 68, 255]),
+                    rgba8([241, 173, 25, 255]),
+                    rgba8([19, 185, 44, 255]),
+                ],
+                button_edge: EDGE.map(rgba8),
+                edge_at_poles: false,
+                button_pressed: [
+                    rgba8([252, 148, 142, 255]),
+                    rgba8([254, 210, 115, 255]),
+                    rgba8([110, 218, 126, 255]),
+                ],
+                button_glyph: [
+                    rgba8(CLOSE_GLYPH_LIGHT),
+                    rgba8(MINIMIZE_GLYPH),
+                    rgba8(ZOOM_GLYPH),
+                ],
+                rim_1x: rgba8([255, 255, 255, 89]),
+                rim_2x: rgba8([255, 255, 255, 153]),
+                shadow: [0.0, 0.0, 0.0, 1.0],
+                window_background: rgba8([255, 255, 255, 255]),
+            }
+        }
+    }
+
+    /// Resolve every colour from the theme; anything the theme lacks falls back to
+    /// [`Palette::builtin`].
+    pub fn from_theme(theme: &Theme, appearance: Appearance) -> Self {
+        let mut p = Self::builtin(appearance.is_dark());
+        let sem = |c: SemanticColor| theme.tokens.semantic(appearance, c).map(|c| c.to_array());
+        let fill = |material: &str, window: WindowState| -> Option<Rgba> {
+            let opts = MaterialOptions {
+                window,
+                reduce_transparency: true,
+                ..Default::default()
+            };
+            let r = theme.recipe(appearance, material, &opts).ok()?;
+            r.fills.last().map(|f| f.rgba)
+        };
+        if let Some(c) = fill("Titlebar", WindowState::Active) {
+            p.titlebar_active = c;
+        }
+        if let Some(c) = fill("Titlebar", WindowState::Inactive) {
+            p.titlebar_inactive = c;
+        }
+        if let Some(c) = fill("SeamlessWindowTitlebar", WindowState::Active) {
+            p.unified_active = c;
+        }
+        if let Some(c) = fill("SeamlessWindowTitlebar", WindowState::Inactive) {
+            p.unified_inactive = c;
+        }
+        p.separator = sem(SemanticColor::Grid).unwrap_or(p.separator);
+        p.title_active = sem(SemanticColor::WindowFrameText).unwrap_or(p.title_active);
+        p.title_inactive = sem(SemanticColor::TertiaryLabel).unwrap_or(p.title_inactive);
+        p.rim_1x = sem(SemanticColor::WindowRim).unwrap_or(p.rim_1x);
+        p.rim_2x = sem(SemanticColor::WindowRim2x).unwrap_or(p.rim_2x);
+        p.window_background = sem(SemanticColor::WindowBackground).unwrap_or(p.window_background);
+        if appearance.is_high_contrast() {
+            p.button_inactive = if appearance.is_dark() {
+                INACTIVE_BUTTON_DARK_HIGH_CONTRAST
+            } else {
+                INACTIVE_BUTTON_LIGHT_HIGH_CONTRAST
+            };
+        }
+        p
+    }
+
+    pub fn titlebar(&self, style: TitlebarStyle, active: bool) -> Rgba {
+        match (style, active) {
+            (TitlebarStyle::Standard, true) => self.titlebar_active,
+            (TitlebarStyle::Standard, false) => self.titlebar_inactive,
+            (_, true) => self.unified_active,
+            (_, false) => self.unified_inactive,
+        }
+    }
+
+    /// Rim colour for a backing scale: the 2× token from a scale of 2 up (selection).
+    pub fn rim(&self, scale: f64) -> Rgba {
+        if scale >= 2.0 {
+            self.rim_2x
+        } else {
+            self.rim_1x
+        }
+    }
+
+    pub fn button_color(&self, kind: crate::decorations::metrics::ButtonKind) -> Rgba {
+        match kind {
+            crate::decorations::metrics::ButtonKind::Close => self.close,
+            crate::decorations::metrics::ButtonKind::Minimize => self.minimize,
+            crate::decorations::metrics::ButtonKind::Zoom => self.zoom,
+        }
+    }
+
+    fn index(kind: crate::decorations::metrics::ButtonKind) -> usize {
+        match kind {
+            crate::decorations::metrics::ButtonKind::Close => 0,
+            crate::decorations::metrics::ButtonKind::Minimize => 1,
+            crate::decorations::metrics::ButtonKind::Zoom => 2,
+        }
+    }
+
+    /// A button's face from top to bottom: upper colour, centre, lower colour.
+    pub fn face_of(&self, kind: crate::decorations::metrics::ButtonKind) -> [Rgba; 3] {
+        self.button_face[Self::index(kind)]
+    }
+
+    /// The ring of a button just inside its edge.
+    pub fn rim_of(&self, kind: crate::decorations::metrics::ButtonKind) -> Rgba {
+        self.button_rim[Self::index(kind)]
+    }
+
+    /// The colour of a button's edge at its sides.
+    pub fn edge_of(&self, kind: crate::decorations::metrics::ButtonKind) -> Rgba {
+        self.button_edge[Self::index(kind)]
+    }
+
+    /// The fill of a pressed button.
+    pub fn pressed_fill(&self, kind: crate::decorations::metrics::ButtonKind) -> Rgba {
+        self.button_pressed[Self::index(kind)]
+    }
+
+    /// The glyph a button shows while the group is hovered.
+    pub fn glyph_of(&self, kind: crate::decorations::metrics::ButtonKind) -> Rgba {
+        self.button_glyph[Self::index(kind)]
+    }
+}

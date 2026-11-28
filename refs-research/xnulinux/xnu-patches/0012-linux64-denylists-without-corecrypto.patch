@@ -1,0 +1,30 @@
+From: xnulinux
+Subject: [PATCH] linux64: the sanitizer denylists no longer name the corecrypto files 0008 took out
+
+The KASan and kcov denylists name two files of osfmk/corecrypto one by one (cc_clear.c, ccdrbg_nisthmac.c), and
+validate_denylist.sh fails the build when a file a denylist names is missing. Those files are gone with the tree's
+corecrypto (0008, vm-xnu-rebuild.sh), so a build into a new object tree stopped in build_setup ("KASan: denylisted
+file ... not found"); an object tree from before kept its generated denylists and went on building.
+---
+--- a/san/coverage/kcov-denylist-x86_64
++++ b/san/coverage/kcov-denylist-x86_64
+@@ -3,8 +3,6 @@
+ # Early boot AUTOGEN
+ src:./bsd/kern/kdebug.c
+ src:./bsd/kern/kern_csr.c
+-src:./osfmk/corecrypto/cc_clear.c
+-src:./osfmk/corecrypto/ccdrbg_nisthmac.c
+ src:./osfmk/device/subrs.c
+ src:./osfmk/i386/Diagnostics.c
+ src:./osfmk/i386/acpi.c
+--- a/san/memory/kasan-denylist-x86_64
++++ b/san/memory/kasan-denylist-x86_64
+@@ -5,8 +5,6 @@
+ # Early boot AUTOGEN
+ src:./bsd/kern/kdebug.c
+ src:./bsd/kern/kern_csr.c
+-src:./osfmk/corecrypto/cc_clear.c
+-src:./osfmk/corecrypto/ccdrbg_nisthmac.c
+ src:./osfmk/device/subrs.c
+ src:./osfmk/i386/Diagnostics.c
+ src:./osfmk/i386/acpi.c

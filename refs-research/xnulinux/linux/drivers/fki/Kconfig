@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config FKI
+	bool "Foreign kernel interface"
+	depends on ARM64 && MODULES
+	help
+	  A small, versioned, semantic interface for loadable foreign-kernel
+	  personalities (for example a Darwin personality module). It exports
+	  only the services declared in <linux/fki.h>.

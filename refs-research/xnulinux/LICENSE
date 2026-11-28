@@ -1,0 +1,19 @@
+xnulinux is made of parts under different licenses, kept apart along the line between the Linux kernel and XNU.
+Each source file names its license in an SPDX-License-Identifier line; the full texts are in LICENSES/:
+
+  GPL-2.0-only         fki-ko/, linux/, scripts/, tools/, tests/, docs/, gpu/xnu-drm/ (xnudrmd, test/), gpu/venus/
+  GPL-2.0-or-later     gpu/xnu-cpu-metal/
+  APSL-2.0             xnu-ko/, xnu-patches/, kexts/ (kexts/free/compat/ too)
+  BSD-2-Clause-Patent  kexts/XnuDisplay/, kexts/XnuEthernet/, kexts/XnuInput/ (from macOS-DroidVM),
+                       gpu/xnu-cpu-metal/src/xnu-cpu-metal-bundle/XnuCpuMetalShim.h (from UniXNU/AdrenoMetal)
+  MIT                  gpu/xnu-drm/darwin/, gpu/xnu-drm/test/, gpu/xnu-drm/xnudrm_proto.h; the patches to Mesa and virglrenderer
+                       (under their upstream's license, as are the patches to metal2vulkan: GPL-2.0-or-later)
+
+docs/images/ holds screenshots of macOS running on xnulinux; the macOS interface and wallpaper in them are Apple's.
+
+Mbed TLS (Apache-2.0 OR GPL-2.0-or-later), which the corecrypto kext (kexts/free/corecrypto/) is built with, is fetched
+at build time at a pinned release (kexts/free/corecrypto/mbedtls.rev) and used under Apache-2.0; none of it is kept here.
+
+Files without a comment syntax (JSON manifests, property lists, patches) are under the license of the directory they are in.
+
+Copyright (c) 2026 Heyang Zhou and contributors.

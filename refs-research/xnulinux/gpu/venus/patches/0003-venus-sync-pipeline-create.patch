@@ -1,0 +1,51 @@
+From: xnulinux <xnulinux@local>
+Subject: [PATCH] venus: create graphics and compute pipelines synchronously on Darwin
+
+When the Venus host renderer runs on MoltenVK (macOS), SPIRV-Cross / Metal
+shader compilation can reject a pipeline with VK_ERROR_INITIALIZATION_FAILED
+(-3). With Mesa Venus's default async pipeline creation on the primary ring,
+vn_Create{Graphics,Compute}Pipelines returns VK_SUCCESS immediately with an
+unregistered client handle, causing callers (such as metal2vulkan's
+multi_variable_dynamic_creates self-check) to miss the failure and causing
+subsequent vkDestroyPipeline/vkCmdBindPipeline calls to hit a fatal CS error
+on unhardened virglrenderer.
+
+Force synchronous pipeline creation (want_sync = true) under #ifdef __APPLE__.
+Note that #ifdef __APPLE__ checks that the guest is Darwin (not that the host
+renderer is MoltenVK); this Darwin build of Venus exclusively serves hosted
+macOS whose host renderer is MoltenVK, so both always hold together here and
+the guest always receives the real VkResult from the host driver and takes its
+fallback path cleanly.
+
+---
+ src/virtio/vulkan/vn_pipeline.c | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/src/virtio/vulkan/vn_pipeline.c b/src/virtio/vulkan/vn_pipeline.c
+index 1111111..2222222 100644
+--- a/src/virtio/vulkan/vn_pipeline.c
++++ b/src/virtio/vulkan/vn_pipeline.c
+@@ -1683,7 +1683,11 @@ vn_CreateGraphicsPipelines(VkDevice device,
+    struct vn_device *dev = vn_device_from_handle(device);
+    const VkAllocationCallbacks *alloc =
+       pAllocator ? pAllocator : &dev->base.vk.alloc;
++#ifdef __APPLE__
++   bool want_sync = true;
++#else
+    bool want_sync = false;
++#endif
+    VkResult result;
+ 
+    /* silence -Wmaybe-uninitialized false alarm on release build with gcc */
+@@ -1775,7 +1779,11 @@ vn_CreateComputePipelines(VkDevice device,
+    struct vn_device *dev = vn_device_from_handle(device);
+    const VkAllocationCallbacks *alloc =
+       pAllocator ? pAllocator : &dev->base.vk.alloc;
++#ifdef __APPLE__
++   bool want_sync = true;
++#else
+    bool want_sync = false;
++#endif
+    VkResult result;
+ 
+    memset(pPipelines, 0, sizeof(*pPipelines) * createInfoCount);

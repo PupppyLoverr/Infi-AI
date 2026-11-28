@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# scripts/mk-puredarwin-disk.sh on both hosts it runs on: the disk it makes from a small root file system, checked from
+# outside (tests/puredarwin-disk). On Linux the HFS+ tools and the kernel's hfsplus module are installed first, and the
+# job fails if the module cannot be loaded: it never passes without having made a disk.
+name: puredarwin-disk
+on:
+  push:
+    paths:
+      - .github/workflows/puredarwin-disk.yml
+      - scripts/mk-puredarwin-disk.sh
+      - tests/puredarwin-disk/**
+  pull_request:
+    paths:
+      - .github/workflows/puredarwin-disk.yml
+      - scripts/mk-puredarwin-disk.sh
+      - tests/puredarwin-disk/**
+jobs:
+  disk:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: HFS+ tools and the hfsplus module (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q hfsprogs gdisk uuid-runtime
+          # the module comes with the kernel's own modules on newer kernels and in linux-modules-extra on older ones
+          sudo modprobe hfsplus || { sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" && sudo modprobe hfsplus; }
+          grep -w hfsplus /proc/filesystems
+      - name: The disk, made and checked
+        run: tests/puredarwin-disk/run.sh

@@ -1,0 +1,401 @@
+//! A parent's committed layers ([`LayerModel`], in [`ParentLayers`]): their animated properties and their look.
+
+use std::sync::{Arc, Mutex};
+
+use crate::glass_look::GlassLook;
+use cupertino_animation::LayerCurve;
+use cupertino_animation::LayerProperty;
+use cupertino_protocols::server::layers::cupertino_layer_v1::CupertinoLayerV1;
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+use smithay::wayland::compositor::with_states;
+
+use super::ops::Op;
+use super::tracked::{GestureProgress, Tracked};
+use super::{held, spatial, Motion, PROPERTIES};
+
+/// How a layer's content mixes with what lies behind it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum BlendRole {
+    #[default]
+    Normal,
+    /// Coverage drawn in a colour taken from the glass behind, at a weight (primary, secondary, fill).
+    Vibrant(VibrantWeight),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum VibrantWeight {
+    Primary,
+    Secondary,
+    Fill,
+}
+
+/// The line along the outside of a layer's glass (`set_glass_edge`): its width in logical points, constant whatever
+/// the layer's scale, its straight colour and opacity, and whether it softens by the layer's content blur (a layer
+/// object of [`SOFT_EDGE_VERSION`](super::SOFT_EDGE_VERSION) or later); a width of 0 draws none.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GlassEdge {
+    pub width: f64,
+    pub color: [f32; 4],
+    pub soft: bool,
+}
+
+/// An animation asked for but not started: it starts when its commit is first shown.
+#[derive(Clone, Debug)]
+pub(super) struct Waiting {
+    serial: u32,
+    pub(super) prop: usize,
+    pub(super) to: f64,
+    curve: LayerCurve,
+    velocity: f64,
+    samples: Option<Arc<[f32]>>,
+    pub(super) since: f64,
+    /// The gesture that drives the animation once it starts ([`Tracked`]).
+    pub(super) gesture: Option<GestureProgress>,
+    /// The transaction whose part started the animation ([`Motion`]).
+    pub(super) motion: Option<Motion>,
+}
+
+/// The value property `prop` of a new layer starts at: opacity and scale at 1, the rest at 0.
+pub(super) fn initial(prop: usize) -> f64 {
+    if prop == 4 || prop == 5 {
+        1.0
+    } else {
+        0.0
+    }
+}
+
+/// A committed layer of a parent.
+pub struct LayerModel {
+    pub serial: u64,
+    pub surface: WlSurface,
+    /// The parent's own presentation (`get_presentation`), not a layer drawn over it.
+    pub whole: bool,
+    pub(super) resource: CupertinoLayerV1,
+    pub(super) props: [LayerProperty; PROPERTIES],
+    /// The serial of each property's running animation.
+    pub(super) running: [Option<u32>; PROPERTIES],
+    /// The transaction whose part started each property's running animation, read while `running` holds it.
+    pub(super) motion: [Option<Motion>; PROPERTIES],
+    /// The animation of each property a gesture drives: the property shows it rather than `props`, which rests at the
+    /// value it started from.
+    pub(super) tracked: [Option<Tracked>; PROPERTIES],
+    pub(super) waiting: Vec<Waiting>,
+    /// Width and height follow the content's size until they are set.
+    sized: [bool; 2],
+    /// Whether the layer had an animation running or waiting at the last tick, for `settled`.
+    pub(super) busy: bool,
+    pub glass: Option<(GlassLook, f64)>,
+    pub blend: BlendRole,
+    pub raised: bool,
+    pub pointer_lit: bool,
+    pub blur_ramp: [f32; 2],
+    pub masks: bool,
+    pub placeholder: [f32; 4],
+    /// The glass group (0 for none) and how far its shapes blend into each other, in points.
+    pub group: u32,
+    pub spacing: f64,
+    /// The line along the outside of its glass.
+    pub edge: GlassEdge,
+    /// The straight sRGB colour laid over its glass's face at its alpha (`set_glass_tint`); transparent for none.
+    pub tint: [f32; 4],
+}
+
+impl LayerModel {
+    pub(super) fn new(
+        serial: u64,
+        surface: WlSurface,
+        resource: CupertinoLayerV1,
+        whole: bool,
+    ) -> Self {
+        let props = std::array::from_fn(|i| LayerProperty::new(initial(i)));
+        Self {
+            serial,
+            surface,
+            whole,
+            resource,
+            props,
+            running: [None; PROPERTIES],
+            motion: [None; PROPERTIES],
+            tracked: std::array::from_fn(|_| None),
+            waiting: Vec::new(),
+            sized: [false; 2],
+            busy: false,
+            glass: None,
+            blend: BlendRole::Normal,
+            raised: false,
+            pointer_lit: false,
+            blur_ramp: [1.0, 1.0],
+            masks: false,
+            placeholder: [0.0; 4],
+            group: 0,
+            spacing: 0.0,
+            edge: GlassEdge::default(),
+            tint: [0.0; 4],
+        }
+    }
+
+    /// The content's size in logical points, (0, 0) before its first buffer.
+    pub fn content_size(&self) -> (f64, f64) {
+        use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
+        with_states(&self.surface, |states| {
+            states
+                .data_map
+                .get::<RendererSurfaceStateUserData>()
+                .and_then(|d| d.lock().unwrap().view())
+                .map_or((0.0, 0.0), |v| (f64::from(v.dst.w), f64::from(v.dst.h)))
+        })
+    }
+
+    /// Width and height take the content's size before the first value or animation of either.
+    fn fix_size(&mut self, prop: usize) {
+        if prop == 2 || prop == 3 {
+            let i = prop - 2;
+            if !self.sized[i] {
+                let (w, h) = self.content_size();
+                self.props[prop].set(if i == 0 { w } else { h });
+                self.sized[i] = true;
+            }
+        }
+    }
+
+    /// End the running animation of `prop` at `now`: `replaced` with what was shown. A property a gesture drove stays
+    /// where it shows.
+    pub(super) fn replace(&mut self, prop: usize, now: f64) {
+        let tracked = self.tracked[prop]
+            .take()
+            .map(|t| (t.value(now), t.velocity(now)));
+        if let Some((value, _)) = tracked {
+            self.props[prop].set(value);
+        }
+        if let Some(serial) = self.running[prop].take() {
+            if let Some((value, velocity)) = tracked {
+                self.resource.replaced(serial, value, velocity);
+            } else if self.props[prop].is_animating(now) {
+                let p = &self.props[prop];
+                self.resource
+                    .replaced(serial, p.value(now), p.velocity(now));
+            } else {
+                self.resource.finished(serial);
+            }
+        }
+    }
+
+    /// End the animations of `prop` still waiting to start, from commits that applied before, at `now`: `replaced`
+    /// with what is shown, where the motion that follows starts.
+    fn replace_waiting(&mut self, prop: usize, now: f64) {
+        if !self.waiting.iter().any(|w| w.prop == prop) {
+            return;
+        }
+        let (value, velocity) = (self.value(prop, now), self.velocity(prop, now));
+        for w in std::mem::take(&mut self.waiting) {
+            if w.prop == prop {
+                self.resource.replaced(w.serial, value, velocity);
+            } else {
+                self.waiting.push(w);
+            }
+        }
+    }
+
+    /// The value of `prop` shown at `now`, [`held`] in its range: an animation that overshoots does not take the layer
+    /// past it.
+    pub fn value(&self, prop: usize, now: f64) -> f64 {
+        held(
+            prop,
+            match prop {
+                2 | 3 if !self.sized[prop - 2] => {
+                    let (w, h) = self.content_size();
+                    if prop == 2 {
+                        w
+                    } else {
+                        h
+                    }
+                }
+                _ => self.shown(prop, now),
+            },
+        )
+    }
+
+    /// The value of `prop` shown at `now`, before it is held in its range: the gesture's when one drives it.
+    fn shown(&self, prop: usize, now: f64) -> f64 {
+        self.tracked[prop]
+            .as_ref()
+            .map_or_else(|| self.props[prop].value(now), |t| t.value(now))
+    }
+
+    /// The velocity of `prop` shown at `now`, units per second.
+    pub fn velocity(&self, prop: usize, now: f64) -> f64 {
+        self.tracked[prop]
+            .as_ref()
+            .map_or_else(|| self.props[prop].velocity(now), |t| t.velocity(now))
+    }
+
+    /// The value `prop` rests at once its animation ends: what the client hit-tests against.
+    pub fn target(&self, prop: usize) -> f64 {
+        held(
+            prop,
+            self.waiting
+                .iter()
+                .rev()
+                .find(|w| w.prop == prop)
+                .map_or_else(
+                    || {
+                        self.tracked[prop]
+                            .as_ref()
+                            .map_or_else(|| self.props[prop].target(), |t| t.to)
+                    },
+                    |w| w.to,
+                ),
+        )
+    }
+
+    /// Whether an animation of the layer runs or waits at `now`, one a gesture moves included.
+    pub fn animating(&self, now: f64) -> bool {
+        !self.waiting.is_empty()
+            || self.props.iter().any(|p| p.is_animating(now))
+            || self.tracked.iter().flatten().any(|t| t.progress.moving())
+    }
+
+    /// The animations waiting to start are driven by the gesture of `progress` once they start.
+    pub(super) fn track(&mut self, progress: &GestureProgress) {
+        for w in &mut self.waiting {
+            w.gesture.get_or_insert_with(|| progress.clone());
+        }
+    }
+
+    /// Follow the gestures that drive properties at `now`: at rest at 1 an animation finished, and once its transaction
+    /// lets the progress go a property stays where it shows, its animation answered `replaced` unless it finished.
+    pub(super) fn follow_gestures(&mut self, now: f64) {
+        for prop in 0..PROPERTIES {
+            let Some((bound, at_one)) = self.tracked[prop].as_ref().map(|t| {
+                let at_one = t.progress.at_rest().is_some_and(|at| at >= 0.5);
+                (t.progress.bound(), at_one)
+            }) else {
+                continue;
+            };
+            if at_one {
+                if let Some(serial) = self.running[prop].take() {
+                    self.resource.finished(serial);
+                }
+            }
+            if !bound {
+                self.replace(prop, now);
+            }
+        }
+    }
+
+    /// Start the waiting animations at `now`; with `reduce_motion` the spatial ones end at their target at once.
+    pub(super) fn start(&mut self, now: f64, reduce_motion: bool) {
+        for w in std::mem::take(&mut self.waiting) {
+            self.fix_size(w.prop);
+            if let Some(progress) = w.gesture {
+                // the gesture moves the property from what it shows now
+                let from = self.shown(w.prop, now);
+                self.replace(w.prop, now);
+                self.props[w.prop].set(from);
+                let still = reduce_motion && spatial(w.prop);
+                self.tracked[w.prop] = Some(Tracked::new(progress, from, w.to, w.samples, still));
+                self.running[w.prop] = Some(w.serial);
+                self.motion[w.prop] = w.motion;
+                continue;
+            }
+            self.replace(w.prop, now);
+            if reduce_motion && spatial(w.prop) {
+                self.props[w.prop].set(w.to);
+            } else if let (Some(samples), LayerCurve::Timed { duration, .. }) = (w.samples, w.curve)
+            {
+                self.props[w.prop].animate_samples(samples, duration, now);
+            } else {
+                self.props[w.prop].animate(w.to, w.curve, now, w.velocity);
+            }
+            self.running[w.prop] = Some(w.serial);
+            self.motion[w.prop] = w.motion;
+        }
+    }
+
+    /// The animations waiting to start that no transaction's part claimed are `motion`'s: the commits of its part just
+    /// applied.
+    pub(super) fn mark(&mut self, motion: Motion) {
+        for w in &mut self.waiting {
+            w.motion.get_or_insert(motion);
+        }
+    }
+
+    /// Whether an animation of `motion` waits or runs: one that finished, or was replaced, is no longer its.
+    pub(super) fn moves(&self, motion: Motion) -> bool {
+        self.waiting.iter().any(|w| w.motion == Some(motion))
+            || (0..PROPERTIES).any(|p| self.running[p].is_some() && self.motion[p] == Some(motion))
+    }
+
+    /// Stop the animations of `motion` at what they show at `now`, each answered `replaced` with it: its transaction
+    /// was cancelled after it started.
+    pub(super) fn stop(&mut self, motion: Motion, now: f64) {
+        if self.waiting.iter().any(|w| w.motion == Some(motion)) {
+            for w in std::mem::take(&mut self.waiting) {
+                if w.motion == Some(motion) {
+                    let (value, velocity) = (self.value(w.prop, now), self.velocity(w.prop, now));
+                    self.resource.replaced(w.serial, value, velocity);
+                } else {
+                    self.waiting.push(w);
+                }
+            }
+        }
+        for prop in 0..PROPERTIES {
+            if self.running[prop].is_some() && self.motion[prop] == Some(motion) {
+                let shown = self.shown(prop, now);
+                self.replace(prop, now);
+                self.props[prop].set(shown);
+            }
+        }
+    }
+
+    pub(super) fn apply(&mut self, op: Op, now: f64) {
+        match op {
+            Op::Create { .. } | Op::Destroy => {}
+            Op::Set(prop, v) => {
+                self.fix_size(prop);
+                self.replace(prop, now);
+                self.replace_waiting(prop, now);
+                self.props[prop].set(v);
+            }
+            Op::Animate {
+                serial,
+                prop,
+                to,
+                curve,
+                velocity,
+                samples,
+                ..
+            } => self.waiting.push(Waiting {
+                serial,
+                prop,
+                to,
+                curve,
+                velocity,
+                samples,
+                since: now,
+                gesture: None,
+                motion: None,
+            }),
+            Op::Cancel(prop) => {
+                let shown = self.shown(prop, now);
+                self.replace(prop, now);
+                self.replace_waiting(prop, now);
+                self.props[prop].set(shown);
+            }
+            Op::Glass(g) => self.glass = g,
+            Op::Blend(b) => self.blend = b,
+            Op::Raised(r) => self.raised = r,
+            Op::PointerLit(l) => self.pointer_lit = l,
+            Op::BlurRamp(r) => self.blur_ramp = r,
+            Op::Masks(m) => self.masks = m,
+            Op::Placeholder(c) => self.placeholder = c,
+            Op::Group(group, spacing) => (self.group, self.spacing) = (group, spacing),
+            Op::Edge(edge) => self.edge = edge,
+            Op::Tint(tint) => self.tint = tint,
+        }
+    }
+}
+
+/// The committed layers of a parent surface in creation order, in its data map.
+#[derive(Default)]
+pub struct ParentLayers(pub Mutex<Vec<LayerModel>>);

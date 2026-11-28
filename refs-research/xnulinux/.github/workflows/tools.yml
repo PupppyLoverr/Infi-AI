@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# The tests of the tools (tests/tools). python3 alone, but for kcdis's: those also need an llvm-objdump (the runner has
+# llvm-objdump-NN, which the test finds) and are skipped without one.
+name: tools
+on:
+  push:
+  pull_request:
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tools' tests
+        run: python3 -m unittest discover -s tests/tools -v

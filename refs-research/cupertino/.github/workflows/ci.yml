@@ -1,0 +1,339 @@
+name: CI
+
+# Pull requests and main: every Rust check goes through `cargo xtask ci --profile pr`, which plans the crates the change
+# affects and runs formatting, Clippy, the tests, the doctests, the layer check and the repository gate on them. Beside
+# it: the dependency policy, the book, and the instruction counts of the hot functions against the commit before.
+# Arch is the only target: every job that builds Rust runs in the CI image (ci-images.yml); the Ubuntu runner is only
+# the VM that hosts the container. Newer pushes cancel obsolete runs.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  image:
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/ci-images.yml
+
+  # The plan and the checks of `cargo xtask ci`. The base is the commit the change is compared with: the pull request's
+  # base, or the commit main was at before the push; without one (a new branch, a force push) every crate is checked.
+  #
+  # The setup of every container job: actions/checkout and the cache restores run as root, then the setup action gives
+  # the unprivileged user `ci` what they wrote, and every `run` step runs as `ci` (the job's default shell).
+  validate:
+    needs: image
+    name: cargo xtask ci
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+      # The runner VM's Android SDK, .NET, Haskell and CodeQL are never used here and take about 30 GB of its 72 GB
+      # disk; the build and its cache need the room. They are mounted so that the job can remove them from inside.
+      volumes:
+        - /usr/local/lib/android:/host/android
+        - /usr/share/dotnet:/host/dotnet
+        - /opt/ghc:/host/ghc
+        - /opt/hostedtoolcache/CodeQL:/host/codeql
+    defaults: &as-ci
+      run:
+        shell: runuser -u ci -- bash --noprofile --norc -eo pipefail {0}
+    env:
+      # Without debug information the test binaries take a third of the disk; panics still name file and line.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      SCCACHE_DIR: /var/cache/sccache
+      SCCACHE_CACHE_SIZE: 6G
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Main is the only writer of the compile cache; a pull request reads main's.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/cache/sccache
+          key: sccache-validate-${{ github.sha }}
+          restore-keys: sccache-validate-
+      - uses: ./.github/actions/arch-setup
+        with:
+          free-disk: 'true'
+      - name: The commit to compare with
+        id: base
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: &base |
+          if [ "$EVENT" = pull_request ]; then base=$PR_BASE; else base=$BEFORE; fi
+          if [ -z "$base" ] || [ "$base" = 0000000000000000000000000000000000000000 ] \
+              || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "::notice::No earlier commit to compare with: every crate is checked"
+            echo "base=" >> "$GITHUB_OUTPUT"
+            echo "args=--scope all" >> "$GITHUB_OUTPUT"
+          else
+            echo "base=$base" >> "$GITHUB_OUTPUT"
+            echo "args=--base $base" >> "$GITHUB_OUTPUT"
+          fi
+      - name: cargo xtask ci --profile pr
+        env:
+          ARGS: ${{ steps.base.outputs.args }}
+        # ARGS is two words (an option and its value) and is split on purpose.
+        run: cargo xtask ci --profile pr $ARGS
+      - name: Compile cache
+        if: always()
+        run: sccache --show-stats || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: ci-latest
+          path: target/xtask/ci-latest.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f target/xtask/ci-latest.json ]; then
+            jq -r -f .github/ci-summary.jq target/xtask/ci-latest.json >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "cargo xtask ci wrote no report (target/xtask/ci-latest.json)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+        with:
+          path: /var/cache/sccache
+          key: sccache-validate-${{ github.sha }}
+
+  # The book must build, and its internal links and anchors must resolve. mdBook and lychee are prebuilt release
+  # binaries, pinned, and both archives are checked against the published sha256; the job builds no Rust.
+  docs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: mdBook and link checker
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --output mdbook.tar.gz \
+            https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz
+          curl --fail --location --silent --show-error --output lychee.tar.gz \
+            https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-x86_64-unknown-linux-gnu.tar.gz
+          echo "3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7  mdbook.tar.gz" | sha256sum --check --strict
+          echo "1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a  lychee.tar.gz" | sha256sum --check --strict
+          mkdir -p "$HOME/.local/bin" lychee
+          tar --extract --gzip --file mdbook.tar.gz --directory "$HOME/.local/bin"
+          tar --extract --gzip --file lychee.tar.gz --directory lychee --strip-components=1
+          install --mode 0755 lychee/lychee "$HOME/.local/bin/lychee"
+          rm -r mdbook.tar.gz lychee.tar.gz lychee
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Build the book
+        run: mdbook build docs
+      # Offline: local files only, so another site's outage cannot fail the build.
+      - name: Internal links and anchors
+        run: lychee --offline --no-progress --include-fragments 'docs/src/**/*.md'
+
+  # Licences, advisories, bans and sources, as set in deny.toml.
+  deny:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+
+  # Instruction counts of the hot functions (each crate's `instructions` bench, gungraun under Valgrind's Callgrind),
+  # at the commit before the change and at the change, one after the other on this runner: a count that rises by more
+  # than MICROBENCH_LIMIT_PERCENT over the earlier commit's fails the job. A benchmark the earlier commit does not have is
+  # counted and kept, with nothing to compare it with; without an earlier commit (a new branch) every count is new. Only
+  # the crates `cargo xtask ci` plans as affected run, all of them when the plan names none. The runner switches address
+  # randomisation off for repeatable counts, a personality call the container's default seccomp profile refuses.
+  microbench:
+    needs: image
+    name: Instruction counts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+      options: --security-opt seccomp=unconfined
+      volumes:
+        - /usr/local/lib/android:/host/android
+        - /usr/share/dotnet:/host/dotnet
+        - /opt/ghc:/host/ghc
+        - /opt/hostedtoolcache/CodeQL:/host/codeql
+    defaults: *as-ci
+    env:
+      # how much, in percent, an instruction count may rise over the earlier commit's before the job fails
+      MICROBENCH_LIMIT_PERCENT: "3"
+      SCCACHE_DIR: /var/cache/sccache
+      SCCACHE_CACHE_SIZE: 2G
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/cache/sccache
+          key: sccache-microbench-${{ github.sha }}
+          restore-keys: sccache-microbench-
+      - uses: ./.github/actions/arch-setup
+        with:
+          free-disk: 'true'
+      - name: The commit to compare with
+        id: base
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: *base
+      # The counts stay out of the target directory, so a restored cache never brings back an old baseline.
+      - name: The crates to bench and their runner
+        id: crates
+        env:
+          ARGS: ${{ steps.base.outputs.args }}
+        run: |
+          echo "GUNGRAUN_HOME=$RUNNER_TEMP/gungraun" >> "$GITHUB_ENV"
+          # the crates that declare a [[bench]] named `instructions`
+          benches=$(cargo metadata --locked --no-deps --format-version 1 \
+            | jq -c '[.packages[] | select(any(.targets[]; .name == "instructions" and (.kind | index("bench")))) | .name]')
+          # the crates the change affects, from the plan of `cargo xtask ci`; every bench crate when it names none
+          # ARGS is two words (an option and its value) and is split on purpose.
+          plan=$(cargo xtask ci --profile pr $ARGS --dry-run --format json || true)
+          affected=$(jq -c '(if .whole_workspace then .selected_packages else .affected_packages end // null)
+              | if type == "array" then map(if type == "object" then (.name // .package) else . end) else null end' \
+              <<<"$plan" 2>/dev/null || echo null)
+          if [ "$affected" = null ] || [ -z "$affected" ]; then
+            echo "::notice::The plan names no affected crates: every crate with benches runs"
+            crates=$benches
+          else
+            crates=$(jq -nc --argjson b "$benches" --argjson a "$affected" '$b - ($b - $a)')
+          fi
+          echo "crates=$(jq -r 'join(" ")' <<<"$crates")" >> "$GITHUB_OUTPUT"
+          echo "Instruction-count benches: $crates" >> "$GITHUB_STEP_SUMMARY"
+          # The runner must be exactly the version of the library in Cargo.lock; the image has one, a newer lock
+          # installs its own.
+          version=$(cargo metadata --locked --format-version 1 | jq -r '[.packages[] | select(.name == "gungraun") | .version][0] // empty')
+          if [ -n "$version" ] && [ "$(gungraun-runner --version | awk '{print $2}')" != "$version" ]; then
+            cargo install gungraun-runner --version "=$version" --locked --root "$RUNNER_TEMP/gungraun-runner"
+            echo "GUNGRAUN_RUNNER=$RUNNER_TEMP/gungraun-runner/bin/gungraun-runner" >> "$GITHUB_ENV"
+          else
+            echo "GUNGRAUN_RUNNER=$(command -v gungraun-runner)" >> "$GITHUB_ENV"
+          fi
+      - name: Counts at the commit before the change
+        if: steps.crates.outputs.crates != ''
+        env:
+          BASE: ${{ steps.base.outputs.base }}
+          CRATES: ${{ steps.crates.outputs.crates }}
+        run: |
+          if [ -z "$BASE" ]; then
+            echo "::notice::No earlier commit to compare with: every count is new"
+            exit 0
+          fi
+          git worktree add --detach "$RUNNER_TEMP/base" "$BASE"
+          # only the crates that already had the bench at that commit; built into this checkout's target directory
+          had=$(cd "$RUNNER_TEMP/base" && cargo metadata --locked --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(any(.targets[]; .name == "instructions" and (.kind | index("bench")))) | .name')
+          packages=()
+          for crate in $CRATES; do
+            if grep -qxF "$crate" <<<"$had"; then packages+=(-p "$crate"); fi
+          done
+          if [ "${#packages[@]}" -eq 0 ]; then
+            echo "::notice::The earlier commit has none of these benches: every count is new"
+            exit 0
+          fi
+          # the change's toolchain and target directory, so that both counts come from one compiler and one place
+          export CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target
+          RUSTUP_TOOLCHAIN=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          export RUSTUP_TOOLCHAIN
+          if ! (cd "$RUNNER_TEMP/base" && cargo bench --locked --no-fail-fast "${packages[@]}" --bench instructions \
+              -- --save-baseline=base); then
+            echo "::warning::The benches of $BASE did not all run: the counts they did not save are new"
+          fi
+      - name: Counts at the change, against the commit before
+        if: steps.crates.outputs.crates != ''
+        env:
+          CRATES: ${{ steps.crates.outputs.crates }}
+        run: |
+          packages=()
+          for crate in $CRATES; do packages+=(-p "$crate"); done
+          status=0
+          cargo bench --locked --no-fail-fast "${packages[@]}" --bench instructions -- --output-format=json \
+            --baseline=base --callgrind-limits="ir=${MICROBENCH_LIMIT_PERCENT}%" > "$RUNNER_TEMP/counts.out" || status=$?
+          grep -v '^[[:space:]]*{' "$RUNNER_TEMP/counts.out" || true
+          # One row per benchmark from the runner's JSON lines: its instructions now and at the earlier commit.
+          grep '^[[:space:]]*{' "$RUNNER_TEMP/counts.out" | jq -s '[.[] as $s | ($s.profiles // [])[]
+              | select(.tool == "Callgrind") | (.data.total // {}) as $t
+              | {crate: (($s.package_dir // "") | split("/") | last),
+                 name: (($s.module_path // "?") + (if $s.id then " " + $s.id else "" end)),
+                 new: $t.metrics.Ir.values.new, old: $t.metrics.Ir.values.old,
+                 regressed: (($t.regressions // []) | length > 0)}]' > "$RUNNER_TEMP/counts.json"
+          {
+            echo "### Instruction counts against the commit before"
+            echo
+            echo "| crate | benchmark | instructions | baseline | change |"
+            echo "|---|---|---:|---:|---:|"
+            jq -r '.[] | "| \(.crate) | \(.name) | \(.new // "?") | \(.old // "new") | "
+                + (if .new != null and .old != null and .old != 0
+                   then "\((.new - .old) * 10000 / .old | round / 100)%" else "" end)
+                + (if .regressed then " **regressed**" else "" end) + " |"' "$RUNNER_TEMP/counts.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+          regressed=$(jq -r '[.[] | select(.regressed) | .name] | join(", ")' "$RUNNER_TEMP/counts.json")
+          if [ -n "$regressed" ]; then
+            echo "::error::rose by more than ${MICROBENCH_LIMIT_PERCENT}% over the commit before: $regressed"
+            exit 1
+          fi
+          if [ "$status" -ne 0 ]; then
+            echo "::error::cargo bench failed ($status)"
+            exit 1
+          fi
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+        with:
+          path: /var/cache/sccache
+          key: sccache-microbench-${{ github.sha }}
+
+  result:
+    name: CI result
+    if: always()
+    needs: [image, validate, docs, deny, microbench]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "Job results: $(jq -c 'map_values(.result)' <<<"$NEEDS")"
+          failed=$(jq -r 'to_entries | map(select(.value.result != "success") | "\(.key): \(.value.result)") | join(", ")' <<<"$NEEDS")
+          if [ -n "$failed" ]; then
+            echo "::error::required CI jobs did not succeed: $failed"
+            exit 1
+          fi

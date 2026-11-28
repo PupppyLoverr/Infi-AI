@@ -1,0 +1,363 @@
+//! Pixel-shader rectangle element with fractional logical geometry, plus the cache that gives
+//! per-frame rebuilt elements stable ids and commit counters (so damage tracking only reports
+//! changes when the parameters actually changed).
+
+use std::collections::{hash_map::DefaultHasher, HashMap};
+use std::hash::{Hash, Hasher};
+use std::rc::Rc;
+
+use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement, UnderlyingStorage};
+use smithay::backend::renderer::gles::{
+    GlesError, GlesFrame, GlesPixelProgram, GlesRenderer, Uniform,
+};
+use smithay::backend::renderer::utils::{CommitCounter, OpaqueRegions};
+use smithay::utils::{Buffer, Logical, Physical, Rectangle, Scale, Size};
+
+use super::passes::{Passes, RectPass, PARAMS};
+
+/// Identity of a cached element.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ElementKey {
+    pub kind: &'static str,
+    pub index: u64,
+}
+
+impl ElementKey {
+    pub const fn new(kind: &'static str, index: u64) -> Self {
+        Self { kind, index }
+    }
+}
+
+/// Hash builder for element signatures (f64 values hashed by bit pattern).
+#[derive(Default)]
+pub struct Sig(DefaultHasher);
+
+impl Sig {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn f(mut self, v: f64) -> Self {
+        v.to_bits().hash(&mut self.0);
+        self
+    }
+    pub fn u(mut self, v: u64) -> Self {
+        v.hash(&mut self.0);
+        self
+    }
+    pub fn rect(self, r: Rectangle<f64, Logical>) -> Self {
+        self.f(r.loc.x).f(r.loc.y).f(r.size.w).f(r.size.h)
+    }
+    pub fn finish(self) -> u64 {
+        self.0.finish()
+    }
+}
+
+#[derive(Debug)]
+struct Slot {
+    id: Id,
+    commit: CommitCounter,
+    sig: u64,
+    used: bool,
+}
+
+/// Stable ids and commit counters for elements rebuilt every frame.
+#[derive(Debug, Default)]
+pub struct ElementCache {
+    slots: HashMap<ElementKey, Slot>,
+    /// What each material and glass element's backdrop signature was made from, and whether it was used since the last frame.
+    backdrops: HashMap<ElementKey, (crate::render::material::glass::BackdropRecord, bool)>,
+    /// The output's offscreen frame while it is drawn at a whole scale above its own.
+    pub supersample: crate::render::supersample::Supersample,
+}
+
+impl ElementCache {
+    /// Id and commit for `key`; the commit counter advances when `sig` differs from the last call.
+    pub fn slot(&mut self, key: ElementKey, sig: u64) -> (Id, CommitCounter) {
+        let s = self.slots.entry(key).or_insert_with(|| Slot {
+            id: Id::new(),
+            commit: CommitCounter::default(),
+            sig,
+            used: true,
+        });
+        if s.sig != sig {
+            s.sig = sig;
+            s.commit.increment();
+        }
+        s.used = true;
+        (s.id.clone(), s.commit)
+    }
+
+    /// Id and commit for `key` as they are, without comparing a signature; `sig` is stored only for a new key.
+    pub fn peek(&mut self, key: ElementKey, sig: u64) -> (Id, CommitCounter) {
+        let s = self.slots.entry(key).or_insert_with(|| Slot {
+            id: Id::new(),
+            commit: CommitCounter::default(),
+            sig,
+            used: true,
+        });
+        s.used = true;
+        (s.id.clone(), s.commit)
+    }
+
+    /// Advance the commit of `key` though its signature is unchanged; its new commit, if it is known.
+    pub fn advance(&mut self, key: ElementKey) -> Option<CommitCounter> {
+        let s = self.slots.get_mut(&key)?;
+        s.commit.increment();
+        Some(s.commit)
+    }
+
+    /// What the backdrop signature of material or glass element `key` was made from last frame.
+    pub fn backdrop(
+        &self,
+        key: ElementKey,
+    ) -> Option<&crate::render::material::glass::BackdropRecord> {
+        self.backdrops.get(&key).map(|(r, _)| r)
+    }
+
+    /// Keep what the backdrop signature of material or glass element `key` was made from this frame.
+    pub fn set_backdrop(
+        &mut self,
+        key: ElementKey,
+        record: crate::render::material::glass::BackdropRecord,
+    ) {
+        self.backdrops.insert(key, (record, true));
+    }
+
+    /// Forget every key that was not requested since the previous call.
+    pub fn end_frame(&mut self) {
+        self.slots
+            .retain(|_, s| std::mem::replace(&mut s.used, false));
+        self.backdrops
+            .retain(|_, (_, used)| std::mem::replace(used, false));
+    }
+
+    pub fn len(&self) -> usize {
+        self.slots.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.slots.is_empty()
+    }
+}
+
+/// How far below a half pixel an edge still counts as on it: the error a point placed from a surface's device origin
+/// carries (an origin over a fractional scale is no exact number of points), far less than any edge a client sets.
+pub const HALF_PIXEL_TOLERANCE: f64 = 1.0 / 1024.0;
+
+/// `v` (device pixels) on the nearest whole pixel, a half towards positive infinity, within
+/// [`HALF_PIXEL_TOLERANCE`]. Moving by whole pixels commutes with it, so an edge a client sets in its surface lands on
+/// the pixel the client rounds it to, wherever the surface lies; rounding halves away from zero does not.
+pub fn nearest_pixel(v: f64) -> f64 {
+    (v + 0.5 + HALF_PIXEL_TOLERANCE).floor()
+}
+
+/// Physical rectangle of a logical one, each edge on its nearest pixel (no gaps between neighbours).
+pub fn to_physical_rect(r: Rectangle<f64, Logical>, scale: Scale<f64>) -> Rectangle<i32, Physical> {
+    let x0 = nearest_pixel(r.loc.x * scale.x);
+    let y0 = nearest_pixel(r.loc.y * scale.y);
+    let x1 = nearest_pixel((r.loc.x + r.size.w) * scale.x);
+    let y1 = nearest_pixel((r.loc.y + r.size.h) * scale.y);
+    Rectangle::new(
+        (x0 as i32, y0 as i32).into(),
+        ((x1 - x0) as i32, (y1 - y0) as i32).into(),
+    )
+}
+
+/// What draws a [`ShaderRect`].
+#[derive(Debug, Clone)]
+enum RectProgram {
+    /// A pixel program of the renderer's own shader interface and its uniforms (a test's probe).
+    Pixel {
+        program: GlesPixelProgram,
+        uniforms: Vec<Uniform<'static>>,
+    },
+    /// One of the compositor's rectangle passes and its block.
+    Pass {
+        passes: Rc<Passes>,
+        pass: RectPass,
+        params: [[f32; 4]; PARAMS],
+    },
+}
+
+/// A rectangle drawn by a program that sees its point across the element: a rectangle pass ([`ShaderRect::pass`]),
+/// whose block is in points relative to the element origin, or a pixel program of the renderer's interface
+/// ([`ShaderRect::new`]), which sees `v_coords` in `[0, 1]` across the element and the uniform `area_pt` (the
+/// element's size in points).
+#[derive(Debug, Clone)]
+pub struct ShaderRect {
+    program: RectProgram,
+    id: Id,
+    commit: CommitCounter,
+    area: Rectangle<f64, Logical>,
+    alpha: f32,
+    opaque: bool,
+    /// A rectangle inside the area where the program draws nothing.
+    hole: Option<Rectangle<f64, Logical>>,
+}
+
+impl ShaderRect {
+    /// A rectangle drawn by a pixel program of the renderer's own shader interface.
+    pub fn new(
+        program: GlesPixelProgram,
+        id: Id,
+        commit: CommitCounter,
+        area: Rectangle<f64, Logical>,
+        alpha: f32,
+        mut uniforms: Vec<Uniform<'static>>,
+        opaque: bool,
+    ) -> Self {
+        uniforms.push(Uniform::new(
+            "area_pt",
+            (area.size.w as f32, area.size.h as f32),
+        ));
+        Self::with_program(
+            RectProgram::Pixel { program, uniforms },
+            id,
+            commit,
+            area,
+            alpha,
+            opaque,
+        )
+    }
+
+    /// A rectangle drawn by the rectangle pass `pass` of `passes` with its block `params` (unused `vec4`s zero).
+    #[allow(clippy::too_many_arguments)]
+    pub fn pass(
+        passes: &Rc<Passes>,
+        pass: RectPass,
+        id: Id,
+        commit: CommitCounter,
+        area: Rectangle<f64, Logical>,
+        alpha: f32,
+        params: &[[f32; 4]],
+        opaque: bool,
+    ) -> Self {
+        let mut block = [[0.0; 4]; PARAMS];
+        block[..params.len()].copy_from_slice(params);
+        Self::with_program(
+            RectProgram::Pass {
+                passes: passes.clone(),
+                pass,
+                params: block,
+            },
+            id,
+            commit,
+            area,
+            alpha,
+            opaque,
+        )
+    }
+
+    fn with_program(
+        program: RectProgram,
+        id: Id,
+        commit: CommitCounter,
+        area: Rectangle<f64, Logical>,
+        alpha: f32,
+        opaque: bool,
+    ) -> Self {
+        Self {
+            program,
+            id,
+            commit,
+            area,
+            alpha,
+            opaque,
+            hole: None,
+        }
+    }
+
+    pub fn area(&self) -> Rectangle<f64, Logical> {
+        self.area
+    }
+
+    /// The same element, saying it draws nothing inside `hole` (a shadow cut out under its window).
+    pub fn with_hole(mut self, hole: Rectangle<f64, Logical>) -> Self {
+        self.hole = Some(hole);
+        self
+    }
+
+    /// The device pixels wholly inside the hole, a pixel in from its edge, where the element draws nothing.
+    pub fn hole(&self, scale: Scale<f64>) -> Option<Rectangle<i32, Physical>> {
+        let hole = self.hole?;
+        let x0 = (hole.loc.x * scale.x).ceil() as i32 + 1;
+        let y0 = (hole.loc.y * scale.y).ceil() as i32 + 1;
+        let x1 = ((hole.loc.x + hole.size.w) * scale.x).floor() as i32 - 1;
+        let y1 = ((hole.loc.y + hole.size.h) * scale.y).floor() as i32 - 1;
+        (x1 > x0 && y1 > y0).then(|| Rectangle::new((x0, y0).into(), (x1 - x0, y1 - y0).into()))
+    }
+}
+
+impl Element for ShaderRect {
+    fn id(&self) -> &Id {
+        &self.id
+    }
+
+    fn current_commit(&self) -> CommitCounter {
+        self.commit
+    }
+
+    fn src(&self) -> Rectangle<f64, Buffer> {
+        Rectangle::from_size(Size::from((1.0, 1.0)))
+    }
+
+    fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
+        to_physical_rect(self.area, scale)
+    }
+
+    fn opaque_regions(&self, scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
+        if self.opaque {
+            OpaqueRegions::from_slice(&[Rectangle::from_size(self.geometry(scale).size)])
+        } else {
+            OpaqueRegions::default()
+        }
+    }
+
+    fn alpha(&self) -> f32 {
+        self.alpha
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::Unspecified
+    }
+}
+
+impl RenderElement<GlesRenderer> for ShaderRect {
+    fn draw(
+        &self,
+        frame: &mut GlesFrame<'_, '_>,
+        src: Rectangle<f64, Buffer>,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+        _opaque_regions: &[Rectangle<i32, Physical>],
+    ) -> Result<(), GlesError> {
+        match &self.program {
+            RectProgram::Pixel { program, uniforms } => frame.render_pixel_shader_to(
+                program,
+                src,
+                dst,
+                Size::from((1, 1)),
+                Some(damage),
+                self.alpha,
+                uniforms,
+            ),
+            RectProgram::Pass {
+                passes,
+                pass,
+                params,
+            } => passes.draw(
+                frame,
+                *pass,
+                dst,
+                damage,
+                (self.area.size.w as f32, self.area.size.h as f32),
+                self.alpha,
+                params,
+            ),
+        }
+    }
+
+    fn underlying_storage(&self, _renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
+        None
+    }
+}

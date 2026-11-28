@@ -1,0 +1,26 @@
+From: xnulinux
+Subject: [PATCH] linux64: leave the generic timers' controls to Linux
+
+Hosted, XNU takes no timer interrupt (cpu_idle hands its deadline to the host), but each CPU it starts on still set up
+the timers as on its own machine: the virtual timer enabled, the physical one masked and disabled. Where Linux's own tick
+is the physical timer (bare metal, the host kernel at EL1 beside nVHE KVM: a DGX Spark), that silences the CPU's tick
+under Linux, which believes it armed and does not program it again until something else makes it: timers on that CPU
+(the idle call's own, RCU's, the sleeps of xnu.ko's stop) late by seconds to minutes after every start of a run. The
+enabled virtual timer raised KVM's guest-timer interrupt once per CPU as well.
+---
+diff --git a/osfmk/arm64/machine_routines.c b/osfmk/arm64/machine_routines.c
+--- a/osfmk/arm64/machine_routines.c
++++ b/osfmk/arm64/machine_routines.c
+@@ -2819,6 +2819,12 @@
+ void
+ fiq_context_init(boolean_t enable_fiq __unused)
+ {
++	{
++		/* LINUX64 (xnulinux): the generic timers are Linux's, their control registers included. */
++		if (linux64_hook) {
++			return;
++		}
++	}
+ 	/* Interrupts still disabled. */
+ 	assert(ml_get_interrupts_enabled() == FALSE);
+ 	_enable_virtual_timer();

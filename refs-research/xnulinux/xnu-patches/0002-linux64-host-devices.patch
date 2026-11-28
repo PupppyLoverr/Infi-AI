@@ -1,0 +1,633 @@
+The host's devices for the hosted system's drivers (kexts/): network, input, keystore, system disk and host calls
+(bsd/kern/linux64_host.c), the wall clock (IOPlatformExpert), a host-file md disk (memdev), no bootloader NVRAM, and the
+stand-ins for Apple's AppleKeyStore and IOAESAccelerator services AMFI and AppleImage4 need.
+
+diff --git a/bsd/conf/files b/bsd/conf/files
+index 7a2a873..710273d 100644
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -177,6 +177,7 @@ bsd/net/ether_if_module.c		optional ether bound-checks
+ bsd/net/ether_inet_pr_module.c		optional ether inet bound-checks
+ bsd/net/ether_inet6_pr_module.c		optional ether inet bound-checks
+ bsd/net/if_loop.c			optional loop bound-checks
++bsd/kern/linux64_host.c		standard
+ bsd/net/if_mib.c			optional networking bound-checks
+ bsd/net/if_vlan.c			optional vlan bound-checks
+ bsd/net/if_fake.c			optional if_fake bound-checks
+diff --git a/bsd/dev/memdev.c b/bsd/dev/memdev.c
+index d24535d..386e6ad 100644
+--- a/bsd/dev/memdev.c
++++ b/bsd/dev/memdev.c
+@@ -76,6 +76,7 @@
+  */
+ 
+ #include <sys/param.h>
++#include <linux64/linux64.h>
+ #include <sys/kernel.h>
+ #include <sys/mount.h>
+ #include <sys/namei.h>
+@@ -95,6 +96,7 @@
+ #include <vm/vm_pager_xnu.h>
+ #include <mach/memory_object_types.h>
+ #include <kern/debug.h>
++#include <kern/kalloc.h>
+ 
+ #include <miscfs/devfs/devfs.h>
+ 
+@@ -172,6 +174,7 @@ struct mdev {
+ #define mdInited        0x01    /* This device defined */
+ #define mdRO            0x02    /* This device is read-only */
+ #define mdPhys          0x04    /* This device is in physical memory */
++#define mdHost          0x08    /* LINUX64 (xnulinux): backed by a host file, I/O through the host */
+ 
+ int mdevBMajor = -1;
+ int mdevCMajor = -1;
+@@ -180,6 +183,38 @@ static int      mdevioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct
+ dev_t           mdevadd(int devid, uint64_t base, unsigned int size, int phys);
+ dev_t           mdevlookup(int devid);
+ void            mdevremoveall(void);
++dev_t           mdevadd_host(void);
++
++/*
++ * LINUX64 (xnulinux): a hosted XNU's disk backed by a host file. Stage 995 returns its size in bytes (0: none),
++ * stage 994 moves bytes between it and a wired kernel buffer (returns the count or -errno).
++ */
++struct mdev_host_req { uint64_t write, off, len; void *buf; long result; };	/* the hook itself must return 0 */
++
++static long
++mdev_host_call(unsigned long stage, unsigned long arg)
++{
++	register unsigned long x0 __asm__("x0") = stage;
++	register unsigned long x1 __asm__("x1") = arg;
++	register unsigned long x2 __asm__("x2") = 0;
++	__asm__ volatile ("blr %3" : "+r"(x0), "+r"(x1), "+r"(x2) : "r"(linux64_hook)
++	    : "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13",
++	    "x14", "x15", "x16", "x17", "x30", "cc", "memory");
++	return (long)x0;
++}
++
++static int
++mdev_host_io(int write, uint64_t off, void *buf, uint64_t len)
++{
++	struct mdev_host_req q = { .write = (uint64_t)write, .off = off, .len = len, .buf = buf, .result = -EIO };
++	long r;
++	mdev_host_call(994, (unsigned long)&q);
++	r = q.result;
++	if (r < 0) {
++		return (int)-r;
++	}
++	return (uint64_t)r == len ? 0 : EIO;
++}
+ int             mdevgetrange(int devid, uint64_t *base, uint64_t *size);
+ 
+ static  int
+@@ -228,6 +263,32 @@ mdevrw(dev_t dev, struct uio *uio, __unused int ioflag)
+ 	if (uio_resid(uio) < 0) {
+ 		return EINVAL;
+ 	}
++	if (mdev[devid].mdFlags & mdHost) {                      /* LINUX64 (xnulinux): host-file disk, through a bounce buffer */
++		uint64_t end = (uint64_t)mdev[devid].mdSize << 12;
++		int write = (uio_rw(uio) == UIO_WRITE);
++		char *bounce = kalloc_data(65536, Z_WAITOK);
++		status = bounce ? 0 : ENOMEM;
++		while (!status && uio_resid(uio) > 0 && (uint64_t)uio->uio_offset < end) {
++			uint64_t off = (uint64_t)uio->uio_offset;
++			count = (int)MIN((uint64_t)uio_resid(uio), MIN(65536ULL, end - off));
++			if (write) {
++				status = uiomove(bounce, count, uio);
++				if (!status) {
++					status = mdev_host_io(1, off, bounce, count);
++				}
++			} else {
++				status = mdev_host_io(0, off, bounce, count);
++				if (!status) {
++					status = uiomove(bounce, count, uio);
++				}
++			}
++		}
++		if (bounce) {
++			kfree_data(bounce, 65536);
++		}
++		return status;
++	}
++
+ 	mdata = ((addr64_t)mdev[devid].mdBase << 12) + uio->uio_offset; /* Point to the area in "file" */
+ 
+ 	saveflag = uio->uio_segflg;                                                     /* Remember what the request is */
+@@ -242,10 +303,10 @@ mdevrw(dev_t dev, struct uio *uio, __unused int ioflag)
+ 		}
+ 	}
+ 
+-	if (uio->uio_offset > (mdev[devid].mdSize << 12)) {
++	if (uio->uio_offset > ((uint64_t)mdev[devid].mdSize << 12)) {
+ 		count = 0;
+ 	} else {
+-		count = imin(uio_resid(uio), (mdev[devid].mdSize << 12) - uio->uio_offset);
++		count = imin(uio_resid(uio), ((uint64_t)mdev[devid].mdSize << 12) - uio->uio_offset);
+ 	}
+ 
+ 	status = uiomove64(mdata, count, uio);     /* Move the data */
+@@ -280,16 +341,16 @@ mdevstrategy(struct buf *bp)
+  *	we just return with resid == count.
+  */
+ 
+-	if (blkoff >= (mdev[devid].mdSize << 12)) {                     /* Are they trying to read/write at/after end? */
+-		if (blkoff != (mdev[devid].mdSize << 12)) {              /* Are we trying to read after EOF? */
++	if (blkoff >= ((uint64_t)mdev[devid].mdSize << 12)) {                     /* Are they trying to read/write at/after end? */
++		if (blkoff != ((uint64_t)mdev[devid].mdSize << 12)) {              /* Are we trying to read after EOF? */
+ 			buf_seterror(bp, EINVAL);                                               /* Yeah, this is an error */
+ 		}
+ 		buf_biodone(bp);                                                                /* Return */
+ 		return;
+ 	}
+ 
+-	if ((blkoff + buf_count(bp)) > (mdev[devid].mdSize << 12)) {            /* Will this read go past end? */
+-		buf_setcount(bp, (uint32_t)((mdev[devid].mdSize << 12) - blkoff));  /* Yes, trim to max */
++	if ((blkoff + buf_count(bp)) > ((uint64_t)mdev[devid].mdSize << 12)) {            /* Will this read go past end? */
++		buf_setcount(bp, (uint32_t)(((uint64_t)mdev[devid].mdSize << 12) - blkoff));  /* Yes, trim to max */
+ 	}
+ 	/*
+ 	 * make sure the buffer's data area is
+@@ -299,6 +360,18 @@ mdevstrategy(struct buf *bp)
+ 		panic("ramstrategy: buf_map failed");
+ 	}
+ 
++	if (mdev[devid].mdFlags & mdHost) {                      /* LINUX64 (xnulinux): host-file disk */
++		int err = mdev_host_io(!(buf_flags(bp) & B_READ), blkoff, (void *)vaddr, buf_count(bp));
++		buf_unmap(bp);
++		if (err) {
++			buf_seterror(bp, err);
++		} else {
++			buf_setresid(bp, 0);
++		}
++		buf_biodone(bp);
++		return;
++	}
++
+ 	fvaddr = (mdev[devid].mdBase << 12) + blkoff;           /* Point to offset into ram disk */
+ 
+ 	if (buf_flags(bp) & B_READ) {                                   /* Is this a read? */
+@@ -434,7 +507,7 @@ mdevioctl(dev_t dev, u_long cmd, caddr_t data, __unused int flag,
+ 		if (!(mdev[devid].mdFlags & mdInited)) {
+ 			return ENXIO;
+ 		}
+-		*o = ((mdev[devid].mdSize << 12) + mdev[devid].mdSecsize - 1) / mdev[devid].mdSecsize;
++		*o = (((uint64_t)mdev[devid].mdSize << 12) + mdev[devid].mdSecsize - 1) / mdev[devid].mdSecsize;
+ 		break;
+ 
+ 	/*
+@@ -708,6 +781,37 @@ mdevadd(int devid, uint64_t base, unsigned int size, int phys)
+ }
+ 
+ 
++/* LINUX64 (xnulinux): add the host-file disk (if the host has one) as the first free md unit. */
++dev_t
++mdevadd_host(void)
++{
++	uint64_t size = 0;
++	long bytes;
++	dev_t dev;
++	int i;
++
++	if (!linux64_hook) {
++		return -1;
++	}
++	mdev_host_call(995, (unsigned long)&size);
++	bytes = (long)size;
++	if (bytes < 4096) {
++		return -1;
++	}
++	/* a page-number range no RAM disk can overlap: the host disk has no memory behind it */
++	dev = mdevadd(-1, 1ULL << 40, (unsigned int)((uint64_t)bytes >> 12), 0);
++	if (dev == (dev_t)-1) {
++		return dev;
++	}
++	for (i = 0; i < NB_MAX_MDEVICES; i++) {
++		if ((mdev[i].mdFlags & mdInited) && mdev[i].mdBDev == dev) {
++			mdev[i].mdFlags |= mdHost;
++		}
++	}
++	printf("LINUX64: md%x is the host disk (%ld bytes)\n", minor(dev), bytes);
++	return dev;
++}
++
+ dev_t
+ mdevlookup(int devid)
+ {
+@@ -760,7 +864,7 @@ mdevgetrange(int devid, uint64_t *base, uint64_t *size)
+ 	}
+ 
+ 	*base = mdev[devid].mdBase << 12;
+-	*size = mdev[devid].mdSize << 12;
++	*size = (uint64_t)mdev[devid].mdSize << 12;
+ 
+ 	/* make sure (base, size) is a valid range and will not overflow */
+ 	assert(*size < (UINT64_MAX - *base));
+diff --git a/bsd/kern/linux64_host.c b/bsd/kern/linux64_host.c
+new file mode 100644
+index 0000000..00cb495
+--- /dev/null
++++ b/bsd/kern/linux64_host.c
+@@ -0,0 +1,124 @@
++/*
++ * Copyright (c) 2026 xnulinux contributors. All rights reserved.
++ *
++ * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
++ * This file contains Original Code and/or Modifications of Original Code as defined in and that are subject to the Apple
++ * Public Source License Version 2.0 (the 'License'). You may not use this file except in compliance with the License.
++ * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
++ */
++/*
++ * LINUX64 (xnulinux): the host's devices for the hosted system's drivers (kexts/), as kernel functions they import.
++ * Each is one call into the host (linux64/linux64_abi.h); off the host they do nothing.
++ *
++ *   XnuEthernet  linux64_net_send, linux64_net_recv    frames through the Linux netdev xnu0 (Linux routes and NATs)
++ *   XnuInput     linux64_input_read                    evdev records from the host
++ *   XnuEAN       linux64_store_rw                      the keystore file
++ *   XnuDisk      linux64_disk_size, linux64_disk_rw    the system disk
++ *   XnuDrm       linux64_hostcall                      messages to a Linux service (the GPU bridge, xnudrmd)
++ */
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <net/ethernet.h>
++#include <linux64/linux64.h>
++
++#define L64_FRAME_MAX   (ETHER_MAX_LEN + 64)
++#define L64_ENXIO       6       /* Linux's ENXIO: the host has no such device */
++
++/* One frame to the host: its length when sent, 0 when not. */
++long linux64_net_send(const void *frame, unsigned long length);
++long
++linux64_net_send(const void *frame, unsigned long length)
++{
++	struct linux64_buf_req q = { .buf = (void *)(uintptr_t)frame, .len = length, .result = 0 };
++
++	if (linux64_hook == 0 || length < ETHER_HDR_LEN || length > L64_FRAME_MAX) {
++		return 0;
++	}
++	linux64_call(LINUX64_CALL_NET_SEND, &q);
++	return q.result > 0 ? (long)length : 0;
++}
++
++/* The next frame from the host into buffer: its length, 0 when none waits. */
++long linux64_net_recv(void *buffer, unsigned long size);
++long
++linux64_net_recv(void *buffer, unsigned long size)
++{
++	struct linux64_buf_req q = { .buf = buffer, .len = size, .result = 0 };
++
++	if (linux64_hook == 0) {
++		return 0;
++	}
++	linux64_call(LINUX64_CALL_NET_RECV, &q);
++	return q.result > 0 ? q.result : 0;
++}
++
++/* Whole struct linux64_input_event records into buffer: their bytes, 0 when none wait. */
++long linux64_input_read(void *buffer, unsigned long size);
++long
++linux64_input_read(void *buffer, unsigned long size)
++{
++	struct linux64_buf_req q = { .buf = buffer, .len = size, .result = 0 };
++
++	if (linux64_hook == 0) {
++		return 0;
++	}
++	linux64_call(LINUX64_CALL_INPUT_READ, &q);
++	return q.result > 0 ? q.result : 0;
++}
++
++static long
++linux64_rw(enum linux64_call call, int write, void *buffer, unsigned long length, unsigned long offset)
++{
++	struct linux64_rw_req q = { .write = (uint64_t)write, .off = offset, .len = length, .buf = buffer, .result = -L64_ENXIO };
++
++	if (linux64_hook == 0) {
++		return -L64_ENXIO;
++	}
++	linux64_call(call, &q);
++	return q.result;
++}
++
++/* The keystore file: `length` bytes at `offset`; bytes moved, or a negative errno. */
++long linux64_store_rw(int write, void *buffer, unsigned long length, unsigned long offset);
++long
++linux64_store_rw(int write, void *buffer, unsigned long length, unsigned long offset)
++{
++	return linux64_rw(LINUX64_CALL_KEYSTORE_RW, write, buffer, length, offset);
++}
++
++/* The system disk: its size in bytes (0: none), and `length` bytes at `offset` (bytes moved, or a negative errno). */
++uint64_t linux64_disk_size(void);
++uint64_t
++linux64_disk_size(void)
++{
++	uint64_t size = 0;
++
++	if (linux64_hook != 0) {
++		linux64_call(LINUX64_CALL_DISK_SIZE, &size);
++	}
++	return size;
++}
++
++long linux64_disk_rw(int write, void *buffer, unsigned long length, unsigned long offset);
++long
++linux64_disk_rw(int write, void *buffer, unsigned long length, unsigned long offset)
++{
++	return linux64_rw(LINUX64_CALL_DISK_RW, write, buffer, length, offset);
++}
++
++/*
++ * A host call: len bytes at req to a Linux service, its reply into reply (at most max bytes). The reply's length, or a
++ * negative errno. The CPU waits in the call.
++ */
++long linux64_hostcall(const void *req, unsigned long len, void *reply, unsigned long max);
++long
++linux64_hostcall(const void *req, unsigned long len, void *reply, unsigned long max)
++{
++	struct linux64_hostcall_req q = { .req = req, .len = len, .reply = reply, .max = max, .result = -L64_ENXIO };
++
++	if (linux64_hook == 0) {
++		return -L64_ENXIO;
++	}
++	linux64_call(LINUX64_CALL_HOSTCALL, &q);
++	return q.result;
++}
+diff --git a/iokit/Kernel/IONVRAMCHRPHandler.cpp b/iokit/Kernel/IONVRAMCHRPHandler.cpp
+index 0cc7f6e..c07d35c 100644
+--- a/iokit/Kernel/IONVRAMCHRPHandler.cpp
++++ b/iokit/Kernel/IONVRAMCHRPHandler.cpp
+@@ -511,6 +511,10 @@ IONVRAMCHRPHandler::unserializeVariables(void)
+ 		if (currentRegion->size == 0) {
+ 			continue;
+ 		}
++		/* LINUX64 (xnulinux): no NVRAM image from a bootloader (blank store): no partition to read */
++		if (_nvramImage == nullptr || currentRegion->offset == 0xFFFFFFFF) {
++			continue;
++		}
+ 
+ 		DEBUG_INFO("region = %d\n", currentRegion->type);
+ 		cnt = 0;
+diff --git a/iokit/Kernel/IOPlatformExpert.cpp b/iokit/Kernel/IOPlatformExpert.cpp
+index 76555f6..10d3001 100644
+--- a/iokit/Kernel/IOPlatformExpert.cpp
++++ b/iokit/Kernel/IOPlatformExpert.cpp
+@@ -27,6 +27,7 @@
+  */
+ 
+ #include <IOKit/IOCPU.h>
++#include <linux64/linux64.h>
+ #include <IOKit/IOPlatformActions.h>
+ #include <IOKit/IODeviceTreeSupport.h>
+ #include <IOKit/IOKitDebug.h>
+@@ -1403,15 +1404,17 @@ PESetGMTTimeOfDay(long secs)
+ 	PESetUTCTimeOfDay(secs, 0);
+ }
+ 
++
+ void
+ PEGetUTCTimeOfDay(clock_sec_t * secs, clock_usec_t * usecs)
+ {
+ 	clock_nsec_t    nsecs = 0;
+ 
+-	*secs = 0;
+-	if (gIOPlatform) {
+-		gIOPlatform->getUTCTimeOfDay(secs, &nsecs);
+-	}
++	/* LINUX64: hosted, no RTC; the host's wall clock (UTC) through upcall 812 */
++	uint64_t host[2] = { 0, 0 };
++	linux64_call(LINUX64_CALL_WALLCLOCK, host);
++	*secs = (clock_sec_t)host[0];
++	nsecs = (clock_nsec_t)host[1];
+ 
+ 	assert(nsecs < NSEC_PER_SEC);
+ 	*usecs = nsecs / NSEC_PER_USEC;
+@@ -1540,6 +1543,113 @@ IOPlatformExpert::registerNVRAMController(IONVRAMController * caller)
+ 	publishResource("IONVRAM");
+ }
+ 
++#include <libkern/c++/OSKext.h>
++
++/*
++ * LINUX64 (xnulinux): a stand-in for AppleKeyStore's "AKSKernelServices" table, which AMFI requires (AKS_services()
++ * has no path without it). The entries AMFI calls are type-discriminated function pointers: 0x120 (disc 0x61fc,
++ * register for a state notification), 0x128 (0x146e, read state), 0x130 (0xd507, unregister). A hosted XNU has no
++ * keybag: the queries report unsupported, unregistering succeeds.
++ */
++#include <ptrauth.h>
++static int
++linux64_aks_unsupported(void)
++{
++	return kIOReturnUnsupported;
++}
++static int
++linux64_aks_ok(void)
++{
++	return 0;
++}
++static uintptr_t linux64_aks_table[0x40];
++
++
++/*
++ * LINUX64 (xnulinux): the stand-in IOAESAccelerator's AES operation (vtable +0x890, called by AppleImage4 with
++ * (src, dst, length, iv, direction, ...)). There is no device key to use: it copies src to dst ("encrypts" with the
++ * identity), which is all a hosted Image4 nonce store needs to stay consistent.
++ */
++extern "C" uint64_t kvtophys(vm_offset_t va);
++extern "C" void ml_phys_write_double_64(addr64_t paddr, unsigned long long data);
++static IOReturn
++linux64_aes_perform(IOService *self, IOMemoryDescriptor *src, IOMemoryDescriptor *dst, uint64_t len, void *iv, int dir,
++    void *a6, void *a7)
++{
++	(void)self; (void)iv; (void)dir; (void)a6; (void)a7;
++	if (!src || !dst || len > 65536) {
++		return kIOReturnBadArgument;
++	}
++	void *buf = IOMallocData((vm_size_t)len);
++	if (!buf) {
++		return kIOReturnNoMemory;
++	}
++	/* the descriptors come unprepared (a real engine prepares them for its DMA): wire them for the copy, each in its
++	 * own direction (AppleVirtualPlatformXART encrypts in place: one in-out descriptor as both, which a read-only
++	 * preparation would keep writeBytes from) */
++	IOReturn rs = src->prepare(), rd = (src == dst) ? kIOReturnSuccess : dst->prepare();
++	IOByteCount got = 0, put = 0;
++	if (rs == kIOReturnSuccess && rd == kIOReturnSuccess) {
++		got = src->readBytes(0, buf, (IOByteCount)len);
++		put = dst->writeBytes(0, buf, got);
++	}
++	if (rs == kIOReturnSuccess) {
++		src->complete();
++	}
++	if (rd == kIOReturnSuccess && src != dst) {
++		dst->complete();
++	}
++	IOFreeData(buf, (vm_size_t)len);
++	return (got == len && put == len) ? kIOReturnSuccess : kIOReturnIOError;
++}
++
++static void
++linux64_patch_aes_vtable(OSObject *aes)
++{
++	uintptr_t vt = (uintptr_t)ptrauth_auth_data(*(void **)aes, ptrauth_key_asda,
++	    ptrauth_blend_discriminator(aes, 0xcda1));
++	uintptr_t entry = vt + 0x890;
++	void *fn = ptrauth_strip((void *)&linux64_aes_perform, ptrauth_key_function_pointer);
++	uint64_t signed_fn = (uint64_t)ptrauth_sign_unauthenticated(fn, ptrauth_key_asia,
++	    ptrauth_blend_discriminator((void *)entry, 0x17dc));
++	uint64_t pa = kvtophys((vm_offset_t)entry);
++	if (pa) {
++		ml_phys_write_double_64((addr64_t)pa, signed_fn);
++		IOLog("LINUX64: IOAESAccelerator AES entry (vtable %p +0x890) is the hosted copy\n", (void *)vt);
++	}
++}
++
++static void
++linux64_register_stand_in(IOService *parent, IOService *s, const char *name)
++{
++	if (s && s->init()) {
++		s->setName(name);
++		if (s->attach(parent)) {
++			s->registerService();
++			IOLog("LINUX64: stand-in %s registered\n", name);
++		}
++	}
++	if (s) {
++		s->release();
++	}
++}
++static void *
++linux64_aks_services(void)
++{
++	if (!linux64_aks_table[0]) {
++		void *un = ptrauth_strip((void *)&linux64_aks_unsupported, ptrauth_key_function_pointer);
++		void *ok = ptrauth_strip((void *)&linux64_aks_ok, ptrauth_key_function_pointer);
++		for (unsigned i = 1; i < 0x40; i++) {
++			linux64_aks_table[i] = (uintptr_t)ptrauth_sign_unauthenticated(un, ptrauth_key_asia, 0);
++		}
++		linux64_aks_table[0x120 / 8] = (uintptr_t)ptrauth_sign_unauthenticated(un, ptrauth_key_asia, 0x61fc);
++		linux64_aks_table[0x128 / 8] = (uintptr_t)ptrauth_sign_unauthenticated(un, ptrauth_key_asia, 0x146e);
++		linux64_aks_table[0x130 / 8] = (uintptr_t)ptrauth_sign_unauthenticated(ok, ptrauth_key_asia, 0xd507);
++		linux64_aks_table[0] = (uintptr_t)ptrauth_sign_unauthenticated(un, ptrauth_key_asia, 0);
++	}
++	return linux64_aks_table;
++}
++
+ IOReturn
+ IOPlatformExpert::callPlatformFunction(const OSSymbol *functionName,
+     bool waitForFunction,
+@@ -1564,7 +1674,63 @@ IOPlatformExpert::callPlatformFunction(const OSSymbol *functionName,
+ 	}
+ 
+ 	if (waitForFunction) {
+-		_resources = waitForService(resourceMatching(functionName));
++		/*
++		 * LINUX64 (xnulinux): with the virtual platform's software keystore in the collection (AppleVPKeyStore, as in
++		 * Apple's VirtualMac), AppleKeyStore provides AKSKernelServices itself: the stand-ins below for the SEP's
++		 * endpoint and the AES engine are still needed, the stand-in table is not.
++		 */
++		static int linux64_real_aks = -1;
++		if (linux64_hook && linux64_real_aks < 0) {
++			OSKext *vpks = OSKext::lookupKextWithIdentifier("com.apple.driver.AppleVPKeyStore");
++			linux64_real_aks = vpks != NULL;
++			OSSafeReleaseNULL(vpks);
++		}
++		if (linux64_hook && functionName->isEqualTo("AKSKernelServices")) {
++			static bool scrd_done;
++			if (param1 && !linux64_real_aks) {
++				*(void **)param1 = linux64_aks_services();
++			}
++			if (!scrd_done) {
++				/*
++				 * No SEP either: AMFI's device-state thread waits forever for the SEP's "scrd" endpoint by name (and
++				 * launchd's first AMFI sysctl waits on that thread). A plain registered service of that name.
++				 */
++				scrd_done = true;
++				linux64_register_stand_in(this, OSTypeAlloc(IOService), "sep-endpoint,scrd");
++				/*
++				 * No AES engine either: AppleImage4's finalize waits for an IOAESAccelerator service (it only waits, then
++				 * releases it). The class is IOCryptoAcceleratorFamily's: an instance of it, registered, with no driver.
++				 */
++				OSObject *aes = OSMetaClass::allocClassWithName("IOAESAccelerator");
++				IOService *aess = OSDynamicCast(IOService, aes);
++				if (aess) {
++					linux64_patch_aes_vtable(aess);
++					linux64_register_stand_in(this, aess, "IOAESAccelerator");
++				} else {
++					IOLog("LINUX64: cannot make an IOAESAccelerator (%p)\n", aes);
++					OSSafeReleaseNULL(aes);
++				}
++			}
++			if (!linux64_real_aks) {
++				IOLog("LINUX64: AKSKernelServices from the hosted stand-in\n");
++				return kIOReturnSuccess;
++			}
++		}
++		if (linux64_hook && linux64_real_aks && functionName->isEqualTo("AKSKernelServices")) {
++			_resources = waitForService(resourceMatching(functionName));   /* AppleVPKeyStore publishes it */
++		} else if (linux64_hook) {
++			/*
++			 * LINUX64 (xnulinux): a hosted XNU has no providers for some platform functions (AppleKeyStore's, which AMFI
++			 * waits for): wait a while, then report the function unsupported instead of blocking its caller forever.
++			 */
++			mach_timespec_t t = { 2, 0 };
++			_resources = waitForService(resourceMatching(functionName), &t);
++			if (_resources == NULL) {
++				IOLog("LINUX64: platform function %s has no provider; unsupported\n", functionName->getCStringNoCopy());
++			}
++		} else {
++			_resources = waitForService(resourceMatching(functionName));
++		}
+ 	} else {
+ 		_resources = getResourceService();
+ 	}
+@@ -2341,6 +2507,7 @@ IOPlatformDevice::getResources( void )
+ * the kernel with a suitable message.
+ *********************************************************************/
+ 
++
+ class IOPanicPlatform : IOPlatformExpert {
+ 	OSDeclareDefaultStructors(IOPanicPlatform);
+ 
+@@ -2361,6 +2528,19 @@ IOPanicPlatform::start(IOService * provider)
+ 		platform_name = provider->getName();
+ 	}
+ 
++	/*
++	 * LINUX64 (xnulinux): hosted without the platform kexts, the generic IOPlatformExpert stands in as
++	 * the platform driver, so matching and gIOPlatform users can proceed.
++	 */
++	if (linux64_hook != 0) {
++		IOLog("linux64: no platform driver for \"%s\", using the generic IOPlatformExpert\n", platform_name);
++		if (!IOPlatformExpert::start(provider)) {
++			return false;
++		}
++		registerService();
++		return true;
++	}
++
+ 	panic("Unable to find driver for this platform: \"%s\".",
+ 	    platform_name);
+ 
+diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
+index ae82fc8..3fd837c 100644
+--- a/iokit/bsddev/IOKitBSDInit.cpp
++++ b/iokit/bsddev/IOKitBSDInit.cpp
+@@ -65,6 +65,7 @@ extern "C" {
+ 
+ extern dev_t mdevadd(int devid, uint64_t base, unsigned int size, int phys);
+ extern dev_t mdevlookup(int devid);
++extern dev_t mdevadd_host(void);
+ extern void mdevremoveall(void);
+ extern int mdevgetrange(int devid, uint64_t *base, uint64_t *size);
+ extern void di_root_ramfile(IORegistryEntry * entry);
+@@ -859,6 +860,9 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+ 			}
+ 			regEntry->release();                                                            /* Toss the entry */
+ 		}
++		if (mdevlookup(0) < 0) {
++			(void)mdevadd_host();                   /* LINUX64 (xnulinux): no RAM disk, maybe a host-file disk */
++		}
+ 	}
+ 
+ //

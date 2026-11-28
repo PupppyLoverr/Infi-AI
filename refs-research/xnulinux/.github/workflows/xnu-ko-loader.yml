@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# xnu.ko's loader (xnu_main.c, macho.c, adt.c) compiled for user space with AddressSanitizer and
+# UndefinedBehaviorSanitizer and run on images its test makes (xnu-ko/test/run.sh): what insmod xnu.ko reads and writes
+# while it loads, without a kernel.
+name: xnu-ko-loader
+on:
+  push:
+    paths: [.github/workflows/xnu-ko-loader.yml, xnu-ko/**, fki-ko/fki.h, xnu-patches/include/**]
+  pull_request:
+    paths: [.github/workflows/xnu-ko-loader.yml, xnu-ko/**, fki-ko/fki.h, xnu-patches/include/**]
+jobs:
+  loader:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: xnu.ko's loader in user space (AddressSanitizer)
+        run: xnu-ko/test/run.sh

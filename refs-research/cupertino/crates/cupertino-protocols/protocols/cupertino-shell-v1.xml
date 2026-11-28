@@ -1,0 +1,1153 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="cupertino_shell_v1">
+  <copyright>
+    SPDX-License-Identifier: MIT OR Apache-2.0
+  </copyright>
+
+  <description summary="private protocol between the Cupertino server and its shell processes">
+    Roles the server gives only to the shell processes and host components it starts (menu bar,
+    dock, window manager, session observer). Applications use cupertino_app_effects_v1 instead.
+    Every change of a message raises the version of its interface.
+  </description>
+
+  <interface name="cupertino_shell_v1" version="32">
+    <description summary="shell services of the server">
+      Global singleton, offered only to the processes the server started for a shell role, on a
+      connection of their own. Each request needs the role it creates: a connection that holds
+      other roles, or none, gets the permission error. Version 2 adds the display options of the
+      session object, version 3 the screen capture state of the menu bar object. Version 5 moves
+      the backdrops and the title bar style of application windows to the public
+      cupertino_app_effects_v1 protocol, which any client may use, and removes their requests here. Version 6 adds the
+      session_action request of the menu bar object, version 7 the lock_requested event of the session object, version 8 the session_agent event of the menu bar
+      object, version 9 the log_out_requested event of the session object, version 10 the window list, the shortcuts and the further
+      window commands of the menu bar object, version 11 its edit request, version 12 its engage_help event, version 13 its force_quit_app request, version 14 its backdrop_luminance event, version 15 its window_controls event, version 16 its window_full_screen event, version 17 the window_icon event of the dock object, version 18 its engage event, version 19 its app_resident event, version 20 the activate_app request and app_activation event of the session object, version 21 the backdrop_bands event of the menu bar object, version 22 the window_thumbnail event of the dock object, version 23 its overview_drag, overview_move_window and overview_workspace_frame requests, version 24 the active_client event of the menu bar object, version 25 its active_client_keys event, version 26 the activate_window request of the dock object. Version 28 removes the overview's
+      events, enum and requests and the window_thumbnail event of the dock object: the overview
+      component (cupertino_overview_v1) and its holes take their place. Version 29 removes the
+      strip placement, the rectangle of set_placement and the strip_pressed event of the window
+      manager object: the strip is the window manager's own surface, its thumbnails holes. Version 30 adds the
+      get_keyboard_panels request. Version 31 removes the agent_trust enum and the session_agent event of
+      the menu bar object: the menu bar takes the session menu's state from the session agent component. Version 32 adds the
+      window_launch event of the dock object. An object this global
+      creates has the version the global was bound at, so the since of each message of those
+      objects is the shell version that added it.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="unbind the shell global">
+        Objects created through this global stay valid.
+      </description>
+    </request>
+
+    <enum name="error">
+      <entry name="role" value="0" summary="the surface is not a layer surface of that output, already has a role, or the output already has this role holder"/>
+      <entry name="permission" value="2" summary="the connection does not hold the role the request needs"/>
+    </enum>
+
+    <request name="get_menu_bar">
+      <description summary="make a layer surface the menu bar of an output">
+        Gives the menu-bar role to a layer surface anchored to the top edge of the output. The
+        server owns the bar's presentation as on the design: it reserves the bar's
+        height in the output's usable area (the client sets an exclusive zone of 0), dims the bar
+        of an inactive output, hides it in full screen or by policy and reveals it when the
+        pointer dwells at the top edge, by moving and fading the surface. The client draws the
+        bar content and opens its menus as popups of this surface.
+      </description>
+      <arg name="id" type="new_id" interface="cupertino_menu_bar_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="output" type="object" interface="wl_output"/>
+    </request>
+
+    <request name="get_dock">
+      <description summary="make a layer surface the dock of an output">
+        Gives the dock role to a layer surface on that output. Unlike the menu bar, the client
+        owns the dock's presentation: tile layout, magnification, bounces, auto-hide and its
+        reserved area (through the layer surface's exclusive zone). The server tells it which
+        windows exist and takes its activation requests. The area of the surface's committed
+        backdrops is the dock's rectangle for the server, so the surface may be larger than the
+        bar.
+        Posts the role error when the surface is not a layer surface of that output, already has
+        a role, or the output already has a dock.
+      </description>
+      <arg name="id" type="new_id" interface="cupertino_dock_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="output" type="object" interface="wl_output"/>
+    </request>
+
+    <request name="get_session">
+      <description summary="follow the appearance and lock state of the session">
+        Creates an observer of the session. It has no surface or role, so a client may create
+        any number of them. The server sends the current state right after the object is
+        created and again on every change.
+      </description>
+      <arg name="id" type="new_id" interface="cupertino_session_v1"/>
+    </request>
+
+    <request name="get_window_manager">
+      <description summary="arrange the windows of an output">
+        Makes the client the window manager of the output: the component that owns the stage
+        policy (which windows share the stage, the strip of recent groups). The role takes no
+        surface: the window manager has a surface of its own for the strip, an ordinary layer
+        surface it persists, so the server holds it with the placements while the component
+        starts again. A window manager bound below version 29 is left inert.
+        Posts the role error when the output is gone or already has a window manager.
+      </description>
+      <arg name="id" type="new_id" interface="cupertino_window_manager_v1"/>
+      <arg name="output" type="object" interface="wl_output"/>
+    </request>
+
+    <request name="get_keyboard_panels" since="30">
+      <description summary="draw the input-source switcher and the accent picker">
+        Makes the client the one that draws the keyboard's two panels: the list of the input
+        sources while a switch is under way, and the candidates of a held letter. The server keeps
+        their keys, their choice and the text they change; the client only shows what it is sent
+        and reports a click on a candidate. It needs no surface. Posts the permission error when
+        the connection does not hold the keyboard_panels role, and the role error when it already
+        has the object.
+      </description>
+      <arg name="id" type="new_id" interface="cupertino_keyboard_panels_v1"/>
+    </request>
+  </interface>
+
+  <interface name="cupertino_keyboard_panels_v1" version="1">
+    <description summary="the input-source switcher and the accent picker">
+      What the two keyboard panels show. A panel is an ordinary transient layer surface of the
+      client: the switcher's with the namespace cupertino-osd-input-sources, the picker's with
+      cupertino-osd-accents. Neither ever takes the keyboard. No key of a switch or a picker
+      reaches any client: the server commits the selected source and edits the focused text field
+      itself, and waits for nothing the client does.
+
+      The sources and the candidates come as lists: each entry event since the last event that
+      ends a list, up to the event that ends it, is the whole list. An output is null when the
+      client has not bound it; the panel then goes on the client's first output. Strings are cut
+      at 1024 bytes, at a character boundary.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="stop drawing the panels"/>
+    </request>
+
+    <event name="source_entry">
+      <description summary="one source of the switch">
+        Its id and the name it is shown with, most recently used first.
+      </description>
+      <arg name="id" type="string"/>
+      <arg name="name" type="string"/>
+    </event>
+
+    <event name="sources_changed">
+      <description summary="the switch opened or its selection moved">
+        Ends the list of sources and selects the entry at index selected. Sent when the switch
+        opens, on every step and when the client is to show a switch already under way, each
+        time with the whole list. The panel shows on output, centred.
+      </description>
+      <arg name="output" type="object" interface="wl_output" allow-null="true"/>
+      <arg name="selected" type="uint"/>
+    </event>
+
+    <event name="sources_closed">
+      <description summary="the switch ended">
+        Committed or cancelled: the server already chose the keymap. The panel fades out.
+      </description>
+    </event>
+
+    <event name="accent_entry">
+      <description summary="one candidate of the picker">
+        In order; at most nine.
+      </description>
+      <arg name="text" type="string"/>
+    </event>
+
+    <event name="accents_changed">
+      <description summary="the picker opened or its focus moved">
+        Ends the list of candidates. serial counts the pickers of the session. The rectangle is
+        the text cursor's, in the logical points of output from its top left corner; top is the
+        height at the output's top the picker stays below (the menu bar's), 0 for none; focused is
+        the index of the focused candidate, -1 when none is.
+      </description>
+      <arg name="serial" type="uint"/>
+      <arg name="output" type="object" interface="wl_output" allow-null="true"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+      <arg name="top" type="int"/>
+      <arg name="focused" type="int"/>
+    </event>
+
+    <event name="accents_closed">
+      <description summary="the picker is gone">
+        Sent after every close of the picker of this serial: a candidate inserted, Escape, another
+        key, the end of the text input, a focus change, a press off the picker's panel.
+      </description>
+      <arg name="serial" type="uint"/>
+    </event>
+
+    <request name="accent_pick">
+      <description summary="the pointer was released on a candidate">
+        Inserts candidate index of the picker of serial into the field the server edits. A pick
+        of another picker than the open one, or an index outside its list, is ignored.
+      </description>
+      <arg name="serial" type="uint"/>
+      <arg name="index" type="uint"/>
+    </request>
+  </interface>
+
+  <interface name="cupertino_window_manager_v1" version="1">
+    <description summary="the window manager of one output">
+      Events describe the windows the client arranges and the input meant for it. They come in
+      groups ended by a done event; the client applies a group at once. The first group, sent
+      right after the object is created, has the usable area and every arranged window. Window
+      ids are the server's, the same as the dock's.
+
+      The arranged windows are the mapped, unminimized top-level windows without a parent on the
+      output's current workspace (or on every workspace), of applications that are not hidden.
+
+      The client decides which arranged windows are hidden; the server keeps the frame clock: it
+      fades a hidden window out where it is drawn and a window shown again back in at its own
+      frame, and keeps hidden windows out of pointer hit testing. A strip window is a claimed
+      hole of the window manager's own surface (cupertino_hole_v1): the server draws it in the
+      hole, and the presses on it reach that surface. The server draws no strip. A window starts
+      on the stage and returns to it when it leaves the arranged set. When the connection of a window manager
+      that is a component ends, its placements are held with its holds and replaced by the
+      instance that takes the hold over; otherwise, on explicit destroy and when holds end, every
+      window is drawn and hit at its own frame again at once. `commit` and `activate_window` are
+      window changes inside a transaction bracket (`cupertino_transaction_v1`).
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="stop arranging the output's windows">
+        Every window returns to the stage at once.
+      </description>
+    </request>
+
+    <event name="usable_area">
+      <description summary="the area windows may use">
+        The output minus the menu bar and the reserved layer zones, in global logical
+        coordinates. Sent in the first group and on every change.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </event>
+
+    <enum name="window_state" bitfield="true">
+      <entry name="active" value="1" summary="the key window of the session"/>
+    </enum>
+
+    <event name="window">
+      <description summary="an arranged window appeared or changed">
+        Application id (the desktop entry id when known), frame in global logical coordinates
+        and state of a window. Sent when the window joins the arranged set and again whenever
+        one of these changes.
+      </description>
+      <arg name="id" type="uint"/>
+      <arg name="app_id" type="string"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+      <arg name="state" type="uint" enum="window_state"/>
+    </event>
+
+    <event name="window_closed">
+      <description summary="a window left the arranged set">
+        It closed, was minimized, moved to another output or workspace, or its application was
+        hidden. Its placement is dropped.
+      </description>
+      <arg name="id" type="uint"/>
+    </event>
+
+    <event name="toggle_stage">
+      <description summary="the stage shortcut was pressed">
+        Turn the stage on when it is off and off when it is on.
+      </description>
+    </event>
+
+    <event name="done">
+      <description summary="end of a group of events"/>
+    </event>
+
+    <enum name="placement">
+      <entry name="stage" value="0" summary="at the window's own frame"/>
+      <entry name="hidden" value="2" summary="not drawn"/>
+    </enum>
+
+    <request name="set_placement">
+      <description summary="where a window rests">
+        Pending until commit. An id that is not an arranged window is ignored at commit: the
+        window may have just closed.
+      </description>
+      <arg name="id" type="uint"/>
+      <arg name="placement" type="uint" enum="placement"/>
+    </request>
+
+    <request name="commit">
+      <description summary="apply the pending placements together">
+        Every window whose placement changed starts its fade in the same frame. Inside a
+        transaction bracket it starts with the transaction's other changes, the strip's holes
+        among them, so a swap of the stage and the strip moves as one.
+      </description>
+    </request>
+
+    <request name="activate_window">
+      <description summary="focus and raise a window">
+        As a click on it does. An id that is no longer a window is ignored.
+      </description>
+      <arg name="id" type="uint"/>
+    </request>
+
+    <enum name="error">
+      <entry name="invalid_placement" value="0" summary="not an entry of the placement enum"/>
+    </enum>
+  </interface>
+
+  <interface name="cupertino_session_v1" version="20">
+    <description summary="appearance, display options and lock state of the session">
+      The state every shell process follows. Right after the object is created the server sends
+      appearance, then display_options (version 2), then locked or unlocked. Later events say
+      what changed; an event is complete by itself and is not part of a group. The server draws the lock screen's surfaces on its
+      own: a shell process needs to react to locked only by closing transient interface it owns
+      (menus, panels), and it keeps its surfaces.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="stop observing the session"/>
+    </request>
+
+    <event name="appearance">
+      <description summary="the session's appearance">
+        1 for the dark appearance, 0 for the light one. The client draws again with it, for
+        example from the colours of its materials and palettes. The materials of the client's
+        backdrops follow the appearance in the server and need no request.
+      </description>
+      <arg name="dark" type="uint"/>
+    </event>
+
+    <enum name="display_option" bitfield="true" since="2">
+      <entry name="reduce_motion" value="1" summary="replace spatial transitions with fades"/>
+      <entry name="reduce_transparency" value="2" summary="draw materials opaque"/>
+      <entry name="increase_contrast" value="4" summary="draw with the high-contrast colours"/>
+      <entry name="differentiate_without_color" value="8" summary="do not carry state by colour alone"/>
+    </enum>
+
+    <event name="display_options" since="2">
+      <description summary="the accessibility display options of the session">
+        The options that are on. The client draws again with them: with reduce_motion it fades
+        what it would slide, scale or magnify; with reduce_transparency and increase_contrast it
+        picks its opaque and high-contrast palettes. The materials of the client's backdrops
+        follow the options in the server and need no request. Bits the client does not know
+        are reserved and stay 0.
+      </description>
+      <arg name="options" type="uint" enum="display_option"/>
+    </event>
+
+    <event name="locked">
+      <description summary="the session is locked">
+        Sent as soon as the server hides the session for the lock, before the lock screen has
+        its first frame. The session stays locked until unlocked, also while the client that
+        took the lock is gone.
+      </description>
+    </event>
+
+    <event name="unlocked">
+      <description summary="the session is unlocked"/>
+    </event>
+
+    <event name="lock_requested" since="7">
+      <description summary="the server asks the lock screen to lock the session">
+        Sent only to the connection that holds the session lock role, for the lock shortcut, the
+        idle lock and the menu: the client locks as if it had been asked on its own control
+        interface. It is the server's private way to the lock screen, which a process on the
+        session bus cannot take over. explicit is 1 when the person asked for it (the lock
+        shortcut) and 0 when the display slept or the machine is going to sleep.
+      </description>
+      <arg name="explicit" type="uint"/>
+    </event>
+
+    <event name="log_out_requested" since="9">
+      <description summary="the server asks the session agent to ask whether to log out">
+        Sent only to the connection that holds the session_agent role, for the log out shortcut
+        and the session menu: the client shows its log out confirmation as if it had been asked on
+        its own control interface, which a process on the session bus cannot take over.
+      </description>
+    </event>
+
+    <enum name="activation" since="20">
+      <entry name="activated" value="0" summary="the application's windows were brought forward"/>
+      <entry name="resident" value="1" summary="a process of the application runs but shows no window"/>
+      <entry name="not_running" value="2" summary="no process of the application runs"/>
+    </enum>
+
+    <request name="activate_app" since="20">
+      <description summary="bring a running application forward by its desktop file ID">
+        Brings the application of the desktop file ID desktop_id (with or without the .desktop
+        suffix) forward as the dock's activate_app does, when it shows a window: its frontmost
+        window takes the focus, a minimised one is restored when it has no other, and a hidden
+        application is shown. An application matches when its application id is the desktop file
+        ID, or when the server's desktop entry for its application id has that ID; both compare
+        without regard to case. The server answers with app_activation and the same serial, at
+        once. It starts nothing: the client launches the application itself when the answer is
+        not activated. Needs the Session role, checked on every request: a connection that no
+        longer holds it gets the permission error and nothing is done.
+      </description>
+      <arg name="serial" type="uint" summary="chosen by the client, returned in app_activation"/>
+      <arg name="desktop_id" type="string"/>
+    </request>
+
+    <event name="app_activation" since="20">
+      <description summary="what activate_app found">
+        The answer to the activate_app request with this serial: activated when the
+        application showed a window and was brought forward; resident when a process of it is
+        connected after showing a window but shows none now (the client may ask that process
+        for a window); not_running otherwise.
+      </description>
+      <arg name="serial" type="uint"/>
+      <arg name="result" type="uint" enum="activation"/>
+    </event>
+  </interface>
+
+  <interface name="cupertino_menu_bar_v1" version="25">
+    <description summary="the menu bar of one output">
+      Events describe the active application and the menus its active window exports. They
+      come in groups ended by a done event; the client applies a group at once. The first group
+      is sent right after the object is created; from version 3 a group with screen_capture
+      follows it, from version 10 a group with the shortcuts, from version 14 to 20 a group with
+      backdrop_luminance once the server knows it, and from version 21 a group with backdrop_bands
+      in its place.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="give up the menu-bar role"/>
+    </request>
+
+    <event name="active_app">
+      <description summary="the active application changed">
+        Application id (the desktop entry id when known) and title of the active window; both
+        are empty when no window is active. Each is cut to at most 1024 bytes at a UTF-8
+        character boundary.
+      </description>
+      <arg name="app_id" type="string"/>
+      <arg name="title" type="string"/>
+    </event>
+
+    <event name="menu_none">
+      <description summary="the active window exports no menu"/>
+    </event>
+
+    <event name="menu_dbusmenu">
+      <description summary="the active window exports a DBusMenu tree">
+        Announced by the window through the application menu address protocol.
+      </description>
+      <arg name="service" type="string"/>
+      <arg name="path" type="string"/>
+    </event>
+
+    <event name="menu_gtk">
+      <description summary="the active window exports GMenuModel menus">
+        Announced by the window through the toolkit shell protocol. An empty string is an
+        absent path.
+      </description>
+      <arg name="bus_name" type="string"/>
+      <arg name="application_id" type="string"/>
+      <arg name="application_object_path" type="string"/>
+      <arg name="window_object_path" type="string"/>
+      <arg name="menubar_object_path" type="string"/>
+      <arg name="app_menu_object_path" type="string"/>
+    </event>
+
+    <event name="window_state">
+      <description summary="state of the active window for the window menu">
+        Whether the active window can zoom, its workspace (1-based, 0 for none) and the number
+        of workspaces of the output.
+      </description>
+      <arg name="can_zoom" type="uint"/>
+      <arg name="workspace" type="uint"/>
+      <arg name="workspaces" type="uint"/>
+    </event>
+
+    <enum name="app_window_flags" bitfield="true" since="10">
+      <entry name="active" value="1" summary="the active window"/>
+      <entry name="minimized" value="2" summary="minimized"/>
+    </enum>
+
+    <event name="app_window" since="10">
+      <description summary="a window of the active application, for the window list">
+        One event per toplevel of the active application, in stacking order from the top, at
+        most 1000, in every group that has window_state. The list is complete in each such group
+        and replaces the last one; no event means the application has no window. id is the
+        server's window id (the dock's), stable for the window's lifetime and never reused within
+        a session. title is cut to at most 1024 bytes at a UTF-8 character boundary.
+      </description>
+      <arg name="id" type="uint"/>
+      <arg name="title" type="string"/>
+      <arg name="flags" type="uint" enum="app_window_flags"/>
+    </event>
+
+    <event name="engage">
+      <description summary="the menu-bar shortcut was pressed">
+        Focus the first menu title of this bar for keyboard navigation. The bar takes the
+        keyboard by asking for exclusive keyboard interactivity and lets go when navigation ends.
+        Sent in a group of its own, ended by done.
+      </description>
+    </event>
+
+    <event name="screen_capture" since="3">
+      <description summary="whether the screen is being captured">
+        1 while a screen or window capture session runs (ext-image-copy-capture-v1), 0 otherwise.
+        The bar shows the screen capture indicator while it is 1. Sent in a group of its own,
+        ended by done, after the first group and whenever it changes.
+      </description>
+      <arg name="active" type="uint"/>
+    </event>
+
+    <enum name="bound_action" since="10">
+      <entry name="close_window" value="0"/>
+      <entry name="minimize" value="1"/>
+      <entry name="zoom" value="2"/>
+      <entry name="toggle_fullscreen" value="3"/>
+      <entry name="hide_app" value="4"/>
+      <entry name="hide_others" value="5"/>
+      <entry name="quit_app" value="6"/>
+      <entry name="tile_left" value="7"/>
+      <entry name="tile_right" value="8"/>
+      <entry name="tile_fill" value="9"/>
+      <entry name="force_quit" value="10"/>
+      <entry name="lock" value="11"/>
+      <entry name="log_out" value="12"/>
+      <entry name="help_search" value="13" since="12"/>
+    </enum>
+
+    <event name="shortcut" since="10">
+      <description summary="the chord the server binds to an action">
+        The physical chord that runs the action, in the shortcut file's syntax (modifiers in the
+        order Ctrl, Alt, Shift, Super, then the key name, joined by "+"); empty when nothing is
+        bound. One event per bound_action entry of the object's version, in a group of its own ended by done, after the
+        first group and whenever the bindings or the modifier profile change.
+      </description>
+      <arg name="action" type="uint" enum="bound_action"/>
+      <arg name="chord" type="string"/>
+    </event>
+
+    <enum name="modifier_key" since="10">
+      <entry name="super" value="0" summary="the cupertino profile: Super is the command key"/>
+      <entry name="ctrl" value="1" summary="the classic-pc profile: Ctrl is the command key"/>
+    </enum>
+
+    <event name="primary_modifier" since="10">
+      <description summary="the physical key of the primary modifier">
+        Which key the active modifier profile makes the primary modifier, for the chords the bar
+        shows for applications' own items. Sent in the shortcut group.
+      </description>
+      <arg name="key" type="uint" enum="modifier_key"/>
+    </event>
+
+    <event name="done">
+      <description summary="end of a group of events"/>
+    </event>
+
+    <event name="engage_help" since="12">
+      <description summary="the help search shortcut was pressed">
+        Open this bar's Help menu with its search field focused, taking the keyboard as for engage. Sent in a group of
+        its own, ended by done, to the bar of the output with the active window (else the output under the pointer),
+        like engage. Never sent while the session is locked or a lock is pending.
+      </description>
+    </event>
+
+    <event name="backdrop_luminance" since="14">
+      <description summary="how light the wallpaper under the bar is">
+        The perceptual lightness (CIE L*/100) of the mean colour of the output's wallpaper under the bar's strip, in
+        thousandths: 0 black, 1000 white. Sent to a bar of version 14 to 20 (a later bar gets backdrop_bands), in a
+        group of its own, ended by done, once the server knows it: after the first groups, and
+        again when it moves by more than 10. A server that has no measure sends nothing, and the bar keeps the
+        palette of the appearance. Once sent, a measure is never withdrawn: when the wallpaper image goes, the one
+        drawn in its place is measured. Only the server's own wallpaper image is measured; nothing of a window or
+        another client is sampled.
+      </description>
+      <arg name="luminance" type="uint"/>
+    </event>
+
+    <event name="backdrop_bands" since="21">
+      <description summary="the colour of the wallpaper under the bar, across it">
+        The mean colour of the output's wallpaper under the bar's strip, in bands of equal width
+        from the output's left edge to its right: for each band, the mean of the encoded sRGB red,
+        green and blue of its pixels, each a little-endian 16-bit value from 0 (none) to 65535
+        (full), so three values per band and at most 256 bands. The bar averages the bands under
+        an item, or all of them for the whole strip, and takes the relative luminance of that
+        colour. Sent to a bar of version 21 or later in place of backdrop_luminance, in a group of
+        its own ended by done, once the server knows it and again when any band changes. A server
+        that has no measure sends nothing; once sent, a measure is never withdrawn. Only the
+        server's own wallpaper image is measured; nothing of a window or another client is
+        sampled.
+      </description>
+      <arg name="bands" type="array"/>
+    </event>
+
+    <enum name="window_control" bitfield="true" since="15">
+      <entry name="minimize" value="1" summary="the Window menu's Minimize"/>
+      <entry name="zoom" value="2" summary="the Window menu's Zoom"/>
+    </enum>
+
+    <event name="window_controls" since="15">
+      <description summary="the controls of the active window that are enabled">
+        The controls of the active window that are enabled: those its client did not disable
+        through cupertino_app_effects_v1.set_disabled_controls, and zoom only while the window is
+        resizable. Sent in every group that has window_state. window_state's can_zoom keeps
+        meaning that zoom is enabled, for bars older than version 15. Until the server sends it,
+        both controls are enabled.
+      </description>
+      <arg name="enabled" type="uint" enum="window_control"/>
+    </event>
+
+    <event name="window_full_screen" since="16">
+      <description summary="whether the active window is in full screen">
+        Whether the active window is in full screen (1) or not (0). Sent in every group that
+        has window_state. A window in full screen can always be taken out of it, whatever its
+        controls, so a bar offers leaving full screen then even where window_controls has zoom
+        disabled. Until the server sends it, the window is taken as not in full screen.
+      </description>
+      <arg name="full_screen" type="uint"/>
+    </event>
+
+    <enum name="client_kind" since="24">
+      <entry name="wayland" value="0" summary="the window's own process shows it"/>
+      <entry name="x11" value="1" summary="the X11 bridge shows the window of an X11 program"/>
+    </enum>
+
+    <enum name="key_class" since="25">
+      <entry name="other" value="0" summary="the server gives the window the control chord of each command-key chord"/>
+      <entry name="toolkit" value="1" summary="the window uses the desktop's toolkit and reads the command key itself"/>
+      <entry name="terminal" value="2" summary="the window is a terminal's: the server gives it the control and shift chord"/>
+    </enum>
+
+    <event name="active_client" since="24">
+      <description summary="the process that shows the active window">
+        The process on the other end of the active window's connection, for a window that
+        registers its menus on the session bus instead of announcing them: pid is 0 when no
+        window is active or the process is not known. With kind x11 the window belongs to an
+        X11 program and pid is the bridge's. Sent in every group that has window_state.
+      </description>
+      <arg name="pid" type="uint"/>
+      <arg name="kind" type="uint" enum="client_kind"/>
+    </event>
+
+    <event name="active_client_keys" since="25">
+      <description summary="how the server passes chords to the active window">
+        How the server passes the person's chords to the active window, so the bar shows the keys
+        pressed for the window's accelerators. Sent right after active_client in every group that
+        has it. A bar that is not sent it takes other.
+      </description>
+      <arg name="keys" type="uint" enum="key_class"/>
+    </event>
+
+    <request name="set_menu_open">
+      <description summary="a menu of this bar is open or closed">
+        While a menu is open the server keeps the bar revealed.
+      </description>
+      <arg name="open" type="uint"/>
+    </request>
+
+    <enum name="command">
+      <entry name="hide_app" value="0" summary="hide the active application"/>
+      <entry name="hide_others" value="1" summary="hide every other application"/>
+      <entry name="show_all" value="2" summary="show all hidden applications"/>
+      <entry name="quit_app" value="3" summary="close every window of the active application"/>
+      <entry name="minimize" value="4" summary="minimize the active window"/>
+      <entry name="zoom" value="5" summary="zoom the active window"/>
+      <entry name="close" value="6" summary="close the active window"/>
+      <entry name="toggle_fullscreen" value="7" summary="enter or leave full screen with the active window" since="10"/>
+      <entry name="tile_left" value="8" summary="tile the active window to the left half of its output" since="10"/>
+      <entry name="tile_right" value="9" summary="tile the active window to the right half of its output" since="10"/>
+      <entry name="tile_fill" value="10" summary="make the active window fill its output's usable area" since="10"/>
+      <entry name="bring_all_to_front" value="11" summary="raise every window of the active application, keeping their order and the focus" since="10"/>
+      <entry name="cascade_all" value="12" summary="bring_all_to_front, and cascade the windows 24 pt apart from the active one" since="10"/>
+      <entry name="minimize_all" value="13" summary="minimize every window of the active application" since="10"/>
+      <entry name="zoom_all" value="14" summary="zoom every window of the active application that can zoom" since="10"/>
+      <entry name="force_quit_dialog" value="15" summary="open the force quit dialog" since="10"/>
+    </enum>
+
+    <request name="window_command">
+      <description summary="run a window-management command of the fallback menus">
+        Acts on the active application or window at the time the server handles the request.
+      </description>
+      <arg name="command" type="uint" enum="command"/>
+    </request>
+
+    <enum name="error">
+      <entry name="invalid_command" value="0" summary="the window_command value is not an entry of the command enum"/>
+      <entry name="invalid_session_action" value="1" summary="the session_action value is not an entry of the session_action enum"/>
+      <entry name="invalid_edit_action" value="2" summary="the edit value is not an entry of the edit_action enum" since="11"/>
+    </enum>
+
+    <request name="move_to_workspace">
+      <description summary="move the active window to a workspace of its output">
+        1-based workspace index.
+      </description>
+      <arg name="workspace" type="uint"/>
+    </request>
+
+    <enum name="session_action" since="6">
+      <entry name="sleep" value="0" summary="put the computer to sleep without asking"/>
+      <entry name="restart" value="1" summary="ask whether to restart"/>
+      <entry name="shut_down" value="2" summary="ask whether to shut down"/>
+      <entry name="lock" value="3" summary="lock the session on the person's request"/>
+      <entry name="log_out" value="4" summary="ask whether to log out"/>
+      <entry name="switch_user" value="5" summary="lock the session and show the login window"/>
+      <entry name="refresh_capabilities" value="6" summary="read again what the session menu may offer"/>
+    </enum>
+
+    <request name="session_action" since="6">
+      <description summary="an entry of the session menu was chosen">
+        The server asks the session agent on the menu bar's behalf: the agent answers only the
+        server and the process itself, so a shell process cannot reach it directly. The result
+        shows in the agent's properties.
+      </description>
+      <arg name="action" type="uint" enum="session_action"/>
+    </request>
+
+    <request name="activate_window" since="10">
+      <description summary="a row of the window list was chosen">
+        Show the window: unminimize it, switch to its workspace, raise and focus it. An id that
+        names no window of the active application when the request arrives is ignored, since the
+        list can change in the meantime. The request is also ignored while the session is locked.
+      </description>
+      <arg name="id" type="uint"/>
+    </request>
+
+    <enum name="edit_action" since="11">
+      <entry name="undo" value="0"/>
+      <entry name="redo" value="1"/>
+      <entry name="cut" value="2"/>
+      <entry name="copy" value="3"/>
+      <entry name="paste" value="4"/>
+      <entry name="select_all" value="5"/>
+    </enum>
+
+    <request name="edit" since="11">
+      <description summary="an item of the Edit menu was chosen">
+        The server sends the key chord of the action to the key window, as if it was typed there.
+
+        The request counts only while a popup of this menu bar holds the popup grab when it
+        arrives; at any other time it is ignored. The target is the key window at that moment, and
+        only when it is the xdg toplevel of an application: never an X11 window, a lock surface,
+        the greeter, a layer surface or a surface of a shell process. Nothing is sent, and the
+        request is ignored without an error, while the session is locked or a lock is pending,
+        while the overview or the application switcher is open, or while another grab holds the
+        pointer or the keyboard.
+
+        The server keeps one edit; a newer request replaces it. It sends the edit once, on the
+        first change of keyboard focus after the popup grab ends, and only when that change gives
+        the keyboard to the target window and comes within 500 ms of the request's arrival. Any
+        other first focus, or no focus change within 500 ms, drops the edit. Every condition above
+        is checked again right before the chord is sent.
+
+        The chord depends on the application. A terminal (an application id in the server's list
+        of terminals, the list its keyboard rewrite reads) gets only copy and paste, as
+        Shift+Ctrl+c and Shift+Ctrl+v, and nothing for the other actions. A first-party
+        application (an id that starts with "cupertino-"), or an application the keyboard rewrite
+        is off for, gets the primary modifier of the modifier profile (Super under cupertino, Ctrl
+        under classic-pc) with z for undo, Shift and z for redo, and x, c, v and a for cut, copy,
+        paste and select all. Any other application gets the same keys with Ctrl, whatever the
+        profile: so a terminal missing from the list gets Ctrl+c on copy, as the keyboard rewrite
+        gives it for Super+c.
+
+        The client is told the chord's modifiers; then the key that types the letter in the active
+        layout (else the key the shortcuts' Latin fallback maps to it) is pressed and released at
+        once, and the client is told the real modifiers again. The key never repeats and never
+        runs a shortcut of the server. An action value outside edit_action is the error
+        invalid_edit_action.
+      </description>
+      <arg name="action" type="uint" enum="edit_action"/>
+    </request>
+
+    <request name="force_quit_app" since="13">
+      <description summary="force quit the active application, named as the bar's label shows it">
+        The alternate of the Force Quit item, chosen with Alt held: the choice that names the
+        application is the confirmation. app_id is the active application's id as the bar last
+        got it in active_app. The server ends the application only if app_id equals the id of the
+        active application when it handles the request, the same way as the dock's force_quit_app:
+        an application that does not answer its pings is killed at once (SIGKILL); any other gets
+        a close request for each of its windows and SIGTERM, and SIGKILL three seconds later if a
+        process is still there.
+
+        Any other app_id (the active application changed in the meantime, or there is none), an
+        app_id longer than 255 bytes, and every request while the session is locked or a lock is
+        pending, is ignored without an error. There is no reply; the application's windows
+        closing is the result.
+      </description>
+      <arg name="app_id" type="string"/>
+    </request>
+  </interface>
+
+  <interface name="cupertino_dock_v1" version="32">
+    <description summary="the dock of one output">
+      Events describe the windows of the session and the application switcher. They come in
+      groups ended by a done event; the client applies a group at once. The first group, sent
+      right after the object is created, lists every window; while a switch is under way, the
+      switcher as it stands follows in a group of its own. Window ids are the server's, stable for a window's lifetime
+      and never reused within a session.
+
+      The server owns the switcher's keys and its choice: it opens on the switch chord, steps
+      on its keys, commits the selected application when the modifier is released and cancels
+      on Escape, with or without a dock. One dock draws the panel (after its show delay and with
+      its fade), on the output switcher_output names, and reports what the pointer did on it: the
+      entry it picked, a release on an entry (switcher_activate) or elsewhere on the panel
+      (switcher_cancel). The panel is a layer surface of namespace cupertino-dock-switcher; a
+      press anywhere else cancels the switch when it is released.
+
+      Hot corners and touchpad gestures are detected by the server and mapped to their action by
+      the dock (hot_corner, gesture, run_action).
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="give up the dock role"/>
+    </request>
+
+    <enum name="window_state" bitfield="true">
+      <entry name="minimized" value="1"/>
+      <entry name="active" value="2" summary="the key window of the session"/>
+    </enum>
+
+    <event name="window">
+      <description summary="a window appeared or changed">
+        Application id (the desktop entry id when known), title and state of a window. Sent
+        when the window is mapped and again whenever one of these changes. The application id
+        and the title are each cut to at most 1024 bytes at a UTF-8 character boundary.
+      </description>
+      <arg name="id" type="uint"/>
+      <arg name="app_id" type="string"/>
+      <arg name="title" type="string"/>
+      <arg name="state" type="uint" enum="window_state"/>
+    </event>
+
+    <event name="window_closed">
+      <description summary="a window went away"/>
+      <arg name="id" type="uint"/>
+    </event>
+
+    <event name="launching">
+      <description summary="the server started an application">
+        Sent when the server itself starts a program (a shortcut or a spawned command), so the
+        dock can bounce its tile until a window of that application appears.
+      </description>
+      <arg name="app_id" type="string"/>
+    </event>
+
+    <event name="toggle_auto_hide">
+      <description summary="the auto-hide shortcut was pressed">
+        Turn the dock's auto-hide on when it is off and off when it is on. The dock updates its
+        exclusive zone to match.
+      </description>
+    </event>
+
+    <event name="toggle_app_grid">
+      <description summary="the application grid action was triggered (no longer sent)">
+        The server no longer sends this event: the app-grid action opens the launcher's
+        application browser, which the server asks for on the session bus. A dock that maps a
+        hot corner or gesture to that action sends it back with run_action. The event stays so
+        that existing docks keep binding; a dock that gets it may ignore it.
+      </description>
+    </event>
+
+    <event name="switcher_output">
+      <description summary="the output the switcher's panel goes on">
+        Starts every switcher group, before its switcher_entry events: the output the panel is
+        drawn on, the one under the pointer when the switch opened. Only one dock gets the
+        switcher groups: the dock of that output, else another one. When the client has not bound
+        that output, the server names the dock's own output.
+      </description>
+      <arg name="output" type="object" interface="wl_output"/>
+    </event>
+
+    <event name="switcher_entry">
+      <description summary="an entry of the application switcher">
+        One application of the switcher's list, most recently used first. The entries sent
+        since the last done, up to the switcher_changed that ends them, are the whole list; they
+        replace any earlier one.
+      </description>
+      <arg name="app_id" type="string"/>
+    </event>
+
+    <event name="switcher_changed">
+      <description summary="the application switcher opened or its selection moved">
+        Closes the list of switcher_entry events before it in the group and selects one of them
+        (0-based). The list is never empty and the index is inside it. Sent when the switcher
+        opens, on every step and on every switcher_select that moved the selection, each time with
+        the whole list again. A dock that binds while a switch is under way gets it right
+        after its first group, in a group of its own.
+      </description>
+      <arg name="selected" type="uint"/>
+    </event>
+
+    <event name="switcher_closed">
+      <description summary="the application switcher is gone">
+        The switch ended. When committed is 1 the selected application was activated and the
+        panel fades out; when 0 it was cancelled and the panel disappears at once. Sent after
+        the last switcher_changed of the switch.
+      </description>
+      <arg name="committed" type="uint"/>
+    </event>
+
+    <enum name="corner">
+      <entry name="top_left" value="0"/>
+      <entry name="top_right" value="1"/>
+      <entry name="bottom_left" value="2"/>
+      <entry name="bottom_right" value="3"/>
+    </enum>
+
+    <event name="hot_corner">
+      <description summary="the pointer rested in a corner of the dock's output">
+        The pointer dwelt in the corner for the configured time. The dock maps the corner to
+        its action (its own settings) and carries it out, by run_action for the server's actions.
+      </description>
+      <arg name="corner" type="uint" enum="corner"/>
+    </event>
+
+    <enum name="gesture">
+      <entry name="swipe_up" value="0" summary="a three- or four-finger swipe up"/>
+      <entry name="swipe_down" value="1" summary="a three- or four-finger swipe down"/>
+      <entry name="pinch" value="2" summary="a four-finger pinch in"/>
+      <entry name="spread" value="3" summary="a four-finger spread"/>
+    </enum>
+
+    <event name="gesture">
+      <description summary="a touchpad gesture committed on the dock's output">
+        The server's recognizer committed a gesture that is not the workspace swipe (which the
+        server carries out itself) and that no transaction is bound to on the output
+        (cupertino_transaction_v1.bind_gesture, whose transaction then follows it instead). The
+        dock maps it to its action as for hot_corner.
+      </description>
+      <arg name="kind" type="uint" enum="gesture"/>
+    </event>
+
+    <event name="attention">
+      <description summary="an application asks for attention">
+        The application asked to be activated and the server refused (its activation token was
+        older than the user's last input). The dock bounces its tile once. Sent to every dock;
+        not sent for the active application.
+      </description>
+      <arg name="app_id" type="string"/>
+    </event>
+
+    <event name="unresponsive" since="4">
+      <description summary="an application stopped or resumed answering">
+        The server pings every client that owns a window; a client that does not answer for two
+        seconds is unresponsive until it does. State 1 says the application stopped answering,
+        0 that it answers again. The dock marks the application "Not Responding" in its menu and
+        the switcher, and in the Force Quit dialog. Sent to every dock when it changes; right
+        after the object is created, one event per application that is unresponsive then.
+      </description>
+      <arg name="app_id" type="string"/>
+      <arg name="state" type="uint"/>
+    </event>
+
+    <event name="force_quit_dialog" since="4">
+      <description summary="the Force Quit shortcut was pressed">
+        The dock opens its Force Quit Applications dialog, listing the running applications with
+        the unresponsive ones marked, or closes it when it is open. Quitting is force_quit_app,
+        sent only after the person confirmed.
+      </description>
+    </event>
+
+    <event name="window_icon" since="17">
+      <description summary="the icon a window set for itself">
+        The icon the window set with xdg_toplevel_icon_v1, as the server copied it when the
+        window committed it. Sent after the window's window event in the same group when the
+        window has an icon as it maps, and again whenever the window commits a different one,
+        also when it removes its icon. The dock shows it for an application whose desktop entry
+        names no icon.
+
+        name is a key into the icon theme, empty for none. It is at most 255 bytes and never
+        holds a slash, two dots in a row or a NUL; the dock never opens it as a path.
+
+        size is the side of the square image in pixels, 0 for none. pixels is a sealed file
+        of exactly size * size * 4 bytes: wl_shm argb8888 (premultiplied alpha, little-endian),
+        rows packed. The server copies the largest square image of at most 512 pixels a side.
+        When size is 0 the file is empty.
+      </description>
+      <arg name="id" type="uint"/>
+      <arg name="name" type="string"/>
+      <arg name="size" type="uint"/>
+      <arg name="pixels" type="fd"/>
+    </event>
+
+    <event name="engage" since="18">
+      <description summary="the Focus Dock shortcut was pressed">
+        Focus the first tile of the dock for keyboard navigation. The dock takes the keyboard by
+        asking for exclusive keyboard interactivity on its surface and lets go when navigation
+        ends. Sent to the dock of the output under the pointer, else the first dock, in a group
+        of its own ended by done; never while the session is locked or a lock is pending.
+      </description>
+    </event>
+
+    <event name="app_resident" since="19">
+      <description summary="whether an application's process still runs">
+        An application is resident while a client of it that showed a window of that
+        application is still connected, with or without windows now: closing its last window
+        does not end it, its process exiting (or its connection closing) does. The first group
+        lists every resident application with resident 1; later groups send a change of either
+        kind, after the window events of the same group. The server's own connections, the
+        shell processes and the X11 bridge (one connection for the windows of every X11
+        application) are never applications. The application id is cut like the window
+        event's.
+      </description>
+      <arg name="app_id" type="string"/>
+      <arg name="resident" type="uint" summary="1 while resident, 0 once it is no longer"/>
+    </event>
+
+    <event name="done">
+      <description summary="end of a group of events"/>
+    </event>
+
+    <event name="window_launch" since="32">
+      <description summary="the application whose launch a window answered">
+        The application the launch behind a window named: the application id an
+        xdg_activation_v1 token a shell process made (the launcher, the dock) was given with
+        set_app_id, the desktop entry id it starts, when the window presented that token as it
+        mapped, its process was started with it in XDG_ACTIVATION_TOKEN, or it was first
+        activated with it later. An application's own token names no launch: Qt names the
+        requester's application whatever the token is for. The window's own application id may
+        differ from it (a program whose windows name no desktop entry); the dock files a window
+        whose own application id names no application under the launched one and ends that
+        application's launch bounce.
+
+        Sent before the window's window event in the group that first lists the window when its
+        launch named an application then, else in the group of the activation that first named
+        one; never again for that window. Not sent for a window whose launch named none. The
+        application id is cut like the window event's.
+      </description>
+      <arg name="id" type="uint"/>
+      <arg name="app_id" type="string"/>
+    </event>
+
+    <request name="force_quit_app" since="4">
+      <description summary="quit an application at the person's request">
+        Ends the application after the person confirmed in the Force Quit dialog. An application
+        that does not answer its pings is killed at once (SIGKILL). Any other gets a close request
+        for each of its windows and SIGTERM, and SIGKILL three seconds later if a process is still
+        there. Unknown application ids are ignored: the application may have just quit. There is
+        no reply; the application's windows closing is the result.
+      </description>
+      <arg name="app_id" type="string"/>
+    </request>
+
+    <request name="activate_app">
+      <description summary="bring an application forward">
+        Raises the application's windows on their workspaces and focuses the frontmost, as a
+        click on a running application's tile does. Unknown application ids are ignored: the
+        application may have just quit.
+      </description>
+      <arg name="app_id" type="string"/>
+    </request>
+
+    <request name="restore_window">
+      <description summary="restore a minimized window">
+        Unminimizes the window, animating it out of its tile's rectangle (surface-local). An id
+        that is no longer a minimized window is ignored: it may have just closed or been restored.
+      </description>
+      <arg name="id" type="uint"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </request>
+
+    <request name="set_minimize_target">
+      <description summary="where a window minimizes to">
+        The rectangle, in surface-local coordinates, of the slot a newly minimized window's tile
+        takes; the server animates minimizing windows into it. Double-buffered, applied on the
+        next wl_surface.commit. Until one is set, windows minimize without a target.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </request>
+
+    <request name="switcher_select">
+      <description summary="the pointer picked an entry of the switcher">
+        Selects entry index of the open switcher, as the pointer hovering over or pressing the
+        entry's tile does; the commit stays with the server's keys. An index outside the list,
+        or a request while no switcher is open, is ignored: the list may have just changed.
+        The server answers with switcher_changed when the selection moved.
+      </description>
+      <arg name="index" type="uint"/>
+    </request>
+
+    <request name="switch_workspace">
+      <description summary="go to a workspace of the dock's output">
+        Switches the output to the workspace. An unknown id is ignored: the workspace may have
+        just been removed.
+      </description>
+      <arg name="id" type="uint"/>
+    </request>
+
+    <request name="add_workspace">
+      <description summary="append a workspace to the dock's output"/>
+    </request>
+
+    <request name="remove_workspace">
+      <description summary="remove a workspace of the dock's output">
+        Its windows move to the previous (else the next) workspace. The last regular workspace,
+        a full-screen one and an unknown id are ignored.
+      </description>
+      <arg name="id" type="uint"/>
+    </request>
+
+    <request name="move_workspace">
+      <description summary="reorder a workspace of the dock's output">
+        Moves the workspace to position index (0-based) among the output's workspaces; an index
+        past the end moves it last. A full-screen workspace and an unknown id are ignored.
+      </description>
+      <arg name="id" type="uint"/>
+      <arg name="index" type="uint"/>
+    </request>
+
+    <request name="run_action">
+      <description summary="run a named compositor action">
+        Runs the action as the shortcut bound to it would (the names of the shortcut file:
+        overview, app-overview, show-desktop, launcher, control-panel, notification-center, lock,
+        ...), for the output under the pointer. An unknown name is logged and ignored.
+      </description>
+      <arg name="name" type="string"/>
+    </request>
+
+    <enum name="app_command">
+      <entry name="show_windows" value="0" summary="open the application overview of the application"/>
+      <entry name="hide" value="1" summary="hide the application's windows"/>
+      <entry name="quit" value="2" summary="ask every window of the application to close"/>
+    </enum>
+
+    <request name="app_command">
+      <description summary="a command of a tile's context menu">
+        Carries out the command for the application. Unknown application ids are ignored: the
+        application may have just quit.
+      </description>
+      <arg name="app_id" type="string"/>
+      <arg name="command" type="uint" enum="app_command"/>
+    </request>
+
+    <request name="switcher_activate">
+      <description summary="the pointer was released on an entry of the switcher">
+        Selects entry index of the open switcher and commits it, as releasing the modifier
+        would. An index outside the list, or a request while no switcher is open, is ignored.
+      </description>
+      <arg name="index" type="uint"/>
+    </request>
+
+    <request name="switcher_cancel">
+      <description summary="the pointer was released on the panel off the entries">
+        Ends the open switch without activating anything; ignored while no switcher is open.
+      </description>
+    </request>
+
+    <request name="activate_window" since="26">
+      <description summary="a window of a tile's context menu was chosen">
+        Show the window: unminimize it, switch to its workspace, raise and focus it. An id that
+        names no window the dock lists when the request arrives is ignored, since the windows can
+        change in the meantime. The request is also ignored while the session is locked.
+      </description>
+      <arg name="id" type="uint"/>
+    </request>
+  </interface>
+</protocol>

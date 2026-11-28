@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+src/metal2vulkan/
+src/Vulkan-Loader/
+src/llvm-project/
+src/AdrenoMetal/
+src/mesa/
+build/
+dist/
+src/xnu-m2v-bridge/target/

@@ -1,0 +1,188 @@
+From: xnulinux <xnulinux@local>
+Subject: [PATCH] vkr: register tombstones for failed pipeline creations so destroy/bind do not kill the Venus ring
+
+When a Venus client creates a graphics or compute pipeline asynchronously
+(without VK_COMMAND_GENERATE_REPLY_BIT_EXT) and the host driver (e.g.
+MoltenVK 1.4.2 SPIRV-Cross) fails with VK_ERROR_INITIALIZATION_FAILED (-3),
+virglrenderer previously discarded the client pipeline object ID without
+inserting it into ctx->object_table. When the client subsequently called
+vkDestroyPipeline (or vkCmdBindPipeline) on that handle, vkr_cs_decoder_lookup_object
+failed with "failed to look up object <id>" and marked the entire Venus command
+stream / ring FATAL, tearing down the context with active MoltenVK objects and
+crashing the host VMM (krunkit SIGSEGV).
+
+Register a lightweight VK_NULL_HANDLE tombstone in ctx->object_table / dev->objects
+for any failed pipeline object ID, and log+ignore vkDestroyPipeline / vkCmdBindPipeline
+on tombstones (and skip vk->DestroyPipeline(VK_NULL_HANDLE) on device teardown).
+
+---
+ src/venus/vkr_command_buffer.c |  7 +++
+ src/venus/vkr_device.c         |  3 +-
+ src/venus/vkr_pipeline.c       | 99 ++++++++++++++++++++++++++++++++++--
+ 3 files changed, 105 insertions(+), 4 deletions(-)
+
+diff --git a/src/venus/vkr_command_buffer.c b/src/venus/vkr_command_buffer.c
+index f538922..497dd96 100644
+--- a/src/venus/vkr_command_buffer.c
++++ b/src/venus/vkr_command_buffer.c
+@@ -4,6 +4,7 @@
+  */
+ 
+ #include "vkr_command_buffer.h"
++#include "vkr_pipeline.h"
+ 
+ #include "vkr_command_buffer_gen.h"
+ 
+@@ -143,6 +144,12 @@ static void
+ vkr_dispatch_vkCmdBindPipeline(UNUSED struct vn_dispatch_context *dispatch,
+                                struct vn_command_vkCmdBindPipeline *args)
+ {
++   struct vkr_pipeline *pipeline = (struct vkr_pipeline *)(uintptr_t)args->pipeline;
++   if (pipeline && pipeline->base.handle.pipeline == VK_NULL_HANDLE) {
++      vkr_log("ignoring vkCmdBindPipeline for failed pipeline object %" PRIu64,
++              pipeline->base.id);
++      return;
++   }
+    VKR_CMD_CALL(CmdBindPipeline, args, args->pipelineBindPoint, args->pipeline);
+ }
+ 
+diff --git a/src/venus/vkr_device.c b/src/venus/vkr_device.c
+index c6a77b7..d42f83a 100644
+--- a/src/venus/vkr_device.c
++++ b/src/venus/vkr_device.c
+@@ -206,7 +206,8 @@ vkr_device_object_destroy(struct vkr_context *ctx,
+       vk->DestroyRenderPass(device, obj->handle.render_pass, NULL);
+       break;
+    case VK_OBJECT_TYPE_PIPELINE:
+-      vk->DestroyPipeline(device, obj->handle.pipeline, NULL);
++      if (obj->handle.pipeline != VK_NULL_HANDLE)
++         vk->DestroyPipeline(device, obj->handle.pipeline, NULL);
+       break;
+    case VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT:
+       vk->DestroyDescriptorSetLayout(device, obj->handle.descriptor_set_layout, NULL);
+diff --git a/src/venus/vkr_pipeline.c b/src/venus/vkr_pipeline.c
+index 2ac0284..c873646 100644
+--- a/src/venus/vkr_pipeline.c
++++ b/src/venus/vkr_pipeline.c
+@@ -103,6 +103,32 @@ vkr_dispatch_vkMergePipelineCaches(UNUSED struct vn_dispatch_context *dispatch,
+                                        args->pSrcCaches);
+ }
+ 
++static void
++vkr_pipeline_register_tombstones(struct vkr_context *ctx,
++                                 struct vkr_device *dev,
++                                 uint32_t count,
++                                 const vkr_object_id *ids,
++                                 VkResult result,
++                                 const char *op)
++{
++   for (uint32_t i = 0; i < count; i++) {
++      if (!ids[i])
++         continue;
++      if (vkr_context_get_object(ctx, ids[i]))
++         continue;
++      struct vkr_pipeline *obj = calloc(1, sizeof(*obj));
++      if (!obj)
++         continue;
++      obj->base.id = ids[i];
++      obj->base.type = VK_OBJECT_TYPE_PIPELINE;
++      obj->base.handle.pipeline = VK_NULL_HANDLE;
++      list_inithead(&obj->base.track_head);
++      vkr_device_add_object(ctx, dev, &obj->base);
++      vkr_log("%s failed (%d); registered tombstone for pipeline object %" PRIu64,
++              op, result, ids[i]);
++   }
++}
++
+ static void
+ vkr_dispatch_vkCreateGraphicsPipelines(struct vn_dispatch_context *dispatch,
+                                        struct vn_command_vkCreateGraphicsPipelines *args)
+@@ -110,11 +136,34 @@ vkr_dispatch_vkCreateGraphicsPipelines(struct vn_dispatch_context *dispatch,
+    struct vkr_context *ctx = dispatch->data;
+    struct vkr_device *dev = vkr_device_from_handle(args->device);
+    struct object_array arr;
++   vkr_object_id stack_ids[16];
++   vkr_object_id *ids = args->createInfoCount <= ARRAY_SIZE(stack_ids)
++                           ? stack_ids
++                           : malloc(sizeof(*ids) * args->createInfoCount);
++   if (ids) {
++      for (uint32_t i = 0; i < args->createInfoCount; i++) {
++         ids[i] = vkr_cs_handle_load_id((const void **)&args->pPipelines[i],
++                                        VK_OBJECT_TYPE_PIPELINE);
++      }
++   }
+ 
+-   if (vkr_graphics_pipeline_create_array(ctx, args, &arr) < VK_SUCCESS)
++   VkResult res = vkr_graphics_pipeline_create_array(ctx, args, &arr);
++   if (res < VK_SUCCESS) {
++      if (ids)
++         vkr_pipeline_register_tombstones(ctx, dev, args->createInfoCount, ids, res,
++                                          "vkCreateGraphicsPipelines");
++      if (ids && ids != stack_ids)
++         free(ids);
+       return;
++   }
+ 
+    vkr_pipeline_add_array(ctx, dev, &arr, args->pPipelines);
++   if (ids) {
++      vkr_pipeline_register_tombstones(ctx, dev, args->createInfoCount, ids, res,
++                                       "vkCreateGraphicsPipelines");
++      if (ids != stack_ids)
++         free(ids);
++   }
+ }
+ 
+ static void
+@@ -124,18 +173,50 @@ vkr_dispatch_vkCreateComputePipelines(struct vn_dispatch_context *dispatch,
+    struct vkr_context *ctx = dispatch->data;
+    struct vkr_device *dev = vkr_device_from_handle(args->device);
+    struct object_array arr;
++   vkr_object_id stack_ids[16];
++   vkr_object_id *ids = args->createInfoCount <= ARRAY_SIZE(stack_ids)
++                           ? stack_ids
++                           : malloc(sizeof(*ids) * args->createInfoCount);
++   if (ids) {
++      for (uint32_t i = 0; i < args->createInfoCount; i++) {
++         ids[i] = vkr_cs_handle_load_id((const void **)&args->pPipelines[i],
++                                        VK_OBJECT_TYPE_PIPELINE);
++      }
++   }
+ 
+-   if (vkr_compute_pipeline_create_array(ctx, args, &arr) < VK_SUCCESS)
++   VkResult res = vkr_compute_pipeline_create_array(ctx, args, &arr);
++   if (res < VK_SUCCESS) {
++      if (ids)
++         vkr_pipeline_register_tombstones(ctx, dev, args->createInfoCount, ids, res,
++                                          "vkCreateComputePipelines");
++      if (ids && ids != stack_ids)
++         free(ids);
+       return;
++   }
+ 
+    vkr_pipeline_add_array(ctx, dev, &arr, args->pPipelines);
++   if (ids) {
++      vkr_pipeline_register_tombstones(ctx, dev, args->createInfoCount, ids, res,
++                                       "vkCreateComputePipelines");
++      if (ids != stack_ids)
++         free(ids);
++   }
+ }
+ 
+ static void
+ vkr_dispatch_vkDestroyPipeline(struct vn_dispatch_context *dispatch,
+                                struct vn_command_vkDestroyPipeline *args)
+ {
+-   vkr_pipeline_destroy_and_remove(dispatch->data, args);
++   struct vkr_context *ctx = dispatch->data;
++   struct vkr_device *dev = vkr_device_from_handle(args->device);
++   struct vkr_pipeline *obj = (struct vkr_pipeline *)(uintptr_t)args->pipeline;
++   if (obj && obj->base.handle.pipeline == VK_NULL_HANDLE) {
++      vkr_log("ignoring vkDestroyPipeline for failed pipeline object %" PRIu64,
++              obj->base.id);
++      vkr_device_remove_object(ctx, dev, &obj->base);
++      return;
++   }
++   vkr_pipeline_destroy_and_remove(ctx, args);
+ }
+ 
+ void

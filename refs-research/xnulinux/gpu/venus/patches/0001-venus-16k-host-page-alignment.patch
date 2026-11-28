@@ -1,0 +1,56 @@
+Upstream: Mesa 26.3.1 (https://archive.mesa3d.org/mesa-26.3.1.tar.xz)
+Upstream-License: MIT
+Patch-License: MIT (provided under the same license as upstream)
+Origin: Sergio Lopez, gitlab.freedesktop.org/slp/mesa commit 761ef1ec ("virtio/vulkan: force 16k alignment for allocations")
+Subject: venus: align ring, shmem, blob and device memory sizes to 16 KiB
+
+On a macOS host (krunkit/libkrun), the VMM maps virtio-gpu blobs into the guest with hv_vm_map, which needs host-page
+(16 KiB) aligned sizes; the guest kernel rounds them only to its own 4 KiB pages. Linux 7.2 exposes the device's blob
+alignment (VIRTIO_GPU_F_BLOB_ALIGNMENT); until Mesa reads it, align everything to 16 KiB.
+
+--- a/src/virtio/vulkan/vn_device_memory.c
++++ b/src/virtio/vulkan/vn_device_memory.c
+@@ -31,6 +31,12 @@ vn_device_memory_alloc_simple(struct vn_device *dev,
+ {
+    VkDevice dev_handle = vn_device_to_handle(dev);
+    VkDeviceMemory mem_handle = vn_device_memory_to_handle(mem);
++
++   /* in a copy: the info is the application's own, const and possibly in read-only memory */
++   VkMemoryAllocateInfo aligned_info = *alloc_info;
++   aligned_info.allocationSize = align64(alloc_info->allocationSize, 16384);
++   alloc_info = &aligned_info;
++
+    if (VN_PERF(NO_ASYNC_MEM_ALLOC)) {
+       return vn_call_vkAllocateMemory(dev->primary_ring, dev_handle,
+                                       alloc_info, NULL, &mem_handle);
+--- a/src/virtio/vulkan/vn_renderer_virtgpu.c
++++ b/src/virtio/vulkan/vn_renderer_virtgpu.c
+@@ -1241,6 +1241,8 @@ virtgpu_bo_create_from_device_memory(
+    const uint32_t blob_flags =
+       virtgpu_bo_blob_flags(gpu, flags, external_handles);
+ 
++   size = align64(size, 16384);
++
+    uint32_t res_id;
+    uint32_t gem_handle = virtgpu_ioctl_resource_create_blob(
+       gpu, gpu->bo_blob_mem, blob_flags, size, mem_id, &res_id);
+@@ -1291,6 +1293,8 @@ virtgpu_shmem_create(struct vn_renderer *renderer, size_t size)
+ {
+    struct virtgpu *gpu = (struct virtgpu *)renderer;
+ 
++   size = align64(size, 16384);
++
+    struct vn_renderer_shmem *cached_shmem =
+       vn_renderer_shmem_cache_get(&gpu->shmem_cache, size);
+    if (cached_shmem) {
+--- a/src/virtio/vulkan/vn_ring.c
++++ b/src/virtio/vulkan/vn_ring.c
+@@ -264,7 +264,7 @@ vn_ring_get_layout(size_t buf_size,
+    layout->extra_offset = layout->buffer_offset + layout->buffer_size;
+    layout->extra_size = extra_size;
+ 
+-   layout->shmem_size = layout->extra_offset + layout->extra_size;
++   layout->shmem_size = align64(layout->extra_offset + layout->extra_size, 16384);
+ }
+ 
+ struct vn_ring *

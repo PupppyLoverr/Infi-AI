@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# scripts/apple-kc/im4p.py (the kernelcache unpacker of scripts/apple-kc/link.sh) on kernelcaches the test makes itself:
+# tests/apple-kc/test_im4p.py, with the lzfse tool for the LZFSE round trip. Nothing of Apple's is read.
+name: im4p
+on:
+  push:
+    paths:
+      - .github/workflows/im4p.yml
+      - scripts/apple-kc/im4p.py
+      - tests/apple-kc/test_im4p.py
+  pull_request:
+    paths:
+      - .github/workflows/im4p.yml
+      - scripts/apple-kc/im4p.py
+      - tests/apple-kc/test_im4p.py
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: lzfse
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq lzfse >/dev/null
+          else
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install lzfse
+          fi
+      - name: Tests
+        run: IM4P_TEST_NEED_LZFSE=1 python3 tests/apple-kc/test_im4p.py -v

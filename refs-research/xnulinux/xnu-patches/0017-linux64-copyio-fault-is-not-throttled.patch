@@ -1,0 +1,77 @@
+From: xnulinux
+Subject: [PATCH] linux64: a page-in taken inside copyin/copyout is not I/O-throttled there
+
+vm_fault ends in throttle_lowpri_io(1) when it paged in from disk: a thread whose I/O is being throttled (utility or
+background tier, with higher-tier I/O going on) sleeps its throttle window there. For a fault taken in the kernel's
+copyin/copyout that is wrong: the thread is in the middle of a system call and holds what the call holds (a pipe's
+mutex, a file's lock in a write), so everything else that needs it waits out a background thread's throttle window.
+XNU's own abort handler therefore marks such a fault (handle_kernel_abort: thread->recover around vm_fault, "we don't
+want to throttle kernel faults for copyio faults"), throttle_lowpri_io asks current_thread_in_kernel_fault() and
+returns, and the thread sleeps its window on the way back to user space instead (unix_syscall's own
+throttle_lowpri_io).
+
+Hosted, XNU's abort handler does not see these faults, and neither stand-in set the mark: linux64_kernel_fault (an
+EL1 host: Linux takes the abort and forwards it) and linux64_el0_fault_user_page (a pure EL0 host: copyio resolves
+the fault itself). Both set it now, linux64_kernel_fault for a fault on a user address: with PAN on those are the
+kernel's copyin/copyout faults.
+---
+--- a/osfmk/arm64/copyio.c
++++ b/osfmk/arm64/copyio.c
+@@ -155,11 +155,14 @@ linux64_el0_fault_user_page(vm_map_t map, user_addr_t uaddr, bool write)
+ 	    fault_type, FALSE, FALSE) == KERN_SUCCESS) {
+ 		return 0;
+ 	}
+-	if (vm_fault(map, (vm_map_offset_t)(uaddr & ~0xfffULL), fault_type,
+-	    FALSE, VM_KERN_MEMORY_NONE, THREAD_UNINT, NULL, 0) != KERN_SUCCESS) {
+-		return EFAULT;
+-	}
+-	return 0;
++	/* a copyio fault, as linux64_kernel_fault's on an EL1 host (sleh.c): not one for vm_fault to throttle I/O on */
++	thread_t thread = current_thread();
++	bool const was_recover = thread->recover;
++	thread->recover = true;
++	kern_return_t kr = vm_fault(map, (vm_map_offset_t)(uaddr & ~0xfffULL), fault_type,
++	    FALSE, VM_KERN_MEMORY_NONE, THREAD_UNINT, NULL, 0);
++	thread->recover = was_recover;
++	return kr == KERN_SUCCESS ? 0 : EFAULT;
+ }
+ 
+ static int
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -3684,8 +3684,8 @@ linux64_kernel_fault(uint64_t far, uint64_t esr)
+ 	}
+ 	/* a kernel address faults on the kernel map; a user one (copyio) on the current thread's map */
+ 	vm_map_t map = kernel_map;
++	thread_t thread = current_thread();
+ 	if (!VM_KERNEL_ADDRESS(far)) {
+-		thread_t thread = current_thread();
+ 		if (thread == THREAD_NULL || thread->map == VM_MAP_NULL || thread->map == kernel_map) {
+ 			return KERN_FAILURE;
+ 		}
+@@ -3695,11 +3695,23 @@ linux64_kernel_fault(uint64_t far, uint64_t esr)
+ 	if (!is_translation_fault(fault_code)) {
+ 		ffr = arm_fast_fault(map->pmap, far, fault_type, (fault_code == FSC_ACCESS_FLAG_FAULT_L3), FALSE);
+ 	}
+-	kern_return_t kr = ffr == KERN_SUCCESS ? KERN_SUCCESS :
+-	    vm_fault(map, far, fault_type, FALSE, VM_KERN_MEMORY_NONE, THREAD_UNINT, NULL, 0);
+ 	if (ffr == KERN_SUCCESS) {
+ 		return KERN_SUCCESS;
+ 	}
++	/*
++	 * As handle_kernel_abort marks a fault taken in copyin/copyout (hosted: the kernel's faults on a user address are
++	 * those): vm_fault ends in throttle_lowpri_io, which asks current_thread_in_kernel_fault() and does not throttle
++	 * such a fault. Without the mark a thread with throttled I/O behind it slept its throttle window here, inside
++	 * the system call, holding whatever the call holds; it sleeps that window on the way back to user space.
++	 */
++	bool const was_recover = (map != kernel_map) ? thread->recover : false;
++	if (map != kernel_map) {
++		thread->recover = true;
++	}
++	kern_return_t kr = vm_fault(map, far, fault_type, FALSE, VM_KERN_MEMORY_NONE, THREAD_UNINT, NULL, 0);
++	if (map != kernel_map) {
++		thread->recover = was_recover;
++	}
+ 	return kr;
+ }
+ 

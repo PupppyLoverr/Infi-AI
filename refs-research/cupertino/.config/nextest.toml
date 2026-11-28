@@ -1,0 +1,12 @@
+# Every test runs in its own process. A test that runs longer than `period` is reported as slow every
+# period; after `terminate-after` periods it is killed and fails by name, so a hang costs 2 minutes,
+# not the whole run.
+[profile.default]
+slow-timeout = { period = "30s", terminate-after = 4 }
+fail-fast = false
+
+[profile.default.junit]
+path = "junit.xml"
+
+# CI (`cargo xtask ci` passes `--profile ci` when CI is set): the default profile's settings and JUnit report.
+[profile.ci]

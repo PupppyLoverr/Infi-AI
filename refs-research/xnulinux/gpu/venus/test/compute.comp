@@ -1,0 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#version 450
+layout(local_size_x=64) in;
+layout(std430, binding=0) buffer B { uint d[]; };
+// groups in two dimensions (compute.c dispatches 1024 x 64 of them): a row is 1024 * 64 = 65536 elements
+void main(){ uint i=gl_GlobalInvocationID.y*65536u+gl_GlobalInvocationID.x; d[i]=d[i]*2u+1u; }

@@ -1,0 +1,12 @@
+[package]
+name = "{{crate_name}}"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+cupertino-kit = {{kit_dependency}}
+
+# The toolkit draws on the CPU, so its crates are optimized even in a debug build of the application.
+[profile.dev.package."*"]
+opt-level = 3

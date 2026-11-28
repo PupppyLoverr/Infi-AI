@@ -1,0 +1,24 @@
+//! The integration tests of `cupertino-ui-controls`, one binary: each file beside this one is a module of it, so a
+//! test's name starts with its file's.
+
+#[allow(dead_code)]
+mod support;
+
+mod dialog;
+#[path = "glass-variants.rs"]
+mod glass_variants;
+#[path = "knob-lens.rs"]
+mod knob_lens;
+mod lists;
+mod menus;
+#[path = "press-controls.rs"]
+mod press_controls;
+#[path = "text-fields.rs"]
+mod text_fields;
+#[path = "toolbar-band.rs"]
+mod toolbar_band;
+#[path = "toolbar-press.rs"]
+mod toolbar_press;
+mod typeahead;
+#[path = "value-controls.rs"]
+mod value_controls;

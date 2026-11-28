@@ -1,0 +1,285 @@
+//! What the panel's preview pane shows of the selected result beyond the result itself: for a file or a folder its
+//! type in words, its size, when it changed, where it is, and a picture or the start of its text; for an application
+//! its icon at the pane's size. The host reads them off the loop and hands them over as a [`Preview`]; the helpers
+//! here turn what it read into the words the pane shows.
+
+use cupertino_kit::controls::ImageSource;
+use cupertino_kit::geometry::Size;
+
+/// The picture the pane shows above the result's name.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PreviewBody {
+    /// A picture of the file's content, drawn `size` points large.
+    Image {
+        sources: Vec<ImageSource>,
+        size: Size,
+    },
+    /// The first lines of a text file.
+    Text(String),
+    /// The result's icon at the pane's size.
+    Icon,
+}
+
+/// What the host found out about a result for the pane.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Preview {
+    pub body: PreviewBody,
+    /// The result's icon at [`crate::view::PREVIEW_ICON_SIZE`], one rendition per scale; none to draw the list's.
+    pub icon: Vec<ImageSource>,
+    /// The type in words ("PNG image", "Folder"); empty when it adds nothing.
+    pub kind: String,
+    /// Lines under the name, each a label and its value: the size, the change date, the folder.
+    pub details: Vec<(String, String)>,
+}
+
+/// Bytes read from the start of a file to show its text.
+pub const TEXT_SNIFF: usize = 4096;
+/// The longest line of an excerpt, in characters.
+const LINE_CHARS: usize = 160;
+
+/// The type `mime` in words: the kind of content, named by the subtype where that reads well.
+pub fn kind_name(mime: &str) -> String {
+    let (top, sub) = mime.split_once('/').unwrap_or((mime, ""));
+    let sub = sub.split(['+', ';']).next().unwrap_or("");
+    let sub = sub
+        .trim_start_matches("x-")
+        .trim_start_matches("vnd.")
+        .to_ascii_uppercase();
+    let named = |what: &str| {
+        if sub.is_empty() || sub.len() > 6 || sub.contains(['.', '-']) {
+            let mut word = what.to_owned();
+            if let Some(first) = word.get_mut(..1) {
+                first.make_ascii_uppercase();
+            }
+            word
+        } else {
+            format!("{sub} {what}")
+        }
+    };
+    match (top, mime) {
+        (_, "inode/directory") => "Folder".to_owned(),
+        (_, "text/plain") => "Plain text".to_owned(),
+        (_, "application/pdf") => "PDF document".to_owned(),
+        (_, "application/zip") => "ZIP archive".to_owned(),
+        (_, "application/octet-stream") => "Document".to_owned(),
+        ("image", _) => named("image"),
+        ("audio", _) => named("audio"),
+        ("video", _) => named("video"),
+        ("font", _) => named("font"),
+        ("text", _) => named("text"),
+        _ => "Document".to_owned(),
+    }
+}
+
+/// `bytes` in decimal units: "1 byte", "532 bytes", "12 KB", "1.2 MB".
+pub fn human_size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["KB", "MB", "GB", "TB", "PB"];
+    match bytes {
+        1 => return "1 byte".to_owned(),
+        0..1000 => return format!("{bytes} bytes"),
+        _ => {}
+    }
+    let mut value = bytes as f64 / 1000.0;
+    let mut unit = 0;
+    while value >= 999.95 && unit + 1 < UNITS.len() {
+        value /= 1000.0;
+        unit += 1;
+    }
+    if value < 10.0 {
+        format!("{value:.1} {}", UNITS[unit])
+    } else {
+        format!("{value:.0} {}", UNITS[unit])
+    }
+}
+
+/// The first `lines` lines of `bytes` when they read as text: UTF-8 (a character cut at the end is dropped) without
+/// NUL bytes. Tabs become four spaces, carriage returns go, and long lines are cut. `None` for binary content and for
+/// content that is only white space.
+pub fn text_excerpt(bytes: &[u8], lines: usize) -> Option<String> {
+    if bytes.contains(&0) {
+        return None;
+    }
+    let text = match std::str::from_utf8(bytes) {
+        Ok(text) => text,
+        // a character cut by the end of what was read
+        Err(e) if e.error_len().is_none() => std::str::from_utf8(&bytes[..e.valid_up_to()]).ok()?,
+        Err(_) => return None,
+    };
+    if text.trim().is_empty() {
+        return None;
+    }
+    let excerpt: Vec<String> = text
+        .lines()
+        .take(lines)
+        .map(|line| {
+            line.replace('\t', "    ")
+                .replace('\r', "")
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(LINE_CHARS)
+                .collect()
+        })
+        .collect();
+    Some(excerpt.join("\n"))
+}
+
+/// The most details the pane lists, and the longest text of a label, a value, the type or the excerpt it takes.
+pub const MAX_DETAILS: usize = 8;
+pub const MAX_LABEL_CHARS: usize = 64;
+pub const MAX_VALUE_CHARS: usize = 256;
+pub const MAX_EXCERPT_CHARS: usize = 4 * TEXT_SNIFF;
+/// The largest rendition a preview picture may have, in pixels on a side, and its most renditions.
+pub const MAX_IMAGE_EDGE: u32 = 2048;
+pub const MAX_RENDITIONS: usize = 4;
+
+/// `text` without control characters (but newlines when `lines`), cut to `limit` characters.
+fn clean(text: &str, limit: usize, lines: bool) -> String {
+    text.chars()
+        .filter(|&c| !c.is_control() || (lines && c == '\n'))
+        .take(limit)
+        .collect()
+}
+
+/// Whether `source` holds the pixels it says it has and is no larger than a preview needs.
+fn sound(source: &ImageSource) -> bool {
+    let image = &source.image;
+    let (w, h, stride) = (image.width, image.height, image.stride);
+    w > 0
+        && h > 0
+        && w <= MAX_IMAGE_EDGE
+        && h <= MAX_IMAGE_EDGE
+        && u64::from(stride) >= u64::from(w) * 4
+        && (image.pixels.len() as u64) >= u64::from(stride) * u64::from(h)
+}
+
+/// `preview` as the pane can show it. What a host hands over is never trusted to be well formed: at most
+/// [`MAX_DETAILS`] details, every text cut to its limit with control characters dropped, renditions that do not hold
+/// their pixels or exceed [`MAX_IMAGE_EDGE`] dropped, a picture left with none (or with a size that is not a finite
+/// positive one) shown as the icon, and the picture's size fitted to the pane.
+pub fn bounded(preview: Preview, limit: Size) -> Preview {
+    let keep = |sources: Vec<ImageSource>| -> Vec<ImageSource> {
+        sources
+            .into_iter()
+            .filter(sound)
+            .take(MAX_RENDITIONS)
+            .collect()
+    };
+    let body = match preview.body {
+        PreviewBody::Image { sources, size } => {
+            let sources = keep(sources);
+            let finite = size.width.is_finite()
+                && size.height.is_finite()
+                && size.width > 0.0
+                && size.height > 0.0;
+            if sources.is_empty() || !finite {
+                PreviewBody::Icon
+            } else {
+                PreviewBody::Image {
+                    sources,
+                    size: fit(size, limit),
+                }
+            }
+        }
+        PreviewBody::Text(text) => {
+            let text = clean(&text, MAX_EXCERPT_CHARS, true);
+            if text.trim().is_empty() {
+                PreviewBody::Icon
+            } else {
+                PreviewBody::Text(text)
+            }
+        }
+        PreviewBody::Icon => PreviewBody::Icon,
+    };
+    Preview {
+        body,
+        icon: keep(preview.icon),
+        kind: clean(&preview.kind, MAX_LABEL_CHARS, false),
+        details: preview
+            .details
+            .into_iter()
+            .take(MAX_DETAILS)
+            .map(|(label, value)| {
+                (
+                    clean(&label, MAX_LABEL_CHARS, false),
+                    clean(&value, MAX_VALUE_CHARS, false),
+                )
+            })
+            .collect(),
+    }
+}
+
+/// The folder holding `path`, with the home folder written as `~`.
+pub fn location(path: &std::path::Path, home: Option<&std::path::Path>) -> String {
+    let Some(parent) = path.parent() else {
+        return "/".to_owned();
+    };
+    if let Some(rest) = home.and_then(|home| parent.strip_prefix(home).ok()) {
+        return if rest.as_os_str().is_empty() {
+            "~".to_owned()
+        } else {
+            format!("~/{}", rest.display())
+        };
+    }
+    parent.display().to_string()
+}
+
+const MONTHS: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+
+/// The civil date of `days` since 1970-01-01: (year, month 1–12, day 1–31).
+fn civil(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    (year, month, day)
+}
+
+/// When `time` (Unix seconds) was, in local time `offset` seconds east of UTC, seen from `now`: "Today at 14:02",
+/// "Yesterday at 09:15", else "3 November 2026 at 14:02".
+pub fn format_date(time: i64, offset: i64, now: i64) -> String {
+    let local = time + offset;
+    let day = local.div_euclid(86_400);
+    let today = (now + offset).div_euclid(86_400);
+    let seconds = local.rem_euclid(86_400);
+    let clock = format!("{:02}:{:02}", seconds / 3600, seconds % 3600 / 60);
+    match today - day {
+        0 => format!("Today at {clock}"),
+        1 => format!("Yesterday at {clock}"),
+        _ => {
+            let (year, month, date) = civil(day);
+            format!("{date} {} {year} at {clock}", MONTHS[month as usize - 1])
+        }
+    }
+}
+
+/// `size` shrunk to fit inside `limit` with its aspect ratio kept; never enlarged.
+pub fn fit(size: Size, limit: Size) -> Size {
+    if size.width <= 0.0 || size.height <= 0.0 {
+        return Size::ZERO;
+    }
+    let scale = (limit.width / size.width)
+        .min(limit.height / size.height)
+        .min(1.0);
+    Size::new(
+        (size.width * scale).round().max(1.0),
+        (size.height * scale).round().max(1.0),
+    )
+}

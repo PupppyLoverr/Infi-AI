@@ -1,0 +1,9 @@
+# Pointers of Apple's kexts that go to another of the kernel's symbols than the one they were linked to
+# (scripts/kclink/kclink.py --rebind ADDRESS=SYMBOL; ADDRESS in macOS 27.2's vma2 kernelcache), one per line.
+#
+# AMFI's GOT slot for PAGE_SHIFT_CONST (the second of its __DATA_CONST,__got), which only CoreEntitlements'
+# CEElementIterate reads: with it, the iteration fails whenever the stack pointer is within 0x80 bytes of a page start.
+# On page-aligned kernel stacks and a fixed call chain that is a fixed outcome, and with this kernel's frames every
+# spawn's entitlement dictionary copy failed ("failed to create OSDictionary copy: 14" panic). The kernel's
+# k27_amfi_page_shift (31) stands in for it; AMFI's bytes stay as shipped.
+0xfffffe0007b4bbc8=_k27_amfi_page_shift

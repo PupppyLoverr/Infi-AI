@@ -1,0 +1,35 @@
+From: xnulinux
+Subject: [PATCH] linux64: on an EL1 host too, a pending urgent preemption is taken when preemption is re-enabled
+
+kernel_preempt_check is what _enable_preemption calls when the count reaches 0 with AST_URGENT pending: the place a
+thread is preempted when the preemption was asked for while it had preemption off (it woke a thread that should run
+instead while it held a spinlock; the hosted timer, run from where interrupts are re-enabled, expired its quantum).
+The pure EL0 host gave the function a hosted branch on XNU's virtual interrupt flag, because DAIF cannot be read at
+EL0, under `if (linux64_el0)`. On an EL1 host it still read DAIF. xnu.ko enters XNU with every interrupt masked
+(`msr daifset, #0xf`) and nothing hosted clears the mask (ml_set_interrupts_enabled only flips the virtual flag), so
+the test `state & DAIF_IRQF` was always true and the function returned: on an EL1 host enable_preemption() never
+preempted. The thread kept its CPU until it next turned XNU's interrupts back on with preemption on, blocked, or went
+back to user space, and the thread that should have run (a real-time thread, a thread_call) waited that long.
+
+The hosted branch is now taken on every host. It is the code a pure EL0 host has run all along; where the hosted
+kernel delivers its timer and IPIs (ml_set_interrupts_enabled, linux64_cpu_idle, linux64_spin_relax, the EL0 IRQ
+path) the virtual flag is off, and the branch returns before anything.
+---
+--- a/osfmk/arm/preemption_disable.c
++++ b/osfmk/arm/preemption_disable.c
+@@ -69,7 +69,14 @@ kernel_preempt_check(void)
+ {
+ 	uint64_t state;
+ 
+-	if (linux64_el0) {
++	/*
++	 * LINUX64 (xnulinux): hosted, XNU's interrupt state is the virtual flag (ml_set_interrupts_enabled), on an EL1 host
++	 * as on a pure EL0 one. The hardware's mask, which the test below reads, stays set for as long as XNU's kernel runs
++	 * on an EL1 host: with it an urgent AST was never taken here, and a preemption asked for while preemption was off
++	 * (a wakeup under a spinlock, the timer run from where interrupts are re-enabled) waited for the next place
++	 * interrupts are turned back on with preemption on, or for the return to user space.
++	 */
++	if (linux64_hook) {
+ 		if (!ml_get_interrupts_enabled()) {
+ 			return;
+ 		}

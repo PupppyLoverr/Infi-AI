@@ -1,0 +1,61 @@
+From: xnulinux
+Subject: [PATCH] linux64: a workloop sync waiter is not woken by being named as an inner queue's owner
+
+macOS 27.2's libdispatch tells the kernel who owns a queue that was taken without a system call also when that queue
+is not the workloop but one that targets it: a NOTE_WL_SYNC_WAKE | NOTE_WL_DISCOVER_OWNER event with bit 0x200, the
+owner's thread as ident, that queue's state word as the address, sent together with the caller's own
+NOTE_WL_SYNC_WAIT. This kernel does not know the bit. The owner of an inner queue, unlike the owner of the workloop,
+can be waiting on the workloop at that moment (dispatch_sync on the inner queue, then stuck behind the workloop's
+owner: its on-stack record is linked on the workloop's list), and its waiting knote has the same ident. The event was
+taken as a wake-up of that knote: the owner returned from its wait as if the workloop had been handed to it, ran its
+block and returned, and its record stayed on the list. Whoever drained the workloop later took the record off it, by
+then stack that had been reused, and died authenticating its first word (EXC_ARM_PAC_FAIL at
+_dispatch_lane_serial_drain + 212: locationd in about half of the boots with four CPUs, never with one).
+
+filt_wltouch now leaves a knote that is already there alone when such an event arrives, and a knote that such an
+event made is not a wake-up for its owner's later wait unless a real NOTE_WL_SYNC_WAKE came in between.
+---
+--- a/bsd/kern/kern_event.c
++++ b/bsd/kern/kern_event.c
+@@ -2050,6 +2050,20 @@ filt_wlupdate_inheritor(struct kqworkloop *kqwl, struct turnstile *ts,
+ 	turnstile_update_inheritor(ts, inheritor, flags);
+ }
+ 
++/*
++ * LINUX64: macOS 27.2's libdispatch sets this bit (no public header names it; the name is ours) on the
++ * NOTE_WL_SYNC_WAKE | NOTE_WL_DISCOVER_OWNER event that tells the kernel who owns a queue taken without a system
++ * call, when that queue is not the workloop itself but one that targets it (EV_EXTIDX_WL_ADDR is that queue's
++ * state word; the event comes with the caller's own NOTE_WL_SYNC_WAIT). The event's ident is the owner's, as a
++ * waiter's is, and unlike the owner of the workloop the owner of an inner queue can be waiting on the workloop at
++ * that moment (dispatch_sync on the inner queue, then stuck on the workloop: its record is linked on the workloop's
++ * list). Taken as a plain NOTE_WL_SYNC_WAKE, the event found the owner's waiting knote and woke it: the owner went on
++ * as if it had been handed the workloop, and whoever drained the workloop later found its record, by then stack that
++ * had been reused (EXC_ARM_PAC_FAIL in _dispatch_lane_serial_drain, locationd in about half of the boots with four
++ * CPUs).
++ */
++#define NOTE_WL_INNER_OWNER 0x00000200
++
+ #define EVFILT_WORKLOOP_EFAULT_RETRY_COUNT 100
+ #define FILT_WLATTACH 0
+ #define FILT_WLTOUCH  1
+@@ -2720,6 +2734,20 @@ filt_wltouch(struct knote *kn, struct kevent_qos_s *kev)
+ 	}
+ 
+ 	uint32_t command = kev->fflags & NOTE_WL_COMMANDS_MASK;
++	/*
++	 * LINUX64: an owner told about with NOTE_WL_INNER_OWNER may itself be waiting on this workloop, or come to
++	 * (see NOTE_WL_INNER_OWNER), and this knote is the owner's. Being discovered changes nothing for a knote
++	 * that is already there: a waiting owner is not woken by it. A knote the discovery made (kn_sfflags keeps the
++	 * bit) is not a wake-up either: the owner's wait on it waits, unless a real NOTE_WL_SYNC_WAKE came in between.
++	 */
++	if (command == NOTE_WL_SYNC_WAKE) {
++		if (kev->fflags & NOTE_WL_INNER_OWNER) {
++			return 0;
++		}
++		kn->kn_sfflags &= ~NOTE_WL_INNER_OWNER;
++	} else if (command == NOTE_WL_SYNC_WAIT && (kn->kn_sfflags & NOTE_WL_INNER_OWNER)) {
++		kn->kn_sfflags &= ~(NOTE_WL_INNER_OWNER | NOTE_WL_SYNC_WAKE);
++	}
+ 	if (command == NOTE_WL_SYNC_IPC) {
+ 		error = filt_wlupdate_sync_ipc(kqwl, kn, kev, FILT_WLTOUCH);
+ 	} else {

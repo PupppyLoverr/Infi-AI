@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+[package]
+name = "xnu-m2v-bridge"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "xnu_m2v"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+metal2vulkan = { path = "../metal2vulkan/crates/metal2vulkan", features = ["ash"] }
+metal2vulkan-runtime = { path = "../metal2vulkan/crates/metal2vulkan-runtime" }
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"

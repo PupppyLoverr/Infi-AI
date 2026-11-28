@@ -1,0 +1,670 @@
+use crate::glass::GlassRole;
+use crate::look::{self, paint_focus_ring};
+use crate::motion::{Curve, SpringTween, Tween};
+use crate::press::{Keys, Outcome, Press};
+use crate::{Button, ButtonRole, ButtonStyle};
+use cupertino_geometry::{Rect, Size};
+use cupertino_theme::animation::SpringPreset;
+use cupertino_theme::ui::{Color, ColorRole, ControlFamily, InteractionVariant, ThemeTokens};
+use cupertino_ui_core::layout::{Constraints, ContainerKind, LayoutSpec, Measured, SizeSpec};
+use cupertino_ui_core::{
+    AccessibleStates, Action, Change, ControlState, Environment, Event, EventCx, MeasureCx,
+    PaintCx, Propagation, Role, SemanticsCx, Widget,
+};
+
+impl<M> Button<M> {
+    fn radius(&self, chrome: Rect, theme: &ThemeTokens) -> f64 {
+        match self.style {
+            ButtonStyle::Bordered | ButtonStyle::Borderless => {
+                theme.metrics.button_radius.min(chrome.height() / 2.0)
+            }
+            ButtonStyle::Glass => look::geometry(theme, ControlFamily::GlassButton)
+                .corners
+                .radius(chrome.height()),
+            ButtonStyle::Pill | ButtonStyle::RoundIcon => chrome.height() / 2.0,
+        }
+    }
+
+    fn active(&self) -> bool {
+        self.enabled && !self.busy
+    }
+}
+
+/// The chrome's height: the push button's at the theme's control size, a translucent button's its own.
+fn height(style: ButtonStyle, theme: &ThemeTokens) -> f64 {
+    match style {
+        ButtonStyle::Glass => look::geometry(theme, ControlFamily::GlassButton).height,
+        _ => theme.metrics.button_height,
+    }
+}
+
+/// The chrome: the button's height, centred in a node padded out to the minimum target. A round icon button is
+/// square. The chrome is what paints; the padded node is what takes the pointer and what the layout places, and
+/// neither changes while the button is pressed.
+pub(crate) fn chrome(size: Size, style: ButtonStyle, theme: &ThemeTokens) -> Rect {
+    let height = height(style, theme);
+    let width = match style {
+        ButtonStyle::RoundIcon => height,
+        _ => size.width,
+    };
+    Rect::new(
+        (size.width - width) / 2.0,
+        (size.height - height) / 2.0,
+        width,
+        height,
+    )
+}
+
+/// What a button paints with in one state: its fill, the edge it strokes (only with Increase Contrast) and its label's
+/// colour.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ButtonLook {
+    pub fill: Option<Color>,
+    pub border: Option<Color>,
+    pub text: Option<Color>,
+}
+
+/// A destructive button's tinted bezel: a share of the destructive red.
+const DESTRUCTIVE_TINT: f32 = 0.10;
+/// A destructive button's red label while disabled: a share of the red.
+const DESTRUCTIVE_DISABLED: f32 = 0.45;
+
+impl ButtonLook {
+    /// An ordinary button is a quiet bezel with the control text; a default button the accent with its light label,
+    /// except in a window that is not active, where it rests as an ordinary button; a destructive button a red label
+    /// over a faint red tint. Disabled, every button is a fainter bezel with the disabled text: not the inactive
+    /// window's look, which keeps its labels. With Increase Contrast the bezel strokes its edge.
+    pub fn of(
+        role: ButtonRole,
+        style: ButtonStyle,
+        theme: &ThemeTokens,
+        state: &ControlState,
+    ) -> ButtonLook {
+        let contrast = theme.preferences.appearance.is_high_contrast();
+        let bezel = Some(look::quiet(theme, look::BEZEL, state));
+        let text = look::color(theme, ColorRole::ControlText, state);
+        let border = look::color(theme, ColorRole::ControlBorder, state).filter(|_| contrast);
+        let disabled = !state.enabled;
+        match role {
+            ButtonRole::Default
+                if !disabled && state.window_active && style != ButtonStyle::Glass =>
+            {
+                ButtonLook {
+                    fill: look::color(theme, ColorRole::DefaultButtonFill, state),
+                    border,
+                    text: look::color(theme, ColorRole::DefaultButtonText, state),
+                }
+            }
+            ButtonRole::Destructive if contrast && !disabled => ButtonLook {
+                fill: look::color(theme, ColorRole::DestructiveFill, state),
+                border,
+                text: look::color(theme, ColorRole::DestructiveText, state),
+            },
+            ButtonRole::Destructive => {
+                let red = look::color(
+                    theme,
+                    ColorRole::DestructiveFill,
+                    &ControlState {
+                        enabled: true,
+                        ..*state
+                    },
+                );
+                ButtonLook {
+                    fill: if disabled {
+                        bezel
+                    } else {
+                        look::faded(red, DESTRUCTIVE_TINT).map(|tint| {
+                            let quiet = look::quiet(theme, look::BEZEL, state);
+                            Color {
+                                a: tint.a + quiet.a - look::BEZEL.normal,
+                                ..tint
+                            }
+                        })
+                    },
+                    border,
+                    text: if disabled {
+                        look::faded(red, DESTRUCTIVE_DISABLED)
+                    } else {
+                        red
+                    },
+                }
+            }
+            _ => ButtonLook {
+                fill: bezel,
+                border,
+                text,
+            },
+        }
+    }
+}
+
+impl<M: Clone + 'static> Button<M> {
+    fn press(
+        &self,
+        press: &mut Press,
+        event: &Event,
+        keys: Keys,
+        cx: &mut EventCx<'_, M>,
+    ) -> Propagation {
+        match press.event(event, self.active(), keys, cx) {
+            Outcome::Ignored => Propagation::Continue,
+            Outcome::Changed => {
+                cx.request_paint();
+                Propagation::Stop
+            }
+            Outcome::Activated(_) => {
+                cx.request_paint();
+                if let Some(message) = &self.on_press {
+                    cx.emit(message.clone());
+                }
+                Propagation::Stop
+            }
+        }
+    }
+}
+
+/// A button that Space activates but Return passes over, so a sheet's Return reaches its default button.
+pub(crate) struct SheetButton<M> {
+    pub(crate) button: Button<M>,
+    /// Takes the focus when the sheet opens.
+    pub(crate) initial: bool,
+    /// An alert's button: a capsule as wide as its place, see [`paint_capsule`].
+    pub(crate) capsule: bool,
+}
+
+/// An alert's capsule button: its height and the least room on each side of its label.
+pub(crate) const CAPSULE_HEIGHT: f64 = 28.0;
+pub(crate) const CAPSULE_INSET: f64 = 12.0;
+/// The quiet capsule's fill: a share of white in the dark appearance and of black in the light one, more under the
+/// pointer and more again while pressed.
+const QUIET_DARK: f32 = 0.10;
+const QUIET_LIGHT: f32 = 0.06;
+const QUIET_HOVER: f32 = 0.04;
+const QUIET_PRESSED: f32 = 0.10;
+
+/// An alert's button: the default answer in the accent capsule with its light label, the others on a quiet capsule
+/// with the control text, or the destructive red for a destructive one (a red capsule in high contrast). A capsule
+/// fills its node's width.
+fn paint_capsule<M>(button: &Button<M>, press: &Press, cx: &mut PaintCx<'_>) {
+    let theme = cx.env().theme.clone();
+    let state = ControlState {
+        enabled: button.enabled,
+        hovered: press.hovered(),
+        pressed: press.pressed(),
+        focused: cx.is_focused(),
+        focus_visible: cx.focus_visible(),
+        window_active: cx.window_active(),
+        busy: button.busy,
+        ..ControlState::default()
+    };
+    let size = cx.size();
+    let height = CAPSULE_HEIGHT.min(size.height);
+    let chrome = Rect::new(0.0, (size.height - height) / 2.0, size.width, height);
+    let radius = height / 2.0;
+    let high_contrast = theme.preferences.appearance.is_high_contrast();
+    let (fill, text) = match button.role {
+        ButtonRole::Default => (
+            look::color(&theme, ColorRole::DefaultButtonFill, &state),
+            look::color(&theme, ColorRole::DefaultButtonText, &state),
+        ),
+        // in high contrast a red label on a quiet capsule may not stand out: the capsule takes the red instead
+        ButtonRole::Destructive if high_contrast => (
+            look::color(&theme, ColorRole::DestructiveFill, &state),
+            look::color(&theme, ColorRole::DestructiveText, &state),
+        ),
+        role => {
+            let dark = theme.preferences.appearance.is_dark();
+            let share = if dark { QUIET_DARK } else { QUIET_LIGHT }
+                + match look::variant(&state).interaction {
+                    InteractionVariant::Pressed => QUIET_PRESSED,
+                    InteractionVariant::Hover => QUIET_HOVER,
+                    _ => 0.0,
+                };
+            let tone = if dark { 1.0 } else { 0.0 };
+            let text = if role == ButtonRole::Destructive {
+                look::color(&theme, ColorRole::DestructiveFill, &state)
+            } else {
+                look::color(&theme, ColorRole::ControlText, &state)
+            };
+            (Some(Color::new(tone, tone, tone, share)), text)
+        }
+    };
+    look::fill(cx, chrome, radius, fill);
+    if high_contrast {
+        look::stroke(
+            cx,
+            chrome.inset(cupertino_geometry::Insets::uniform(0.5)),
+            radius - 0.5,
+            1.0,
+            look::color(&theme, ColorRole::ControlBorder, &state),
+        );
+    }
+    if let Some(label) = look::label(cx.env(), &button.label) {
+        let origin = look::centred(&label, chrome, cx.env());
+        let text = text.map(|c| {
+            if state.enabled {
+                c
+            } else {
+                Color::new(c.r, c.g, c.b, c.a * 0.5)
+            }
+        });
+        look::glyphs(cx, &label, origin, text);
+    }
+    paint_focus_ring(cx, chrome, radius);
+}
+
+impl<M: Clone + 'static> Widget<M> for SheetButton<M> {
+    type State = ButtonState;
+
+    fn layout(&self) -> LayoutSpec {
+        if self.capsule {
+            LayoutSpec {
+                width: SizeSpec::Fill,
+                ..LayoutSpec::new(ContainerKind::Leaf)
+            }
+        } else {
+            self.button.layout()
+        }
+    }
+
+    fn state(&self) -> ButtonState {
+        ButtonState::default()
+    }
+
+    fn update(&self, old: &Self, press: &mut ButtonState) -> Change {
+        if self.capsule != old.capsule {
+            return Change::Layout;
+        }
+        self.button.update(&old.button, press)
+    }
+
+    fn measure(
+        &self,
+        press: &ButtonState,
+        constraints: Constraints,
+        cx: &mut MeasureCx<'_>,
+    ) -> Measured {
+        if !self.capsule {
+            return self.button.measure(press, constraints, cx);
+        }
+        let label = look::label(cx.env(), &self.button.label).map_or(0.0, |l| l.size().width);
+        Measured {
+            size: Size::new(label + 2.0 * CAPSULE_INSET, CAPSULE_HEIGHT),
+            baseline: None,
+        }
+    }
+
+    fn event(
+        &self,
+        state: &mut ButtonState,
+        event: &Event,
+        cx: &mut EventCx<'_, M>,
+    ) -> Propagation {
+        self.button.press(&mut state.press, event, Keys::Space, cx)
+    }
+
+    fn paint(&self, press: &ButtonState, cx: &mut PaintCx<'_>) {
+        if self.capsule {
+            paint_capsule(&self.button, &press.press, cx);
+        } else {
+            self.button.paint(press, cx)
+        }
+    }
+
+    fn semantics(&self, press: &ButtonState, cx: &mut SemanticsCx<'_>) {
+        self.button.semantics(press, cx);
+        if self.initial {
+            cx.initial_focus();
+        }
+    }
+}
+
+/// How long a glass button's press tint takes to come on when it is pressed, and to go when it is let go, in seconds.
+const GLASS_PRESS_IN: f64 = 0.045;
+const GLASS_PRESS_OUT: f64 = 0.32;
+
+/// How many times its size a glass button's glass grows under a press, about its centre: on Kit's clock along
+/// [`SpringPreset::GLASS_BUTTON_PRESS`] as it is pressed and back along [`SpringPreset::GLASS_BUTTON_RELEASE`] as it is
+/// let go; not under Reduce Motion.
+const GLASS_PRESS_SCALE: f64 = 1.043;
+
+/// The interaction fill a glass button lays over its glass, a level of the label colour (black in the light appearance,
+/// white in the dark one): the quinary level while the pointer is over it, shown at once and gone as soon as it leaves,
+/// and the quaternary level while it is pressed; with Increase Contrast the deeper levels of those, light and dark.
+const GLASS_HOVER_FILL: f32 = 0.047;
+const GLASS_PRESS_FILL: f32 = 0.098;
+const GLASS_HOVER_FILL_CONTRAST: f32 = 0.149;
+const GLASS_PRESS_FILL_CONTRAST_LIGHT: f32 = 0.349;
+const GLASS_PRESS_FILL_CONTRAST_DARK: f32 = 0.298;
+
+/// The interaction fill of a glass button in `theme`, while hovered or (`pressed`) pressed.
+pub(crate) fn glass_interaction_fill(theme: &ThemeTokens, pressed: bool) -> Color {
+    let dark = theme.preferences.appearance.is_dark();
+    let contrast = theme.preferences.appearance.is_high_contrast();
+    let alpha = match (pressed, contrast, dark) {
+        (false, false, _) => GLASS_HOVER_FILL,
+        (false, true, _) => GLASS_HOVER_FILL_CONTRAST,
+        (true, false, _) => GLASS_PRESS_FILL,
+        (true, true, false) => GLASS_PRESS_FILL_CONTRAST_LIGHT,
+        (true, true, true) => GLASS_PRESS_FILL_CONTRAST_DARK,
+    };
+    let tone = if dark { 1.0 } else { 0.0 };
+    Color::new(tone, tone, tone, alpha)
+}
+
+impl<M> Button<M> {
+    /// The glass a glass button lies on and what it lays over it, and the look its label then takes. A default button
+    /// in an active window, enabled, is the regular glass tinted with the accent at full strength, its label in the
+    /// default button's text colour; where the desktop shows no glass the accent is filled over the painted body, and
+    /// where it does not tint glass over the glass. The button grows its glass under a press on Kit's clock
+    /// ([`GLASS_PRESS_SCALE`], none under Reduce Motion nor where the desktop does not scale glass); its glass
+    /// is not interactive, so the compositor does not grow it again. Over it the interaction fill
+    /// ([`glass_interaction_fill`]): the hover level at once, the press level coming on and going with the press.
+    fn paint_glass_body(
+        &self,
+        button: &ButtonState,
+        state: &ControlState,
+        chrome: Rect,
+        radius: f64,
+        cx: &mut PaintCx<'_>,
+    ) -> ButtonLook {
+        let theme = cx.env().theme.clone();
+        let accent = (self.role == ButtonRole::Default && state.enabled && state.window_active)
+            .then(|| look::color(&theme, ColorRole::DefaultButtonFill, state))
+            .flatten()
+            .map(|c| c.with_alpha(1.0));
+        // on glass already the button draws none of its own, so the accent is filled there too, as it is over glass
+        // the window system does not tint
+        let on_glass = cx.on_glass();
+        let tinted = cx.glass_tint();
+        // the glass grows under a press on Kit's clock, not under Reduce Motion nor where the window system draws it at
+        // its shape
+        let scale = if theme.motion.reduce || !cx.glass_scale() {
+            1.0
+        } else {
+            1.0 + (GLASS_PRESS_SCALE - 1.0) * button.grow.sample(cx)
+        };
+        let shown = crate::glass::paint_glass_tinted(
+            cx,
+            GlassRole::GlassButton,
+            chrome,
+            radius,
+            accent.filter(|_| tinted),
+            scale,
+        );
+        if !shown || on_glass || !tinted {
+            look::fill(cx, chrome, radius, accent);
+        }
+        // the label takes the colours of text on the glass, or on the accent
+        let mut look = ButtonLook::of(self.role, self.style, &cx.env().theme, state);
+        if accent.is_some() {
+            look.text = look::color(&theme, ColorRole::DefaultButtonText, state);
+        }
+        if !state.enabled {
+            return look;
+        }
+        let press = button.tint.sample(cx);
+        if press > 0.0 {
+            let fill = glass_interaction_fill(&theme, true);
+            look::fill(cx, chrome, radius, look::faded(Some(fill), press as f32));
+        } else if state.hovered {
+            look::fill(
+                cx,
+                chrome,
+                radius,
+                Some(glass_interaction_fill(&theme, false)),
+            );
+        }
+        look
+    }
+}
+
+/// The node state of a [`Button`]: how it is armed, how far a glass button's press tint has come on and how far its
+/// glass has grown towards [`GLASS_PRESS_SCALE`], from 0 at rest to 1. Opaque.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ButtonState {
+    press: Press,
+    tint: Tween,
+    grow: SpringTween,
+}
+
+impl<M: Clone + 'static> Widget<M> for Button<M> {
+    type State = ButtonState;
+
+    fn layout(&self) -> LayoutSpec {
+        LayoutSpec::new(ContainerKind::Leaf)
+    }
+
+    fn state(&self) -> ButtonState {
+        ButtonState::default()
+    }
+
+    fn update(&self, old: &Self, _: &mut ButtonState) -> Change {
+        if self.label != old.label || self.style != old.style {
+            Change::Layout
+        } else if self.role != old.role || self.enabled != old.enabled || self.busy != old.busy {
+            Change::Paint
+        } else {
+            Change::None
+        }
+    }
+
+    /// A round icon button's label is only its accessible name; the others fit the label between their insets.
+    fn measure(&self, _: &ButtonState, _: Constraints, cx: &mut MeasureCx<'_>) -> Measured {
+        let metrics = cx.env().theme.metrics;
+        let width = match self.style {
+            ButtonStyle::RoundIcon => metrics.button_height,
+            _ => {
+                let label = look::label(cx.env(), &self.label).map_or(0.0, |l| l.size().width);
+                label + 2.0 * metrics.button_inset
+            }
+        };
+        Measured {
+            size: Size::new(width, height(self.style, &cx.env().theme)),
+            baseline: None,
+        }
+    }
+
+    fn target(&self, _: &ButtonState, env: &Environment) -> Size {
+        env.theme.metrics.min_target
+    }
+
+    /// A glass button draws in the window's raised layer, its glass between that layer and the window's content, so
+    /// over content its glass shows what lies under it.
+    fn raised(&self, _: &ButtonState) -> bool {
+        self.style == ButtonStyle::Glass
+    }
+
+    fn event(
+        &self,
+        state: &mut ButtonState,
+        event: &Event,
+        cx: &mut EventCx<'_, M>,
+    ) -> Propagation {
+        let pressed = state.press.pressed();
+        let propagation = self.press(&mut state.press, event, Keys::SpaceAndReturn, cx);
+        // a glass button's press tint comes on quickly and lingers as it goes; its glass grows and settles back
+        match (pressed, state.press.pressed()) {
+            (false, true) => {
+                state.tint.go(1.0, GLASS_PRESS_IN, 0.0, Curve::EaseOut);
+                state.grow.go(1.0, SpringPreset::GLASS_BUTTON_PRESS);
+            }
+            (true, false) => {
+                state.tint.go(0.0, GLASS_PRESS_OUT, 0.0, Curve::EaseInOut);
+                state.grow.go(0.0, SpringPreset::GLASS_BUTTON_RELEASE);
+            }
+            _ => {}
+        }
+        propagation
+    }
+
+    fn paint(&self, button: &ButtonState, cx: &mut PaintCx<'_>) {
+        let press = &button.press;
+        let theme = cx.env().theme.clone();
+        let state = ControlState {
+            enabled: self.enabled,
+            hovered: press.hovered(),
+            pressed: press.pressed(),
+            focused: cx.is_focused(),
+            focus_visible: cx.focus_visible(),
+            window_active: cx.window_active(),
+            busy: self.busy,
+            ..ControlState::default()
+        };
+        let chrome = chrome(cx.size(), self.style, &theme);
+        let radius = self.radius(chrome, &theme);
+        let mut look = ButtonLook::of(self.role, self.style, &theme, &state);
+        if self.style == ButtonStyle::Glass {
+            look = self.paint_glass_body(button, &state, chrome, radius, cx);
+        } else if self.style != ButtonStyle::Borderless || state.pressed {
+            look::fill(cx, chrome, radius, look.fill);
+        }
+        if let Some(border) = look.border {
+            look::stroke(
+                cx,
+                chrome.inset(cupertino_geometry::Insets::uniform(0.5)),
+                radius - 0.5,
+                1.0,
+                Some(border),
+            );
+        }
+        if self.style != ButtonStyle::RoundIcon {
+            if let Some(label) = look::label(cx.env(), &self.label) {
+                let origin = look::centred(&label, chrome, cx.env());
+                look::glyphs(cx, &label, origin, look.text);
+            }
+        }
+        paint_focus_ring(cx, chrome, radius);
+    }
+
+    fn semantics(&self, _: &ButtonState, cx: &mut SemanticsCx<'_>) {
+        cx.role(Role::Button);
+        cx.name(self.label.clone());
+        cx.states(AccessibleStates {
+            disabled: !self.enabled,
+            busy: self.busy,
+            ..AccessibleStates::default()
+        });
+        if self.enabled {
+            cx.focusable();
+        }
+        if self.active() {
+            cx.action(Action::Click);
+        }
+    }
+}
+
+/// The height of a [`CompactButton`]'s bezel and the least width of it.
+const COMPACT_HEIGHT: f64 = 19.0;
+const COMPACT_MIN_WIDTH: f64 = 53.5;
+/// The room beside a compact button's label, and the corner radius of its bezel.
+const COMPACT_INSET: f64 = 9.5;
+const COMPACT_RADIUS: f64 = 5.5;
+
+/// A push button smaller than the ordinary one, for a strip of a list that holds one action: a quiet rounded bezel 19
+/// points tall and at least 53.5 wide with its label, Space and Return activating it. It is taken out of the Tab
+/// order while disabled.
+pub struct CompactButton<M> {
+    pub label: String,
+    pub enabled: bool,
+    pub on_press: Option<M>,
+}
+
+impl<M: Clone> CompactButton<M> {
+    fn plain(&self) -> Button<M> {
+        Button {
+            label: self.label.clone(),
+            role: ButtonRole::Normal,
+            style: ButtonStyle::Bordered,
+            enabled: self.enabled,
+            busy: false,
+            on_press: self.on_press.clone(),
+        }
+    }
+}
+
+impl<M: Clone + 'static> Widget<M> for CompactButton<M> {
+    type State = Press;
+
+    fn layout(&self) -> LayoutSpec {
+        LayoutSpec::new(ContainerKind::Leaf)
+    }
+
+    fn state(&self) -> Press {
+        Press::default()
+    }
+
+    fn update(&self, old: &Self, _: &mut Press) -> Change {
+        if self.label != old.label {
+            Change::Layout
+        } else if self.enabled != old.enabled {
+            Change::Paint
+        } else {
+            Change::None
+        }
+    }
+
+    fn measure(&self, _: &Press, _: Constraints, cx: &mut MeasureCx<'_>) -> Measured {
+        let label = look::label(cx.env(), &self.label).map_or(0.0, |l| l.size().width);
+        Measured {
+            size: Size::new(
+                (label + 2.0 * COMPACT_INSET).max(COMPACT_MIN_WIDTH),
+                COMPACT_HEIGHT,
+            ),
+            baseline: None,
+        }
+    }
+
+    fn event(&self, press: &mut Press, event: &Event, cx: &mut EventCx<'_, M>) -> Propagation {
+        self.plain().press(press, event, Keys::SpaceAndReturn, cx)
+    }
+
+    fn paint(&self, press: &Press, cx: &mut PaintCx<'_>) {
+        let theme = cx.env().theme.clone();
+        let state = ControlState {
+            enabled: self.enabled,
+            hovered: press.hovered(),
+            pressed: press.pressed(),
+            focused: cx.is_focused(),
+            focus_visible: cx.focus_visible(),
+            window_active: cx.window_active(),
+            ..ControlState::default()
+        };
+        let size = cx.size();
+        let chrome = Rect::new(
+            0.0,
+            (size.height - COMPACT_HEIGHT) / 2.0,
+            size.width,
+            COMPACT_HEIGHT,
+        );
+        let look = ButtonLook::of(ButtonRole::Normal, ButtonStyle::Bordered, &theme, &state);
+        look::fill(cx, chrome, COMPACT_RADIUS, look.fill);
+        if let Some(border) = look.border {
+            look::stroke(
+                cx,
+                chrome.inset(cupertino_geometry::Insets::uniform(0.5)),
+                COMPACT_RADIUS - 0.5,
+                1.0,
+                Some(border),
+            );
+        }
+        if let Some(label) = look::label(cx.env(), &self.label) {
+            let origin = look::centred(&label, chrome, cx.env());
+            look::glyphs(cx, &label, origin, look.text);
+        }
+        paint_focus_ring(cx, chrome, COMPACT_RADIUS);
+    }
+
+    fn semantics(&self, _: &Press, cx: &mut SemanticsCx<'_>) {
+        cx.role(Role::Button);
+        cx.name(self.label.clone());
+        cx.states(AccessibleStates {
+            disabled: !self.enabled,
+            ..AccessibleStates::default()
+        });
+        if self.enabled {
+            cx.focusable();
+            cx.action(Action::Click);
+        }
+    }
+}

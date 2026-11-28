@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# The tests of the kernel collection linker (scripts/kclink), in tests/kclink: python3 and, for the tests that compile
+# their objects, the runner's clang; nothing of Apple's. A test file added there is run without a change to this file.
+name: kclink
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: The kernel collection linker's tests
+        run: python3 -m unittest discover -s tests/kclink -v

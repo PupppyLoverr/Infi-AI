@@ -1,0 +1,31 @@
+[package]
+name = "cupertino-protocols"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Private Wayland protocols between the Cupertino server and its shell processes, with generated client and server bindings; re-exports the public ones"
+autotests = false
+
+[package.metadata.cupertino]
+layer = "protocol"
+
+[lib]
+test = false
+
+[features]
+client = ["dep:wayland-client", "dep:wayland-backend", "dep:wayland-scanner", "dep:bitflags", "cupertino-app-protocols/client"]
+server = ["dep:wayland-server", "dep:wayland-backend", "dep:wayland-scanner", "dep:bitflags", "cupertino-app-protocols/server"]
+
+[dependencies]
+cupertino-app-protocols = { path = "../cupertino-app-protocols", optional = true }
+bitflags = { version = "2", optional = true }
+wayland-backend = { version = "0.3", optional = true }
+wayland-scanner = { version = "0.31", optional = true }
+wayland-client = { version = "0.31", optional = true }
+wayland-server = { version = "0.31", optional = true }
+
+[[test]]
+# Every file of `tests/` is a module of this one binary (`tests/main.rs`).
+name = "tests"
+path = "tests/main.rs"
+required-features = ["client", "server"]

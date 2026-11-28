@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Build fki.ko and xnu.ko against the newest generic arm64 Ubuntu kernel's headers (the host the project runs on:
+# Ubuntu 24.04 with its HWE kernel), and check that every source file names its license.
+name: modules
+on:
+  push:
+  pull_request:
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Kernel headers
+        run: |
+          sudo apt-get update -qq
+          pkg=$(apt-cache search --names-only '^linux-headers-[0-9.]+-[0-9]+-generic$' | awk '{print $1}' | sort -V | tail -1)
+          echo "headers: $pkg"
+          sudo apt-get install -y -qq "$pkg" >/dev/null
+          echo "KDIR=/usr/src/${pkg#linux-headers-}" | sed 's|/usr/src/|/usr/src/linux-headers-|' >> "$GITHUB_ENV"
+      - name: fki.ko
+        run: make -C "$KDIR" M="$PWD/fki-ko" modules
+      - name: xnu.ko
+        run: make -C "$KDIR" M="$PWD/xnu-ko" KBUILD_EXTRA_SYMBOLS="$PWD/fki-ko/Module.symvers" modules
+      - name: Module licenses
+        run: |
+          test "$(modinfo -F license fki-ko/fki.ko)" = GPL
+          test "$(modinfo -F license xnu-ko/xnu.ko)" = Proprietary
+  apple-kc:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: scripts/apple-kc (package.sh, link.sh) on stand-ins for what they read
+        run: tests/apple-kc/run.sh
+  spdx:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Every source file has an SPDX-License-Identifier
+        run: |
+          missing=$(git ls-files '*.c' '*.h' '*.cpp' '*.mm' '*.m' '*.rs' '*.S' '*.s' '*.sh' '*.py' '*.metal' '*.comp' '*Makefile' |
+            while read -r f; do head -3 "$f" | grep -q SPDX-License-Identifier || echo "$f"; done)
+          [ -z "$missing" ] || { echo "no SPDX-License-Identifier:"; echo "$missing"; exit 1; }

@@ -1,0 +1,61 @@
+[package]
+name = "cupertino-server-render"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Compositor rendering primitives: scene lowering, GLES passes, window chrome, cursors, effects, and snapshots"
+autotests = false
+
+[package.metadata.cupertino]
+layer = "core"
+
+[lib]
+test = false
+
+[dependencies]
+accesskit = "0.25"
+accesskit_unix = "0.24"
+anyhow = "1"
+bumpalo = { version = "3.20", features = ["collections"] }
+bytemuck = { version = "1", features = ["derive"] }
+cupertino-assets = { path = "../cupertino-assets" }
+cupertino-cursor = { path = "../cupertino-cursor" }
+cupertino-defaults = { path = "../cupertino-defaults" }
+cupertino-effects = { path = "../cupertino-effects" }
+cupertino-geometry = { path = "../cupertino-geometry" }
+cupertino-glass = { path = "../cupertino-glass" }
+cupertino-gpu = { path = "../cupertino-gpu" }
+cupertino-input = { path = "../cupertino-input" }
+cupertino-raster-math = { path = "../cupertino-raster-math" }
+cupertino-scene = { path = "../cupertino-scene" }
+cupertino-server-backend = { path = "../cupertino-server-backend" }
+cupertino-theme = { path = "../cupertino-theme" }
+cupertino-wm = { path = "../cupertino-wm" }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+libc = "0.2"
+rustix = { version = "1", features = ["event", "fs"] }
+swash = "0.2.10"
+tiny-skia = "0.12"
+tracing = "0.1"
+xcursor = "0.3"
+
+[dependencies.smithay]
+version = "0.7"
+default-features = false
+features = [
+    "backend_drm",
+    "backend_egl",
+    "backend_gbm",
+    "desktop",
+    "renderer_gl",
+    "wayland_frontend",
+]
+
+[[bench]]
+name = "decorations"
+harness = false
+
+[[test]]
+# Every file of `tests/` is a module of this one binary (`tests/main.rs`).
+name = "tests"
+path = "tests/main.rs"

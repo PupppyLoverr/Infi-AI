@@ -1,0 +1,30 @@
+Upstream: Mesa 26.3.1 (https://archive.mesa3d.org/mesa-26.3.1.tar.xz)
+Upstream-License: MIT
+Patch-License: MIT (provided under the same license as upstream)
+Subject: util: threads Mesa starts leave the hardware-fault signals unblocked
+
+Mesa blocks every signal but SIGSYS and SIGSEGV on the threads it starts (u_thread_create_ex). On Darwin a hardware
+fault whose signal is blocked on the faulting thread is not delivered: the thread runs the same instruction again
+and faults again, forever, at full CPU (gpu/xnu-cpu-metal/test/faultmask.c shows it, on a Mac too). A protection
+fault there is SIGBUS, not SIGSEGV, so a rasteriser thread that jumps to non-executable memory never ends its
+process: iconservicesagent was seen at 100% of a CPU with 150,000 faults a second. With SIGBUS, SIGILL, SIGFPE and
+SIGTRAP left unblocked the process dies with a crash report and launchd starts it again.
+
+--- a/src/util/u_thread.c
++++ b/src/util/u_thread.c
+@@ -84,6 +84,15 @@
+     * that tracking mechanism.
+     */
+    sigdelset(&new_set, SIGSEGV);
++
++   /* A hardware fault on a thread that has its signal blocked is not delivered on Darwin: the thread takes the
++    * same fault again and again, at full CPU, and the process never dies (a protection fault there is SIGBUS,
++    * not SIGSEGV). Leave the fault signals to their default action.
++    */
++   sigdelset(&new_set, SIGBUS);
++   sigdelset(&new_set, SIGILL);
++   sigdelset(&new_set, SIGFPE);
++   sigdelset(&new_set, SIGTRAP);
+    pthread_sigmask(SIG_BLOCK, &new_set, &saved_set);
+    ret = thrd_create(thrd, thread_routine, paramp);
+    pthread_sigmask(SIG_SETMASK, &saved_set, NULL);

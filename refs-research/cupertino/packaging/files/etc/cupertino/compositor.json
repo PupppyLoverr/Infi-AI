@@ -1,0 +1,8 @@
+{
+  "shell": {
+    "components": ["menubar", "dock", "desktop", "windowmanager", "overview", "launcher",
+                   "notifications", "controlcenter", "osd", "agent", "dialogs"],
+    "off": [],
+    "alone": []
+  }
+}

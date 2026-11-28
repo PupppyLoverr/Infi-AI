@@ -1,0 +1,102 @@
+From: xnulinux
+Subject: [PATCH] linux64: spinning CPUs let the host in (paravirtual ticket locks, cpu_pause relax)
+
+XNU's ticket locks (lck_spin, hw_lck_ticket) wait through hvg_hc_wait_for_kick / hvg_hc_kick_cpu when has_lock_pv
+(CONFIG_PV_TICKET, osfmk/arm64/lock_ticket_pv.c), as under Apple's own hypervisor. Hosted, a CPU spinning on a lock with
+every interrupt masked held its Linux CPU too: Linux CPUs waiting for it (an IPI's answer) locked up with four CPUs.
+---
+diff --git a/config/MASTER.arm64.bcm2837 b/config/MASTER.arm64.bcm2837
+--- a/config/MASTER.arm64.bcm2837
++++ b/config/MASTER.arm64.bcm2837
+@@ -69,7 +69,7 @@
+ #  PERF_DBG_DEV =   [ PERF_DBG_BASE config_dtrace lock_stats zleaks alternate_debugger config_debug_syscall_rejection config_iotrace PERF_EXTRAS_DEV config_memory_microstackshot ]
+ #  PERF_DBG_DEBUG = [ PERF_DBG_BASE config_dtrace lock_stats zleaks alternate_debugger config_debug_syscall_rejection config_iotrace PERF_EXTRAS_DEBUG config_memory_microstackshot ]
+ #  PERF_DBG_KASAN = [ PERF_DBG_BASE config_dtrace lock_stats zleaks alternate_debugger config_debug_syscall_rejection config_iotrace PERF_EXTRAS_DEV config_memory_microstackshot ]
+-#  PARAVIRT_BASE =  [ ]
++#  PARAVIRT_BASE =  [ config_pv_ticket ]
+ #  MACH_BASE =      [ mach config_ecc_logging vc_progress_white importance_inheritance config_atm config_coalitions config_iosched config_library_validation config_sysdiagnose config_telemetry config_mach_bridge_recv_time config_quiesce_counter config_io_compression_stats phys_write_acct config_service_port_info PARAVIRT_BASE ]
+ #  MACH_RELEASE =   [ MACH_BASE config_skip_precise_user_kernel_time debugger_for_zone_info ]
+ #  MACH_DEV =       [ MACH_BASE config_io_accounting importance_trace config_task_suspend_stats ]
+diff --git a/osfmk/arm64/arm64_hypercall.c b/osfmk/arm64/arm64_hypercall.c
+--- a/osfmk/arm64/arm64_hypercall.c
++++ b/osfmk/arm64/arm64_hypercall.c
+@@ -292,12 +292,46 @@
+ 
+ #else /* APPLEVIRTUALPLATFORM */
+ 
+-bool
+-hvg_is_hcall_available(__unused hvg_hcall_code_t hcall)
++#include <arm/cpu_data_internal.h>
++#include <linux64/linux64.h>
++
++/*
++ * LINUX64 (xnulinux): the paravirtual ticket locks' wait-for-kick and kick (osfmk/arm64/lock_ticket_pv.c) on the host.
++ * Each XNU CPU is a Linux thread: a CPU that cannot get a ticket lock sleeps in Linux (interrupts on, so Linux can use
++ * the CPU and take its IPIs) until the holder's unlock kicks it, instead of spinning with every interrupt masked. The
++ * wait is bounded (1 ms) and may end early: the caller looks at the lock again either way.
++ */
++static unsigned int linux64_pv_kicked[LINUX64_CPU_SLOTS];
++
++bool
++hvg_is_hcall_available(hvg_hcall_code_t hcall)
+ {
+-	return false;
++	return linux64_hook && (hcall == HVG_HCALL_VCPU_WFK || hcall == HVG_HCALL_VCPU_KICK);
++}
++
++void
++hvg_hc_kick_cpu(unsigned int cpu_id)
++{
++	cpu_data_t *target = CpuDataEntries[cpu_id].cpu_data_vaddr;
++
++	if (target == NULL) {
++		return;
++	}
++	os_atomic_store(&linux64_pv_kicked[LINUX64_CPU_SLOT(target->cpu_phys_id)], 1, release);
++	linux64_call2(LINUX64_CALL_IPI, target->cpu_phys_id, 0);	/* the host wakes that CPU; no XNU IPI is pending */
+ }
+ 
++void
++hvg_hc_wait_for_kick(__unused unsigned int ien)
++{
++	unsigned int slot = linux64_cpu_slot();
++
++	if (!os_atomic_xchg(&linux64_pv_kicked[slot], 0, acquire)) {
++		linux64_call2(LINUX64_CALL_IDLE, 1000000, (unsigned long)&linux64_pv_kicked[slot]);
++		os_atomic_store(&linux64_pv_kicked[slot], 0, relaxed);
++	}
++}
++
+ hvg_hcall_return_t
+ hvg_hcall_get_mabs_offset(__attribute__((unused)) uint64_t *mabs_offset)
+ {
+diff --git a/osfmk/arm/machine_cpu.h b/osfmk/arm/machine_cpu.h
+--- a/osfmk/arm/machine_cpu.h
++++ b/osfmk/arm/machine_cpu.h
+@@ -56,7 +56,14 @@
+ 
+ extern void init_cpu_timebase(boolean_t enable_fiq);
+ 
+-#define cpu_pause() do {} while (0)     /* Not for this architecture */
++/*
++ * LINUX64 (xnulinux): every spin loop's pause (lock_rw, the lock spin helpers) lets the host take a spinning CPU's
++ * interrupts now and then (linux64_spin_relax, ~1 ms): hosted, a CPU spins with the host's interrupts masked, and
++ * Linux CPUs waiting on it (an IPI's answer) would wait as long as it spins.
++ */
++extern unsigned long linux64_hook;
++extern void linux64_spin_relax(void);
++#define cpu_pause() do { if (__builtin_expect(linux64_hook != 0, 0)) linux64_spin_relax(); } while (0)
+ bool
+ wfe_to_deadline_or_interrupt(uint32_t cid, uint64_t wfe_deadline, cpu_data_t *cdp, bool unmask, bool check_cluster_recommendation);
+ #endif /* _ARM_MACHINE_CPU_H_ */
+diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -3940,6 +3940,7 @@
+ 				}
+ 				if (os_atomic_load_exclusive(&cpu_data->inflight_disconnect, relaxed)) {
+ 					__builtin_arm_wfe();
++					cpu_pause();    /* LINUX64: the host takes this CPU's interrupts now and then */
+ 					inflight_disconnect = true;
+ 					continue;
+ 				}

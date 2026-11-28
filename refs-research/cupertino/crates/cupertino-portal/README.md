@@ -1,0 +1,351 @@
+# cupertino-portal
+
+The session's xdg-desktop-portal backend. Applications ask xdg-desktop-portal, and xdg-desktop-portal asks this
+backend for the interfaces `data/cupertino.portal` lists: Settings, FileChooser, ScreenCast, AppChooser, Screenshot and GlobalShortcuts. The server sets `XDG_CURRENT_DESKTOP=Cupertino`, so
+xdg-desktop-portal reads `cupertino-portals.conf` to pick the backend for each interface.
+
+The portal is a service (layer `services`): it draws nothing. The file chooser and the app chooser are the shell's
+dialogs (the `dialogs` component of `cupertino-shell`, `cupertino-shell-dialogs`), the consent questions the
+session's prompts (`cupertino-prompts`), and the colour picker and the screen-sharing chooser the screenshot program's
+(`cupertino-screenshot`); the portal asks each over a private bus interface that only it may call. The PipeWire
+streams of screen sharing are its own module (`screencast`).
+
+## Running
+
+The crate builds the `cupertino-portal` binary. The server starts and supervises it from its installed path. It
+owns `org.freedesktop.impl.portal.desktop.cupertino` on the session bus and serves `/org/freedesktop/portal/desktop`.
+There is no D-Bus activation file: an instance that the bus starts would lack the server's Wayland connection.
+
+```
+cargo build -p cupertino-portal
+```
+
+It reads the session's appearance before it takes the bus name, so the first read after the server publishes the
+session already has it. It exits with a failure (and the server restarts it) when the Wayland connection is lost, when a
+change cannot be sent on the bus, or when another process holds the bus name.
+
+## Settings
+
+`org.freedesktop.impl.portal.Settings` version 1 serves the `org.freedesktop.appearance` namespace from the session's
+appearance, as `cupertino_app_effects_v1` sends it:
+
+| Key              | Value                                             |
+| ---------------- | ------------------------------------------------- |
+| `color-scheme`   | `1` (prefer dark) when dark, else `2` (prefer light) |
+| `contrast`       | `1` (higher) with Increase Contrast, else `0`     |
+| `reduced-motion` | `1` (reduced) with Reduce Motion, else `0`        |
+
+It also serves the GTK keys of two GNOME namespaces:
+
+| Namespace                          | Key                 | Value                                                     |
+| ---------------------------------- | ------------------- | --------------------------------------------------------- |
+| `org.gnome.desktop.interface`      | `overlay-scrolling` | `false` when scroll bars are shown at all times (the setting, or Automatic with a mouse), else `true` |
+| `org.gnome.desktop.wm.preferences` | `button-layout`     | `close,minimize,maximize:` at all times: the buttons of a title bar an application draws (GTK header bars, Chromium, Electron's title bar overlay) go at the leading end |
+
+The same values go to GSettings, through `gsettings`, for GTK 3 on Wayland and the GTK backend of the portal, and to
+the `[Settings]` group of `gtk-3.0/settings.ini` and `gtk-4.0/settings.ini` in the configuration directory
+(`gtk-overlay-scrolling`, `gtk-decoration-layout`), which GTK reads under X11 (`src/toolkits.rs`); each on a thread of
+its own, at the start and after every change.
+
+`ReadAll` matches a namespace exactly or by a trailing `*`; an empty list or an empty pattern matches every namespace.
+`Read` of any other key fails, so xdg-desktop-portal asks the next backend. A change of appearance emits
+`SettingChanged` once for each key whose value changed.
+
+## File chooser
+
+`org.freedesktop.impl.portal.FileChooser` answers `OpenFile`, `SaveFile` and `SaveFiles` with the shell's file
+chooser: the portal checks the call, then asks the dialogs component (`org.cupertino.Dialogs1.ChooseFile`, which only
+the portal may call; `src/dialogs.rs`) and answers with what the person chose. The dialog is the file family's open and
+save panel: a sidebar of the home folder and the user directories, the open folder's list with the family's item icons,
+and a bottom bar with the filters, the choices, Cancel and the action button; a save adds a Save As field and asks before
+it replaces a file (`crates/cupertino-shell-dialogs/README.md`).
+
+- Only the owner of `org.freedesktop.portal.Desktop` may call it or close a request; any other caller gets
+  `AccessDenied`. Options are checked before a window shows: a wrong type, a relative folder, a `current_name` with a
+  `/`, an unknown filter kind, a filter pattern over 256 bytes or a string or list over its bound is `InvalidArgs`. At
+  most 16 dialogs are open at once, 4 for one app id.
+- The dialogs bound every value again. Glob filters match without regard to case, in at most pattern × name steps;
+  MIME filters match by extension. Folders always show. The filter runs once for each listing, not on each redraw.
+- The title, the action label, filter names and choice labels lose control and bidirectional-override characters.
+- The answer is `0` with `uris` (`file://`, escaped), `choices` and `current_filter`; Cancel or closing the window is
+  `1`; `Close` on the request takes the dialog down (`Dialogs1.Close`) and answers `2`, as does a dialog that ends
+  without an answer (the dialogs component restarted) or a call to the dialogs that fails.
+- A `parent_window` of `wayland:<handle>` makes the dialog a child of that window (xdg-foreign-unstable-v2). An `x11:` window, an empty one, or a handle the server does not know leaves the dialog a window of its own.
+- The dialogs read every folder as a task, so one on a hung mount leaves the window responsive.
+
+## Screen cast
+
+`org.freedesktop.impl.portal.ScreenCast` version 5 shares one display or one window with an application as a PipeWire
+video stream (the `screencast` module: one PipeWire source node for each share, which the consumer connects to by its
+node id; the portal is the only program that links libpipewire). It is served only when the server offers the image capture globals
+(ext-image-copy-capture-v1, ext-output-image-capture-source-v1, ext-foreign-toplevel-image-capture-source-v1 and
+ext-foreign-toplevel-list-v1).
+
+- `CreateSession` adds an `org.freedesktop.impl.portal.Session` object at the session handle. `SelectSources` takes
+  `types` (monitor, window or both), `cursor_mode` (hidden or embedded), `persist_mode` (0, 1 or 2; another value is
+  `InvalidArgs`) and `restore_data`; `multiple` is read but one source is shared.
+- `Start` asks the screenshot program to choose (`org.cupertino.Screenshot1.SelectSources`, see below), which shows a
+  window, "“<app>” wants to share your screen. Choose a display or a window.", the app named and drawn
+  by its desktop entry (`<app id>.desktop`: `Name=` and an `Icon=` that is an icon name) else shown as its id, or as
+  "An application" for an empty id. It lists the displays and the windows, by title and app id, with nothing
+  selected. When the app asked to persist and has an id, a check box "Let “<app>” share it again without asking" is
+  offered, unticked.
+- The window takes no answer that grants for 500 ms after its first frame is on screen (the frame callback that
+  answers its first committed frame; a window the server shows late starts the delay late, and one it never shows
+  stays unarmed): clicks, row picks and keys do nothing
+  until then, and a key held since before keeps doing nothing, since Return shares only on a fresh press (its
+  repeats are ignored). Share is the default button and is enabled only once armed and a row is picked; Escape cancels at once.
+- The keyboard focus starts on Cancel, and a screen reader announces Cancel first. Until the window is armed, Return,
+  Enter and Space press no button at all (not even Cancel), so a key typed for the app neither shares nor denies; Tab
+  moves the focus, but Share and the check box are no Tab stops until armed. Once armed, Return and Space press the
+  focused button: Cancel denies, Share shares; with the focus in the list Return presses Share. Escape, a click on
+  Cancel and closing the window deny, armed or not.
+- The answer to `Start` is `0` with one entry in `streams`: the node id, `source_type`, `size` (logical for a display,
+  in pixels for a window) and `position` for a display. It has `persist_mode` and `restore_data` when the person
+  ticked the box, else `persist_mode` 0. Cancel or closing the window is `1`; a `Close` on the request or the session
+  while the window shows takes it down and answers `2`, as does the app leaving the bus (the frontend closes the
+  session).
+- Remembering. `restore_data` is `("cupertino", 1, <grant id>)`, the id 32 random hexadecimal digits; it means
+  nothing without this backend's record. A window is remembered only until the app quits (`persist_mode` 1 at most):
+  its identifier lasts no longer. A display the app may keep (`persist_mode` 2) is written to `screen-sharing.conf`
+  (`cupertino-defaults::screen_sharing`, mode `0600`) as `grant = <id> <app id> display <connector>`, read, changed
+  and written under an advisory `flock` on `.screen-sharing.conf.lock` beside it, which Settings' Forget takes too, so
+  neither drops nor brings back the other's change; a transient
+  grant is kept in memory, at most 64. A later `SelectSources` with that `restore_data` and the same app id shares the
+  same source again without a window, as long as it is still there; otherwise the window shows. The grant is the
+  frontend's app id's alone: it never restores for another id or an empty one.
+- Forgetting. Settings › Privacy › Screen Sharing lists each remembered display by app, with Forget, which reads the
+  file again under its lock and takes out that one line, never writing back the list the pane read; the next request
+  shows the window again. A share running then goes on until it is stopped. Forget is the only way a remembered
+  display is taken back: Stop Sharing ends the share and leaves `screen-sharing.conf` alone, so the app may share the
+  display again without asking until the person forgets it in Settings. A remembered window is not listed in Settings
+  and lasts only until the app quits; Stop Sharing drops it with the share, so the app asks again.
+- While a share runs the portal shows a status item in the menu bar (StatusNotifierItem
+  `org.kde.StatusNotifierItem-<pid>-<n>` with a `com.canonical.dbusmenu` menu, registered with
+  `org.kde.StatusNotifierWatcher` and again whenever a watcher appears): tooltip and first menu row "“<app>” is sharing
+  “<source>”", then Stop Sharing, which ends the share and closes the session (`Closed`), and keeps a remembered
+  display (see Forgetting). The menu's events (`Event`, `EventGroup`) are taken only from the connection that owns
+  `org.kde.StatusNotifierWatcher` when they arrive, the menu bar the item registered with; any other caller gets
+  `org.freedesktop.DBus.Error.AccessDenied` and the share runs on, so another application cannot end a share it did not
+  start. Without a menu bar nobody can press Stop Sharing; the share still ends with the app or its session. The item goes
+  when the share ends for any reason. The server's privacy dot in the menu bar shows for any capture besides.
+- Frames are copied with an image copy session straight into the stream's memfds through a `wl_shm` pool, the cursor
+  painted in when it is embedded. A frame is captured only while PipeWire has a free buffer, at most at the framerate
+  the consumer fixed, and carries the copy session's damage. A resized source renegotiates the stream.
+- `Session.Close` and the frontend leaving the bus stop the share. A closed window or a source that fails ends the
+  share, which closes the session and emits `Closed`.
+- A display without logical geometry is sized by its mode turned by its transform over its scale (`geometry`, with
+  `cupertino-geometry`'s `OutputTransform`, every `wl_output` transform tested).
+- Stream frames are not turned upright. They go to the stream exactly as the server copies them, and the copy's
+  `transform` event is ignored (`capture::frame_event`), unlike a screenshot's or a colour pick's. Cupertino's server
+  always copies a share upright and reports it as not turned, so this is right on Cupertino; on a server that sends
+  turned frames a turned display would be streamed turned.
+- The same callers, bounds and sanitizing as the file chooser apply: only the frontend calls, at most 16 sessions and 4
+  for one app id, and titles lose control and bidirectional-override characters.
+
+Known limitations: no cursor metadata, no region source, one source for each `Start`, shared memory only (no dmabuf),
+and no audio. A display is remembered by its connector name, so a different screen on the same connector restores
+too. The app id of an app outside a sandbox is what the frontend reads from its systemd unit; such an app runs as the
+person and could edit `screen-sharing.conf` itself, so a grant protects against sandboxed apps only.
+
+### The PipeWire streams (`screencast`)
+
+One PipeWire video source stream for each share, which a consumer such as a browser connects to by its node id; the
+portal is the only program that links libpipewire.
+
+| Item | Contents |
+|---|---|
+| `Screencast` | the connection to the user's PipeWire, served by a thread of its own: `connect(notices)`, `open(stream, name, offer)`, `resize(stream, size)`, `dequeue(stream)`, `queue(stream, buffer, frame)`, `close(stream)`, `is_connected()`; dropping it closes every stream |
+| `Notice` | what the thread reports: `Node` (the node id), `State`, `Added` (a buffer and its memfd), `Removed`, `Dequeued` (a buffer to fill, or none) |
+| `State` | `Connecting`, `Negotiated(Format)`, `Streaming(Format)`, `Closed(reason)` |
+| `Offer` | the source size and the pixel layouts it can be captured in, in order of preference |
+| `Format` | the fixed `width`, `height`, `pixel` (`Bgrx` or `Bgra`) and `framerate`; `stride()`, `frame_len()` |
+| `Frame` | the damage of a filled buffer and its timestamp on `CLOCK_MONOTONIC` |
+| `format::negotiate` | the format a consumer's fixed `Format` param means for an offer, or the `Mismatch` |
+
+#### How it works
+
+- `connect` starts the thread `pipewire`, which runs the PipeWire main loop; commands reach it over a
+  `pipewire::channel`, and `notices` runs on it, so the owner hands them on without blocking. The connection goes to
+  the PipeWire that `PIPEWIRE_REMOTE` or the runtime directory names.
+- Each stream is an output that drives the graph (`DRIVER`) and allocates its own buffers (`ALLOC_BUFFERS`). It offers
+  the source size in each layout of the offer, a variable framerate up to 60 with 30 as the default, and takes the
+  maximum framerate the consumer fixes.
+- A fixed format sets the buffer params: 4 buffers (2 to 8) of one memfd each, with a header meta (the timestamp and
+  a sequence number) and a damage meta of up to 16 rectangles. Each memfd is announced as `Added` with a duplicate fd,
+  so the owner writes frames into it directly.
+- The owner asks for a buffer with `dequeue`, writes the frame at offset 0 and the format's stride, and hands it back
+  with `queue`. The damage is cut to the frame; more rectangles than fit become the whole frame. Each queue triggers one
+  cycle of the graph.
+- `resize` drops the buffers, offers the new size and waits for the consumer to fix a format again. Buffers that
+  PipeWire still adds for the old format get memfds of that format.
+- PipeWire going away reports every stream `Closed` and ends the thread.
+
+#### Known limitations
+
+- Shared memory only: no dmabuf buffers, so every frame is copied once into the memfd.
+- No cursor metadata: the cursor is either painted into the frame or left out.
+- Video only, no audio.
+- A frame is at most `i32::MAX` bytes, the largest `wl_shm` pool (`Size::shareable`): the portal ends the share of a
+  larger source.
+
+## App chooser
+
+`org.freedesktop.impl.portal.AppChooser` version 2 asks which app opens a link or a file when xdg-desktop-portal's
+OpenURI needs the person to pick or confirm one. The window is the consent: nothing opens unless they choose an app.
+
+- `ChooseApplication` asks the dialogs component (`org.cupertino.Dialogs1.ChooseApplication`, `src/dialogs.rs`)
+  for a window, "Open “<file name or URI>” with:", that lists the `choices` by the name of their desktop entry
+  (`<id>.desktop` in `$XDG_DATA_HOME/applications` and each `XDG_DATA_DIRS` entry), which the portal reads; an id with
+  no installed entry shows as the id. Each row shows the entry's `Icon=` as Kit resolves an application's icon; an
+  entry with no icon, an icon that does not resolve, or an `Icon=` with a `/` or a control character shows the
+  applications symbol. `last_choice` opens selected when it is one of `choices`. Open is the default button: Return opens the
+  selected app, and Escape cancels. Unlike the screen-sharing window and the screenshot alert it has no arming delay and opens
+  with the focus in the list, on the selected app: it hands the app nothing of the person's (no pixels, no files),
+  only which installed app opens what the app already named, so the arrows and Return work at once.
+- The answer is `0` with `choice` and an `activation_token`: the caller's own, handed on unchanged, when it sent one;
+  else one the window asks the server for when the person opens the app, made for that key press or click and naming
+  the chosen app, so the app may take the focus (and the Dock bounces its tile). When the server gives none the answer
+  has no `activation_token`. Cancel or closing the window is `1`; `Close` on the request takes the window down and
+  answers `2`; neither carries a token. An answer that is not one of the choices offered at that moment is `2` with
+  no `choice`.
+- `UpdateChoices` replaces the list of the open window at `handle` (`Dialogs1.UpdateChoices`); the selection stays on its app while that app is
+  still offered. Any other handle is `InvalidArgs`.
+- The same callers and bounds as the file chooser apply: only the frontend calls, at most 16 windows and 4 for one app
+  id, at most 256 choices, an id with a `/` or a control character is refused, and shown text loses control and
+  bidirectional-override characters.
+
+Known limitations: an `Icon=` that is an absolute path is not shown.
+
+## Screenshot
+
+`org.freedesktop.impl.portal.Screenshot` version 3 takes a screenshot of every display for an application. It is served
+with screen cast, only when the server offers the image capture globals. The prompts' alert is the consent: nothing is
+captured unless the person agrees.
+
+- `Screenshot` asks the session's prompts (`cupertino-prompts`, `org.cupertino.Prompts1.AskScreenshot`, which only
+  the portal may call; `src/prompts.rs`) whether the app may take it: an alert over a scrim, "Screenshot", that says
+  "“<app>” wants to take a screenshot of your screen.", the app named and drawn by its desktop entry (`<app id>.desktop`
+  in `$XDG_DATA_HOME/applications` and each `XDG_DATA_DIRS` entry), else by its id; an empty id shows as "An
+  application". The prompts' README tells how the alert takes its answer: the focus starts on Cancel, Take Screenshot
+  takes a press only 500 ms after the alert's first frame is on screen, Escape and Cancel deny. A call to the prompts
+  that fails is Cancel.
+- `modal`, `interactive` and `permission_store_checked` are read but change nothing: the same alert shows every time,
+  even when the frontend checked the permission store. `AvailableTargets` is `1` (the whole screen); a `target` other
+  than `1` is `InvalidArgs`.
+- Once the alert has had 300 ms to leave the screen, one frame of each display is copied with an image copy session
+  into a memfd, without the pointer. Each is turned upright when its copy says it is turned, and the displays are joined
+  as they sit, at the largest scale among them; what no display covers is transparent.
+- The PNG goes to `XDG_PICTURES_DIR` of `user-dirs.dirs`, else `~/Pictures`, created when missing, as
+  `Screenshot <date> at <time>.png` like the screenshot tool names it, then ` (2)`, ` (3)`, … when the name is taken. It
+  is created new (never replacing a file) and readable by its owner only (`0600`).
+- The answer is `0` with `uri` (`file://`, escaped); Cancel or Escape is `1`; `Close` on the request takes the alert
+  down (`Prompts1.Close`) and answers `2`, and so does a capture or a write that fails.
+- `PickColor` lets the person pick the colour of one pixel on any display, in the screenshot program
+  (`org.cupertino.Screenshot1.PickColor`, see below). One frame of every display is copied at once
+  and frozen under an overlay layer surface on each display (namespace `cupertino-screenshot`), the pointer
+  hidden. A crosshair marks the pixel under the pointer and a loupe beside it shows the 11 × 11 pixels round it, ten
+  points each, the middle one outlined; it moves to the other side of the pointer near an edge. A click picks: its
+  press must come on the overlay at least 500 ms after it appeared, and its release takes the pixel under the pointer
+  then, both on overlays on screen for at least 500 ms, counted for each overlay from the frame callback of its first
+  frame; so a button held from before or a click meant for what was under the pointer picks nothing. Escape cancels.
+- Every display has an overlay for the whole pick: any display added, unplugged or moved from the copy until the pick
+  ends ends it with `2`, since a display without an overlay would pass a click to the app under it. A second
+  `PickColor` while one runs answers `2` at once, before the screenshot program is asked.
+- The pick is the consent, so no window asks first: the app learns one colour and only of a pixel the person clicked.
+  The answer is `0` with `color`, `(ddd)` red, green and blue in sRGB from 0 to 1 (the display's 8-bit value over
+  255); Escape is `1`; `Close` on the request takes the overlay down and answers `2`, as do displays that change
+  during the pick, a copy that fails, a pick while another one runs, and a screenshot program that does not start.
+- The same callers and bounds as the file chooser apply: only the frontend calls, at most 16 screenshots and 4 for one
+  app id are pending, the app id and the parent window are at most 1024 bytes, and the app's name loses control and
+  bidirectional-override characters.
+
+**The screenshot program.** The colour picker and the screen-sharing chooser are `cupertino-screenshot`'s
+(`crates/cupertino-screenshot`), so one copy of each exists. For each call the portal asks the server to start it
+(`org.cupertino.Session1.StartScreenshot`, which only the portal may call; nothing happens when it runs), waits for it
+to own `org.cupertino.Screenshot1` (at most 10 s, `screenshot_tool::START_TIMEOUT`), then calls `PickColor` or
+`SelectSources` on it, and `Close` when the frontend closes the request first. The program accepts only the portal's
+calls; it exits when it has had nothing to do for 30 s.
+
+Known limitations: no window or area target and no pointer in the image. A picked colour is the copied pixel's value,
+without the display's colour profile, and the picker has no keyboard movement of the pointer.
+
+## Global shortcuts
+
+`org.freedesktop.impl.portal.GlobalShortcuts` version 1 lets an application bind keyboard shortcuts that work while
+another application has the keyboard (Electron's `globalShortcut`, push-to-talk keys). It is served only when the
+server offers `cupertino_global_shortcuts_v1` to the process (`src/shortcut_keys.rs`); the server routes a bound chord
+to the portal before the focused client sees it, so that client gets neither the press nor the release.
+
+- `CreateSession` adds an `org.freedesktop.impl.portal.Session` object at the session handle; at most 32 sessions and
+  4 for one app id. `Session.Close`, and the frontend leaving the bus, end the session and give its keys back to the
+  server; a `BindShortcuts` waiting on its question then answers `2` and the alert goes (`Prompts1.Close`).
+- `BindShortcuts` reads each shortcut's `description` and `preferred_trigger`, written as the shortcuts specification
+  writes it (`CTRL+ALT+k`, `LOGO+Return`, modifier names without regard to case) or as a GTK accelerator
+  (`<Control><Alt>k`); the key is an xkb keysym name, the character it types, or one of the web and Electron key
+  names (`Enter`, `ArrowUp`, `PageUp`, `MediaPlayPause`, `VolumeUp` …); `Command`, `CommandOrControl` and `Option` are
+  Control and Alt. At most 64 shortcuts, each id given
+  once and every string at most 1024 bytes; else `InvalidArgs` or `LimitsExceeded`.
+- The clash rule, applied when the call comes and again when it is answered: a shortcut gets its key only when the
+  key is no modifier or lock key (Shift, Control, Alt, Super, the level and group keys, Caps Lock, Num Lock), holds
+  Control, Alt or Super or is F1 to F35 or a media key (`XF86…`), is none of the chords the server keeps (its bindings, Ctrl+Alt+F1
+  to F12, Super+Alt+S, Ctrl+Alt+Escape: the `reserved` group), and no other session holds it; within one call the
+  first shortcut naming a key keeps it. A shortcut without its key is not bound and is left out of the answer.
+- The first call of an app asks the session's prompts (`org.cupertino.Prompts1.AskShortcuts`, `src/prompts.rs`): an
+  alert over a scrim, "Keyboard Shortcuts": "“<app>” wants to use these keyboard shortcuts, also while you work in
+  other apps.", then one row per shortcut, which the portal words and the prompts show as they come: its keys as
+  symbols (`⌃⌥T  Push to talk`) or, for one without a key, the reason (`not available: it needs ⌃, ⌥ or ⌘`, `its key
+  is a modifier key`, `the system uses it`, `“<app>” uses it`, `it names no key`, `another shortcut here uses it`);
+  a description is cut to 80 characters. The list scrolls past its first lines, so every shortcut can be read before
+  Allow. Don't Allow has the focus; Allow takes a press only 500 ms after the alert's first frame is on screen. Allow
+  answers `0` with `shortcuts`
+  (each with `description` and `trigger_description`) and Don't Allow `1`, both remembered for the app id in
+  `global-shortcuts.conf` (`cupertino-defaults::global_shortcuts`, mode `0600`, `allow = <app id> <key>…` with the
+  keys allowed, or `deny = <app id>`, changed under an advisory lock on a thread of its own so the bus is served
+  meanwhile; comments and lines not understood are kept); Escape, the alert taken away and a call to the prompts that
+  fails answer `1` and remember nothing. A denied app is refused without asking. An allowed app binds the keys it was allowed without asking;
+  a call naming a key it was not allowed asks again, listing only the shortcuts not allowed yet
+  ("“<app>” wants to use more keyboard shortcuts …"), and Allow adds their keys to the line. An `allow` line without
+  keys (written before the keys were remembered) allows none, so the app is asked once more. An empty app id or one a
+  line cannot hold is asked every time. A call where no shortcut can have
+  its key answers `0` with an empty list and shows nothing. A second `BindShortcuts` on a session replaces its
+  shortcuts.
+- `ListShortcuts` answers the session's bound shortcuts.
+- The server's `pressed` and `released` become `Activated` and `Deactivated` (session, shortcut id, the key event's
+  time in milliseconds) for the session that holds the key, sent to the unique bus name of the frontend that made the
+  session, as `ShortcutsChanged` is; repeats send nothing. A release stands for the shortcut its press did, so a
+  shortcut bound again or given another key while held still ends with `Deactivated`. A key the server keeps later (a
+  changed `shortcuts.conf`) is taken from the shortcut holding it, which leaves the session's list, and
+  `ShortcutsChanged` carries the session's shortcuts now.
+
+Known limitations: `ConfigureShortcuts` (version 2) is not served, so a shortcut without a free key cannot be given
+another one; the person takes a line out of `global-shortcuts.conf` to be asked again. When the portal process
+restarts, its sessions are gone: an application keeps no shortcut until it binds again.
+
+## Diagnostic events
+
+The process records versioned diagnostic events to the user's event store (`$XDG_STATE_HOME/cupertino/events`), each
+beside the line or answer it already gives; `main` installs the recorder before anything else. App ids, interfaces and
+D-Bus error names are recorded as they are; a path in an error's text is recorded as its hash.
+
+| Event | Severity | Fields | Where |
+|---|---|---|---|
+| `portal.request.failed` | warn | `interface`, `method`, `app_id` (when the call has one), `error` (the D-Bus error name) | a call of FileChooser, AppChooser, ScreenCast, GlobalShortcuts, Session, Screenshot or Request is refused (a caller other than the frontend, bad arguments, a limit) |
+| `portal.screencast.failed` | error | `stage` (`start`: the stream never reached the app; `running`: a share failed after), `app_id` (for `start`), `error` | a share does not start or ends on a failure |
+| `portal.permission.store_failed` | warn | `operation` (`save`, `load`), `app_id`, `error` | `screen-sharing.conf` cannot be written (the share is kept only while the app runs) or read (nothing is restored) |
+| `portal.screenshot.failed` | error | `method` (`Screenshot`, `PickColor`), `app_id` (when known), `error` | a granted screenshot or colour pick cannot copy, write or pick |
+| `portal.exit_error` | error | `error` | the process ends with an error |
+| `portal.panic` | fatal | `panic`, `location` | any panic |
+
+`cupertino diagnose events --component cupertino-portal` lists them.
+
+## Installing
+
+- `bin/cupertino-portal`
+- `data/cupertino.portal` to `/usr/share/xdg-desktop-portal/portals/`
+- `data/cupertino-portals.conf` to `/usr/share/xdg-desktop-portal/`: Settings and FileChooser from this backend
+  first, then the GTK backend for what it does not serve; ScreenCast, AppChooser, Screenshot (which carries
+  `PickColor`) and GlobalShortcuts from this backend only; Secret from gnome-keyring; every other interface from the GTK backend
+
+The packages ship the binary, `cupertino.portal` and the same routing file as
+`packaging/files/usr/share/xdg-desktop-portal/cupertino-portals.conf`. Each interface this crate implements is routed here first, nothing else is, `cupertino.portal` lists exactly those, and the crate's copy is the same file.

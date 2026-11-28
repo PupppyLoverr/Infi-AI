@@ -1,0 +1,30 @@
+Upstream: Mesa 26.3.1 (https://archive.mesa3d.org/mesa-26.3.1.tar.xz)
+Upstream-License: MIT
+Patch-License: MIT (provided under the same license as upstream)
+Subject: venus: no host image copy on macOS
+
+A host image copy (VK_EXT_host_image_copy) is the host driver's to carry out. NVIDIA's (GB10, 580) maps the whole
+memory object the image is in for each one, 64 MB in 13 ms, and unmaps it again. The Metal layer reads every frame
+WindowServer draws back into its IOSurface that way, twice or more a frame: the renderer's thread spent two thirds of
+a CPU in mmap with the GPU 2% busy, and the desktop showed 9 to 23 frames a second. Without the feature the Metal
+layer reads back through a buffer: about 50 frames a second, the renderer's thread at 11%. VN_HOST_IMAGE_COPY=1
+offers the feature again.
+
+--- a/src/virtio/vulkan/vn_physical_device.c
++++ b/src/virtio/vulkan/vn_physical_device.c
+@@ -484,6 +484,15 @@
+       feats->extendedDynamicState3RepresentativeFragmentTestEnable = false;
+       feats->extendedDynamicState3ShadingRateImageEnable = false;
+    }
++
++#if DETECT_OS_APPLE
++   /* A host image copy is the host driver's to carry out, and NVIDIA's maps the whole memory object the image is in
++    * for each one (64 MB, 13 ms) and unmaps it again: the Metal layer reads every frame WindowServer draws back that
++    * way. Without the feature it reads back through a buffer (VN_HOST_IMAGE_COPY=1 offers it again).
++    */
++   if (!debug_get_bool_option("VN_HOST_IMAGE_COPY", false))
++      feats->hostImageCopy = false;
++#endif
+ }
+ 
+ static void

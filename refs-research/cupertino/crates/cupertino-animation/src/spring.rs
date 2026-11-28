@@ -1,0 +1,189 @@
+//! Damped spring matching the design spring model.
+//!
+//! Progress p(t) runs from 0 to 1; `initial_velocity` is in "fractions of the total distance per
+//! second", like the design spring's initial velocity.
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpringParams {
+    pub mass: f64,
+    pub stiffness: f64,
+    pub damping: f64,
+    pub initial_velocity: f64,
+    pub allows_overdamping: bool,
+}
+
+impl SpringParams {
+    /// Reference perceptual duration/bounce constructor (formulae):
+    /// mass = 1, stiffness = (2π/d)², damping = 4π(1−b)/d for b ≥ 0, 4π/((1+b)·d) for b < 0.
+    pub fn from_perceptual(duration: f64, bounce: f64) -> Self {
+        let inv = 1.0 / duration;
+        let stiffness = if duration > 0.0 {
+            (std::f64::consts::TAU * inv).powi(2)
+        } else {
+            f64::INFINITY
+        };
+        let b = if bounce < 0.0 {
+            1.0 / (bounce + 1.0)
+        } else {
+            1.0 - bounce
+        };
+        Self {
+            mass: 1.0,
+            stiffness,
+            damping: b * 4.0 * std::f64::consts::PI * inv,
+            initial_velocity: 0.0,
+            allows_overdamping: false,
+        }
+    }
+
+    /// Perceptual duration = 2π·sqrt(m/k)
+    pub fn perceptual_duration(&self) -> f64 {
+        std::f64::consts::TAU * (self.mass / self.stiffness).sqrt()
+    }
+
+    /// Perceptual bounce
+    pub fn bounce(&self) -> f64 {
+        let x =
+            self.perceptual_duration() * self.damping / (self.mass * 4.0 * std::f64::consts::PI);
+        let zeta = self.damping / (2.0 * (self.stiffness * self.mass).sqrt());
+        if zeta > 1.0 {
+            1.0 / x - 1.0
+        } else {
+            1.0 - x
+        }
+    }
+
+    /// Damping ratio-based constructor (approximate convenience, not part of the design API).
+    pub fn from_ratio(response: f64, damping_ratio: f64) -> Self {
+        let w0 = std::f64::consts::TAU / response;
+        Self {
+            mass: 1.0,
+            stiffness: w0 * w0,
+            damping: 2.0 * damping_ratio * w0,
+            initial_velocity: 0.0,
+            allows_overdamping: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Mode {
+    Under { wd: f64, b: f64 },
+    Critical { b: f64 },
+    Over { r: f64, c1: f64, c2: f64 },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Spring {
+    pub params: SpringParams,
+    w0: f64,
+    zeta: f64,
+    mode: Mode,
+}
+
+impl Spring {
+    pub fn new(params: SpringParams) -> Self {
+        let w0 = (params.stiffness / params.mass).sqrt();
+        let zeta = params.damping / (2.0 * (params.stiffness * params.mass).sqrt());
+        let v0 = params.initial_velocity;
+        let mode = if zeta < 1.0 {
+            let wd = (1.0 - zeta * zeta).sqrt() * w0;
+            Mode::Under {
+                wd,
+                b: (zeta * w0 - v0) / wd,
+            }
+        } else if zeta > 1.0 && params.allows_overdamping {
+            // p(t) = 1 − c1·e^{(−ζω0+r)t} − c2·e^{(−ζω0−r)t}, with p(0)=0, p'(0)=v0
+            let r = (zeta * zeta - 1.0).sqrt() * w0;
+            let a = zeta * w0;
+            let c1 = (v0 - (a + r)) / (-2.0 * r);
+            let c2 = 1.0 - c1;
+            Mode::Over { r, c1, c2 }
+        } else {
+            Mode::Critical { b: w0 - v0 }
+        };
+        Self {
+            params,
+            w0,
+            zeta,
+            mode,
+        }
+    }
+
+    pub fn damping_ratio(&self) -> f64 {
+        self.zeta
+    }
+
+    /// Progress at time `t` seconds (0 → 1, may overshoot).
+    pub fn value(&self, t: f64) -> f64 {
+        if t <= 0.0 {
+            return 0.0;
+        }
+        match self.mode {
+            Mode::Under { wd, b } => {
+                1.0 - (-self.zeta * self.w0 * t).exp() * ((wd * t).cos() + b * (wd * t).sin())
+            }
+            Mode::Critical { b } => 1.0 - (-self.w0 * t).exp() * (1.0 + b * t),
+            Mode::Over { r, c1, c2 } => {
+                let a = self.zeta * self.w0;
+                1.0 - c1 * ((-a + r) * t).exp() - c2 * ((-a - r) * t).exp()
+            }
+        }
+    }
+
+    /// d(progress)/dt at time `t` (fractions of distance per second).
+    pub fn velocity(&self, t: f64) -> f64 {
+        let t = t.max(0.0);
+        match self.mode {
+            Mode::Under { wd, b } => {
+                let a = self.zeta * self.w0;
+                let e = (-a * t).exp();
+                let (s, c) = (wd * t).sin_cos();
+                e * (a * (c + b * s) - (-wd * s + b * wd * c))
+            }
+            Mode::Critical { b } => {
+                let e = (-self.w0 * t).exp();
+                e * (self.w0 * (1.0 + b * t) - b)
+            }
+            Mode::Over { r, c1, c2 } => {
+                let a = self.zeta * self.w0;
+                -c1 * (-a + r) * ((-a + r) * t).exp() - c2 * (-a - r) * ((-a - r) * t).exp()
+            }
+        }
+    }
+
+    /// Settling duration = `duration_for_epsilon(0.001).
+    pub fn settling_duration(&self) -> f64 {
+        self.duration_for_epsilon(1e-3)
+    }
+
+    /// Mirrors the design duration-for-epsilon control flow:
+    /// ζ<1 → analytic envelope bound; ζ≥1 → sample every 0.1 s, return the start of the first
+    /// interval where |1−p| stays below ε for more than 1 s.
+    pub fn duration_for_epsilon(&self, eps: f64) -> f64 {
+        let eps = eps.max(1e-6);
+        match self.mode {
+            Mode::Under { b, .. } => {
+                let amp = 1.0 + b.abs();
+                ((eps / amp).ln() / (-self.zeta * self.w0)).max(0.0)
+            }
+            _ => {
+                let mut t = 0.0;
+                let mut entered: Option<f64> = None;
+                while t < 600.0 {
+                    let d = (1.0 - self.value(t)).abs();
+                    if d < eps {
+                        let s = *entered.get_or_insert(t);
+                        if t - s > 1.0 {
+                            return s;
+                        }
+                    } else {
+                        entered = None;
+                    }
+                    t += 0.1;
+                }
+                entered.unwrap_or(t)
+            }
+        }
+    }
+}

@@ -1,0 +1,260 @@
+//! MIME detection with the shared MIME database: by extension first (cheap, no I/O), by content
+//! sniffing when the extension is unknown, and the "kind" description / group of a type.
+
+use crate::entry::Entry;
+use std::path::Path;
+
+pub const DIRECTORY: &str = "inode/directory";
+pub const UNKNOWN: &str = "application/octet-stream";
+
+/// MIME type from the name only.
+pub fn mime_from_name(name: &str) -> Option<String> {
+    mime_guess::from_path(name)
+        .first()
+        .map(|m| m.essence_str().to_string())
+}
+
+/// Whether a file named `name` is of the MIME type `pattern` (`image/png`, `image/*` or `*/*`, without regard to case)
+/// by its extension: any of the types its extension may mean will do, as a file chooser's filter takes it.
+pub fn name_has_type(pattern: &str, name: &str) -> bool {
+    let pattern = pattern.to_ascii_lowercase();
+    let (kind, sub) = pattern.split_once('/').unwrap_or((pattern.as_str(), "*"));
+    mime_guess::from_path(name).iter().any(|guess| {
+        (kind == "*" || guess.type_().as_str() == kind)
+            && (sub == "*" || guess.subtype().as_str() == sub)
+    })
+}
+
+/// MIME type of `path`: directories, then extension, then content sniffing of a regular file.
+pub fn detect(path: &Path, is_dir: bool) -> String {
+    if is_dir {
+        return DIRECTORY.to_string();
+    }
+    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        if let Some(m) = mime_from_name(name) {
+            return m;
+        }
+    }
+    match tree_magic_mini::from_filepath(path) {
+        Some(m) if m != UNKNOWN => m.to_string(),
+        _ => UNKNOWN.to_string(),
+    }
+}
+
+/// Cached MIME of an entry (extension based; call [`detect`] to sniff).
+pub fn entry_mime(e: &Entry) -> String {
+    if let Some(m) = &e.mime {
+        return m.clone();
+    }
+    if e.is_dir {
+        return DIRECTORY.to_string();
+    }
+    mime_from_name(&e.name).unwrap_or_else(|| UNKNOWN.to_string())
+}
+
+/// Groups of the "arrange by kind" view. The mapping of types to groups mirrors the table shipped
+/// with the design; the display order of the groups is not known.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum KindGroup {
+    Applications,
+    Folders,
+    Documents,
+    Images,
+    Movies,
+    Music,
+    Pdf,
+    Text,
+    Spreadsheets,
+    Presentations,
+    Email,
+    Fonts,
+    Source,
+    Contacts,
+    SystemPrefs,
+    Other,
+}
+
+impl KindGroup {
+    pub fn title(self) -> &'static str {
+        match self {
+            KindGroup::Applications => "Applications",
+            KindGroup::Folders => "Folders",
+            KindGroup::Documents => "Documents",
+            KindGroup::Images => "Images",
+            KindGroup::Movies => "Movies",
+            KindGroup::Music => "Music",
+            KindGroup::Pdf => "PDF Documents",
+            KindGroup::Text => "Text",
+            KindGroup::Spreadsheets => "Spreadsheets",
+            KindGroup::Presentations => "Presentations",
+            KindGroup::Email => "Mail",
+            KindGroup::Fonts => "Fonts",
+            KindGroup::Source => "Source Code",
+            KindGroup::Contacts => "Contacts",
+            KindGroup::SystemPrefs => "System Preferences",
+            KindGroup::Other => "Other",
+        }
+    }
+}
+
+/// Group of a MIME type, following the structure of the design table (most specific first).
+pub fn kind_group(mime: &str) -> KindGroup {
+    match mime {
+        DIRECTORY => KindGroup::Folders,
+        "application/pdf" => KindGroup::Pdf,
+        "application/x-executable"
+        | "application/x-sharedlib"
+        | "application/vnd.appimage"
+        | "application/x-desktop" => KindGroup::Applications,
+        "application/vnd.ms-excel"
+        | "text/csv"
+        | "application/vnd.oasis.opendocument.spreadsheet" => KindGroup::Spreadsheets,
+        "application/vnd.ms-powerpoint" | "application/vnd.oasis.opendocument.presentation" => {
+            KindGroup::Presentations
+        }
+        "message/rfc822" | "application/mbox" => KindGroup::Email,
+        "text/vcard" | "text/x-vcard" => KindGroup::Contacts,
+        "text/html"
+        | "text/x-csrc"
+        | "text/x-c++src"
+        | "text/x-rust"
+        | "text/x-python"
+        | "application/javascript"
+        | "text/javascript"
+        | "application/json"
+        | "application/xml"
+        | "text/x-java"
+        | "text/x-shellscript" => KindGroup::Source,
+        "application/rtf"
+        | "text/rtf"
+        | "text/plain"
+        | "application/msword"
+        | "application/vnd.oasis.opendocument.text" => KindGroup::Text,
+        m if m.starts_with("font/")
+            || m.starts_with("application/font")
+            || m == "application/x-font-ttf" =>
+        {
+            KindGroup::Fonts
+        }
+        m if m.starts_with("image/") => KindGroup::Images,
+        m if m.starts_with("video/") => KindGroup::Movies,
+        m if m.starts_with("audio/") => KindGroup::Music,
+        m if m.starts_with("text/") => KindGroup::Text,
+        _ => KindGroup::Documents,
+    }
+}
+
+/// The design's kind strings by MIME type: the descriptions of its type declarations (strings),
+/// each for the MIME type of the declaration it describes (correspondence). A desktop entry is described as
+/// the application it launches, and plain text by its parent text type, the plain-text declaration having
+/// no description.
+const KIND_STRINGS: [(&str, &str); 27] = [
+    (DIRECTORY, "folder"),
+    ("application/x-desktop", "application"),
+    ("text/plain", "text"),
+    ("image/png", "PNG image"),
+    ("image/jpeg", "JPEG image"),
+    ("application/pdf", "PDF document"),
+    ("application/zip", "Zip archive"),
+    ("application/gzip", "GZip archive"),
+    ("application/x-tar", "tar archive"),
+    ("video/mp4", "MPEG-4 movie"),
+    ("audio/mp4", "MPEG-4 audio"),
+    ("audio/mpeg", "MP3 audio"),
+    ("video/quicktime", "QuickTime movie"),
+    ("text/html", "HTML text"),
+    ("application/xml", "XML text"),
+    ("text/xml", "XML text"),
+    ("application/json", "JSON"),
+    ("text/x-python", "Python script"),
+    ("text/x-python3", "Python script"),
+    ("application/x-shellscript", "shell script"),
+    ("text/x-csrc", "C source code"),
+    ("application/x-executable", "Unix executable"),
+    ("inode/symlink", "symbolic link"),
+    ("image/svg+xml", "SVG image"),
+    ("image/tiff", "TIFF image"),
+    ("application/rtf", "rich text (RTF)"),
+    ("text/rtf", "rich text (RTF)"),
+];
+
+/// Short human readable description used by the Kind column and by sorting by kind: the design's string
+/// ([`KIND_STRINGS`]) with its first letter capitalised, as the design shows it; types it does
+/// not list are described from the MIME type in the same style (approximate).
+pub fn kind_description(mime: &str) -> String {
+    let described = match KIND_STRINGS.iter().find(|(m, _)| *m == mime) {
+        Some((_, kind)) => (*kind).to_string(),
+        None => match mime {
+            m if m.contains("spreadsheet") || m == "text/csv" => "spreadsheet".into(),
+            m if m.contains("wordprocessing") || m == "application/msword" => {
+                "word processing document".into()
+            }
+            m if m.contains("presentation") => "presentation".into(),
+            "text/x-rust" | "text/rust" => "Rust source code".into(),
+            "text/x-c++src" | "text/x-c++" => "C++ source code".into(),
+            "text/markdown" | "text/x-markdown" => "Markdown text".into(),
+            m if m.ends_with("-compressed-tar") => "compressed tar archive".into(),
+            // a file of no known type: a generic document (approximate, the earlier behaviour; the design's description of
+            // an undeclared type is not known)
+            UNKNOWN => "document".into(),
+            m => {
+                let (major, minor) = m.split_once('/').unwrap_or((m, ""));
+                let minor = subtype_words(minor);
+                match major {
+                    "image" => format!("{minor} image"),
+                    "video" => format!("{minor} movie"),
+                    "audio" => format!("{minor} audio"),
+                    "text" => format!("{minor} text"),
+                    _ => format!("{minor} document"),
+                }
+            }
+        },
+    };
+    let mut chars = described.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => described,
+    }
+}
+
+/// The longest subtype written as an abbreviation in capitals ("PNG", "WEBP"); a longer one is a word.
+const ABBREVIATION_MAX: usize = 4;
+
+/// The longest word of a subtype of several words written in capitals as an abbreviation ("WMV" in "MS WMV"); a
+/// longer one is a word.
+const WORD_ABBREVIATION_MAX: usize = 3;
+
+/// A MIME subtype as words of a kind string: without its `x-` or `vnd.` prefix, with its separators as spaces, in
+/// capitals when it is a short abbreviation and else with only its first letter capitalised, so that no subtype
+/// reads as shouted ("Markdown", "Compressed tar", "WEBP"); in a subtype of several words each short one stays an
+/// abbreviation ("MS WMV", "Adobe DNG").
+fn subtype_words(minor: &str) -> String {
+    let bare = minor.trim_start_matches("x-").trim_start_matches("vnd.");
+    if bare.len() <= ABBREVIATION_MAX && bare.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return bare.to_uppercase();
+    }
+    let parts: Vec<&str> = bare
+        .split(['-', '.', '_', '+'])
+        .filter(|w| !w.is_empty())
+        .collect();
+    let several = parts.len() > 1;
+    let words = parts
+        .iter()
+        .map(|w| {
+            if several
+                && w.len() <= WORD_ABBREVIATION_MAX
+                && w.chars().all(|c| c.is_ascii_alphanumeric())
+            {
+                w.to_uppercase()
+            } else {
+                w.to_lowercase()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut chars = words.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => words,
+    }
+}

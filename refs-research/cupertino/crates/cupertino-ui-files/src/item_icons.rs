@@ -1,0 +1,285 @@
+//! What a file view draws for each item: a picture's thumbnail once it is made ([`ThumbnailService`]), else the
+//! family's own art for a folder, a text file, another document or an archive ([`crate::item_art`]) unless an asset
+//! pack ships an icon of its own for that kind, else the icon of the item's type from the asset packs and the icon
+//! theme ([`FileIcons`]), with the alias badge on a symbolic link.
+//! Each window says which of its items are in view, so only those get thumbnails; the program runs the making of each
+//! as a job ([`ItemIcons::take_job`]).
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+
+use cupertino_ui_controls::ImageSource;
+use cupertino_ui_core::next_resource_id;
+use cupertino_ui_render::{ImageResource, PixelFormat, ResourceId};
+
+use cupertino_icons::{SystemIcons, ThemeIcons};
+
+/// The icon of an application whose own the icon themes lack.
+const GENERIC_APPLICATION: &str = "application.generic";
+
+use crate::entry::{Entry, Kind};
+use crate::file_icons::{FileIcons, RENDITION_SCALES};
+use crate::item_art::{self, Art};
+use crate::mime;
+use crate::thumbnail_service::{
+    has_thumbnail, Stamp, Thumbnail, ThumbnailJob, ThumbnailService, MEMORY_BUDGET,
+};
+use cupertino_icons::thumbnail::Thumbnailer;
+
+/// Thumbnails are made for this many device pixels a point, so they stay sharp on a 2× display; a 1× display draws
+/// them shrunk.
+const THUMBNAIL_SCALE: f64 = 2.0;
+
+/// How many different pages of lines the text files' art shows; a file always gets the same one.
+const TEXT_PAGES: u64 = 8;
+
+/// One drawing of [`item_art`]: the art, its size in points (as bits, so the key hashes) and its variant.
+type ArtKey = (Art, u64, u64);
+
+/// The icons of the items of every window.
+pub struct ItemIcons {
+    files: RefCell<FileIcons>,
+    thumbnails: Option<ThumbnailService>,
+    /// The art drawn so far, kept for the life of the process so a repainted cell names the same pixels.
+    art: RefCell<HashMap<ArtKey, Vec<ImageSource>>>,
+    /// Whether an asset pack ships its own icon, by semantic name.
+    packed: RefCell<HashMap<&'static str, bool>>,
+    /// Where the icons applications name are looked up, and the generic application icon drawn for one the themes
+    /// lack; `None` draws an application with its type's icon.
+    apps: Option<RefCell<(ThemeIcons, SystemIcons)>>,
+    /// The icons applications name, by name and size in points (as bits), each looked up once.
+    app_icons: RefCell<HashMap<(String, u64), Vec<ImageSource>>>,
+}
+
+/// The edge in device pixels of the thumbnails of icons `points` square.
+fn thumbnail_edge(points: f64) -> u32 {
+    (points * THUMBNAIL_SCALE).round().max(1.0) as u32
+}
+
+/// What the service knows window `window`'s previews by: apart from its items, as a window wants one size at a time.
+fn previews(window: u64) -> u64 {
+    window | 1 << 63
+}
+
+/// Whether `entry` is drawn with its thumbnail: a picture of a decoded format. A symbolic link shows its type's icon
+/// with the alias badge.
+fn shows_thumbnail(entry: &Entry) -> bool {
+    entry.kind == Kind::File && has_thumbnail(&mime::entry_mime(entry))
+}
+
+fn source(thumbnail: &Thumbnail) -> ImageSource {
+    ImageSource {
+        id: ResourceId(thumbnail.id),
+        image: ImageResource {
+            revision: 1,
+            width: thumbnail.width,
+            height: thumbnail.height,
+            stride: thumbnail.width * 4,
+            format: PixelFormat::Rgba8,
+            pixels: Arc::clone(&thumbnail.rgba),
+        },
+    }
+}
+
+impl ItemIcons {
+    /// Icons drawn with `files`, and thumbnails kept in `thumbnails`' cache when there is one; `wake` is called when a
+    /// thumbnail's job waits to be taken and when a thumbnail is made.
+    pub fn new(
+        files: FileIcons,
+        thumbnails: Option<Thumbnailer>,
+        wake: Arc<dyn Fn() + Send + Sync>,
+    ) -> Self {
+        let ids = Arc::new(|| next_resource_id().0);
+        Self {
+            files: RefCell::new(files),
+            thumbnails: thumbnails
+                .map(|cache| ThumbnailService::new(cache, MEMORY_BUDGET, wake, ids)),
+            art: RefCell::new(HashMap::new()),
+            packed: RefCell::new(HashMap::new()),
+            apps: None,
+            app_icons: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// Applications drawn with the icons their entries name, looked up in `themes`, else with `system`'s generic
+    /// application icon.
+    pub fn with_app_icons(self, themes: Option<(ThemeIcons, SystemIcons)>) -> Self {
+        Self {
+            apps: themes.map(RefCell::new),
+            ..self
+        }
+    }
+
+    /// The renditions of the icon `name` an item names itself, `points` square at each rendition scale, the generic
+    /// application icon where the icon themes lack it (or `name` is empty); none without icon themes.
+    fn named(&self, name: &str, points: f64) -> Vec<ImageSource> {
+        let Some(themes) = &self.apps else {
+            return Vec::new();
+        };
+        let key = (name.to_owned(), points.to_bits());
+        if let Some(images) = self.app_icons.borrow().get(&key) {
+            return images.clone();
+        }
+        let mut sources = themes.borrow_mut();
+        let (themes, system) = &mut *sources;
+        let images: Vec<ImageSource> = RENDITION_SCALES
+            .iter()
+            .map(|&scale| {
+                let px = (points * f64::from(scale)).round().max(1.0) as u32;
+                let own = (!name.is_empty()).then(|| themes.load(name, px)).flatten();
+                let pixmap = own.unwrap_or_else(|| system.raster(GENERIC_APPLICATION, px).clone());
+                ImageSource {
+                    id: next_resource_id(),
+                    image: ImageResource {
+                        revision: 1,
+                        width: pixmap.width(),
+                        height: pixmap.height(),
+                        stride: pixmap.width() * 4,
+                        format: PixelFormat::Rgba8Premultiplied,
+                        pixels: Arc::from(pixmap.data()),
+                    },
+                }
+            })
+            .collect();
+        self.app_icons.borrow_mut().insert(key, images.clone());
+        images
+    }
+
+    /// Whether the windows' items get thumbnails.
+    pub fn thumbnails(&self) -> bool {
+        self.thumbnails.is_some()
+    }
+
+    /// The next thumbnail to make, for the program to run off its UI thread ([`ThumbnailService::take_job`]).
+    pub fn take_job(&self) -> Option<ThumbnailJob> {
+        self.thumbnails.as_ref()?.take_job()
+    }
+
+    /// The renditions of `entry`'s image `points` square: its thumbnail, else its type's icon.
+    pub fn icon(&self, entry: &Entry, points: f64) -> Vec<ImageSource> {
+        let thumbnail = self
+            .thumbnails
+            .as_ref()
+            .filter(|_| shows_thumbnail(entry))
+            .and_then(|service| service.get(&entry.path, thumbnail_edge(points)));
+        if let Some(thumbnail) = thumbnail {
+            return vec![source(&thumbnail)];
+        }
+        // an application draws its own icon, where the themes have it
+        if let Some(own) = entry.icon.as_deref().map(|name| self.named(name, points)) {
+            if !own.is_empty() {
+                return own;
+            }
+        }
+        let mime = mime::entry_mime(entry);
+        let mut files = self.files.borrow_mut();
+        let alias = entry.kind == Kind::Symlink;
+        // a link keeps its type's icon, which carries the alias badge
+        let name = files.name(&entry.path, &mime);
+        let art = Art::for_icon(name).filter(|_| !alias).filter(|_| {
+            !*self
+                .packed
+                .borrow_mut()
+                .entry(name)
+                .or_insert_with(|| files.pack_has(name))
+        });
+        match art {
+            Some(art) => self.art(art, points, &entry.name),
+            None => files.images(&entry.path, &mime, alias, points),
+        }
+    }
+
+    /// `art` `points` square at each rendition scale; a text page's lines are picked by the item's `name`.
+    fn art(&self, art: Art, points: f64, name: &str) -> Vec<ImageSource> {
+        let variant = match art {
+            Art::Text => {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                name.hash(&mut hasher);
+                hasher.finish() % TEXT_PAGES
+            }
+            _ => 0,
+        };
+        let key = (art, points.to_bits(), variant);
+        self.art
+            .borrow_mut()
+            .entry(key)
+            .or_insert_with(|| {
+                RENDITION_SCALES
+                    .iter()
+                    .map(|&scale| {
+                        let px = (points * f64::from(scale)).round().max(1.0) as u32;
+                        let pixels = item_art::draw(art, px, variant + 1);
+                        ImageSource {
+                            id: ResourceId(next_resource_id().0),
+                            image: ImageResource {
+                                revision: 1,
+                                width: px,
+                                height: px,
+                                stride: px * 4,
+                                format: PixelFormat::Rgba8Premultiplied,
+                                pixels: Arc::from(pixels),
+                            },
+                        }
+                    })
+                    .collect()
+            })
+            .clone()
+    }
+
+    /// Window `window` shows `entries` with icons `points` square, the first most wanted.
+    pub fn want<'a>(&self, window: u64, entries: impl IntoIterator<Item = &'a Entry>, points: f64) {
+        if let Some(service) = &self.thumbnails {
+            let items = entries
+                .into_iter()
+                .filter(|e| shows_thumbnail(e))
+                .map(|e| (e.path.clone(), Stamp::of(e)));
+            service.want(window, thumbnail_edge(points), items);
+        }
+    }
+
+    /// Window `window` closed.
+    pub fn forget(&self, window: u64) {
+        if let Some(service) = &self.thumbnails {
+            service.forget(window);
+            service.forget(previews(window));
+        }
+    }
+
+    /// The thumbnail of `entry` `points` square once it is made: a picture's preview, which has no icon to fall back
+    /// on.
+    pub fn thumbnail(&self, entry: &Entry, points: f64) -> Option<ImageSource> {
+        let service = self
+            .thumbnails
+            .as_ref()
+            .filter(|_| shows_thumbnail(entry))?;
+        let thumbnail = service.get(&entry.path, thumbnail_edge(points))?;
+        Some(source(&thumbnail))
+    }
+
+    /// The picture a preview shows of `entry` `points` square: `Some` with its thumbnail once made, `Some(None)` when
+    /// none will come (the file has none, or making it failed), `None` while it is being made.
+    pub fn preview_picture(&self, entry: &Entry, points: f64) -> Option<Option<ImageSource>> {
+        let Some(service) = self.thumbnails.as_ref().filter(|_| shows_thumbnail(entry)) else {
+            return Some(None);
+        };
+        let edge = thumbnail_edge(points);
+        match service.get(&entry.path, edge) {
+            Some(thumbnail) => Some(Some(source(&thumbnail))),
+            None if service.failed(&entry.path, edge) => Some(None),
+            None => None,
+        }
+    }
+
+    /// Window `window` previews `entries` `points` square, besides the items it shows: the preview column's and the
+    /// preview window's pictures.
+    pub fn want_previews<'a>(
+        &self,
+        window: u64,
+        entries: impl IntoIterator<Item = &'a Entry>,
+        points: f64,
+    ) {
+        self.want(previews(window), entries, points);
+    }
+}
