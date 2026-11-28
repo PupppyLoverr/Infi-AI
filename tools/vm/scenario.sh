@@ -151,6 +151,9 @@ q switcher true; shot 24b-switcher 1.0
 q switcher false; sleep 0.3
 q screenshot true; shot 24c-screenshot-tool 1.0
 q screenshot false; sleep 0.3
+q layout unity; shot 26a-layout-unity 1.0
+q layout taskbar; shot 26b-layout-taskbar 1.0
+q layout macos; sleep 0.4
 SOLYRA_TERM_AGENT=1 solyra-term >/tmp/term-agent.log 2>&1 &
 AGENT_PID=$!; sleep 3.5; shot 23b-terminal-agent 0.5
 kill $AGENT_PID 2>/dev/null || true; sleep 0.5

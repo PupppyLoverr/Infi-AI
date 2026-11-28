@@ -21,6 +21,7 @@ Singleton {
     property bool nightShift: false        // warm display (hyprsunset)
     property bool dockMagnify: false       // macOS spring-damped Dock wave magnification
     property bool dockAutohide: false      // auto-hide Dock when pointer leaves
+    property string layoutStyle: "macos"   // "macos" (default) | "unity" (left dock) | "taskbar" (bottom unified) | "minimal"
     property string wallpaperPath: ""      // empty = ~/.config/solyra/wallpaper.jpg (fallback .png)
 
     // Tint alpha over the compositor's blur. Even at "ultra clear" the
@@ -73,6 +74,7 @@ Singleton {
                 if (j.nightShift !== undefined) root.nightShift = j.nightShift
                 if (j.dockMagnify !== undefined) root.dockMagnify = j.dockMagnify
                 if (j.dockAutohide !== undefined) root.dockAutohide = j.dockAutohide
+                if (j.layoutStyle !== undefined) root.layoutStyle = j.layoutStyle
                 if (j.wallpaperPath !== undefined) root.wallpaperPath = j.wallpaperPath
             } catch (e) {}
         }
@@ -83,7 +85,7 @@ Singleton {
             glass: glass, reduceMotion: reduceMotion, reduceTransparency: reduceTransparency,
             showBorders: showBorders, dark: dark, autoArrange: autoArrange, hideNotch: hideNotch,
             hotCorners: hotCorners, widgets: widgets, nightShift: nightShift,
-            dockMagnify: dockMagnify, dockAutohide: dockAutohide, wallpaperPath: wallpaperPath
+            dockMagnify: dockMagnify, dockAutohide: dockAutohide, layoutStyle: layoutStyle, wallpaperPath: wallpaperPath
         }, null, 2))
     }
 }

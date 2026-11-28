@@ -53,20 +53,20 @@ hl.config({
             size = 14,
             passes = 4,
             noise = 0.01,
-            vibrancy = 0.22,          -- restrained colour through the frosted glass
-            vibrancy_darkness = 0.14,
+            vibrancy = 0.28,          -- vibrant colour through crystal-clear Liquid Glass
+            vibrancy_darkness = 0.10,
             popups = true,
-            popups_ignorealpha = 0.16, -- menus and tooltips: blur the card, not its corners
+            popups_ignorealpha = 0.08, -- menus and tooltips: blur the card, not its corners
             -- Liquid Glass: Hyprland's acrylic variant lenses the backdrop
-            -- through a curved edge (refraction + bulb), tuned to Cupertino's
-            -- MODULE_REFRACTION=-80 optical lensing and clarity.
+            -- through a curved edge (refraction + bulb), tuned to macOS 27 Golden Gate
+            -- and Cupertino optical lensing and clarity.
             variant = 8,
             acrylic = {
-                refraction = 14,     -- subtle inward edge lensing
-                bulb = 12,           -- width of the curved optical rim, px
-                clarity = 0.80,      -- retain wallpaper detail through the blur
+                refraction = 24,     -- crisp inward edge lensing matching macOS 27 & Cupertino
+                bulb = 18,           -- width of the curved optical rim, px
+                clarity = 0.72,      -- crystal-clear backdrop with clean glass lensing
                 aberration = 0.0,    -- no visible chromatic fringe
-                tint = 0x08F4F8FF,
+                tint = 0x06F8FAFF,
             },
         },
     },
@@ -109,7 +109,7 @@ hl.layer_rule({
     name = "solyra-glass",
     match = { namespace = "^solyra-(bar|dock|glass|controlcenter|notifications|notifcenter|snap|overview|island|widgets|basket|session-agent|switcher|screenshot|osd)$" },
     blur = true,
-    ignore_alpha = 0.16,
+    ignore_alpha = 0.08,
 })
 hl.layer_rule({
     name = "solyra-pop",

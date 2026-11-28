@@ -420,18 +420,24 @@ Scope {
             font.family: Theme.font; font.pixelSize: 13; font.weight: Theme.wTitle
             TapHandler { onTapped: level.detailsClicked() }
         }
+        Icon {
+            x: 12; y: 33; size: 15
+            name: level.outputButton ? "volume" : "sun"
+            opacity: 0.85
+        }
         Rectangle {
-            x: level.trackX; y: 40; width: level.trackWidth; height: 4; radius: 2
-            color: Qt.rgba(1, 1, 1, 0.22)
+            x: level.trackX + 8; y: 30; width: level.trackWidth - 8; height: 22; radius: 11
+            color: Qt.rgba(1, 1, 1, 0.16)
+            border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.18)
             Rectangle {
-                width: parent.width * Math.max(0, Math.min(1, level.value))
-                height: parent.height; radius: 2
+                width: Math.max(22, parent.width * Math.max(0, Math.min(1, level.value)))
+                height: parent.height; radius: 11
                 color: "white"
             }
         }
         MouseArea {
-            x: level.trackX - 12; y: 31
-            width: level.trackWidth + 24; height: 22
+            x: level.trackX; y: 28
+            width: level.trackWidth + 8; height: 26
             acceptedButtons: Qt.LeftButton
             onPressed: event => { level.forceActiveFocus(); level.setAt(event.x + x) }
             onPositionChanged: event => { if (pressed) level.setAt(event.x + x) }

@@ -219,26 +219,26 @@ Scope {
 
                 // ================================================================
                 // MODE 1: FULL ART & VISION CLOCK DEPTH (04, 14, 26, 29)
-                // Clean single-line clock right below the notch, zero login clutter
+                // Dramatic macOS 27 Glass Vision Clock below the notch, zero login clutter
                 // ================================================================
-                Row {
+                Column {
                     visible: stage.isDepth
                     anchors.horizontalCenter: parent.horizontalCenter
-                    y: 44
-                    spacing: 14
+                    y: 42
+                    spacing: 2
                     Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: Qt.formatDateTime(clk.date, "HH:mm")
-                        color: "white"
-                        font.family: Theme.font; font.pixelSize: 30; font.weight: Font.Bold; font.features: { "tnum": 1 }
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: Qt.formatDateTime(clk.date, "dddd, d MMMM")
+                        color: Qt.rgba(1, 1, 1, 0.86)
+                        font.family: Theme.font; font.pixelSize: 20; font.weight: Font.DemiBold
                         style: Text.Raised; styleColor: Qt.rgba(0, 0, 0, 0.35)
                     }
                     Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: Qt.formatDateTime(clk.date, "ddd, d MMM")
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: Qt.formatDateTime(clk.date, "HH:mm")
                         color: Qt.rgba(1, 1, 1, 0.88)
-                        font.family: Theme.font; font.pixelSize: 27; font.weight: Font.Medium
-                        style: Text.Raised; styleColor: Qt.rgba(0, 0, 0, 0.35)
+                        font.family: Theme.font; font.pixelSize: 84; font.weight: Font.Bold; font.letterSpacing: -2; font.features: { "tnum": 1 }
+                        style: Text.Raised; styleColor: Qt.rgba(0, 0, 0, 0.30)
                     }
                 }
 
@@ -777,6 +777,29 @@ Scope {
                             visible: UPower.displayDevice.isLaptopBattery
                             Icon { name: UPower.displayDevice.state === UPowerDeviceState.Charging ? "charging" : "battery"; size: 15; color: "white" }
                             Text { text: Math.round(UPower.displayDevice.percentage * (UPower.displayDevice.percentage > 1 ? 1 : 100)) + "%"; color: "white"; font.family: Theme.font; font.pixelSize: 12; font.weight: Theme.wBody;}
+                        }
+                        Row {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            topPadding: 8
+                            spacing: 16
+                            Repeater {
+                                model: [
+                                    { label: "Sleep", cmd: ["systemctl", "suspend"] },
+                                    { label: "Restart", cmd: ["systemctl", "reboot"] },
+                                    { label: "Shut Down", cmd: ["systemctl", "poweroff"] }
+                                ]
+                                Glass {
+                                    required property var modelData
+                                    kind: "module"; r: 14; shadow: false
+                                    width: 78; height: 28
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: modelData.label; color: Qt.rgba(1, 1, 1, 0.88)
+                                        font.family: Theme.font; font.pixelSize: 11; font.weight: Theme.wBody
+                                    }
+                                    TapHandler { onTapped: Quickshell.execDetached(modelData.cmd) }
+                                }
+                            }
                         }
                     }
                 }

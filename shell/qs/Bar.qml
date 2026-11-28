@@ -20,9 +20,10 @@ PanelWindow {
     property var screenModel
     property var shell
     screen: screenModel
+    visible: Theme.layoutStyle !== "taskbar"
     anchors { top: true; left: true; right: true }
     implicitHeight: 28
-    exclusiveZone: 28
+    exclusiveZone: visible ? 28 : 0
     color: "transparent"
     WlrLayershell.namespace: "solyra-bar"
 

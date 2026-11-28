@@ -40,7 +40,7 @@ chmod +x $P/bin/solyra-app $P/bin/solyra-control
 printf '[Desktop Entry]\nName=Terminal\nComment=Solyra Terminal\nExec=solyra-term\nIcon=utilities-terminal\nType=Application\nStartupWMClass=solyra-term\n' > $P/share/applications/solyra-term.desktop
 cp "$repo/third-party/cupertino/crates/cupertino-files/data/applications/cupertino-files.desktop" $P/share/applications/solyra-files.desktop
 cp -r "$repo/shell/qs" $P/qs; cp -r "$repo/shell/hypr" $P/hypr
-cp "$repo/assets/wallpapers/twilight-skyline-4k.jpg" $P/wallpaper.jpg
+cp "$repo/assets/wallpapers/macos27-golden-gate-4k.jpg" $P/wallpaper.jpg
 cp "$repo/assets/wallpapers/solyra-dusk-1920x1200.png" $P/wallpaper.png
 cp "$repo"/assets/wallpapers/*-4k.jpg "$repo/assets/wallpapers/galaxy-1920x1080.png" "$repo/assets/wallpapers/solyra-dusk-1920x1200.png" $P/wallpapers/
 cp "$here/scenario.sh" "$here/hook.sh" $P/

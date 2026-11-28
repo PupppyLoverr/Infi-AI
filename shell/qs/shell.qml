@@ -408,6 +408,7 @@ ShellRoot {
         function glass(value: int): void { Theme.glass = value; Theme.save() }
         function dark(on: bool): void { Theme.dark = on; Theme.save() }
         function wallpaper(path: string): void { Theme.wallpaperPath = path; Theme.save() }
+        function layout(style: string): void { Theme.layoutStyle = style || "macos"; Theme.save() }
         function widgets(on: bool): void { Theme.widgets = on; Theme.save() }
         function arrange(on: bool): void { root.setArrange(on) }
     }

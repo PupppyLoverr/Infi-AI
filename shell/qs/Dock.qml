@@ -17,15 +17,21 @@ PanelWindow {
     property var screenModel
     property var shell
     screen: screenModel
-    anchors.bottom: true
+    readonly property bool isUnity: Theme.layoutStyle === "unity"
+    readonly property bool isTaskbar: Theme.layoutStyle === "taskbar"
+    readonly property bool isMinimal: Theme.layoutStyle === "minimal"
+    anchors.bottom: !isUnity
+    anchors.left: isUnity || isTaskbar
+    anchors.right: isTaskbar
+    anchors.top: isUnity
     // Resting: surface is exactly the glass card so Hyprland's acrylic lens
     // bends the backdrop right along the dock's own edges. Expanding on hover
     // gives room for wave magnification and tooltips when enabled.
-    readonly property bool activeHover: mx >= 0 && Theme.dockMagnify && !Theme.reduceMotion
-    readonly property bool hidden: Theme.dockAutohide && pointerMx < 0 && forcedMx < 0
-    implicitWidth: activeHover ? card.width + 148 : card.width
-    implicitHeight: activeHover ? 140 : (hidden ? 8 : card.height + 4)
-    exclusiveZone: Theme.dockAutohide ? 0 : card.height + 4
+    readonly property bool activeHover: !isUnity && mx >= 0 && Theme.dockMagnify && !Theme.reduceMotion
+    readonly property bool hidden: (Theme.dockAutohide || isMinimal) && pointerMx < 0 && forcedMx < 0
+    implicitWidth: isUnity ? (hidden ? 8 : card.width + 6) : (isTaskbar ? (screenModel ? screenModel.width : 1280) : (activeHover ? card.width + 148 : card.width))
+    implicitHeight: isUnity ? (screenModel ? screenModel.height : 800) : (activeHover ? 140 : (hidden ? 8 : (isTaskbar ? 52 : card.height + 4)))
+    exclusiveZone: (Theme.dockAutohide || isMinimal) ? 0 : (isUnity ? card.width + 6 : (isTaskbar ? 52 : card.height + 4))
     color: "transparent"
     WlrLayershell.namespace: "solyra-dock"
 
@@ -121,28 +127,34 @@ PanelWindow {
     Glass {
         id: card
         kind: "dock"
-        r: 20
+        r: dockWin.isTaskbar ? 0 : 20
         shadow: false
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: dockWin.hidden ? -(height + 12) : 4
+        anchors.bottom: dockWin.isUnity ? undefined : parent.bottom
+        anchors.bottomMargin: dockWin.isUnity ? 0 : (dockWin.isTaskbar ? 0 : (dockWin.hidden ? -(height + 12) : 4))
+        anchors.left: dockWin.isUnity || dockWin.isTaskbar ? parent.left : undefined
+        anchors.right: dockWin.isTaskbar ? parent.right : undefined
+        anchors.leftMargin: dockWin.isUnity ? (dockWin.hidden ? -(width + 12) : 6) : 0
+        anchors.verticalCenter: dockWin.isUnity ? parent.verticalCenter : undefined
+        anchors.horizontalCenter: (dockWin.isUnity || dockWin.isTaskbar) ? undefined : parent.horizontalCenter
         Behavior on anchors.bottomMargin { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.ms(220); easing.type: Easing.OutCubic } }
-        anchors.horizontalCenter: parent.horizontalCenter
-        height: 62
-        width: row.width + 16
+        height: dockWin.isUnity ? Math.min(parent.height - 80, row.height + 16) : (dockWin.isTaskbar ? 52 : 62)
+        width: dockWin.isUnity ? 62 : (dockWin.isTaskbar ? parent.width : row.width + 16)
         Behavior on width {
-            enabled: !Theme.reduceMotion
+            enabled: !Theme.reduceMotion && !dockWin.isTaskbar && !dockWin.isUnity
             SpringAnimation { spring: 4.8; damping: 0.48; epsilon: 0.3 }
         }
         HoverHandler {
-            onPointChanged: dockWin.pointerMx = point.position.x
+            onPointChanged: dockWin.pointerMx = dockWin.isUnity ? point.position.y : point.position.x
             onHoveredChanged: if (!hovered) dockWin.pointerMx = -1
         }
 
-        Row {
+        Grid {
             id: row
-            x: 8
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: 6
+            columns: dockWin.isUnity ? 1 : 64
+            x: dockWin.isUnity ? 8 : (dockWin.isTaskbar ? (parent.width - width) / 2 : 8)
+            anchors.bottom: dockWin.isUnity ? undefined : parent.bottom
+            anchors.bottomMargin: dockWin.isUnity ? 0 : (dockWin.isTaskbar ? 3 : 6)
+            anchors.verticalCenter: dockWin.isUnity ? parent.verticalCenter : undefined
             spacing: dockWin.gap
             Repeater {
                 model: dockWin.items
@@ -153,6 +165,18 @@ PanelWindow {
                     dock: dockWin
                     centre: dockWin.centreOf(index)
                 }
+            }
+        }
+        Row {
+            visible: dockWin.isTaskbar
+            anchors.right: parent.right; anchors.rightMargin: 16
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 12
+            Icon { name: "search"; size: 15; opacity: 0.9; TapHandler { onTapped: if (dockWin.shell) dockWin.shell.toggleSearch() } }
+            Icon { name: "sliders"; size: 15; opacity: 0.9; TapHandler { onTapped: if (dockWin.shell) dockWin.shell.toggleControlCenter() } }
+            Text {
+                text: Qt.formatDateTime(new Date(), "h:mm AP")
+                color: "white"; font.family: Theme.font; font.pixelSize: 13; font.weight: Theme.wTitle
             }
         }
     }
