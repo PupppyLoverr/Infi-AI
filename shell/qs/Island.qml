@@ -268,7 +268,7 @@ PanelWindow {
         : mode === "expanded" && tab === "usage" ? { w: 396, h: 184, r: 26 }
         : mode === "expanded" && tab === "tools" ? { w: 540, h: 256, r: 28 }
         : mode === "expanded" ? { w: 480, h: 196, r: 28 }
-        : { w: hoverIdle.hovered ? 124 : 116, h: 25, r: 12 }
+        : { w: hoverIdle.hovered ? 134 : 126, h: 25, r: 12.5 }
 
     // Concave outer hardware ears when flush to the top bezel (exact match to 07, 16, 30, 31!)
     Shape {
@@ -304,7 +304,7 @@ PanelWindow {
         Behavior on opacity { NumberAnimation { duration: Theme.ms(220) } }
         HoverHandler { id: hoverIdle }
         anchors.horizontalCenter: parent.horizontalCenter
-        y: win.flushNotch ? 0 : (win.mode === "expanded" || win.mode === "reply" ? 4 : 3)
+        y: win.flushNotch ? 0 : 4
         width: win.d.w
         height: win.d.h
         radius: win.d.r

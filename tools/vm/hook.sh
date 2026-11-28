@@ -13,6 +13,7 @@ ln -sf /usr/share/zoneinfo/Australia/Melbourne /etc/localtime
 install -Dm644 -o solyra -g solyra /opt/solyra/hypr/hyprland.lua $U/.config/hypr/hyprland.lua
 [ -f /opt/solyra/wallpaper.jpg ] && install -Dm644 -o solyra -g solyra /opt/solyra/wallpaper.jpg $U/.config/solyra/wallpaper.jpg
 [ -d /opt/solyra/wallpapers ] && { mkdir -p /usr/share/backgrounds/solyra; cp /opt/solyra/wallpapers/* /usr/share/backgrounds/solyra/; }
+[ -d /opt/solyra/fonts ] && { mkdir -p /usr/share/fonts/TTF /etc/fonts/conf.d; cp /opt/solyra/fonts/Geist*.ttf /usr/share/fonts/TTF/; cp /opt/solyra/fonts/60-solyra-geist.conf /etc/fonts/conf.d/; fc-cache -f >/dev/null 2>&1 || true; }
 printf 'hl.on("hyprland.start", function() hl.exec_cmd("bash /opt/solyra/scenario.sh > /tmp/scenario.log 2>&1") end)\n' > $U/.config/solyra/hypr-local.lua
 chown solyra: $U/.config/solyra/hypr-local.lua
 echo '[ "$(tty)" = /dev/tty1 ] && exec $(command -v start-hyprland || echo Hyprland) > /tmp/hypr.log 2>&1' > $U/.bash_profile

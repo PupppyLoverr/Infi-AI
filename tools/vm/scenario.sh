@@ -173,10 +173,12 @@ q island close; sleep 0.8
 q control; shot 17d-web-song-control-center 1.2
 q control; sleep 0.6
 
-# All three Droppy Fullscreen Lock Screen Modes on live Firefox playback
+# All three Droppy Fullscreen Lock Screen Modes + Swipe-Up Sign-In Page on live Firefox playback
 q lockMode depth; q lock; shot 16a-lock-screen-full-art-depth 2.5
 q lockMode lyrics; shot 16b-lock-screen-live-lyrics 1.8
 q lockMode queue; shot 16c-lock-screen-playing-next 1.8
+q lockSignIn true; shot 16d-lock-screen-signin-page 1.8
+q lockSignIn false; sleep 0.4
 
 pkill -x mpv; pkill -x firefox; qs ipc call shell island close
 while [ $(( $(date +%s) - T0 + 14 )) -lt 180 ]; do sleep 5; done

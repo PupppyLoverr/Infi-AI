@@ -22,7 +22,8 @@ if [ ! -f base.qcow2 ]; then
   tail -2 setup.log
 fi
 # Payload: binaries, desktop entries, the QML shell, Hyprland config, wallpaper, scenario.
-P=payload/stage; rm -rf $P; mkdir -p $P/bin $P/share/applications $P/wallpapers
+P=payload/stage; rm -rf $P; mkdir -p $P/bin $P/share/applications $P/wallpapers $P/fonts
+cp "$repo"/assets/fonts/geist/Geist*.ttf "$repo/assets/fonts/60-solyra-geist.conf" $P/fonts/
 cp "${TERM_BIN:-$repo/apps/terminal/target/release/solyra-term}" $P/bin/solyra-term
 files_bin="${FILES_BIN:-$repo/apps/target/release/solyra-files}"; [ -f "$files_bin" ] && cp "$files_bin" $P/bin/solyra-files
 cp "$repo/iso/airootfs/usr/local/bin/solyra-app" $P/bin/solyra-app

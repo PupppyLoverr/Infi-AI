@@ -116,6 +116,7 @@ Item {
         width: tip.implicitWidth + 24
         height: 34
         Glass {
+            kind: "module"
             anchors.top: parent.top
             anchors.horizontalCenter: parent.horizontalCenter
             width: parent.width; height: 27; r: 13.5

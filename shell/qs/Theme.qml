@@ -35,8 +35,8 @@ Singleton {
     readonly property color accent: "#0a84ff"
     readonly property color fill: dark ? Qt.rgba(1, 1, 1, 0.10) : Qt.rgba(0, 0, 0, 0.06)
     readonly property int radius: 16          // one window radius everywhere
-    readonly property string font: "Inter"
-    readonly property string mono: "JetBrains Mono"
+    readonly property string font: "Geist"
+    readonly property string mono: "Geist Mono"
 
     // Apple's island springs (Droppy uses response 0.24–0.4, damping 0.8):
     // QML SpringAnimation equivalents, or instant under Reduce Motion.

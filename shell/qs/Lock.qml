@@ -33,7 +33,11 @@ Scope {
     property bool favOn: false
 
     readonly property string lockMode: shell ? shell.lockMode : "depth"
+    readonly property bool signInOpen: shell ? shell.lockSignInOpen : false
     readonly property var queueItems: shell ? shell.mediaQueue : []
+
+    function openSignIn() { if (root.shell) root.shell.setLockSignIn(true) }
+    function closeSignIn() { if (root.shell) root.shell.setLockSignIn(false) }
 
     readonly property MprisPlayer player: {
         for (const p of Mpris.players.values) if (p.isPlaying) return p
@@ -102,10 +106,44 @@ Scope {
                 anchors.fill: parent
                 clip: true
                 readonly property bool ambient: !!root.player
-                readonly property bool isDepth: ambient && root.lockMode === "depth"
-                readonly property bool isSplit: ambient && (root.lockMode === "lyrics" || root.lockMode === "queue")
+                readonly property bool showSignIn: !ambient || root.signInOpen
+                readonly property bool showMusic: ambient && !root.signInOpen
+                readonly property bool isDepth: showMusic && root.lockMode === "depth"
+                readonly property bool isSplit: showMusic && (root.lockMode === "lyrics" || root.lockMode === "queue")
                 readonly property var lyricLines: root.lyrics ? root.lyrics.lines : []
                 readonly property int lyricCur: root.player && root.lyrics ? root.lyrics.indexAt(root.player.position) : -1
+
+                // Swipe-up (mouse/touch drag or trackpad scroll) opens the dedicated Sign-In page;
+                // swipe-down returns cleanly to the Now Playing music screen.
+                property real dragStartY: 0
+                MouseArea {
+                    anchors.fill: parent
+                    z: 0
+                    onPressed: mouse => { stage.dragStartY = mouse.y }
+                    onReleased: mouse => {
+                        const dy = mouse.y - stage.dragStartY
+                        if (stage.ambient && !root.signInOpen && dy < -44) root.openSignIn()
+                        else if (stage.ambient && root.signInOpen && dy > 44) root.closeSignIn()
+                    }
+                }
+                WheelHandler {
+                    onWheel: event => {
+                        if (!stage.ambient) return
+                        const dy = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y
+                        if (!root.signInOpen && dy > 24) root.openSignIn()
+                        else if (root.signInOpen && dy < -24) root.closeSignIn()
+                    }
+                }
+                Keys.onPressed: event => {
+                    if (!stage.ambient) return
+                    if (!root.signInOpen && (event.key === Qt.Key_Up || event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
+                        root.openSignIn()
+                        event.accepted = true
+                    } else if (root.signInOpen && (event.key === Qt.Key_Escape || event.key === Qt.Key_Down)) {
+                        root.closeSignIn()
+                        event.accepted = true
+                    }
+                }
 
                 SystemClock { id: clk; precision: SystemClock.Minutes }
                 Timer {
@@ -181,31 +219,25 @@ Scope {
 
                 // ================================================================
                 // MODE 1: FULL ART & VISION CLOCK DEPTH (04, 14, 26, 29)
+                // Clean single-line clock right below the notch, zero login clutter
                 // ================================================================
                 Row {
                     visible: stage.isDepth
                     anchors.horizontalCenter: parent.horizontalCenter
-                    y: 42
-                    spacing: 12
+                    y: 44
+                    spacing: 14
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
                         text: Qt.formatDateTime(clk.date, "HH:mm")
                         color: "white"
-                        font.family: Theme.font; font.pixelSize: 28; font.weight: Font.Bold; font.features: { "tnum": 1 }
+                        font.family: Theme.font; font.pixelSize: 30; font.weight: Font.Bold; font.features: { "tnum": 1 }
                         style: Text.Raised; styleColor: Qt.rgba(0, 0, 0, 0.35)
-                    }
-                    Rectangle {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: 28; height: 28; radius: 8
-                        color: Qt.rgba(1, 1, 1, 0.18)
-                        border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.28)
-                        Icon { anchors.centerIn: parent; name: "depth"; size: 15; color: "white" }
                     }
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
                         text: Qt.formatDateTime(clk.date, "ddd, d MMM")
-                        color: Qt.rgba(1, 1, 1, 0.90)
-                        font.family: Theme.font; font.pixelSize: 26; font.weight: Font.Medium
+                        color: Qt.rgba(1, 1, 1, 0.88)
+                        font.family: Theme.font; font.pixelSize: 27; font.weight: Font.Medium
                         style: Text.Raised; styleColor: Qt.rgba(0, 0, 0, 0.35)
                     }
                 }
@@ -213,10 +245,10 @@ Scope {
                 // Centered lower translucent Liquid Glass controls overlay (Full Art & Depth)
                 Column {
                     visible: stage.isDepth
-                    width: Math.min(450, stage.width * 0.44)
+                    width: Math.min(460, stage.width * 0.44)
                     anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.bottom: unlockArea.top
-                    anchors.bottomMargin: 22
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 64
                     spacing: 12
 
                     Row {
@@ -445,8 +477,8 @@ Scope {
                         rightMargin: Math.max(52, stage.width * 0.065)
                         top: parent.top
                         topMargin: 72
-                        bottom: unlockArea.top
-                        bottomMargin: 24
+                        bottom: parent.bottom
+                        bottomMargin: 76
                     }
                     clip: true
 
@@ -561,7 +593,7 @@ Scope {
 
                 // Bottom-left circular frosted Output Device button
                 Rectangle {
-                    visible: stage.ambient
+                    visible: stage.showMusic
                     anchors { left: parent.left; bottom: parent.bottom; leftMargin: 32; bottomMargin: 24 }
                     width: 38; height: 38; radius: 19
                     color: Qt.rgba(1, 1, 1, 0.14)
@@ -570,9 +602,31 @@ Scope {
                     TapHandler { onTapped: root.cycleOutput() }
                 }
 
+                // Bottom-center Swipe-Up Home Bar (replaces cluttered password box while music plays)
+                Column {
+                    visible: stage.showMusic
+                    anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 16 }
+                    spacing: 6
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: "Swipe up to sign in"
+                        color: Qt.rgba(1, 1, 1, swipeHov.hovered ? 0.85 : 0.46)
+                        font.family: Theme.font; font.pixelSize: 11; font.weight: Font.Medium
+                        Behavior on color { ColorAnimation { duration: Theme.ms(140) } }
+                    }
+                    Rectangle {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: swipeHov.hovered ? 156 : 136; height: 5; radius: 2.5
+                        color: Qt.rgba(1, 1, 1, swipeHov.hovered ? 0.88 : 0.52)
+                        Behavior on width { NumberAnimation { duration: Theme.ms(160); easing.type: Easing.OutCubic } }
+                    }
+                    HoverHandler { id: swipeHov }
+                    TapHandler { onTapped: root.openSignIn() }
+                }
+
                 // Bottom-right 3-Mode Droppy Segmented Pill (Full Art & Depth | Live Lyrics | Playing Next)
                 Rectangle {
-                    visible: stage.ambient
+                    visible: stage.showMusic
                     anchors { right: parent.right; bottom: parent.bottom; rightMargin: 32; bottomMargin: 24 }
                     width: 124; height: 38; radius: 19
                     color: Qt.rgba(1, 1, 1, 0.14)
@@ -601,111 +655,127 @@ Scope {
                 }
 
                 // ================================================================
-                // CLASSIC IDLE MODE (no media active)
+                // DEDICATED SIGN-IN PAGE (shown on swipe-up during music, or when idle)
                 // ================================================================
-                Column {
-                    visible: !stage.ambient
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    y: parent.height * 0.14
-                    spacing: 0
-                    Text { anchors.horizontalCenter: parent.horizontalCenter; text: Qt.formatDateTime(clk.date, "dddd, d MMMM"); color: Qt.rgba(1, 1, 1, 0.85); font.family: Theme.font; font.pixelSize: 22; font.weight: Font.DemiBold }
-                    Text { anchors.horizontalCenter: parent.horizontalCenter; text: Qt.formatDateTime(clk.date, "H:mm"); color: "white"; font.family: Theme.font; font.pixelSize: 112; font.weight: Font.Bold }
-                }
+                Item {
+                    id: signInPage
+                    anchors.fill: parent
+                    z: 20
+                    visible: opacity > 0.01
+                    opacity: stage.showSignIn ? 1.0 : 0.0
+                    y: stage.showSignIn ? 0 : 48
+                    Behavior on opacity { NumberAnimation { duration: Theme.ms(240); easing.type: Easing.OutCubic } }
+                    Behavior on y { NumberAnimation { duration: Theme.ms(280); easing.type: Easing.OutCubic } }
+                    onVisibleChanged: if (visible) pw.forceActiveFocus()
 
-                // ================================================================
-                // SHARED PAM PASSWORD UNLOCK
-                // ================================================================
-                Column {
-                    id: unlockArea
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.bottom: parent.bottom
-                    anchors.bottomMargin: stage.ambient ? 20 : parent.height * 0.08
-                    spacing: stage.ambient ? 6 : 8
+                    // Soft dark frosted veil over the blurred ambient backdrop
+                    Rectangle {
+                        anchors.fill: parent
+                        color: Qt.rgba(0.03, 0.035, 0.055, stage.ambient ? 0.56 : 0.22)
+                    }
 
-                    Row {
+                    // Top-center subtle pill to return to Now Playing when music is active
+                    Rectangle {
                         visible: stage.ambient
+                        anchors { horizontalCenter: parent.horizontalCenter; top: parent.top; topMargin: 42 }
+                        width: backRow.implicitWidth + 24; height: 30; radius: 15
+                        color: Qt.rgba(1, 1, 1, backHov.hovered ? 0.22 : 0.12)
+                        border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.24)
+                        Row {
+                            id: backRow
+                            anchors.centerIn: parent; spacing: 6
+                            Icon { anchors.verticalCenter: parent.verticalCenter; name: "down"; size: 12; color: "white" }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: root.player ? ("Now Playing — " + (root.player.trackTitle || "Music")) : "Now Playing"
+                                color: "white"; font.family: Theme.font; font.pixelSize: 12; font.weight: Font.Medium
+                            }
+                        }
+                        HoverHandler { id: backHov }
+                        TapHandler { onTapped: root.closeSignIn() }
+                    }
+
+                    // Large macOS 27 Lock Clock
+                    Column {
                         anchors.horizontalCenter: parent.horizontalCenter
-                        spacing: 8
+                        y: parent.height * 0.14
+                        spacing: 0
+                        Text { anchors.horizontalCenter: parent.horizontalCenter; text: Qt.formatDateTime(clk.date, "dddd, d MMMM"); color: Qt.rgba(1, 1, 1, 0.85); font.family: Theme.font; font.pixelSize: 22; font.weight: Font.DemiBold }
+                        Text { anchors.horizontalCenter: parent.horizontalCenter; text: Qt.formatDateTime(clk.date, "H:mm"); color: "white"; font.family: Theme.font; font.pixelSize: 112; font.weight: Font.Bold; font.features: { "tnum": 1 } }
+                    }
+
+                    // Centered PAM Password Unlock
+                    Column {
+                        id: unlockArea
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: parent.height * 0.09
+                        spacing: 10
+
                         Rectangle {
-                            width: 26; height: 26; radius: 13
-                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            width: 72; height: 72; radius: 36
                             gradient: Gradient {
                                 GradientStop { position: 0; color: "#8e8e93" }
                                 GradientStop { position: 1; color: "#5a5a5f" }
                             }
-                            border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.3)
-                            Text { anchors.centerIn: parent; text: (Quickshell.env("USER") || "?").charAt(0).toUpperCase(); color: "white"; font.family: Theme.font; font.pixelSize: 12; font.weight: Font.DemiBold }
+                            border.width: 1.2; border.color: Qt.rgba(1, 1, 1, 0.36)
+                            Text { anchors.centerIn: parent; text: (Quickshell.env("USER") || "?").charAt(0).toUpperCase(); color: "white"; font.family: Theme.font; font.pixelSize: 30; font.weight: Font.DemiBold }
                         }
                         Text {
-                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            bottomPadding: 2
                             text: { const u = Quickshell.env("USER") || "User"; return u.charAt(0).toUpperCase() + u.slice(1) }
-                            color: Qt.rgba(1, 1, 1, 0.90); font.family: Theme.font; font.pixelSize: 13; font.weight: Font.DemiBold
+                            color: "white"; font.family: Theme.font; font.pixelSize: 16; font.weight: Font.DemiBold
                         }
-                    }
 
-                    Rectangle {
-                        visible: !stage.ambient
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: 64; height: 64; radius: 32
-                        gradient: Gradient {
-                            GradientStop { position: 0; color: "#8e8e93" }
-                            GradientStop { position: 1; color: "#5a5a5f" }
+                        // Cupertino Liquid Glass Password Capsule
+                        Glass {
+                            id: pwBox
+                            kind: "module"
+                            r: 18
+                            shadow: false
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            width: 248; height: 36
+                            TextField {
+                                id: pw
+                                anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16
+                                echoMode: TextInput.Password
+                                placeholderText: ""
+                                color: "white"; placeholderTextColor: Qt.rgba(1, 1, 1, 0.6)
+                                font.family: Theme.font; font.pixelSize: 13
+                                horizontalAlignment: TextInput.AlignHCenter
+                                background: null
+                                focus: stage.showSignIn
+                                enabled: !pam.active
+                                onAccepted: { pam.start() }
+                                Keys.onEscapePressed: if (stage.ambient) root.closeSignIn()
+                            }
+                            Text {
+                                anchors.centerIn: parent
+                                visible: pw.text === "" && !pam.active
+                                text: "Enter Password"
+                                color: Qt.rgba(1, 1, 1, 0.66); font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Medium
+                            }
+                            Connections {
+                                target: pam
+                                function onResponseRequiredChanged() { if (pam.responseRequired) { pam.respond(pw.text); pw.text = "" } }
+                            }
                         }
-                        border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.3)
-                        Text { anchors.centerIn: parent; text: (Quickshell.env("USER") || "?").charAt(0).toUpperCase(); color: "white"; font.family: Theme.font; font.pixelSize: 28; font.weight: Font.DemiBold }
-                    }
-                    Text {
-                        visible: !stage.ambient
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        bottomPadding: 4
-                        text: { const u = Quickshell.env("USER") || "User"; return u.charAt(0).toUpperCase() + u.slice(1) }
-                        color: "white"; font.family: Theme.font; font.pixelSize: 15; font.weight: Font.DemiBold
-                    }
 
-                    Rectangle {
-                        id: pwBox
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: 228; height: 32; radius: 16
-                        color: Qt.rgba(1, 1, 1, 0.14)
-                        border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.24)
-                        TextField {
-                            id: pw
-                            anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16
-                            echoMode: TextInput.Password
-                            placeholderText: ""
-                            color: "white"; placeholderTextColor: Qt.rgba(1, 1, 1, 0.6)
-                            font.family: Theme.font; font.pixelSize: 13
-                            horizontalAlignment: TextInput.AlignHCenter
-                            background: null
-                            focus: true
-                            enabled: !pam.active
-                            onAccepted: { pam.start() }
-                            Component.onCompleted: forceActiveFocus()
-                        }
                         Text {
-                            anchors.centerIn: parent
-                            visible: pw.text === "" && !pam.active
-                            text: "Enter Password"
-                            color: Qt.rgba(1, 1, 1, 0.62); font.family: Theme.font; font.pixelSize: 12
+                            visible: root.status !== ""
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: root.status; color: "#ff8f8f"; font.family: Theme.font; font.pixelSize: 12
                         }
-                        Connections {
-                            target: pam
-                            function onResponseRequiredChanged() { if (pam.responseRequired) { pam.respond(pw.text); pw.text = "" } }
+
+                        Row {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            spacing: 6
+                            visible: UPower.displayDevice.isLaptopBattery
+                            Icon { name: UPower.displayDevice.state === UPowerDeviceState.Charging ? "charging" : "battery"; size: 15; color: "white" }
+                            Text { text: Math.round(UPower.displayDevice.percentage * (UPower.displayDevice.percentage > 1 ? 1 : 100)) + "%"; color: "white"; font.family: Theme.font; font.pixelSize: 12 }
                         }
-                    }
-
-                    Text {
-                        visible: root.status !== ""
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        text: root.status; color: "#ff8f8f"; font.family: Theme.font; font.pixelSize: 12
-                    }
-
-                    Row {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        spacing: 6
-                        visible: UPower.displayDevice.isLaptopBattery
-                        Icon { name: UPower.displayDevice.state === UPowerDeviceState.Charging ? "charging" : "battery"; size: 15; color: "white" }
-                        Text { text: Math.round(UPower.displayDevice.percentage * (UPower.displayDevice.percentage > 1 ? 1 : 100)) + "%"; color: "white"; font.family: Theme.font; font.pixelSize: 12 }
                     }
                 }
             }

@@ -57,6 +57,7 @@ ShellRoot {
 
     // Shared Lock Screen mode: "depth" | "lyrics" | "queue".
     property string lockMode: "depth"
+    property bool lockSignInOpen: false
 
     // Shared Playing Next Queue (auto-populated from ~/Music + active track context).
     property var mediaQueue: [
@@ -227,10 +228,11 @@ ShellRoot {
         ipc.toastRequested("Replied|" + text.trim())
     }
     function control() { cc.open = !cc.open; if (cc.open) centerOpen = false }
-    function lock() { lockScreen.lock() }
+    function lock() { lockSignInOpen = false; lockScreen.lock() }
     function setLockMode(m) {
         if (m === "depth" || m === "lyrics" || m === "queue") lockMode = m
     }
+    function setLockSignIn(open) { lockSignInOpen = !!open }
     function snap() { snaps.open = !snaps.open }
     function toggleOverview() { overviewWin.open = !overviewWin.open }
     function setArrange(on) {
@@ -367,6 +369,7 @@ ShellRoot {
         function control(): void { root.control() }
         function lock(): void { root.lock() }
         function lockMode(mode: string): void { root.setLockMode(mode) }
+        function lockSignIn(open: bool): void { root.setLockSignIn(open) }
         function snap(): void { root.snap() }
         function overview(): void { root.toggleOverview() }
         function island(tab: string): void { islandRequested(tab) }

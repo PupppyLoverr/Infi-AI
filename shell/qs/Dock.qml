@@ -22,17 +22,18 @@ PanelWindow {
     // bends the backdrop right along the dock's own edges. Expanding on hover
     // gives room for wave magnification and tooltips when enabled.
     readonly property bool activeHover: mx >= 0 && Theme.dockMagnify && !Theme.reduceMotion
-    implicitWidth: activeHover ? card.width + 140 : card.width
-    implicitHeight: activeHover ? 136 : card.height + 6
-    exclusiveZone: card.height + 10
+    readonly property bool hidden: Theme.dockAutohide && pointerMx < 0 && forcedMx < 0
+    implicitWidth: activeHover ? card.width + 148 : card.width
+    implicitHeight: activeHover ? 140 : (hidden ? 8 : card.height + 8)
+    exclusiveZone: Theme.dockAutohide ? 0 : card.height + 12
     color: "transparent"
     WlrLayershell.namespace: "solyra-dock"
 
     readonly property var pinned: ["solyra-files", "firefox", "solyra-term", "org.gnome.TextEditor", "mpv", "solyra-settings"]
     readonly property var bundled: ({ "solyra-files": "Finder", "solyra-term": "Terminal", "solyra-settings": "Settings" })
-    // macOS 26/27 proportions: 50 px icons, small even gaps, slim padding.
-    readonly property int cell: 50
-    readonly property int gap: 4
+    // macOS 27 / Cupertino proportions: 52 px icons, balanced gaps, sculptural glass pill.
+    readonly property int cell: 52
+    readonly property int gap: 5
     // Recently used apps that are not pinned (macOS's recent-apps section):
     // remembered as they come to the front, newest first, three kept.
     property var recent: []
@@ -119,12 +120,13 @@ PanelWindow {
     Glass {
         id: card
         kind: "dock"
-        r: 24
+        r: 26
         anchors.bottom: parent.bottom
-        anchors.bottomMargin: 6
+        anchors.bottomMargin: dockWin.hidden ? -(height + 12) : 8
+        Behavior on anchors.bottomMargin { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.ms(220); easing.type: Easing.OutCubic } }
         anchors.horizontalCenter: parent.horizontalCenter
-        height: 66
-        width: row.width + 16
+        height: 68
+        width: row.width + 18
         Behavior on width {
             enabled: !Theme.reduceMotion
             SpringAnimation { spring: 4.8; damping: 0.48; epsilon: 0.3 }

@@ -26,8 +26,11 @@ check() {
 }
 
 package() {
-  install -d "$pkgdir/etc/xdg/quickshell" "$pkgdir/etc/skel/.config/hypr" "$pkgdir/usr/share/backgrounds/solyra" "$pkgdir/etc/skel/.config/solyra"
+  install -d "$pkgdir/etc/xdg/quickshell" "$pkgdir/etc/skel/.config/hypr" "$pkgdir/usr/share/backgrounds/solyra" "$pkgdir/etc/skel/.config/solyra" "$pkgdir/usr/share/fonts/TTF" "$pkgdir/etc/fonts/conf.d"
   cp -r "$_repo/shell/qs/." "$pkgdir/etc/xdg/quickshell/"
+  install -Dm644 "$_repo"/assets/fonts/geist/Geist*.ttf -t "$pkgdir/usr/share/fonts/TTF/"
+  install -Dm644 "$_repo/assets/fonts/60-solyra-geist.conf" "$pkgdir/etc/fonts/conf.d/60-solyra-geist.conf"
+  install -Dm644 "$_repo/assets/fonts/geist/Geist-OFL.txt" "$pkgdir/usr/share/licenses/$pkgname/Geist-OFL.txt"
   install -Dm644 "$_repo/shell/hypr/hyprland.lua" "$pkgdir/etc/skel/.config/hypr/hyprland.lua"
   install -Dm644 /dev/null "$pkgdir/etc/skel/.config/solyra/hypr-local.lua"
   install -Dm644 "$_repo"/assets/wallpapers/*-1920x1080.png "$_repo"/assets/wallpapers/solyra-dusk-1920x1200.png "$_repo"/assets/wallpapers/*-4k.jpg -t "$pkgdir/usr/share/backgrounds/solyra/"
