@@ -151,7 +151,7 @@ PanelWindow {
             Text {
                 id: clockText
                 anchors.centerIn: parent
-                color: "white"; font.family: Theme.font; font.pixelSize: 13.5; font.weight: Font.Medium
+                color: "white"; font.family: Theme.font; font.pixelSize: 13; font.weight: Font.Medium
                 text: Qt.formatDateTime(clock.date, "ddd d MMM  h:mm ap")
                 SystemClock { id: clock; precision: SystemClock.Minutes }
             }
