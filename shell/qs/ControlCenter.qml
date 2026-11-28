@@ -23,10 +23,10 @@ Scope {
     property bool open: false
 
     // Placement (from the top-right corner), as in the reference layout.
-    readonly property int top: 38
+    readonly property int top: 40
     readonly property int edge: 10
     readonly property int gapS: 12
-    readonly property int soundY: bright >= 0 ? 416 : 334
+    readonly property int soundY: bright >= 0 ? 426 : 344
     readonly property int outY: soundY + 70 + gapS
     readonly property int editY: outY + (showOutputs ? outputs.implicitHeight + gapS : 0)
     readonly property int capY: editY + (editing ? edit.implicitHeight + gapS : 0)
@@ -79,13 +79,13 @@ Scope {
         property color tint: Theme.accent
         signal clicked()
         visible: cc.open; fromRight: true
-        r: implicitHeight / 2; kind: "clear"
-        implicitWidth: 172; implicitHeight: 62
+        r: implicitHeight / 2; kind: "module"
+        implicitWidth: 172; implicitHeight: 64
         Rectangle {
             id: disc
-            x: 8; anchors.verticalCenter: parent.verticalCenter
+            x: 9; anchors.verticalCenter: parent.verticalCenter
             width: 46; height: 46; radius: 23
-            color: p.on ? "white" : Qt.rgba(1, 1, 1, 0.16)
+            color: p.on ? "white" : Qt.rgba(1, 1, 1, 0.11)
             Icon { anchors.centerIn: parent; name: p.icon; size: 20; color: p.on ? p.tint : "white" }
         }
         Column {
@@ -101,8 +101,8 @@ Scope {
         property string icon; property bool on: false
         signal clicked()
         visible: cc.open; fromRight: true
-        r: implicitHeight / 2; kind: "clear"
-        implicitWidth: 62; implicitHeight: 62
+        r: implicitHeight / 2; kind: "module"
+        implicitWidth: 64; implicitHeight: 64
         Rectangle { anchors.fill: parent; anchors.margins: 1; radius: height / 2; color: "white"; visible: rb.on }
         Icon { anchors.centerIn: parent; name: rb.icon; size: 24; color: rb.on ? "#1c1c1e" : "white" }
         TapHandler { onTapped: rb.clicked() }
@@ -117,7 +117,7 @@ Scope {
         signal moved(real v)
         signal extraClicked()
         fromRight: true
-        r: 24; kind: "clear"
+        r: 24; kind: "module"
         implicitWidth: 348; implicitHeight: 70
         Text { x: 18; y: 10; text: tr.title; color: "white"; font.family: Theme.font; font.pixelSize: 14; font.weight: Font.Bold }
         Icon { id: lowI; x: 16; y: 39; name: tr.lowIcon; size: 15 }
@@ -127,8 +127,8 @@ Scope {
             y: 36; height: 22
             Rectangle {
                 anchors.fill: parent; radius: 11
-                color: Qt.rgba(1, 1, 1, 0.16)
-                border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.18)
+                color: Qt.rgba(1, 1, 1, 0.12)
+                border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.16)
                 clip: true
                 Rectangle {
                     height: parent.height; radius: 11
@@ -157,17 +157,17 @@ Scope {
     // ------------------------------------------------------------ layout
     Pill2 { gx: 186; gy: cc.top; icon: "wifi"; title: "Wi-Fi"; sub: cc.wifiOn ? (cc.ssid || "Not Connected") : "Off"; on: cc.wifiOn
         onClicked: { Quickshell.execDetached(["nmcli", "radio", "wifi", cc.wifiOn ? "off" : "on"]); cc.wifiOn = !cc.wifiOn } }
-    Pill2 { gx: 186; gy: cc.top + 74; icon: "bluetooth"; title: "Bluetooth"; sub: cc.btOn ? "On" : "Off"; on: cc.btOn
+    Pill2 { gx: 186; gy: cc.top + 76; icon: "bluetooth"; title: "Bluetooth"; sub: cc.btOn ? "On" : "Off"; on: cc.btOn
         onClicked: { Quickshell.execDetached(["bluetoothctl", "power", cc.btOn ? "off" : "on"]); cc.btOn = !cc.btOn } }
-    Pill2 { gx: 186; gy: cc.top + 148; icon: "airplane"; title: "Airplane Mode"; sub: cc.airplane ? "On" : "Off"; on: cc.airplane; tint: "#ff9f0a"
+    Pill2 { gx: 186; gy: cc.top + 152; icon: "airplane"; title: "Airplane Mode"; sub: cc.airplane ? "On" : "Off"; on: cc.airplane; tint: "#ff9f0a"
         onClicked: { Quickshell.execDetached(["rfkill", cc.airplane ? "unblock" : "block", "all"]); cc.airplane = !cc.airplane } }
 
     // Now Playing.
     GlassWindow {
         visible: cc.open; fromRight: true
         gx: cc.edge; gy: cc.top
-        r: 26; kind: "clear"
-        implicitWidth: 164; implicitHeight: 136
+        r: 32; kind: "module"
+        implicitWidth: 164; implicitHeight: 140
         Rectangle {
             x: 14; y: 14; width: 46; height: 46; radius: 10; color: Qt.rgba(1, 1, 1, 0.14); clip: true
             Image { id: artImg; anchors.fill: parent; source: cc.player ? cc.player.trackArtUrl : ""; fillMode: Image.PreserveAspectCrop }
@@ -185,20 +185,20 @@ Scope {
             Icon { name: "next"; size: 18; TapHandler { onTapped: if (cc.player) cc.player.next() } }
         }
     }
-    Round { gx: 98; gy: cc.top + 148; implicitWidth: 76; icon: "snaplayout"; onClicked: { cc.open = false; cc.shell.snap() } }
-    Round { gx: cc.edge; gy: cc.top + 148; implicitWidth: 76; icon: "record"; on: cc.shell && cc.shell.recording; onClicked: { cc.open = false; cc.shell.toggleRecording() } }
+    Round { gx: 98; gy: cc.top + 152; implicitWidth: 76; icon: "snaplayout"; onClicked: { cc.open = false; cc.shell.snap() } }
+    Round { gx: cc.edge; gy: cc.top + 152; implicitWidth: 76; icon: "record"; on: cc.shell && cc.shell.recording; onClicked: { cc.open = false; cc.shell.toggleRecording() } }
 
-    Round { gx: 296; gy: cc.top + 222; icon: "halfcircle"; on: !Theme.dark; onClicked: { Theme.dark = !Theme.dark; Theme.save() } }
+    Round { gx: 294; gy: cc.top + 228; icon: "halfcircle"; on: !Theme.dark; onClicked: { Theme.dark = !Theme.dark; Theme.save() } }
     GlassWindow {
         visible: cc.open; fromRight: true
-        gx: 124; gy: cc.top + 222
-        r: 31; kind: "clear"
-        implicitWidth: 160; implicitHeight: 62
+        gx: 122; gy: cc.top + 228
+        r: 32; kind: "module"
+        implicitWidth: 160; implicitHeight: 64
         Rectangle {
             id: moon
-            x: 8; anchors.verticalCenter: parent.verticalCenter
+            x: 9; anchors.verticalCenter: parent.verticalCenter
             width: 46; height: 46; radius: 23
-            color: cc.shell && cc.shell.dnd ? "white" : Qt.rgba(1, 1, 1, 0.16)
+            color: cc.shell && cc.shell.dnd ? "white" : Qt.rgba(1, 1, 1, 0.11)
             Icon { anchors.centerIn: parent; name: "moon"; size: 20; color: cc.shell && cc.shell.dnd ? "#5e5ce6" : "white" }
         }
         Text { anchors.left: moon.right; anchors.leftMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: "Focus"; color: "white"; font.family: Theme.font; font.pixelSize: 15; font.weight: Font.Bold }
@@ -207,7 +207,7 @@ Scope {
 
     Track {
         visible: cc.open && cc.bright >= 0
-        gx: cc.edge; gy: cc.top + 296
+        gx: cc.edge; gy: cc.top + 304
         title: "Display"; lowIcon: "sunsmall"; highIcon: "sunlarge"; value: cc.bright / 100
         onMoved: v => { cc.bright = v * 100; Quickshell.execDetached(["brightnessctl", "-q", "set", Math.max(1, Math.round(v * 100)) + "%"]) }
     }
@@ -225,7 +225,7 @@ Scope {
         id: outputs
         visible: cc.open && cc.showOutputs; fromRight: true
         gx: cc.edge; gy: cc.outY
-        r: 22; kind: "clear"
+        r: 24; kind: "module"
         implicitWidth: 348; implicitHeight: outCol.height + 24
         Column {
             id: outCol
@@ -272,7 +272,7 @@ Scope {
         id: edit
         visible: cc.open && cc.editing; fromRight: true
         gx: cc.edge; gy: cc.editY
-        r: 22; kind: "clear"
+        r: 24; kind: "module"
         implicitWidth: 348; implicitHeight: editCol.height + 24
         Column {
             id: editCol

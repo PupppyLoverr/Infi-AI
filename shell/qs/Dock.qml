@@ -118,7 +118,7 @@ PanelWindow {
 
     Glass {
         id: card
-        kind: "clear"
+        kind: "dock"
         r: 24
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 6

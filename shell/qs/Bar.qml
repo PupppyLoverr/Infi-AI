@@ -21,8 +21,8 @@ PanelWindow {
     property var shell
     screen: screenModel
     anchors { top: true; left: true; right: true }
-    implicitHeight: 32
-    exclusiveZone: 32
+    implicitHeight: 33
+    exclusiveZone: 33
     color: "transparent"
     WlrLayershell.namespace: "solyra-bar"
 

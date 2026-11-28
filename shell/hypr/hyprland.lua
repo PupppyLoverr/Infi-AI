@@ -53,20 +53,20 @@ hl.config({
             size = 14,
             passes = 4,
             noise = 0.01,
-            vibrancy = 0.38,          -- vivid refracted colour behind glass (macOS 27 Golden Gate)
-            vibrancy_darkness = 0.18,
+            vibrancy = 0.44,          -- vivid refracted colour behind glass (Cupertino + macOS 27 Golden Gate)
+            vibrancy_darkness = 0.14,
             popups = true,
             popups_ignorealpha = 0.16, -- menus and tooltips: blur the card, not its corners
             -- Liquid Glass: Hyprland's acrylic variant lenses the backdrop
-            -- through a curved edge (refraction + bulb), keeps it crystal clear
-            -- (clarity) with a delicate chromatic fringe, matching macOS 27 Golden Gate.
+            -- through a curved edge (refraction + bulb), tuned to Cupertino's
+            -- MODULE_REFRACTION=-80 optical lensing and clarity.
             variant = 8,
             acrylic = {
-                refraction = 32,     -- edge lensing, px: the backdrop bends cleanly at the rim
-                bulb = 24,           -- width of the curved optical rim, px
-                clarity = 0.58,      -- clear glass: vivid backdrop shows through, softened
-                aberration = 0.022,  -- subtle prismatic colour fringe along the curved edge
-                tint = 0x0CF2F6FF,
+                refraction = 38,     -- strong inward edge lensing matching Cupertino module glass
+                bulb = 26,           -- width of the curved optical rim, px
+                clarity = 0.62,      -- crystal-clear backdrop with soft Gaussian diffusion
+                aberration = 0.024,  -- subtle prismatic colour fringe along the curved edge
+                tint = 0x08F4F8FF,
             },
         },
     },
