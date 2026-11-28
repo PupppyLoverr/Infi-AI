@@ -2,37 +2,9 @@
 
 [32m  INFO[0m: Launching config: "/home/solyra/.config/quickshell/shell.qml"
 [32m  INFO[0m: Shell ID: "1f23d0f74c6cc23f920c90fb6c35d007" Path ID "1f23d0f74c6cc23f920c90fb6c35d007"
-[32m  INFO[0m: Saving logs to "/run/user/1001/quickshell/by-id/zeqr17pt/log.qslog"
+[32m  INFO[0m: Saving logs to "/run/user/1001/quickshell/by-id/vexp77pt/log.qslog"
 MESA-EGL: warning: egl: failed to create dri2 screen
 MESA-EGL: warning: egl: failed to create dri2 screen
-[33m  WARN[97m scene[0m: QML IpcHandler at @shell.qml[356:5]: Signal detected: "islandRequested"
-[33m  WARN[97m scene[0m: QML IpcHandler at @shell.qml[356:5]: Signal detected: "hudRequested"
-[33m  WARN[97m scene[0m: QML IpcHandler at @shell.qml[356:5]: Signal detected: "downloadsRequested"
-[33m  WARN[97m scene[0m: QML IpcHandler at @shell.qml[356:5]: Signal detected: "dockHoverRequested"
-[33m  WARN[97m scene[0m: QML IpcHandler at @shell.qml[356:5]: Signal detected: "peekRequested"
-[33m  WARN[97m scene[0m: QML IpcHandler at @shell.qml[356:5]: Signal detected: "replyRequested"
-[33m  WARN[97m scene[0m: QML IpcHandler at @shell.qml[356:5]: Signal detected: "toastRequested"
-[33m  WARN[97m scene[0m: QML IpcHandler at @shell.qml[356:5]: Signal detected: "shelfActionRequested"
-[32m  INFO[0m: Configuration Loaded
-[33m  WARN[97m scene[0m: QML FileView at @Theme.qml[53:5]: Read of /home/solyra/.config/solyra/look.json failed: File does not exist.
-[33m  WARN[97m scene[0m: QML FileView at @ClipHistory.qml[150:29]: Read of /home/solyra/.local/share/solyra/clipboard.json failed: File does not exist.
-[33m  WARN[97m scene[0m: QML FileView at @ClipHistory.qml[150:29]: Read of /home/solyra/.local/share/solyra/clipboard.json failed: File does not exist.
-[33m  WARN[97m scene[0m: QML FileView at @Island.qml[758:25]: Read of /home/solyra/.local/share/solyra/quicknote.txt failed: File does not exist.
-[33m  WARN[97m scene[0m: QML FileView at @UsageWidget.qml[23:5]: Read of /home/solyra/.local/share/solyra/ai-usage.json failed: File does not exist.
-[33m  WARN[97m scene[0m: QML FileView at @WidgetsDashboard.qml[78:5]: Read of /home/solyra/.config/solyra/widgets.json failed: File does not exist.
-[33m  WARN[97m scene[0m: QML FileView at @ShelfModel.qml[26:24]: Read of /home/solyra/.local/share/solyra/shelf.json failed: File does not exist.
-[33m  WARN[97m scene[0m: QML FileView at @shell.qml[81:5]: Read of /home/solyra/.local/share/solyra/events.json failed: File does not exist.
-[33m  WARN[97m qt.qpa.services[0m: Failed to register with host portal QDBusError("org.freedesktop.portal.Error.Failed", "Could not register app ID: Connection already associated with an application ID")
-[33m  WARN[0m: Qt.atob(string): This method is deprecated. Its output differs from the common Web API. Use the overloads that take array-likes.
-[33m  WARN[0m: Qt.atob(string): This method is deprecated. Its output differs from the common Web API. Use the overloads that take array-likes.
-[33m  WARN[0m: Qt.atob(string): This method is deprecated. Its output differs from the common Web API. Use the overloads that take array-likes.
-[33m  WARN[0m: Qt.atob(string): This method is deprecated. Its output differs from the common Web API. Use the overloads that take array-likes.
-[33m  WARN[0m: Qt.atob(string): This method is deprecated. Its output differs from the common Web API. Use the overloads that take array-likes.
-[33m  WARN[0m: Qt.atob(string): This method is deprecated. Its output differs from the common Web API. Use the overloads that take array-likes.
-[33m  WARN[0m: Qt.atob(string): This method is deprecated. Its output differs from the common Web API. Use the overloads that take array-likes.
-[33m  WARN[0m: Qt.atob(string): This method is deprecated. Its output differs from the common Web API. Use the overloads that take array-likes.
-[32m  INFO[97m qt.multimedia.ffmpeg[0m: Using Qt multimedia with FFmpeg version n9.1 GPL version 3 or later
-[31m ERROR[97m quickshell.wayland.buffer.dmabuf[0m: Failed to find render device: no render or primary node found.
-[33m  WARN[97m quickshell.wayland.buffer[0m: Render format initialization failed. All buffers will fall back to SHM.
-[33m  WARN[97m quickshell.dbus.properties[0m: Error updating property org.mpris.MediaPlayer2.mpv.instance-OvHfBFBw/org/mpris/MediaPlayer2/org.mpris.MediaPlayer2.Player:Position
-[33m  WARN[97m quickshell.dbus.properties[0m: QDBusError("org.freedesktop.DBus.Error.ServiceUnknown", "The name is not activatable")
+[31m ERROR[0m: Failed to load configuration
+[31m ERROR[0m:   caused by @shell.qml[331:5]: Type ControlCenter unavailable
+[31m ERROR[0m:   caused by @ControlCenter.qml[482:17]: Expected token `)'
