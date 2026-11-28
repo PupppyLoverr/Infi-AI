@@ -209,15 +209,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // or launched directly with SOLYRA_TERM_AGENT=1.
             host.shared(
                 "start_agent_mode",
-                std::env::var("SOLYRA_TERM_AGENT").as_deref() == Ok("1"),
+                Value::Bool(std::env::var("SOLYRA_TERM_AGENT").as_deref() == Ok("1")),
             );
             let agent_reply = host.shared("agent_reply", "");
+            let (agent_tx, mut agent_rx) = zgx::task::latest::<String>();
+            cx.tasks.spawn(async move {
+                while let Some(text) = agent_rx.recv().await {
+                    agent_reply.set(text.as_str().into());
+                }
+            });
             host.action("agent_run", move |req| {
                 let prompt = match req.field("prompt") {
                     Some(Value::Str(s)) => s.to_string(),
                     _ => return,
                 };
-                let reply = agent_reply.clone();
+                let tx = agent_tx.clone();
                 std::thread::spawn(move || {
                     let out = std::process::Command::new("sh")
                         .arg("-lc")
@@ -240,7 +246,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         Err(e) => format!("Agent error: {e}"),
                     };
-                    reply.set(if text.is_empty() {
+                    tx.send(if text.is_empty() {
                         "Done.".to_string()
                     } else {
                         text
