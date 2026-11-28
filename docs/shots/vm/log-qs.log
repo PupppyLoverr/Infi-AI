@@ -2,7 +2,7 @@
 
 [32m  INFO[0m: Launching config: "/home/solyra/.config/quickshell/shell.qml"
 [32m  INFO[0m: Shell ID: "1f23d0f74c6cc23f920c90fb6c35d007" Path ID "1f23d0f74c6cc23f920c90fb6c35d007"
-[32m  INFO[0m: Saving logs to "/run/user/1001/quickshell/by-id/0fb4f7pt/log.qslog"
+[32m  INFO[0m: Saving logs to "/run/user/1001/quickshell/by-id/2fx3k7pt/log.qslog"
 MESA-EGL: warning: egl: failed to create dri2 screen
 MESA-EGL: warning: egl: failed to create dri2 screen
 [33m  WARN[97m scene[0m: QML IpcHandler at @shell.qml[360:5]: Signal detected: "islandRequested"
@@ -36,5 +36,5 @@ MESA-EGL: warning: egl: failed to create dri2 screen
 [31m ERROR[97m quickshell.wayland.buffer.dmabuf[0m: Failed to find render device: no render or primary node found.
 [33m  WARN[97m quickshell.wayland.buffer[0m: Render format initialization failed. All buffers will fall back to SHM.
 [33m  WARN[97m scene[0m: QML Glass at @Dock.qml[127:5]: Cannot specify left, right, and horizontalCenter anchors at the same time.
-[33m  WARN[97m quickshell.dbus.properties[0m: Error updating property org.mpris.MediaPlayer2.mpv.instance-UVKFXaMC/org/mpris/MediaPlayer2/org.mpris.MediaPlayer2.Player:Position
+[33m  WARN[97m quickshell.dbus.properties[0m: Error updating property org.mpris.MediaPlayer2.mpv.instance-zoTPvkCd/org/mpris/MediaPlayer2/org.mpris.MediaPlayer2.Player:Position
 [33m  WARN[97m quickshell.dbus.properties[0m: QDBusError("org.freedesktop.DBus.Error.ServiceUnknown", "The name is not activatable")

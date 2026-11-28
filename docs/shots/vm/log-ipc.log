@@ -68,6 +68,12 @@ ipc control
 ipc wallpaper /usr/share/backgrounds/solyra/galaxy-1920x1080.png
 ipc control
 ipc control
+ipc wallpaper /usr/share/backgrounds/solyra/cupertino-orb-4k.jpg
+ipc control
+ipc control
+ipc wallpaper /usr/share/backgrounds/solyra/cupertino-lake-4k.jpg
+ipc control
+ipc control
 ipc wallpaper 
 ipc sessionDialog shutdown
 ipc sessionDialog 
