@@ -317,8 +317,10 @@ Scope {
 
     component TileFrame: Item {
         id: tile
+        width: 140
+        height: 64
         property string controlId
-        property real cornerRadius: 20
+        property real cornerRadius: 32
         property bool tappable: true
         signal activated()
         default property alias content: body.data

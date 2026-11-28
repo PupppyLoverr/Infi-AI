@@ -71,7 +71,7 @@ Scope {
                     color: Qt.rgba(1, 1, 1, 0.14)
                     Icon {
                         anchors.centerIn: parent
-                        name: sa.mode === "restart" ? "refresh" : (sa.mode === "logout" ? "close" : "power")
+                        name: sa.mode === "restart" ? "refresh" : (sa.mode === "logout" ? "close" : "lock")
                         size: 22
                     }
                 }

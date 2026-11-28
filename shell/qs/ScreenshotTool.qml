@@ -91,7 +91,7 @@ Scope {
                         ]
                         Rectangle {
                             required property var modelData
-                            width: 94; height: 34; radius: 11
+                            width: modelData.id === "screen" ? 116 : 92; height: 34; radius: 11
                             anchors.verticalCenter: parent.verticalCenter
                             color: sc.captureMode === modelData.id ? Qt.rgba(1, 1, 1, 0.22) : "transparent"
                             Row {
